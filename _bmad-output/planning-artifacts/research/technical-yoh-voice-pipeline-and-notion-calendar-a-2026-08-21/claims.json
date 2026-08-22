@@ -1,0 +1,20 @@
+[
+  {"claim": "Snowboy dead/unmaintained", "class": "maintenance-status", "pub_date": "2021-01"},
+  {"claim": "openWakeWord recommended for Pi over microWakeWord", "class": "recommendation", "pub_date": "2026-01"},
+  {"claim": "Piper relicensed MIT to GPL-3.0", "class": "version", "pub_date": "2025-07"},
+  {"claim": "PipeWire default Bluetooth path on Bookworm", "class": "landscape", "pub_date": "2026-08"},
+  {"claim": "whisper.cpp tiny/base real-time on Pi 5, small batch-only", "class": "performance", "pub_date": "2026-08"},
+  {"claim": "Piper medium tier real-time on Pi 5", "class": "performance", "pub_date": "2026-08"},
+  {"claim": "No Pi-specific long-term retrospective found", "class": "pattern", "pub_date": "2026-08"},
+  {"claim": "Notion current API version 2026-03-11", "class": "version", "pub_date": "2026-03"},
+  {"claim": "Notion 2025-09-03 data sources migration", "class": "version", "pub_date": "2025-09"},
+  {"claim": "Notion internal integration token auth pattern", "class": "auth", "pub_date": "2026-08"},
+  {"claim": "Notion rate limit ~3 req/s, no type split", "class": "rate-limit", "pub_date": "2026-08"},
+  {"claim": "Notion rollup properties not updatable via PATCH", "class": "pattern", "pub_date": "2026-08"},
+  {"claim": "calendar.events + extendedProperties tagging pattern", "class": "auth", "pub_date": "2026-07"},
+  {"claim": "Service accounts can't access personal Google Calendar", "class": "auth", "pub_date": "2026-08"},
+  {"claim": "OAuth Testing status 7-day refresh token expiry", "class": "auth", "pub_date": "2026-08"},
+  {"claim": "Google Calendar ICS refresh latency ~8-24h, no SLA", "class": "pattern", "pub_date": "2026-06"},
+  {"claim": "Recurring event silent no-op update bug", "class": "pattern", "pub_date": "2026-06"},
+  {"claim": "Refresh tokens go stale after ~6mo disuse, keep-alive cron workaround", "class": "pattern", "pub_date": "2026-06"}
+]

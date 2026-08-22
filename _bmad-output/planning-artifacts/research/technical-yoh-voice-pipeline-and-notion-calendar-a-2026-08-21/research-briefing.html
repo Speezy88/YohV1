@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Technical research: Yoh voice pipeline &amp; Notion/Calendar API integration</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --bg-alt: #f6f7f9;
+    --card-bg: #ffffff;
+    --border: #e3e5e9;
+    --text: #1c1f24;
+    --text-muted: #5b6270;
+    --accent: #2f5fb3;
+    --accent-soft: #e8eefb;
+    --verified: #1b7a3d;
+    --verified-bg: #e6f5ea;
+    --medium: #8a6300;
+    --medium-bg: #fff3d6;
+    --low: #9a3b12;
+    --low-bg: #fdeade;
+    --unverified: #7a2f8a;
+    --unverified-bg: #f3e6f7;
+    --disputed: #b3261e;
+    --disputed-bg: #fbe4e2;
+    --code-bg: #f0f1f4;
+    --shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a;
+      --bg-alt: #1b1e24;
+      --card-bg: #1e2128;
+      --border: #2c303a;
+      --text: #e7e9ee;
+      --text-muted: #9aa2b1;
+      --accent: #7fa6e8;
+      --accent-soft: #202b40;
+      --verified: #5fd489;
+      --verified-bg: #142d1f;
+      --medium: #e8c25c;
+      --medium-bg: #3a2e0f;
+      --low: #ef9166;
+      --low-bg: #3a2113;
+      --unverified: #d79ee8;
+      --unverified-bg: #341a3a;
+      --disputed: #f28f8a;
+      --disputed-bg: #3a1917;
+      --code-bg: #262a33;
+      --shadow: 0 1px 3px rgba(0,0,0,0.4), 0 1px 2px rgba(0,0,0,0.3);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.55;
+  }
+  a { color: var(--accent); }
+  .wrap {
+    max-width: 920px;
+    margin: 0 auto;
+    padding: 1.5rem 1.25rem 4rem;
+  }
+  header.report-header {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 1.25rem;
+    margin-bottom: 1.5rem;
+  }
+  header.report-header h1 {
+    font-size: 1.5rem;
+    margin: 0 0 0.5rem;
+  }
+  .meta-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 0.5rem 1rem;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin-top: 0.75rem;
+  }
+  .meta-grid strong { color: var(--text); display: block; font-weight: 600; }
+  .decision-line {
+    background: var(--accent-soft);
+    border-left: 3px solid var(--accent);
+    padding: 0.75rem 1rem;
+    border-radius: 4px;
+    font-size: 0.95rem;
+    margin-top: 0.75rem;
+  }
+  nav.toc {
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    z-index: 10;
+    padding: 0.6rem 0;
+    margin-bottom: 1.5rem;
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+  nav.toc a {
+    display: inline-block;
+    margin-right: 1.1rem;
+    font-size: 0.82rem;
+    text-decoration: none;
+    color: var(--text-muted);
+    padding: 0.15rem 0;
+  }
+  nav.toc a:hover { color: var(--accent); }
+  .card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.25rem 1.4rem;
+    box-shadow: var(--shadow);
+    margin-bottom: 1.5rem;
+  }
+  .card.exec h2 { margin-top: 0; }
+  section { margin-bottom: 2rem; scroll-margin-top: 3rem; }
+  h2 {
+    font-size: 1.2rem;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0.4rem;
+  }
+  h3 { font-size: 1rem; color: var(--text); }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3em;
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 0.12em 0.55em;
+    border-radius: 999px;
+    white-space: nowrap;
+    vertical-align: middle;
+  }
+  .badge.verified { color: var(--verified); background: var(--verified-bg); }
+  .badge.medium { color: var(--medium); background: var(--medium-bg); }
+  .badge.low { color: var(--low); background: var(--low-bg); }
+  .badge.unverified { color: var(--unverified); background: var(--unverified-bg); font-weight: 700; }
+  .badge.disputed { color: var(--disputed); background: var(--disputed-bg); font-weight: 700; }
+  .cite {
+    font-size: 0.78rem;
+    color: var(--accent);
+    text-decoration: none;
+  }
+  .callout {
+    border-left: 3px solid var(--low);
+    background: var(--low-bg);
+    padding: 0.7rem 1rem;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    margin: 0.9rem 0;
+  }
+  .rec {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.85rem 1rem;
+    margin-bottom: 0.8rem;
+    background: var(--bg-alt);
+  }
+  .rec .feeds { font-size: 0.8rem; color: var(--text-muted); margin-top: 0.4rem; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+  }
+  th, td {
+    text-align: left;
+    padding: 0.45rem 0.6rem;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  th { color: var(--text-muted); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.02em; }
+  .table-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 6px; }
+  details.sources summary {
+    cursor: pointer;
+    font-weight: 600;
+    padding: 0.6rem 0;
+    list-style: none;
+  }
+  details.sources summary::-webkit-details-marker { display: none; }
+  details.sources summary::before { content: "▶ "; display: inline-block; transition: transform 0.15s; }
+  details.sources[open] summary::before { transform: rotate(90deg); }
+  code { background: var(--code-bg); padding: 0.1em 0.4em; border-radius: 4px; font-size: 0.85em; }
+  .stale-due { color: var(--low); font-weight: 600; }
+  .stale-fresh { color: var(--verified); }
+  footer.foot {
+    margin-top: 3rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+    font-size: 0.78rem;
+    color: var(--text-muted);
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="report-header">
+    <h1>Yoh Voice Pipeline &amp; Notion/Calendar API Integration</h1>
+    <div class="decision-line">
+      <strong>Decision this research serves:</strong> Ground Yoh's architecture/roadmap on (a) the right wake-word/voice-pipeline approach for the Phase-3 Raspberry Pi build, and (b) correct Notion + Google Calendar API integration patterns for the Phase-1 MVP.
+    </div>
+    <div class="meta-grid">
+      <div><strong>Type</strong>Technical research</div>
+      <div><strong>Decision shape</strong>Explore</div>
+      <div><strong>Date</strong>2026-08-21</div>
+      <div><strong>Depth</strong>Standard preset · 2 rounds/dimension</div>
+      <div><strong>Validation</strong>Normal + 1 spot-check pass</div>
+      <div><strong>Claims tracked</strong>14 verified · 3 unverified · 1 disputed</div>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <a href="#exec">Executive Summary</a>
+    <a href="#wakeword">Wake-Word &amp; Voice Pipeline</a>
+    <a href="#notion">Notion API</a>
+    <a href="#gcal">Google Calendar API</a>
+    <a href="#cross">Cross-Dimension Insights</a>
+    <a href="#recs">Recommendations</a>
+    <a href="#open">Open Questions</a>
+    <a href="#sources">Sources</a>
+    <a href="#staleness">Staleness Map</a>
+  </nav>
+
+  <div class="card exec" id="exec">
+    <h2>Executive Summary</h2>
+    <p><strong>Notion and Google Calendar integration (Phase-1 MVP, needed for Sept 2):</strong> both are straightforward with well-documented, verified patterns. Use a Notion <strong>internal integration token</strong> <span class="badge medium">medium</span> <a class="cite" href="#src-18">[18]</a>, respect the ~3 req/s rate limit <span class="badge verified">verified</span> <a class="cite" href="#src-19">[19]</a>, and use the current <strong>"Query a data source"</strong> endpoint rather than the deprecated one <span class="badge verified">verified</span> <a class="cite" href="#src-20">[20]</a><a class="cite" href="#src-21">[21]</a>. For Google Calendar, grant <code>calendar.events</code> and tag every event Yoh creates with a private <strong>extended property</strong>, filtering on it before any update/delete <span class="badge verified">verified</span> <a class="cite" href="#src-28">[28]</a> — and move the OAuth consent screen to <strong>"In production"</strong> immediately, since "Testing" mode silently kills all refresh tokens after 7 days <span class="badge verified">verified</span> <a class="cite" href="#src-31">[31]</a>.</p>
+    <p><strong>Wake-word/voice pipeline (Phase-3 hardware, not urgent for Sept 2):</strong> the landscape is settled enough to commit to now. <strong>openWakeWord</strong> is the right engine for Pi-class hardware <span class="badge medium">medium</span> <a class="cite" href="#src-2">[2]</a> (Snowboy is dead <span class="badge verified">verified</span> <a class="cite" href="#src-1">[1]</a>, microWakeWord targets microcontrollers, not the Pi). <strong>whisper.cpp</strong> (tiny/base) and <strong>Piper</strong> (medium tier) both run real-time on a <strong>Raspberry Pi 5</strong> specifically — a Pi 4 is measurably worse for both <span class="badge verified">independently verified</span> <a class="cite" href="#src-8">[8]</a><a class="cite" href="#src-10">[10]</a>. <strong>PipeWire</strong>, not BlueALSA, is the current default Bluetooth-audio path on Bookworm <span class="badge verified">independently verified</span> <a class="cite" href="#src-6">[6]</a>.</p>
+    <div class="callout"><strong>Biggest caveat:</strong> no genuine real-world, multi-month retrospective was found for a Pi-based always-listening voice assistant specifically (false-wake rates, thermal behavior, Bluetooth dropout frequency). <span class="badge unverified">unverified</span> This is a real open risk for Phase 3, not a confirmed finding either way.</div>
+  </div>
+
+  <section id="wakeword">
+    <h2>Raspberry Pi Wake-Word &amp; Voice Pipeline <span style="font-size:0.7rem;color:var(--text-muted);font-weight:400;">(Phase 3)</span></h2>
+
+    <h3>Landscape &amp; maturity</h3>
+    <p><strong>Snowboy is dead</strong> <span class="badge verified">verified</span> <a class="cite" href="#src-1">[1]</a> — cloud training shut down Jan 2021, repo points to an unmaintained fork. <strong>openWakeWord</strong> is the actively-maintained current choice, default in Home Assistant's voice architecture <span class="badge verified">verified</span> <a class="cite" href="#src-3">[3]</a>, with ongoing low-intensity maintenance into 2026 <span class="badge medium">medium</span> <a class="cite" href="#src-2">[2]</a>. <strong>microWakeWord</strong> exists specifically for ESP32-S3 microcontrollers — that reasoning doesn't apply to a Raspberry Pi <a class="cite" href="#src-2">[2]</a><a class="cite" href="#src-4">[4]</a>.</p>
+    <p>For STT, <strong>whisper.cpp</strong> tiny/base are the real-time tier on Pi-class CPUs; small is ~0.4–0.6x real-time, batch-only <span class="badge medium">medium</span> <a class="cite" href="#src-9">[9]</a>, independently confirmed <span class="badge verified">verified</span> <a class="cite" href="#src-8">[8]</a>. For TTS, <strong>Piper</strong> is real-time-capable with no GPU, tier choice depending on the Pi model (see Implementation reality).</p>
+    <p><strong>Piper's licensing changed materially</strong>: <code>rhasspy/piper</code> (MIT) is archived; development moved to <code>OHF-Voice/piper1-gpl</code>, relicensed <strong>GPL-3.0</strong> <span class="badge verified">verified</span> <a class="cite" href="#src-5">[5]</a> (year inferred as 2025 from context). For Yoh — personal, non-distributed — this has no practical effect: GPL obligations attach to distribution, not private use.</p>
+
+    <h3>Integration &amp; interoperability</h3>
+    <p>Standard chain: wake-word detector → STT → intent/LLM → TTS → audio out. One builder chose a cloud LLM over local inference specifically because local LLM inference (not STT/TTS) was the Pi-class bottleneck <span class="badge low">low</span> <a class="cite" href="#src-7">[7b]</a> — a signal, not a fact.</p>
+    <p>Raspberry Pi OS <strong>Bookworm replaced PulseAudio/JACK with PipeWire</strong>, which now natively manages Bluetooth reconnection and A2DP output <span class="badge verified">independently verified</span> <a class="cite" href="#src-6">[6]</a> — most BlueALSA-based Bluetooth-on-Pi tutorials online predate this and describe a superseded default. BlueALSA remains available and preferred by some for headless setups, but isn't the modern default. One open PipeWire-Bluetooth GitHub issue suggests the path isn't universally friction-free yet <span class="badge low">low-medium</span> <a class="cite" href="#src-7">[7]</a>.</p>
+
+    <h3>Implementation reality</h3>
+    <p>On a <strong>Raspberry Pi 5</strong>, whisper.cpp tiny/base and Piper's "medium" tier both run comfortably real-time. On a <strong>Raspberry Pi 4</strong>, Piper lags 1–3s/sentence at "medium" vs. under 1s on Pi 5 <span class="badge verified">independently verified</span> <a class="cite" href="#src-10">[10]</a>. STT is tighter still: even on Pi 5, base/small "saturate the CPU" — base.en only becomes viable at all on Pi 5, not Pi 4 <span class="badge verified">independently verified</span> <a class="cite" href="#src-8">[8]</a>. <strong>Build on a Pi 5, not a 3/4</strong> — Pi 4 may not clear the real-time bar at all for STT.</p>
+    <p>What this research <strong>could not find</strong>, despite a dedicated follow-up round: a genuine, Pi-specific long-term retrospective on false-wake rates, thermal throttling, or Bluetooth dropout frequency <span class="badge unverified">unverified</span> <a class="cite" href="#src-11">[11]</a>. An ESP32-based device showed no thermal issues over 15 months <span class="badge medium">medium</span> <a class="cite" href="#src-12">[12]</a> — suggestive, not transferable (different hardware class).</p>
+  </section>
+
+  <section id="notion">
+    <h2>Notion API Integration <span style="font-size:0.7rem;color:var(--text-muted);font-weight:400;">(Phase 1 MVP)</span></h2>
+
+    <h3>Landscape &amp; maturity</h3>
+    <p>Current API version, confirmed directly: <strong>2026-03-11</strong> <span class="badge verified">verified</span> <a class="cite" href="#src-13">[13]</a><a class="cite" href="#src-14">[14]</a>. A third-party blog's "2026-04-01" claim is incorrect — it conflates the March 19 "Views API" feature addition with a fictitious version bump <span class="badge low">low</span> <a class="cite" href="#src-15">[15]</a>. Last genuine breaking change: the <strong>2025-09-03 "data sources" migration</strong> — old integrations still work for single-data-source databases like Yoh's <span class="badge verified">verified</span> <a class="cite" href="#src-16">[16]</a>.</p>
+
+    <h3>Integration &amp; interoperability</h3>
+    <p>Use a Notion <strong>internal integration</strong> (static token, one workspace, no OAuth) <span class="badge medium">medium</span> <a class="cite" href="#src-18">[18]</a>. Read via the current <strong>"Query a data source"</strong> endpoint, not the deprecated <code>databases/{id}/query</code> <span class="badge verified">verified</span> <a class="cite" href="#src-20">[20]</a><a class="cite" href="#src-21">[21]</a>. Write via <code>PATCH /pages/{id}</code> — <strong>rollup properties are explicitly documented as not updatable</strong>; formula properties are implied read-only, not explicitly stated so <span class="badge verified">verified (rollup)</span> <a class="cite" href="#src-22">[22]</a>. Native webhooks now exist as a polling alternative <span class="badge verified">verified</span> <a class="cite" href="#src-17">[17]</a> — not needed for Yoh's once-daily model.</p>
+
+    <h3>Implementation reality</h3>
+    <p>Rate limit: <strong>~3 req/s per integration</strong>, same regardless of integration type <span class="badge verified">verified</span> <a class="cite" href="#src-19">[19]</a> — trivial at personal scale. Date filters without explicit timezone default to UTC <span class="badge low">low-medium, snippet-level</span> — set timezone explicitly on every date write/filter. Official SDK is JS-only (<code>notion-sdk-js</code>); Python relies on the community <code>notion-client</code> <a class="cite" href="#src-23">[23]</a><a class="cite" href="#src-24">[24]</a>.</p>
+  </section>
+
+  <section id="gcal">
+    <h2>Google Calendar API Integration <span style="font-size:0.7rem;color:var(--text-muted);font-weight:400;">(Phase 1 MVP)</span></h2>
+
+    <h3>Landscape &amp; maturity</h3>
+    <p>Still v3, no major-version break; a 2026 update added an <code>eventType</code> field <span class="badge verified">verified</span> <a class="cite" href="#src-25">[25]</a>. Google actively revising calendar-adjacent policy through 2026 (secondary-calendar cleanup, ownership-transfer API) — doesn't affect Yoh's usage, but signals active churn worth a periodic recheck <span class="badge verified">verified</span> <a class="cite" href="#src-26">[26]</a>.</p>
+
+    <h3>Integration &amp; interoperability</h3>
+    <p><strong>Auth:</strong> a service account <strong>cannot</strong> access a personal (@gmail.com) calendar — no domain-wide delegation for consumer accounts <span class="badge medium">medium</span> <a class="cite" href="#src-30">[30]</a>. Use OAuth 2.0 user consent, and critically: move the consent screen to <strong>"In production"</strong> — "Testing" mode auto-expires <strong>all</strong> refresh tokens after exactly 7 days <span class="badge verified">verified, official docs</span> <a class="cite" href="#src-31">[31]</a>. This is directly load-bearing for the Sept 2 MVP.</p>
+    <p><strong>Write isolation:</strong> no scope restricts an app to "only events it created" on the user's <em>existing/primary</em> calendar — that guarantee (<code>calendar.app.created</code>) only applies to a separate app-owned calendar. The verified pattern instead: grant <code>calendar.events</code>, tag every Yoh-created event with a private <strong>extended property</strong>, always filter on it before update/delete <span class="badge verified">verified</span> <a class="cite" href="#src-28">[28]</a><a class="cite" href="#src-29">[29]</a>. No comparison found vs. the dedicated-secondary-calendar alternative in practice.</p>
+    <p>ICS/iCal subscription still works, but refresh latency is ~8–24h (up to 48h reported) with no published SLA <span class="badge medium">medium</span> <a class="cite" href="#src-32">[32]</a> — confirms the live-API-for-reads design choice.</p>
+
+    <h3>Implementation reality</h3>
+    <p>Quotas generous for personal use (10,000 req/min/project) <span class="badge verified">verified</span> <a class="cite" href="#src-27">[27]</a>. Two anecdotal gotchas: a <strong>silent no-op</strong> bug updating recurring-event RRULEs <span class="badge medium">medium</span> <a class="cite" href="#src-33">[33]</a>, and some spec-valid RRULEs rejected <span class="badge low">low-medium</span> <a class="cite" href="#src-34">[34]</a> — lower priority since Yoh's MVP doesn't use recurrence yet. Recurring events require a single shared timezone <span class="badge medium">medium, snippet-level</span> <a class="cite" href="#src-35">[35]</a>. Developers commonly report needing to <strong>manually persist refreshed tokens</strong> back to storage, and some run a keep-alive cron against ~6-month staleness <span class="badge medium">medium, multi-source</span> <a class="cite" href="#src-36">[36]</a><a class="cite" href="#src-37">[37]</a>.</p>
+  </section>
+
+  <section id="cross">
+    <h2>Cross-Dimension Insights</h2>
+    <ul>
+      <li>The Sept-2 MVP and the Phase-3 hardware build share almost no technical risk — Notion/Calendar integration is low-risk and well-documented; the wake-word pipeline's one real unknown (long-term Pi reliability) sits entirely in Phase 3, which the roadmap already deferred past the MVP. This research validates that sequencing, rather than complicating it.</li>
+      <li>Both integrations independently converged on the same pattern: <strong>tag what you own, touch only what you tagged</strong> — Notion's rollup/formula read-only boundary and Calendar's extended-properties self-tagging are both instances of "never assume write access beyond what you explicitly created." Consistent with the "propose, don't impose" trust boundary already in Yoh's design.</li>
+      <li>The OAuth "Testing status" 7-day token expiry is the single highest-risk item for the Sept 2 MVP — not hard to fix, but exactly the kind of thing that looks fine at first and fails silently a week later.</li>
+    </ul>
+  </section>
+
+  <section id="recs">
+    <h2>Recommendations</h2>
+    <div class="rec">
+      <strong>1. Notion (Phase 1, Sept 2)</strong> — internal integration token; query via the current data-source endpoint, not the deprecated one. High confidence on versioning/endpoint shape <a class="cite" href="#src-13">[13]</a><a class="cite" href="#src-20">[20]</a><a class="cite" href="#src-21">[21]</a>; the token-pattern recommendation itself is medium confidence <a class="cite" href="#src-18">[18]</a> — worth a 2-minute direct doc check.
+      <div class="feeds">Feeds: architecture spine (integration approach) · roadmap risk (low)</div>
+    </div>
+    <div class="rec">
+      <strong>2. Google Calendar (Phase 1, Sept 2)</strong> — grant <code>calendar.events</code>, tag Yoh-created events, and move the OAuth consent screen to "In production" before relying on it daily. High confidence, primary-source-verified.
+      <div class="feeds">Feeds: architecture spine (auth pattern) · roadmap risk (currently the MVP's single highest silent-failure risk if skipped)</div>
+    </div>
+    <div class="rec">
+      <strong>3. Hardware (Phase 3)</strong> — build on a <strong>Raspberry Pi 5</strong>, target openWakeWord + whisper.cpp (tiny/base) + Piper (medium) over PipeWire's Bluetooth path. High confidence on Snowboy's death, Pi 5 performance, PipeWire default; medium confidence on openWakeWord-over-microWakeWord specifically.
+      <div class="feeds">Feeds: architecture spine (hardware baseline) · roadmap estimate</div>
+    </div>
+    <div class="rec">
+      <strong>4. Before committing further to Phase 3</strong> — run a short real-world spike testing wake-word false-positive/negative rate and Bluetooth reliability in the actual bathroom/bedroom setup. This is the one dimension published evidence couldn't answer.
+      <div class="feeds">Feeds: roadmap risk (Phase 3 estimate should carry a buffer)</div>
+    </div>
+  </section>
+
+  <section id="open">
+    <h2>Open Questions</h2>
+    <ul>
+      <li><span class="badge unverified">unverified</span> No genuine Pi-specific long-term reliability data (false-wake rate, thermal, Bluetooth dropout) — closing this needs a builder retrospective that doesn't yet exist publicly, or Yoh's own Phase-3 spike test.</li>
+      <li><span class="badge unverified">unverified</span> Whether "primary calendar + extendedProperties" or "dedicated secondary calendar" is more common in practice — both are mechanically valid; no practitioner consensus found.</li>
+      <li><span class="badge low">low, snippet-level</span> Notion's UTC-default timezone-filter behavior and formula-property read-only status rest on snippet-level confirmation, not a direct docs fetch.</li>
+      <li><span class="badge disputed">disputed</span> Google Calendar recurring-event gotchas (silent no-op, RRULE rejection) are single-source/anecdotal — not currently relevant since Yoh's MVP doesn't create recurring events; re-check before adding recurrence later.</li>
+    </ul>
+  </section>
+
+  <section id="sources">
+    <h2>Source Appendix</h2>
+    <details class="sources" open>
+      <summary>37 sources (click to collapse)</summary>
+      <div class="table-scroll">
+<table class="sources"><tbody><tr id="src-1"><td>[1]</td><td><a href="https://github.com/Kitt-AI/snowboy" target="_blank" rel="noopener">Snowboy dead/unmaintained</a></td><td>GitHub (Kitt-AI)</td><td>undated</td><td>2026-08-21</td><td>high</td></tr><tr id="src-2"><td>[2]</td><td><a href="https://github.com/dscripka/openWakeWord" target="_blank" rel="noopener">openWakeWord maintenance + Pi performance + microWakeWord note</a></td><td>GitHub</td><td>2024-02 / activity to 2026-01</td><td>2026-08-21</td><td>medium</td></tr><tr id="src-3"><td>[3]</td><td><a href="https://www.home-assistant.io/voice_control/about_wake_word/" target="_blank" rel="noopener">Home Assistant wake-word engine choice</a></td><td>Home Assistant (official docs)</td><td>undated</td><td>2026-08-21</td><td>high</td></tr><tr id="src-4"><td>[4]</td><td><a href="https://www.kevinahrendt.com/micro-wake-word" target="_blank" rel="noopener">microWakeWord targets microcontrollers</a></td><td>Kevin Ahrendt (microWakeWord author)</td><td>undated</td><td>2026-08-21</td><td>medium</td></tr><tr id="src-5"><td>[5]</td><td><a href="https://github.com/OHF-Voice/piper1-gpl/releases/tag/v1.3.0" target="_blank" rel="noopener">Piper relicensed MIT→GPL-3.0</a></td><td>GitHub (OHF-Voice)</td><td>2025-07</td><td>2026-08-21</td><td>high</td></tr><tr id="src-6"><td>[6]</td><td><a href="https://forums.raspberrypi.com/viewtopic.php?t=389048" target="_blank" rel="noopener">PipeWire is default Bluetooth-audio path on Bookworm</a></td><td>Raspberry Pi Forums (official)</td><td>undated</td><td>2026-08-21</td><td>high (independently verified)</td></tr><tr id="src-7"><td>[7]</td><td><a href="https://github.com/arkq/bluez-alsa/issues/681" target="_blank" rel="noopener">PipeWire-Bluetooth open issue</a></td><td>GitHub (arkq/bluez-alsa)</td><td>undated</td><td>2026-08-21</td><td>low-medium</td></tr><tr id="src-8"><td>[8]</td><td><a href="https://github.com/ggml-org/whisper.cpp/discussions/166" target="_blank" rel="noopener">whisper.cpp tiny/base real-time on Pi 5</a></td><td>GitHub (ggml-org)</td><td>2024-12</td><td>2026-08-21</td><td>high (independently verified)</td></tr><tr id="src-9"><td>[9]</td><td><a href="https://www.promptquorum.com/power-local-llm/local-whisper-stt-comparison-2026" target="_blank" rel="noopener">whisper.cpp small model batch-only</a></td><td>promptquorum.com (benchmark)</td><td>2026</td><td>2026-08-21</td><td>medium</td></tr><tr id="src-10"><td>[10]</td><td><a href="https://pidiylab.com/text-to-speech-raspberry-pi-piper/" target="_blank" rel="noopener">Piper medium tier real-time on Pi 5</a></td><td>pidiylab.com</td><td>undated</td><td>2026-08-21</td><td>high (independently verified)</td></tr><tr id="src-11"><td>[11]</td><td>No genuine Pi-specific long-term retrospective found</td><td>— (absence of evidence, reported as finding)</td><td>—</td><td>2026-08-21</td><td>n/a — open question</td></tr><tr id="src-12"><td>[12]</td><td><a href="https://botmonster.com/smart-home/home-assistant-voice-preview-edition-review/" target="_blank" rel="noopener">HA Voice PE 15-month reliability review (ESP32, not Pi)</a></td><td>Botmonster Tech</td><td>2026</td><td>2026-08-21</td><td>medium</td></tr><tr id="src-13"><td>[13]</td><td><a href="https://developers.notion.com/reference/versioning" target="_blank" rel="noopener">Notion current API version 2026-03-11</a></td><td>Notion (official docs)</td><td>live</td><td>2026-08-21</td><td>high</td></tr><tr id="src-14"><td>[14]</td><td><a href="https://developers.notion.com/page/changelog" target="_blank" rel="noopener">Notion changelog, resolves version discrepancy</a></td><td>Notion (official docs)</td><td>through 2026-04</td><td>2026-08-21</td><td>high</td></tr><tr id="src-15"><td>[15]</td><td><a href="https://fazm.ai/blog/notion-api-updates-2026" target="_blank" rel="noopener">Third-party blog&#x27;s incorrect 2026-04-01 version claim</a></td><td>Fazm Blog</td><td>unclear</td><td>2026-08-21</td><td>low (corrected by [13][14])</td></tr><tr id="src-16"><td>[16]</td><td><a href="https://developers.notion.com/docs/upgrade-faqs-2025-09-03" target="_blank" rel="noopener">Notion 2025-09-03 data-sources migration</a></td><td>Notion (official docs)</td><td>2025-09</td><td>2026-08-21</td><td>high</td></tr><tr id="src-17"><td>[17]</td><td><a href="https://developers.notion.com/reference/webhooks" target="_blank" rel="noopener">Notion native webhooks</a></td><td>Notion (official docs)</td><td>live</td><td>2026-08-21</td><td>high</td></tr><tr id="src-18"><td>[18]</td><td><a href="https://developers.notion.com/guides/get-started/authorization" target="_blank" rel="noopener">Internal integration token auth pattern</a></td><td>Notion (official docs)</td><td>undated</td><td>2026-08-21</td><td>medium</td></tr><tr id="src-19"><td>[19]</td><td><a href="https://developers.notion.com/reference/request-limits" target="_blank" rel="noopener">Notion rate limit ~3 req/s, no type split</a></td><td>Notion (official docs)</td><td>live</td><td>2026-08-21</td><td>high</td></tr><tr id="src-20"><td>[20]</td><td><a href="https://developers.notion.com/reference/post-database-query" target="_blank" rel="noopener">Deprecated database-query endpoint</a></td><td>Notion (official docs)</td><td>live</td><td>2026-08-21</td><td>high</td></tr><tr id="src-21"><td>[21]</td><td><a href="https://developers.notion.com/reference/query-a-data-source" target="_blank" rel="noopener">Current query-a-data-source endpoint</a></td><td>Notion (official docs)</td><td>live</td><td>2026-08-21</td><td>high</td></tr><tr id="src-22"><td>[22]</td><td><a href="https://developers.notion.com/reference/patch-page" target="_blank" rel="noopener">Rollup properties not updatable via PATCH page</a></td><td>Notion (official docs)</td><td>live</td><td>2026-08-21</td><td>high</td></tr><tr id="src-23"><td>[23]</td><td><a href="https://github.com/makenotion/notion-sdk-js" target="_blank" rel="noopener">Official JS SDK</a></td><td>GitHub (Notion)</td><td>undated</td><td>2026-08-21</td><td>high</td></tr><tr id="src-24"><td>[24]</td><td><a href="https://pypi.org/project/notion-client/" target="_blank" rel="noopener">Community Python SDK</a></td><td>PyPI</td><td>undated</td><td>2026-08-21</td><td>medium</td></tr><tr id="src-25"><td>[25]</td><td><a href="https://developers.google.com/workspace/calendar/release-notes" target="_blank" rel="noopener">Calendar API eventType field, no major version break</a></td><td>Google (official)</td><td>rolling/2024-05</td><td>2026-08-21</td><td>high</td></tr><tr id="src-26"><td>[26]</td><td><a href="https://workspaceupdates.googleblog.com/2026/03/an-update-on-secondary-calendar-lifecycle-changes-and-a-new-API.html" target="_blank" rel="noopener">2026 secondary-calendar lifecycle changes</a></td><td>Google Workspace Updates (official)</td><td>2026-03</td><td>2026-08-21</td><td>high</td></tr><tr id="src-27"><td>[27]</td><td><a href="https://developers.google.com/workspace/calendar/api/guides/quota" target="_blank" rel="noopener">Calendar API quota standardization</a></td><td>Google (official)</td><td>live</td><td>2026-08-21</td><td>high</td></tr><tr id="src-28"><td>[28]</td><td><a href="https://developers.google.com/workspace/calendar/api/auth" target="_blank" rel="noopener">OAuth scopes; calendar.events + extendedProperties tagging pattern</a></td><td>Google (official)</td><td>2026-07-22</td><td>2026-08-21</td><td>high</td></tr><tr id="src-29"><td>[29]</td><td><a href="https://developers.google.com/workspace/calendar/api/guides/extended-properties" target="_blank" rel="noopener">Extended properties mechanics (private/shared)</a></td><td>Google (official)</td><td>live</td><td>2026-08-21</td><td>high</td></tr><tr id="src-30"><td>[30]</td><td><a href="https://www.unipile.com/gmail-api-service-account-domain-wide-delegation/" target="_blank" rel="noopener">Service accounts can&#x27;t access personal calendars</a></td><td>Unipile (vendor) + Google Developer Forum</td><td>2026</td><td>2026-08-21</td><td>medium</td></tr><tr id="src-31"><td>[31]</td><td><a href="https://developers.google.com/identity/protocols/oauth2" target="_blank" rel="noopener">OAuth &quot;Testing&quot; status 7-day refresh-token expiry</a></td><td>Google (official)</td><td>live</td><td>2026-08-21</td><td>high (independently confirmed)</td></tr><tr id="src-32"><td>[32]</td><td><a href="https://usemooncal.com/en/guides/google-calendar-ics-refresh" target="_blank" rel="noopener">ICS feed refresh latency ~8-24h, no SLA</a></td><td>usemooncal.com + 2 corroborating sources</td><td>2026</td><td>2026-08-21</td><td>medium</td></tr><tr id="src-33"><td>[33]</td><td><a href="https://discuss.google.dev/t/google-calendar-api-sometimes-silently-fails-to-update-recurrence-rules/269516" target="_blank" rel="noopener">Recurring-event silent no-op update bug</a></td><td>Google Developer Forums</td><td>2026</td><td>2026-08-21</td><td>medium</td></tr><tr id="src-34"><td>[34]</td><td><a href="https://github.com/home-assistant/core/issues/85365" target="_blank" rel="noopener">RRULE rejection reports</a></td><td>GitHub (home-assistant/core)</td><td>undated</td><td>2026-08-21</td><td>low-medium</td></tr><tr id="src-35"><td>[35]</td><td><a href="https://developers.google.com/workspace/calendar/api/guides/recurringevents" target="_blank" rel="noopener">Recurring events require single timezone</a></td><td>Google (official, snippet-level)</td><td>undated</td><td>2026-08-21</td><td>medium</td></tr><tr id="src-36"><td>[36]</td><td><a href="https://github.com/googleapis/google-api-python-client/issues/2339" target="_blank" rel="noopener">Refresh-token persistence friction</a></td><td>GitHub (googleapis)</td><td>undated</td><td>2026-08-21</td><td>medium</td></tr><tr id="src-37"><td>[37]</td><td><a href="https://dev.to/cardinalby/dont-let-google-refresh-token-expire-pie" target="_blank" rel="noopener">Keep-alive cron for stale refresh tokens</a></td><td>DEV Community</td><td>undated</td><td>2026-08-21</td><td>medium</td></tr></tbody></table>
+      </div>
+    </details>
+  </section>
+
+  <section id="staleness">
+    <h2>Staleness Map</h2>
+    <p style="font-size:0.85rem;color:var(--text-muted);">Computed via <code>recon_kit.py staleness</code> against the technical pack's freshness bars (version/auth/rate-limit ≤ 1mo · maintenance-status/performance ≤ 6mo · landscape/recommendation ≤ 12mo · pattern ≤ 2yr), run 2026-08-21.</p>
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th>Claim</th><th>Class</th><th>Published</th><th>Recheck by</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>Notion current API version</td><td>version</td><td>2026-03</td><td>2026-04-01</td><td class="stale-due">due for recheck</td></tr>
+        <tr><td>Notion data-sources migration</td><td>version</td><td>2025-09</td><td>2025-10-01</td><td class="stale-due">due for recheck</td></tr>
+        <tr><td>Piper relicensed GPL-3.0</td><td>version</td><td>2025-07</td><td>2025-08-01</td><td class="stale-due">due for recheck</td></tr>
+        <tr><td>calendar.events + extendedProperties pattern</td><td>auth</td><td>2026-07</td><td>2026-08-01</td><td class="stale-due">due for recheck</td></tr>
+        <tr><td>Snowboy dead/unmaintained</td><td>maintenance-status</td><td>2021-01</td><td>2021-07-01</td><td class="stale-due">due (historical fact — quick sanity check, not a re-run)</td></tr>
+        <tr><td>Notion internal-integration auth pattern</td><td>auth</td><td>2026-08</td><td>2026-09-01</td><td class="stale-fresh">fresh</td></tr>
+        <tr><td>Notion rate limit ~3 req/s</td><td>rate-limit</td><td>2026-08</td><td>2026-09-01</td><td class="stale-fresh">fresh</td></tr>
+        <tr><td>Service accounts blocked on personal Calendar</td><td>auth</td><td>2026-08</td><td>2026-09-01</td><td class="stale-fresh">fresh</td></tr>
+        <tr><td>OAuth "Testing" 7-day token expiry</td><td>auth</td><td>2026-08</td><td>2026-09-01</td><td class="stale-fresh">fresh</td></tr>
+        <tr><td>openWakeWord over microWakeWord</td><td>recommendation</td><td>2026-01</td><td>2027-01-01</td><td class="stale-fresh">fresh</td></tr>
+        <tr><td>PipeWire default on Bookworm</td><td>landscape</td><td>2026-08</td><td>2027-08-01</td><td class="stale-fresh">fresh</td></tr>
+        <tr><td>whisper.cpp / Piper Pi 5 performance</td><td>performance</td><td>2026-08</td><td>2027-02-01</td><td class="stale-fresh">fresh</td></tr>
+        <tr><td>All "pattern"-class claims (rollup read-only, ICS latency, RRULE gotchas, no Pi retrospective)</td><td>pattern</td><td>various</td><td>2028-06 / 08</td><td class="stale-fresh">fresh (2-yr window)</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p style="font-size:0.85rem;margin-top:0.75rem;"><strong>Earliest re-check:</strong> 2021-07-01 (Snowboy — a settled fact needing only a sanity check). The practically meaningful earliest re-check is <strong>2026-09-01</strong>, when the fast-moving auth/version-class claims come due — since Yoh's Sept 2 MVP build window sits inside that same month, a 2-minute live-docs recheck of the Notion API version and Calendar OAuth/scope pages at build time is worth it, not just trusting this snapshot.</p>
+  </section>
+
+  <footer class="foot">
+    Native research run · standard preset (3 researchers · 8 sources/round · 2 rounds max) · normal validation + 1 targeted verification pass · <a href="research.md">full markdown report</a> · <a href=".memlog.md">process memlog</a>
+  </footer>
+
+</div>
+</body>
+</html>

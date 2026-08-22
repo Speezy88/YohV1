@@ -1,0 +1,917 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Yoh: The Daily Ritual Engine</title>
+<style>
+  /* ============ TOKENS ============ */
+  :root{
+    --dawn:#c4623a;
+    --day:#3e5a73;
+    --dusk:#4a3556;
+    --night:#121018;
+    --ink:#18141c;
+    --ink-soft: rgba(24,20,28,.90);
+    --ink-soft-2: rgba(24,20,28,.72);
+    --ink-line: rgba(244,236,221,.14);
+    --ink-line-strong: rgba(244,236,221,.26);
+    --paper:#f5eddf;
+    --paper-dim:#cabda9;
+    --paper-dimmer:#a89b88;
+    --red:#e2543f;
+    --gold:#d9a65c;
+    --hat-white:#f5eddf;
+    --hat-red:#e2543f;
+    --hat-black:#4a4350;
+    --hat-yellow:#e3b341;
+    --hat-green:#7aab86;
+    --hat-blue:#6c93bd;
+    --font-display: ui-serif, Georgia, Cambria, "Times New Roman", serif;
+    --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "Segoe UI Mono", "Roboto Mono", Menlo, Consolas, monospace;
+  }
+
+  *{ box-sizing:border-box; }
+  html{ scroll-behavior:smooth; }
+  @media (prefers-reduced-motion: reduce){ html{ scroll-behavior:auto; } }
+
+  body{
+    margin:0;
+    color:var(--paper);
+    background: var(--night);
+    background-image: linear-gradient(to bottom,
+      var(--dawn) 0%,
+      var(--dawn) 6%,
+      var(--day) 24%,
+      var(--day) 46%,
+      var(--dusk) 60%,
+      var(--dusk) 72%,
+      var(--night) 86%,
+      var(--night) 100%);
+    background-repeat:no-repeat;
+    background-size:100% 100%;
+    font-family:var(--font-body);
+    line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+  }
+
+  ::selection{ background:var(--red); color:var(--paper); }
+
+  a{ color:var(--gold); }
+  a:focus-visible, button:focus-visible, [tabindex]:focus-visible{
+    outline:2px solid var(--gold); outline-offset:3px;
+  }
+
+  img,svg{ max-width:100%; }
+
+  h1,h2,h3,h4{
+    font-family:var(--font-display);
+    font-weight:600;
+    margin:0;
+    text-wrap:balance;
+  }
+
+  .num{ font-variant-numeric:tabular-nums; }
+
+  /* ============ LAYOUT ============ */
+  .wrap{
+    max-width:920px;
+    margin:0 auto;
+    padding:0 clamp(1.1rem, 4vw, 2.5rem);
+  }
+
+  section{ padding: clamp(3rem,7vw,6rem) 0; position:relative; }
+
+  .prose{ max-width:62ch; }
+  .prose p{ margin:0 0 1.05em; color:var(--paper); }
+  .prose p:last-child{ margin-bottom:0; }
+
+  .panel{
+    background:var(--ink-soft);
+    border:1px solid var(--ink-line);
+    border-radius:14px;
+    padding:clamp(1.4rem,3vw,2.4rem);
+    box-shadow:0 20px 50px -30px rgba(0,0,0,.7);
+  }
+
+  .eyebrow{
+    font-family:var(--font-mono);
+    text-transform:uppercase;
+    letter-spacing:.14em;
+    font-size:.72rem;
+    color:var(--gold);
+    display:flex;
+    align-items:center;
+    gap:.6em;
+    margin-bottom:.9rem;
+  }
+  .eyebrow::before{
+    content:"";
+    width:1.4em; height:1px;
+    background:var(--gold);
+    display:inline-block;
+  }
+
+  .section-head{ margin-bottom:clamp(1.6rem,4vw,2.6rem); }
+  .section-head h2{ font-size:clamp(1.7rem,4vw,2.5rem); }
+  .section-head .lede{
+    margin-top:.7rem; color:var(--paper-dim); max-width:60ch; font-size:1.02rem;
+  }
+
+  .reveal{ opacity:1; transform:none; transition:opacity .7s ease, transform .7s ease; }
+  .js .reveal{ opacity:0; transform:translateY(18px); }
+  .js .reveal.in{ opacity:1; transform:none; }
+  @media (prefers-reduced-motion: reduce){ .js .reveal{ opacity:1; transform:none; } }
+
+  /* ============ HERO ============ */
+  .hero{
+    padding-top:clamp(3.5rem,10vw,6.5rem);
+    padding-bottom:clamp(2.5rem,6vw,4rem);
+  }
+  .hero-top{
+    display:flex; justify-content:space-between; align-items:flex-start; gap:2rem; flex-wrap:wrap;
+  }
+  .hero h1{
+    font-size:clamp(3.2rem,11vw,6.4rem);
+    line-height:.92;
+    letter-spacing:-.01em;
+  }
+  .hero h1 em{ font-style:italic; color:var(--red); }
+  .hero .tagline{
+    font-size:clamp(1rem,2.4vw,1.25rem);
+    color:var(--paper-dim);
+    max-width:44ch;
+    margin-top:1rem;
+  }
+  .meta-strip{
+    margin-top:2.4rem;
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+    gap:1px;
+    background:var(--ink-line);
+    border:1px solid var(--ink-line);
+    border-radius:10px;
+    overflow:hidden;
+    font-family:var(--font-mono);
+  }
+  .meta-strip div{
+    background:var(--ink-soft-2);
+    padding:.85rem 1rem;
+  }
+  .meta-strip .k{ font-size:.66rem; text-transform:uppercase; letter-spacing:.1em; color:var(--paper-dimmer); display:block; margin-bottom:.3rem; }
+  .meta-strip .v{ font-size:.86rem; color:var(--paper); }
+
+  .stakes{
+    margin-top:1.4rem;
+    display:flex; flex-wrap:wrap; gap:.6rem;
+  }
+  .chip{
+    font-family:var(--font-mono);
+    font-size:.78rem;
+    padding:.4rem .75rem;
+    border-radius:999px;
+    border:1px solid var(--ink-line-strong);
+    background:var(--ink-soft-2);
+    color:var(--paper-dim);
+  }
+  .chip.warn{ border-color:rgba(226,84,63,.5); color:#f2a99a; }
+
+  /* passive clock motif */
+  .clock{
+    --size:78px;
+    width:var(--size); height:var(--size);
+    border-radius:50%;
+    flex:none;
+    background:
+      radial-gradient(circle at 50% 50%, rgba(226,84,63,.16), transparent 60%),
+      repeating-conic-gradient(var(--ink-line-strong) 0deg 2deg, transparent 2deg 30deg);
+    border:1px solid var(--ink-line-strong);
+    position:relative;
+  }
+  .clock::before{
+    content:"";
+    position:absolute; inset:0; margin:auto;
+    width:9px; height:9px; border-radius:50%;
+    background:var(--red);
+    box-shadow:0 0 14px 3px rgba(226,84,63,.75);
+    animation: pulse 3.2s ease-in-out infinite;
+  }
+  .clock.small{ --size:44px; }
+  @keyframes pulse{
+    0%,100%{ opacity:.55; transform:scale(1); }
+    50%{ opacity:1; transform:scale(1.18); }
+  }
+  @media (prefers-reduced-motion: reduce){ .clock::before{ animation:none; opacity:.9; } }
+
+  /* ============ AXES / DIALS ============ */
+  .axis{
+    padding:1.6rem 0;
+    border-top:1px solid var(--ink-line);
+  }
+  .axis:first-of-type{ border-top:none; padding-top:0; }
+  .axis-head{
+    display:flex; align-items:baseline; gap:.9rem; margin-bottom:.9rem; flex-wrap:wrap;
+  }
+  .axis-index{
+    font-family:var(--font-mono); color:var(--gold); font-size:.85rem; flex:none;
+  }
+  .axis-title{ font-family:var(--font-display); font-size:1.28rem; }
+  .axis-desc{ color:var(--paper-dim); font-size:.95rem; margin:.5rem 0 1rem; max-width:66ch; }
+  .axis-desc strong{ color:var(--paper); font-weight:600; }
+
+  .dial{ display:flex; align-items:center; gap:.8rem; margin:1rem 0 .3rem; }
+  .dial-end{ font-family:var(--font-mono); font-size:.68rem; text-transform:uppercase; letter-spacing:.06em; color:var(--paper-dimmer); flex:0 0 auto; max-width:9em; line-height:1.25; }
+  .dial-end.right{ text-align:right; }
+  .dial-track{ position:relative; flex:1; height:6px; border-radius:6px; background:var(--ink-line); overflow:visible; }
+  .dial-fill{ position:absolute; top:0; left:0; bottom:0; border-radius:6px; background:linear-gradient(90deg, rgba(217,166,92,.25), var(--gold)); }
+  .dial-marker{ position:absolute; top:50%; width:14px; height:14px; border-radius:50%; background:var(--gold); border:2px solid var(--night); transform:translate(-50%,-50%); box-shadow:0 0 0 3px rgba(217,166,92,.25); }
+
+  .rhythm{ margin-top:1.1rem; }
+  .rhythm-strip{ display:flex; gap:3px; align-items:stretch; height:26px; }
+  .rhythm-strip .work{ background:var(--day); border-radius:3px; flex:70 1 0%; position:relative; }
+  .rhythm-strip .brk{ background:var(--red); border-radius:3px; flex:15 1 0%; opacity:.85; }
+  .rhythm-caption{ display:flex; justify-content:space-between; font-family:var(--font-mono); font-size:.68rem; color:var(--paper-dimmer); margin-top:.4rem; }
+
+  /* ============ SIX HATS ============ */
+  .hats-grid{
+    display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:1rem;
+  }
+  .hat-card{
+    background:var(--ink-soft); border:1px solid var(--ink-line); border-radius:12px;
+    padding:1.3rem 1.3rem 1.4rem; position:relative; overflow:hidden;
+  }
+  .hat-card::before{ content:""; position:absolute; inset:0 0 auto 0; height:5px; background:var(--hc); }
+  .hat-id{ display:flex; align-items:center; gap:.6rem; margin-bottom:.7rem; }
+  .hat-glyph{ width:22px; height:16px; flex:none; position:relative; }
+  .hat-glyph .crown{ position:absolute; left:3px; right:3px; top:0; height:11px; border-radius:9px 9px 2px 2px; background:var(--hc); }
+  .hat-glyph .brim{ position:absolute; left:0; right:0; bottom:0; height:4px; border-radius:3px; background:var(--hc); opacity:.55; }
+  .hat-name{ font-family:var(--font-mono); font-size:.78rem; text-transform:uppercase; letter-spacing:.08em; color:var(--paper-dim); }
+  .hat-name b{ color:var(--paper); }
+  .hat-card h3{ font-size:1.05rem; margin-bottom:.5rem; font-family:var(--font-body); font-weight:700; }
+  .hat-card ul{ margin:0; padding-left:1.1rem; color:var(--paper-dim); font-size:.93rem; }
+  .hat-card li{ margin-bottom:.5rem; }
+  .hat-card li:last-child{ margin-bottom:0; }
+  .hat-card li strong{ color:var(--paper); font-weight:600; }
+
+  /* ============ ESCALATION ============ */
+  .escalation-badge{
+    text-align:center; padding:1.6rem 1rem 1.9rem; border:1px dashed var(--ink-line-strong); border-radius:14px;
+    background:radial-gradient(ellipse at 50% 0%, rgba(226,84,63,.14), transparent 70%);
+    margin-bottom:1.8rem;
+  }
+  .escalation-badge .tag{ font-family:var(--font-mono); font-size:.7rem; letter-spacing:.16em; text-transform:uppercase; color:var(--red); }
+  .escalation-badge h3{ font-size:clamp(1.3rem,3vw,1.7rem); margin-top:.5rem; }
+  .escalation-badge p{ color:var(--paper-dim); margin-top:.5rem; max-width:52ch; margin-inline:auto; font-size:.95rem; }
+
+  .tracks{ display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:1rem; }
+  .track{ background:var(--ink-soft-2); border:1px solid var(--ink-line); border-radius:12px; padding:1.1rem; }
+  .track h4{ font-family:var(--font-body); font-size:.92rem; font-weight:700; margin-bottom:.8rem; }
+  .steps{ display:flex; align-items:flex-end; gap:.4rem; height:44px; margin-bottom:.7rem; }
+  .steps span{ flex:1; border-radius:3px 3px 0 0; background:var(--paper-dimmer); opacity:.45; }
+  .steps span:nth-child(1){ height:40%; }
+  .steps span:nth-child(2){ height:68%; opacity:.7; background:var(--gold); }
+  .steps span:nth-child(3){ height:100%; opacity:1; background:var(--red); }
+  .step-labels{ display:flex; justify-content:space-between; font-family:var(--font-mono); font-size:.62rem; color:var(--paper-dimmer); margin-bottom:.7rem; }
+  .track p{ font-size:.85rem; color:var(--paper-dim); margin:0; }
+
+  /* ============ AUTOPSY ============ */
+  .autopsy-file{
+    border:1px solid var(--ink-line-strong); border-radius:12px; overflow:hidden;
+  }
+  .autopsy-head{
+    display:flex; justify-content:space-between; align-items:center; gap:1rem; flex-wrap:wrap;
+    padding:1rem 1.4rem; background:var(--ink-soft-2); border-bottom:1px solid var(--ink-line);
+    font-family:var(--font-mono); font-size:.78rem; color:var(--paper-dim);
+  }
+  .stamp{
+    font-family:var(--font-mono); font-size:.68rem; text-transform:uppercase; letter-spacing:.12em;
+    color:var(--red); border:1px solid rgba(226,84,63,.55); padding:.25rem .6rem; border-radius:4px;
+    transform:rotate(-3deg); display:inline-block;
+  }
+  .cause-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:1px; background:var(--ink-line); }
+  .cause{ background:var(--ink); padding:1.3rem 1.4rem; }
+  .cause .tag{ font-family:var(--font-mono); font-size:.66rem; letter-spacing:.1em; text-transform:uppercase; color:var(--red); }
+  .cause h4{ font-size:1.05rem; margin:.5rem 0 .5rem; font-family:var(--font-body); font-weight:700; }
+  .cause p{ color:var(--paper-dim); font-size:.9rem; margin:0; }
+  .cause ul{ margin:.5rem 0 0; padding-left:1.1rem; color:var(--paper-dim); font-size:.87rem; }
+
+  .invert-arrow{ text-align:center; padding:1rem 0; color:var(--paper-dimmer); font-family:var(--font-mono); font-size:.75rem; letter-spacing:.1em; text-transform:uppercase; }
+  .safeguards{ padding:1.4rem; background:var(--ink-soft-2); }
+  .safeguards .tag{ font-family:var(--font-mono); font-size:.66rem; letter-spacing:.1em; text-transform:uppercase; color:var(--hat-green); }
+  .safe-list{ display:flex; flex-wrap:wrap; gap:.6rem; margin-top:.8rem; }
+  .safe-item{ font-size:.85rem; border:1px solid rgba(122,171,134,.4); color:var(--paper); background:rgba(122,171,134,.1); padding:.4rem .7rem; border-radius:8px; }
+  .autopsy-note{ padding: 0 1.4rem 1.4rem; color:var(--paper-dimmer); font-size:.85rem; font-style:italic; }
+
+  /* ============ ONE FEATURE ONLY ============ */
+  .spotlight{
+    text-align:center; padding:clamp(2.5rem,6vw,3.5rem) 1rem;
+    background:radial-gradient(ellipse at 50% 20%, rgba(217,166,92,.14), transparent 65%);
+    border:1px solid var(--ink-line); border-radius:16px;
+  }
+  .spotlight .tag{ font-family:var(--font-mono); font-size:.7rem; letter-spacing:.14em; text-transform:uppercase; color:var(--gold); }
+  .pair{ display:flex; align-items:center; justify-content:center; gap:0; margin:1.6rem 0; flex-wrap:wrap; }
+  .pair .coin{
+    padding:1.1rem 1.6rem; border-radius:999px; font-family:var(--font-display); font-size:clamp(1rem,2.6vw,1.4rem);
+    border:1px solid var(--ink-line-strong);
+  }
+  .pair .coin.a{ background:var(--ink-soft); margin-right:-1.1rem; z-index:1; }
+  .pair .coin.b{ background:rgba(226,84,63,.16); border-color:rgba(226,84,63,.45); }
+  .pair .plus{ font-family:var(--font-mono); color:var(--paper-dimmer); padding:0 .6rem; }
+  .spotlight p.cap{ color:var(--paper-dim); max-width:52ch; margin:0 auto; font-size:.95rem; }
+
+  .cutlist{ margin-top:2rem; display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:1rem; text-align:left; }
+  .cutlist .box{ background:var(--ink-soft-2); border:1px solid var(--ink-line); border-radius:10px; padding:1.1rem 1.3rem; }
+  .cutlist h5{ font-family:var(--font-mono); font-size:.7rem; text-transform:uppercase; letter-spacing:.1em; margin-bottom:.6rem; }
+  .cutlist.out h5{ color:var(--paper-dimmer); }
+  .cutlist.in h5{ color:var(--hat-green); }
+  .cutlist ul{ margin:0; padding-left:1.1rem; font-size:.88rem; }
+  .cutlist.out li{ color:var(--paper-dimmer); text-decoration:line-through; text-decoration-color:rgba(202,189,169,.5); margin-bottom:.4rem; }
+  .cutlist.in li{ color:var(--paper); margin-bottom:.4rem; }
+
+  /* ============ HARDWARE ============ */
+  .rooms{ display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:1rem; margin-bottom:1.8rem; }
+  .room{ background:var(--ink-soft); border:1px solid var(--ink-line); border-radius:12px; padding:1.2rem; }
+  .room .tag{ font-family:var(--font-mono); font-size:.66rem; text-transform:uppercase; letter-spacing:.1em; color:var(--paper-dimmer); }
+  .room h4{ font-family:var(--font-body); font-size:1rem; font-weight:700; margin:.4rem 0 .6rem; }
+  .room p{ font-size:.87rem; color:var(--paper-dim); margin:0; }
+  .room-top{ display:flex; align-items:center; gap:.8rem; margin-bottom:.5rem; }
+  .bt-link{ display:flex; flex-direction:column; align-items:center; gap:.3rem; color:var(--paper-dimmer); font-family:var(--font-mono); font-size:.68rem; }
+  .bt-line{ width:2px; height:38px; background:repeating-linear-gradient(to bottom, var(--paper-dimmer) 0 4px, transparent 4px 8px); }
+
+  .phrases{ display:flex; flex-direction:column; gap:.6rem; margin-bottom:1.8rem; }
+  .phrase{ display:flex; align-items:center; gap:.9rem; font-family:var(--font-mono); font-size:.88rem; flex-wrap:wrap; }
+  .phrase .say{ background:var(--ink-soft-2); border:1px solid var(--ink-line-strong); padding:.5rem .8rem; border-radius:8px; color:var(--gold); }
+  .phrase .does{ color:var(--paper-dim); }
+  .phrase .arrow{ color:var(--paper-dimmer); }
+
+  .future-flags{ display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:1rem; }
+  .future-flag{ border:1px dashed var(--ink-line-strong); border-radius:10px; padding:1rem 1.2rem; }
+  .future-flag .tag{ font-family:var(--font-mono); font-size:.64rem; letter-spacing:.1em; text-transform:uppercase; color:var(--gold); }
+  .future-flag p{ margin:.4rem 0 0; font-size:.87rem; color:var(--paper-dim); }
+
+  /* ============ ROADMAP ============ */
+  .roadmap{ position:relative; padding-left:2.4rem; }
+  .roadmap::before{
+    content:""; position:absolute; left:.55rem; top:.3rem; bottom:.3rem; width:2px;
+    background:linear-gradient(to bottom, var(--red), var(--gold) 35%, var(--day) 60%, var(--dusk) 85%, var(--night));
+    border-radius:2px;
+  }
+  .phase{ position:relative; padding-bottom:2.4rem; }
+  .phase:last-child{ padding-bottom:0; }
+  .phase::before{
+    content:attr(data-n); position:absolute; left:-2.4rem; top:0; width:1.9rem; height:1.9rem;
+    border-radius:50%; background:var(--ink); border:1px solid var(--ink-line-strong);
+    display:flex; align-items:center; justify-content:center;
+    font-family:var(--font-mono); font-size:.78rem; color:var(--gold);
+  }
+  .phase-card{ background:var(--ink-soft); border:1px solid var(--ink-line); border-radius:12px; padding:1.2rem 1.4rem; }
+  .phase-top{ display:flex; justify-content:space-between; align-items:baseline; gap:1rem; flex-wrap:wrap; }
+  .phase-card h4{ font-family:var(--font-display); font-size:1.2rem; }
+  .phase-tag{ font-family:var(--font-mono); font-size:.68rem; text-transform:uppercase; letter-spacing:.08em; color:var(--paper-dimmer); }
+  .phase-tag.must{ color:var(--red); }
+  .phase-card p{ color:var(--paper-dim); font-size:.92rem; margin:.6rem 0 0; }
+  .phase-card ul{ margin:.6rem 0 0; padding-left:1.15rem; color:var(--paper-dim); font-size:.9rem; }
+  .phase-card li{ margin-bottom:.3rem; }
+
+  /* ============ SYNTHESIS SWIMLANE ============ */
+  .swimlane-scroll{ overflow-x:auto; padding-bottom:.5rem; }
+  .swimlane{ min-width:640px; }
+  .swim-head{ display:grid; grid-template-columns:180px repeat(6,1fr); gap:.4rem; margin-bottom:.6rem; }
+  .swim-head .ph{ font-family:var(--font-mono); font-size:.66rem; text-transform:uppercase; letter-spacing:.06em; color:var(--paper-dimmer); text-align:center; }
+  .swim-row{ display:grid; grid-template-columns:180px repeat(6,1fr); gap:.4rem; align-items:center; margin-bottom:.5rem; }
+  .swim-label{ font-size:.86rem; color:var(--paper); font-weight:600; padding-right:.6rem; }
+  .swim-cell{ height:34px; border-radius:8px; background:var(--ink-line); position:relative; display:flex; align-items:center; justify-content:center; }
+  .swim-cell.lit{ background:rgba(217,166,92,.22); }
+  .swim-cell.origin{ background:rgba(226,84,63,.3); }
+  .swim-cell .dot{ width:9px; height:9px; border-radius:50%; background:var(--paper-dimmer); }
+  .swim-cell.lit .dot{ background:var(--gold); box-shadow:0 0 8px 1px rgba(217,166,92,.6); }
+  .swim-cell.origin .dot{ background:var(--red); box-shadow:0 0 10px 2px rgba(226,84,63,.7); }
+  .swim-caption{ margin-top:1.6rem; display:grid; gap:.6rem; }
+  .swim-caption p{ font-size:.86rem; color:var(--paper-dim); margin:0; }
+  .swim-caption strong{ color:var(--paper); }
+
+  .manifesto{
+    margin-top:3rem; padding:clamp(1.8rem,4vw,3rem); border-radius:16px;
+    background:radial-gradient(ellipse at 50% 0%, rgba(226,84,63,.12), transparent 60%), var(--ink);
+    border:1px solid var(--ink-line-strong);
+  }
+  .manifesto blockquote{ margin:0; font-family:var(--font-display); font-style:italic; font-size:clamp(1.05rem,2.4vw,1.35rem); line-height:1.55; color:var(--paper); }
+  .manifesto blockquote .hl{ color:var(--gold); font-style:normal; }
+  .manifesto cite{ display:block; margin-top:1.2rem; font-family:var(--font-mono); font-style:normal; font-size:.75rem; color:var(--paper-dimmer); }
+
+  footer{ padding:clamp(2.5rem,6vw,4rem) 0 4rem; }
+  .colophon{ display:flex; justify-content:space-between; flex-wrap:wrap; gap:1rem; font-family:var(--font-mono); font-size:.75rem; color:var(--paper-dimmer); border-top:1px solid var(--ink-line); padding-top:1.4rem; }
+
+  @media (max-width:640px){
+    .rooms{ grid-template-columns:1fr; }
+    .bt-link{ flex-direction:row; }
+    .bt-line{ width:38px; height:2px; background:repeating-linear-gradient(to right, var(--paper-dimmer) 0 4px, transparent 4px 8px); }
+    .swim-head, .swim-row{ grid-template-columns:120px repeat(6,minmax(46px,1fr)); }
+  }
+</style>
+</head>
+<body>
+
+<header class="hero wrap">
+  <div class="hero-top">
+    <div>
+      <h1>Y<em>o</em>h</h1>
+      <p class="tagline">A Notion-fed daily planning assistant — the brainstorm that turned a second attempt into a plan.</p>
+    </div>
+    <div class="clock" role="img" aria-label="Passive red clock display, the idle state of Yoh's bedroom hardware"></div>
+  </div>
+
+  <div class="meta-strip">
+    <div><span class="k">Goal</span><span class="v">Turn Notion data into a changing daily plan, with morning / day / night rituals and voice + app access</span></div>
+    <div><span class="k">Mode</span><span class="v">Partner</span></div>
+    <div><span class="k">Status</span><span class="v">Complete</span></div>
+    <div><span class="k">Logged</span><span class="v num">2026&#8209;08&#8209;21 17:01</span></div>
+  </div>
+
+  <div class="stakes">
+    <span class="chip warn">Sept 2, 2026 target — ~12 days out</span>
+    <span class="chip">Solo project, personal use only</span>
+    <span class="chip">Attempt #2</span>
+    <span class="chip">Prior failure: efficacy, not build</span>
+  </div>
+</header>
+
+<main>
+
+  <!-- ============ MORPHOLOGICAL ANALYSIS ============ -->
+  <section class="wrap" id="axes">
+    <div class="section-head reveal">
+      <div class="eyebrow">Technique 01 — Morphological Analysis</div>
+      <h2>Seven dials, dialed in</h2>
+      <p class="lede">Morphological analysis breaks a problem into independent parameters and picks a point on each spectrum. Reconstructed from the session, here is where each of Yoh's seven axes landed.</p>
+    </div>
+
+    <div class="panel reveal">
+
+      <div class="axis">
+        <div class="axis-head"><span class="axis-index">01</span><span class="axis-title">Data scope</span></div>
+        <p class="axis-desc">The Tasks DB has nine fields; only <strong>five earn their keep</strong>: Estimated Duration, Area, Due Date, Status, Energy. Projects DB stays an organizing folder, not a planning input. Research Vault is an on‑demand output store, not an input either. <strong>The daily plan is driven by the Tasks DB alone.</strong></p>
+        <div class="dial">
+          <span class="dial-end">everything in Notion</span>
+          <div class="dial-track"><div class="dial-fill" style="width:88%"></div><div class="dial-marker" style="left:88%"></div></div>
+          <span class="dial-end right">Tasks&nbsp;DB alone</span>
+        </div>
+      </div>
+
+      <div class="axis">
+        <div class="axis-head"><span class="axis-index">02</span><span class="axis-title">Priority logic</span></div>
+        <p class="axis-desc">Priority is never hand-set. It's <strong>derived</strong>: bigger/harder tasks and closer due dates rise automatically. A completeness gate keeps the input honest — Yoh proactively asks for missing due dates, durations, or energy ratings rather than silently guessing or letting a task rot unscored.</p>
+        <div class="dial">
+          <span class="dial-end">manual</span>
+          <div class="dial-track"><div class="dial-fill" style="width:90%"></div><div class="dial-marker" style="left:90%"></div></div>
+          <span class="dial-end right">derived</span>
+        </div>
+      </div>
+
+      <div class="axis">
+        <div class="axis-index" style="margin-bottom:.4rem;display:block">03</div>
+        <div class="axis-title" style="margin-bottom:.4rem">Plan granularity — the day's rhythm</div>
+        <p class="axis-desc">The daily time budget is user-declared and can change by voice any time (2.5 hrs one week, 4 the next). Yoh may suggest raising it ahead of a known crunch, but never overrides it silently. Inside that budget, the default cadence is <strong>70 minutes of work, 15 minutes of break</strong>, repeating — and a late correction made it literal: breaks are <strong>strictly clock-based</strong>, not aligned to task boundaries, even if that splits a task mid-stream. Break count simply scales with the budget (a 3‑hour budget earns 2 breaks).</p>
+        <div class="dial">
+          <span class="dial-end">flexible / task-aligned</span>
+          <div class="dial-track"><div class="dial-fill" style="width:95%"></div><div class="dial-marker" style="left:95%"></div></div>
+          <span class="dial-end right">strict clock</span>
+        </div>
+        <div class="rhythm">
+          <div class="rhythm-strip" aria-hidden="true">
+            <div class="work"></div><div class="brk"></div><div class="work"></div><div class="brk"></div><div class="work"></div>
+          </div>
+          <div class="rhythm-caption"><span>70 min work</span><span>15 min break</span><span>repeats to fill budget</span></div>
+        </div>
+      </div>
+
+      <div class="axis">
+        <div class="axis-head"><span class="axis-index">04</span><span class="axis-title">Memory model</span></div>
+        <p class="axis-desc">Two layers: factual recall of what's actually been said, and a constantly-learning read on the user's behavioral patterns. Learned patterns are only ever <strong>proposed for confirmation</strong>, never silently acted on. Architecturally it's <strong>hybrid</strong> — a small "active" memory (recent days, current patterns, standing preferences) sits in front of every planning decision, while the full raw history lives cold, queried on demand and distilled into short pattern-statements rather than replayed in full.</p>
+        <div class="dial">
+          <span class="dial-end">stateless</span>
+          <div class="dial-track"><div class="dial-fill" style="width:50%"></div><div class="dial-marker" style="left:50%"></div></div>
+          <span class="dial-end right">full raw replay</span>
+        </div>
+      </div>
+
+      <div class="axis">
+        <div class="axis-head"><span class="axis-index">05</span><span class="axis-title">Hardware</span></div>
+        <p class="axis-desc">A Raspberry Pi already on hand, a 3D-printed case, and a screen showing the web app — kept in the bedroom, away from water — with audio bridged over Bluetooth to a waterproof bathroom speaker. Idle, it falls back to a small, non-distracting <strong>red passive clock</strong>. A swiveling camera that nags about room messiness is flagged as a future, not immediate, ambition.</p>
+        <div class="dial">
+          <span class="dial-end">software only</span>
+          <div class="dial-track"><div class="dial-fill" style="width:85%"></div><div class="dial-marker" style="left:85%"></div></div>
+          <span class="dial-end right">dedicated ambient device</span>
+        </div>
+      </div>
+
+      <div class="axis">
+        <div class="axis-head"><span class="axis-index">06</span><span class="axis-title">Adjustment logic</span></div>
+        <p class="axis-desc">A slipped task earns a small, capped priority bump the next day, stacking (still capped) with each consecutive slip. Blockers are handled as logistics only — Yoh reschedules around them, it doesn't try to solve them. Re-flow can happen mid-day in real time, but only when the user self-reports — Yoh never proactively pings mid-block.</p>
+        <div class="dial">
+          <span class="dial-end">fixed plan</span>
+          <div class="dial-track"><div class="dial-fill" style="width:80%"></div><div class="dial-marker" style="left:80%"></div></div>
+          <span class="dial-end right">reactive escalation</span>
+        </div>
+      </div>
+
+      <div class="axis">
+        <div class="axis-head"><span class="axis-index">07</span><span class="axis-title">Tone &amp; personality</span></div>
+        <p class="axis-desc">Default voice: a casual, peer-level secretary handing over a plan to execute, not a formal assistant. It sharpens to concise and educational for intellectual questions (deliberately avoiding "it's not just X, it's Y" as a crutch), and escalates toward authoritative/urging when the user is slipping. Fun voice packs (robot, Hulk, Morty…) are manual toggles only, fully decoupled from that tone escalation.</p>
+        <div class="dial">
+          <span class="dial-end">formal / static</span>
+          <div class="dial-track"><div class="dial-fill" style="width:70%"></div><div class="dial-marker" style="left:70%"></div></div>
+          <span class="dial-end right">casual + escalating</span>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============ SIX THINKING HATS ============ -->
+  <section class="wrap" id="hats">
+    <div class="section-head reveal">
+      <div class="eyebrow">Technique 02 — Six Thinking Hats</div>
+      <h2>Six hats, one honest look at the project</h2>
+      <p class="lede">Structured rounds through facts, feeling, risk, value, ideas, and process — before any building started.</p>
+    </div>
+
+    <div class="hats-grid reveal">
+
+      <div class="hat-card" style="--hc:var(--hat-white)">
+        <div class="hat-id"><span class="hat-glyph"><span class="crown"></span><span class="brim"></span></span><span class="hat-name">White · <b>Facts</b></span></div>
+        <h3>What's actually true</h3>
+        <ul>
+          <li>Hands-on experience with iOS/web/backend, a 3D printer, and a cloud/server setup already running — none of this is new ground.</li>
+          <li>Target: something useful by <strong>Sept 2, 2026</strong> — about 12 days out.</li>
+          <li>Strictly solo: personal use, no co-builder, no other end users.</li>
+        </ul>
+      </div>
+
+      <div class="hat-card" style="--hc:var(--hat-red)">
+        <div class="hat-id"><span class="hat-glyph"><span class="crown"></span><span class="brim"></span></span><span class="hat-name">Red · <b>Feeling</b></span></div>
+        <h3>Cautious hope</h3>
+        <ul>
+          <li>This is <strong>attempt #2</strong> — the first build of Yoh didn't work out.</li>
+          <li>The bet this time: running it through the BMad method produces a better outcome.</li>
+        </ul>
+      </div>
+
+      <div class="hat-card" style="--hc:var(--hat-black)">
+        <div class="hat-id"><span class="hat-glyph"><span class="crown"></span><span class="brim"></span></span><span class="hat-name">Black · <b>Risks</b></span></div>
+        <h3>What actually killed it last time</h3>
+        <ul>
+          <li>Not a build failure or a motivation failure — an <strong>efficacy problem</strong>. The features simply weren't useful in practice.</li>
+          <li>Named risks this time: <strong>too much friction</strong> (re-explaining context, instability/bugs, a personality mismatch, Yoh overstepping its scope) and <strong>bad plans</strong> — a schedule that's low quality or unrealistic.</li>
+        </ul>
+      </div>
+
+      <div class="hat-card" style="--hc:var(--hat-yellow)">
+        <div class="hat-id"><span class="hat-glyph"><span class="crown"></span><span class="brim"></span></span><span class="hat-name">Yellow · <b>Value</b></span></div>
+        <h3>What success looks like</h3>
+        <ul>
+          <li>One specific, trustworthy plan — if followed, every task and goal becomes completable.</li>
+          <li>Success is measured by whether the plan gets <strong>followed</strong>, never by feature count.</li>
+        </ul>
+      </div>
+
+      <div class="hat-card" style="--hc:var(--hat-green)">
+        <div class="hat-id"><span class="hat-glyph"><span class="crown"></span><span class="brim"></span></span><span class="hat-name">Green · <b>Ideas</b></span></div>
+        <h3>Three safeguards, invented on the spot</h3>
+        <ul>
+          <li>Every daily plan carries a one-line <strong>"why"</strong> (e.g. "leading with X — due soonest, biggest chunk") so a bad call is visible up front, not just in hindsight.</li>
+          <li>User feedback that a plan was bad gets written back into memory to improve future plans.</li>
+          <li>Yoh randomly asks the user to <strong>score its own output</strong> roughly every 4 days — a number plus a reason — and checks in more often if scores trend low.</li>
+        </ul>
+      </div>
+
+      <div class="hat-card" style="--hc:var(--hat-blue)">
+        <div class="hat-id"><span class="hat-glyph"><span class="crown"></span><span class="brim"></span></span><span class="hat-name">Blue · <b>Process</b></span></div>
+        <h3>Keeping the session on track</h3>
+        <ul>
+          <li>Resolution: finish the planned technique batch — one invented technique, one facilitator-chosen — then converge and wrap.</li>
+        </ul>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============ ESCALATE UNDER STRAIN ============ -->
+  <section class="wrap" id="escalation">
+    <div class="section-head reveal">
+      <div class="eyebrow">Cross-technique insight</div>
+      <h2>One mechanism, wearing four faces</h2>
+      <p class="lede">These four rules surfaced separately, across different axes and different hats. Laid side by side, they're the same shape: hold steady while things are fine, escalate the moment the user is under strain.</p>
+    </div>
+
+    <div class="reveal">
+      <div class="escalation-badge">
+        <div class="tag">The synthesis</div>
+        <h3>Escalate under strain</h3>
+        <p>Four independent decisions, one governing pattern — none of them designed together, all of them converging on the same response curve.</p>
+      </div>
+
+      <div class="tracks">
+        <div class="track">
+          <h4>Slip-bump priority</h4>
+          <div class="steps" aria-hidden="true"><span></span><span></span><span></span></div>
+          <div class="step-labels"><span>slip 1</span><span>slip 2</span><span>cap</span></div>
+          <p>A slipped task gets a small, automatic bump each consecutive day it slips again — stacking, but hard-capped so a low-priority task can never leap to high priority from slipping alone.</p>
+        </div>
+        <div class="track">
+          <h4>Tone escalation</h4>
+          <div class="steps" aria-hidden="true"><span></span><span></span><span></span></div>
+          <div class="step-labels"><span>on track</span><span>slipping</span><span>procrastinating</span></div>
+          <p>Casual peer-secretary by default, shifting to more authoritative and urging exactly when the slip-bump mechanic detects the user is falling behind.</p>
+        </div>
+        <div class="track">
+          <h4>Night-ritual retry</h4>
+          <div class="steps" aria-hidden="true"><span></span><span></span><span></span></div>
+          <div class="step-labels"><span>check-in due</span><span>notification</span><span>speaker call-out</span></div>
+          <p>Capped at two retries — phone notification, then a home speaker call-out — then Yoh stops and flags "you never checked in." Morning gets one push and moves on; night alone escalates.</p>
+        </div>
+        <div class="track">
+          <h4>Score-check frequency</h4>
+          <div class="steps" aria-hidden="true"><span></span><span></span><span></span></div>
+          <div class="step-labels"><span>baseline ~4d</span><span>trending low</span><span>more frequent</span></div>
+          <p>Self-scoring starts on a loose ~4-day cadence at a random time, but tightens automatically the moment scores trend low, until things improve.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ FUTURE AUTOPSY ============ -->
+  <section class="wrap" id="autopsy">
+    <div class="section-head reveal">
+      <div class="eyebrow">Technique 03 — Future Autopsy (invented)</div>
+      <h2>Imagine it's already dead. Now write the report.</h2>
+      <p class="lede">The invented technique: picture a specific future failure in detail, autopsy it, then invert every named cause into a safeguard built today.</p>
+    </div>
+
+    <div class="autopsy-file reveal">
+      <div class="autopsy-head">
+        <span>CASE FILE — <span class="num">FEB 2027</span> (imagined)</span>
+        <span class="stamp">hypothetical</span>
+      </div>
+      <div class="cause-grid">
+        <div class="cause">
+          <div class="tag">Cause of death — 1</div>
+          <h4>The voice got annoying</h4>
+          <p>Specifically: it said too much, sounded generically "AI-ey," and read as professional and corporate instead of cool — the opposite of the casual peer-secretary it was meant to be.</p>
+        </div>
+        <div class="cause">
+          <div class="tag">Cause of death — 2</div>
+          <h4>Plans needed too much manual revision</h4>
+          <p>The daily schedule stopped being trustworthy enough to just follow — the exact failure mode the whole project exists to avoid.</p>
+        </div>
+      </div>
+      <div class="invert-arrow">invert &#8595; safeguard</div>
+      <div class="safeguards">
+        <div class="tag">Verdict</div>
+        <p style="margin-top:.5rem;color:var(--paper-dim);font-size:.9rem;">Existing safeguards were judged sufficient for cause&nbsp;2 — no new gap found:</p>
+        <div class="safe-list">
+          <span class="safe-item">Why-reasoning on every plan</span>
+          <span class="safe-item">Feedback writes back into memory</span>
+          <span class="safe-item">Periodic self-scoring</span>
+        </div>
+      </div>
+      <p class="autopsy-note">Cause 1 — the voice — was deliberately left open: personality is deferred to iterative tuning through real usage, not fully specified up front.</p>
+    </div>
+  </section>
+
+  <!-- ============ ONE FEATURE ONLY ============ -->
+  <section class="wrap" id="onefeature">
+    <div class="section-head reveal">
+      <div class="eyebrow">Technique 04 — One Feature Only (facilitator-chosen)</div>
+      <h2>If Yoh could only do one thing</h2>
+      <p class="lede">The constraint exercise: strip everything down to a single feature. The honest answer turned out to need two.</p>
+    </div>
+
+    <div class="spotlight reveal">
+      <div class="tag">The irreducible core</div>
+      <div class="pair">
+        <span class="coin a">morning plan generation</span>
+        <span class="plus">+</span>
+        <span class="coin b">night close</span>
+      </div>
+      <p class="cap">Morning-generate is the true "one feature" — but night check-in proved non-negotiable in practice too. The real MVP is this paired minimum, not either half alone.</p>
+
+      <div class="cutlist">
+        <div class="box out">
+          <h5>Cut for Sept 2</h5>
+          <ul>
+            <li>Physical hardware device (Pi / speaker build)</li>
+            <li>iOS app</li>
+          </ul>
+        </div>
+        <div class="box in">
+          <h5>Ships for Sept 2</h5>
+          <ul>
+            <li>Morning-generate + night-close loop, terminal / CLI chat</li>
+            <li>Google Calendar as a passive display: reads existing events once daily, writes the generated plan as new events — never touches events it doesn't own</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ HARDWARE VIGNETTE ============ -->
+  <section class="wrap" id="hardware">
+    <div class="section-head reveal">
+      <div class="eyebrow">Held for Phase 3</div>
+      <h2>The device, waiting in the wings</h2>
+      <p class="lede">Cut from the MVP, not from the vision — the physical form Yoh eventually takes.</p>
+    </div>
+
+    <div class="reveal">
+      <div class="rooms">
+        <div class="room">
+          <div class="room-top"><div class="clock small" role="img" aria-label="passive red clock"></div><span class="tag">Bedroom</span></div>
+          <h4>Raspberry Pi + case + screen</h4>
+          <p>3D-printed case, screen shows the web app, kept away from water. Idle, it dims to a small, sleep-friendly red passive clock.</p>
+        </div>
+        <div class="bt-link"><span>Bluetooth</span><div class="bt-line"></div><span>audio</span></div>
+        <div class="room">
+          <div class="room-top"><span class="tag">Bathroom</span></div>
+          <h4>Waterproof speaker</h4>
+          <p>Audio only, for now — a bathroom-side mic/input solution is explicitly parked until the bedroom device is settled.</p>
+        </div>
+      </div>
+
+      <div class="phrases">
+        <div class="phrase"><span class="say">"Yoh, headphones"</span><span class="arrow">&#8594;</span><span class="does">mutes / stops active listening</span></div>
+        <div class="phrase"><span class="say">"Yoh, headphones off"</span><span class="arrow">&#8594;</span><span class="does">resumes listening</span></div>
+      </div>
+
+      <div class="future-flags">
+        <div class="future-flag">
+          <div class="tag">Future — aspirational</div>
+          <p>A swiveling camera scans the room for messiness and nags about cleaning — explicitly flagged as later, not immediate scope. Once built, the check runs automatically every 3 days, folded into an existing ritual rather than a new trigger.</p>
+        </div>
+        <div class="future-flag">
+          <div class="tag">Future — hardware phase</div>
+          <p>Browser access on the device screen: ask it to look something up, and it pulls a relevant video or page up on the display.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ ROADMAP ============ -->
+  <section class="wrap" id="roadmap">
+    <div class="section-head reveal">
+      <div class="eyebrow">Convergence — MoSCoW &amp; sequencing</div>
+      <h2>Six phases, one modular spine</h2>
+      <p class="lede">Everything above, ordered. A cross-cutting rule runs the length of it: build modularly and extensibly, in the architecture itself, so every later phase bolts on without rework.</p>
+    </div>
+
+    <div class="roadmap reveal">
+      <div class="phase" data-n="1">
+        <div class="phase-card">
+          <div class="phase-top"><h4>MVP loop</h4><span class="phase-tag must">Must — Sept 2, 2026</span></div>
+          <p>Morning-generate + night-close, running in a terminal / CLI chat interface. Google Calendar is a temporary bridge: read once daily, write the plan, never touch what it doesn't own.</p>
+        </div>
+      </div>
+      <div class="phase" data-n="2">
+        <div class="phase-card">
+          <div class="phase-top"><h4>Web app</h4><span class="phase-tag">Next</span></div>
+          <p>A polished, intuitive web app — Calendar retires as the primary interface, but old plan-block events stay behind as passive history.</p>
+        </div>
+      </div>
+      <div class="phase" data-n="3">
+        <div class="phase-card">
+          <div class="phase-top"><h4>Physical hardware</h4><span class="phase-tag">Then</span></div>
+          <p>Pi + case + waterproof Bluetooth speaker + a screen displaying the web app — plus, eventually, browser-access search on the device itself.</p>
+        </div>
+      </div>
+      <div class="phase" data-n="4">
+        <div class="phase-card">
+          <div class="phase-top"><h4>iOS app</h4><span class="phase-tag">Then</span></div>
+          <p>A real iOS app with an iOS Control-Center-style swipe-down shortcut, and push notifications from both the web app and the iOS app.</p>
+        </div>
+      </div>
+      <div class="phase" data-n="5">
+        <div class="phase-card">
+          <div class="phase-top"><h4>Research Vault + Perplexity</h4><span class="phase-tag">Then</span></div>
+          <p>Wire the existing Research Vault DB to a Perplexity research agent — give Yoh a topic, it researches and writes the result back to Notion. Manual, selectable fun voice packs ship alongside.</p>
+        </div>
+      </div>
+      <div class="phase" data-n="6">
+        <div class="phase-card">
+          <div class="phase-top"><h4>Task timer &amp; self-calibration</h4><span class="phase-tag">Later</span></div>
+          <p>A manual per-task timer teaches Yoh actual time-per-task over time, improving every future duration estimate.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ SYNTHESIS ============ -->
+  <section class="wrap" id="synthesis">
+    <div class="section-head reveal">
+      <div class="eyebrow">Where the session closes the loop</div>
+      <h2>Closing the loop</h2>
+      <p class="lede">Five threads run underneath the whole plan. None of them respect the phase boundaries — they're what actually holds the six phases together.</p>
+    </div>
+
+    <div class="panel reveal">
+      <div class="swimlane-scroll">
+        <div class="swimlane">
+          <div class="swim-head">
+            <span></span>
+            <span class="ph">P1</span><span class="ph">P2</span><span class="ph">P3</span><span class="ph">P4</span><span class="ph">P5</span><span class="ph">P6</span>
+          </div>
+
+          <div class="swim-row">
+            <span class="swim-label">Escalate under strain</span>
+            <span class="swim-cell origin"><span class="dot"></span></span>
+            <span class="swim-cell lit"><span class="dot"></span></span>
+            <span class="swim-cell lit"><span class="dot"></span></span>
+            <span class="swim-cell lit"><span class="dot"></span></span>
+            <span class="swim-cell lit"><span class="dot"></span></span>
+            <span class="swim-cell lit"><span class="dot"></span></span>
+          </div>
+
+          <div class="swim-row">
+            <span class="swim-label">Propose, don't impose</span>
+            <span class="swim-cell origin"><span class="dot"></span></span>
+            <span class="swim-cell lit"><span class="dot"></span></span>
+            <span class="swim-cell lit"><span class="dot"></span></span>
+            <span class="swim-cell lit"><span class="dot"></span></span>
+            <span class="swim-cell lit"><span class="dot"></span></span>
+            <span class="swim-cell lit"><span class="dot"></span></span>
+          </div>
+
+          <div class="swim-row">
+            <span class="swim-label">Calendar: bridge, not home</span>
+            <span class="swim-cell origin"><span class="dot"></span></span>
+            <span class="swim-cell lit"><span class="dot"></span></span>
+            <span class="swim-cell"><span class="dot"></span></span>
+            <span class="swim-cell"><span class="dot"></span></span>
+            <span class="swim-cell"><span class="dot"></span></span>
+            <span class="swim-cell"><span class="dot"></span></span>
+          </div>
+
+          <div class="swim-row">
+            <span class="swim-label">Research Vault &#8594; Perplexity &#8594; browser</span>
+            <span class="swim-cell"><span class="dot"></span></span>
+            <span class="swim-cell"><span class="dot"></span></span>
+            <span class="swim-cell lit"><span class="dot"></span></span>
+            <span class="swim-cell"><span class="dot"></span></span>
+            <span class="swim-cell origin"><span class="dot"></span></span>
+            <span class="swim-cell"><span class="dot"></span></span>
+          </div>
+
+          <div class="swim-row">
+            <span class="swim-label">Periodic scoring</span>
+            <span class="swim-cell origin"><span class="dot"></span></span>
+            <span class="swim-cell lit"><span class="dot"></span></span>
+            <span class="swim-cell lit"><span class="dot"></span></span>
+            <span class="swim-cell lit"><span class="dot"></span></span>
+            <span class="swim-cell lit"><span class="dot"></span></span>
+            <span class="swim-cell lit"><span class="dot"></span></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="swim-caption">
+        <p><strong>Escalate under strain</strong> and <strong>propose, don't impose</strong> aren't features of any one phase — they're load-bearing from Phase&nbsp;1 onward, the same trust boundary that governs budget overrides, learned patterns, and blockers alike.</p>
+        <p><strong>Calendar</strong> is introduced in Phase&nbsp;1 purely as a stand-in for the app that doesn't exist yet, and recedes to passive history once the web app (P2) and iOS app (P4) take over.</p>
+        <p><strong>Research Vault &#8594; Perplexity &#8594; hardware browser access</strong> is one feature that happens to land across two non-adjacent phases — the hardware-phase idea (P3) and the formally scheduled integration (P5).</p>
+        <p><strong>Periodic scoring</strong> is the safeguard Future Autopsy singled out as sufficient — the mechanism specifically meant to catch an efficacy failure early this time.</p>
+      </div>
+
+      <div class="manifesto">
+        <blockquote>
+          Yoh is a Notion-driven daily planner built around one core loop — <span class="hl">morning plan generation, then night close and adjust</span> — governed by a single underlying <span class="hl">escalate-under-strain</span> mechanism and a <span class="hl">propose-don't-impose</span> trust boundary that guards against the exact scope-creep and annoyance risk named in the Black Hat and the Future Autopsy. The prior attempt failed on efficacy, not build quality — the periodic scored check-in is the safeguard specifically meant to catch that early this time.
+        </blockquote>
+        <cite>Session synthesis — brainstorm-yoh-notion-daily-assistant, 2026-08-21</cite>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="wrap">
+  <div class="colophon">
+    <span>brainstorm-yoh-notion-daily-assistant-2026-08-21</span>
+    <span>Morphological Analysis &middot; Six Thinking Hats &middot; Future Autopsy &middot; One Feature Only</span>
+    <span>status: complete</span>
+  </div>
+</footer>
+
+<script>
+  (function(){
+    document.documentElement.classList.add('js');
+    if(!('IntersectionObserver' in window)) return;
+    var els = document.querySelectorAll('.reveal');
+    var io = new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target); }
+      });
+    }, { threshold: 0.12, rootMargin: '0px 0px -8% 0px' });
+    els.forEach(function(el){ io.observe(el); });
+  })();
+</script>
+
+</body>
+</html>
