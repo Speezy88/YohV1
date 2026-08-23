@@ -22,7 +22,13 @@ import type {
   QueryDataSourceParameters,
   QueryDataSourceResponse,
 } from "@notionhq/client";
-import { readNotionTasks, setTaskStatus, type NotionDataSourceClient, type NotionWriteClient } from "../src/adapters/notion-adapter.ts";
+import {
+  readNotionTasks,
+  setTaskStatus,
+  type NotionDataSourceClient,
+  type NotionStatusWriteConfig,
+  type NotionWriteClient,
+} from "../src/adapters/notion-adapter.ts";
 import type { UpdatePageParameters, UpdatePageResponse } from "@notionhq/client";
 
 // ============================================================================
@@ -200,6 +206,15 @@ class FakeNotionClient implements NotionDataSourceClient {
 
 const CONFIG = { tasksDataSourceId: "tasks-ds", projectsDataSourceId: "projects-ds" };
 
+/**
+ * `setTaskStatus` takes `NotionStatusWriteConfig`, not the full
+ * `NotionAdapterConfig` — deliberately narrower (Task 19 review fix; see
+ * that type's own doc comment). An empty object exercises its defaults and
+ * proves the write path has no dependency on `CONFIG`'s data-source ids at
+ * all.
+ */
+const STATUS_WRITE_CONFIG: NotionStatusWriteConfig = {};
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -366,7 +381,7 @@ class FakeNotionWriteClient implements NotionWriteClient {
 
 test("setTaskStatus writes the Status property to the given page id and returns Result.ok", async () => {
   const client = new FakeNotionWriteClient();
-  const result = await setTaskStatus(client, CONFIG, "task-1", "completed");
+  const result = await setTaskStatus(client, STATUS_WRITE_CONFIG, "task-1", "completed");
 
   assert.equal(result.ok, true);
   assert.equal(client.calls.length, 1, "expected exactly one Notion write call");
@@ -376,7 +391,7 @@ test("setTaskStatus writes the Status property to the given page id and returns 
 
 test("setTaskStatus writes ONLY the Status property — no other Task field is touched as a side effect", async () => {
   const client = new FakeNotionWriteClient();
-  await setTaskStatus(client, CONFIG, "task-1", "slipped");
+  await setTaskStatus(client, STATUS_WRITE_CONFIG, "task-1", "slipped");
 
   const call = client.calls[0]!;
   const propertyKeys = Object.keys(call.properties ?? {});
@@ -386,10 +401,10 @@ test("setTaskStatus writes ONLY the Status property — no other Task field is t
 test("setTaskStatus maps every TaskStatus value to a Notion Status option name", async () => {
   const client = new FakeNotionWriteClient();
 
-  await setTaskStatus(client, CONFIG, "task-1", "not-started");
-  await setTaskStatus(client, CONFIG, "task-1", "in-progress");
-  await setTaskStatus(client, CONFIG, "task-1", "completed");
-  await setTaskStatus(client, CONFIG, "task-1", "slipped");
+  await setTaskStatus(client, STATUS_WRITE_CONFIG, "task-1", "not-started");
+  await setTaskStatus(client, STATUS_WRITE_CONFIG, "task-1", "in-progress");
+  await setTaskStatus(client, STATUS_WRITE_CONFIG, "task-1", "completed");
+  await setTaskStatus(client, STATUS_WRITE_CONFIG, "task-1", "slipped");
 
   const statusNames = client.calls.map((c) => {
     const prop = (c.properties as Record<string, { status?: { name?: string } }>)["Status"];
@@ -401,7 +416,7 @@ test("setTaskStatus maps every TaskStatus value to a Notion Status option name",
 test("setTaskStatus returns a Result failure (not a throw) when the Notion SDK call fails — AD-12's deliberate AD-8 exception", async () => {
   const client = new FakeNotionWriteClient({ throwError: new Error("notion: 500 internal server error") });
 
-  const result = await setTaskStatus(client, CONFIG, "task-1", "completed");
+  const result = await setTaskStatus(client, STATUS_WRITE_CONFIG, "task-1", "completed");
 
   assert.equal(result.ok, false);
   if (result.ok) return;
@@ -411,7 +426,7 @@ test("setTaskStatus returns a Result failure (not a throw) when the Notion SDK c
 
 test("setTaskStatus honors a custom taskPropertyNames.status override", async () => {
   const client = new FakeNotionWriteClient();
-  const config = { ...CONFIG, taskPropertyNames: { ...(await import("../src/adapters/notion-adapter.ts")).DEFAULT_TASK_PROPERTY_NAMES, status: "Task Status" } };
+  const config = { taskPropertyNames: { ...(await import("../src/adapters/notion-adapter.ts")).DEFAULT_TASK_PROPERTY_NAMES, status: "Task Status" } };
 
   await setTaskStatus(client, config, "task-1", "completed");
 

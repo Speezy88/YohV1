@@ -524,6 +524,21 @@ test("recordSlip: called again for the same Task increments consecutiveSlipCount
   store.close();
 });
 
+test("recordSlip: calling it twice for the SAME slipDate is a no-op — does not double-increment (Task 19 review fix)", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const first = recordSlip(store, "task-1", "2026-08-20");
+  assert.equal(first.data.consecutiveSlipCount, 1);
+
+  const second = recordSlip(store, "task-1", "2026-08-20"); // same date again — e.g. a resumed close-out re-answering the same Task
+  assert.equal(second.data.consecutiveSlipCount, 1, "the same date must not be counted twice");
+  assert.equal(second.version, first.version, "no new write should occur for a duplicate same-date call");
+
+  // A genuinely NEW date still increments normally.
+  const third = recordSlip(store, "task-1", "2026-08-21");
+  assert.equal(third.data.consecutiveSlipCount, 2);
+  store.close();
+});
+
 test("recordSlip: two different Tasks accumulate independent consecutive-slip counts", () => {
   const store = createMemoryStore({ databasePath: tempDbPath() });
   recordSlip(store, "task-a", "2026-08-20");

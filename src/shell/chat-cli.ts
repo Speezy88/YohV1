@@ -358,13 +358,27 @@ type SetTaskStatusFn = (taskId: string, status: TaskStatus) => Promise<Result<vo
  * deliberately-simple, clearly-documented pattern-matching convention every
  * other `chat-cli.ts` command parser uses (NOT real free-text NLU). Accepts
  * a few natural synonyms case-insensitively; anything else is rejected so
- * `answerNightCloseOutRequest` can re-prompt rather than guess.
+ * `answerNightCloseOutRequest` can re-prompt rather than guess. Does NOT
+ * recognize `"skip"` — that is its own, separately-checked escape hatch
+ * (`isSkipAnswer`, below), not a third `NightCloseOutStatus` value: skipping
+ * a Task explicitly means "no status is being reported," which has no
+ * `TaskStatus` to return.
  */
 export function parseNightCloseOutAnswer(raw: string): NightCloseOutStatus | undefined {
   const normalized = raw.trim().toLowerCase();
   if (/^(completed?|done|finished)$/.test(normalized)) return "completed";
   if (/^(slipped?|missed|didn'?t (do it|finish)|not done)$/.test(normalized)) return "slipped";
   return undefined;
+}
+
+/**
+ * Recognizes Spencer's explicit "skip" escape hatch for ONE Task within a
+ * close-out answer loop (Task 19 review fix) — see
+ * `answerNightCloseOutRequest`'s own doc comment for why this exists and
+ * what it does.
+ */
+function isSkipAnswer(raw: string): boolean {
+  return /^skip$/i.test(raw.trim());
 }
 
 /**
@@ -381,22 +395,45 @@ export function parseNightCloseOutAnswer(raw: string): NightCloseOutStatus | und
  * immediately applied via `rituals/night-ritual.ts`'s
  * `applyNightCloseOutConfirmation` — which writes Notion FIRST and only then
  * updates local Slip-Bump state (see that function's own doc comment for
- * the ordering rationale). A Notion write failure re-prompts the SAME
- * question rather than silently moving on to the next Task or clearing the
- * request — the write must actually succeed before local state is allowed
- * to depend on it having happened. A blank answer re-prompts indefinitely
+ * the ordering rationale). A blank answer re-prompts indefinitely
  * (UX-DR20), same as every other answer loop in this file.
  *
- * Only once every named Task has been answered is the interaction request
- * itself cleared (`clearNightCloseOutRequestIfOpen`) — re-reading its
- * current version immediately before clearing, same as
- * `answerDataCompletenessRequest`, so a genuine concurrent write to it is
- * still caught as `ConflictError` per AD-10 rather than silently dropped.
+ * **The "skip" escape hatch (Task 19 review fix).** A Notion write failure
+ * re-prompts the SAME question rather than silently moving on — correct for
+ * a TRANSIENT failure (a network blip, a rate limit), where trying again
+ * shortly after is the right move. It is wrong for a PERMANENT one (e.g. a
+ * Task archived/deleted in Notion between Plan generation and close-out,
+ * returning a hard 404 on every retry): without an escape, every answer
+ * re-prompts forever, and since the request stays open on EOF, the very
+ * NEXT chat session re-surfaces the same unanswerable prompt before
+ * accepting anything else — a permanently unusable assistant. Typing
+ * `"skip"` (recognized at ANY point in a Task's question, not only after a
+ * failure — simpler to implement/document than gating it behind "has this
+ * Task failed once already," and a legitimate "I don't want to answer this
+ * one right now" is reasonable even absent a failure) leaves that ONE
+ * Task's status unresolved for tonight: neither `setTaskStatus` nor
+ * `recordSlip`/`clearSlip` is called for it, since Spencer explicitly did
+ * not confirm what actually happened — recording a guess would be worse
+ * than recording nothing. The loop still moves on to the next Task, and
+ * the whole request still clears once every Task has been either answered
+ * OR skipped (see below) — a skip is this task's chosen way to unblock the
+ * rest of the close-out and the chat session itself, at the documented cost
+ * that a skipped Task gets no Slip-Bump/Notion update for tonight (it is
+ * not automatically re-asked; Spencer can address it another way, e.g.
+ * directly in Notion, or it may be named again by a future night's prompt
+ * if it's still on a later Plan).
+ *
+ * Only once every named Task has been either answered or explicitly skipped
+ * is the interaction request itself cleared
+ * (`clearNightCloseOutRequestIfOpen`) — re-reading its current version
+ * immediately before clearing, same as `answerDataCompletenessRequest`, so
+ * a genuine concurrent write to it is still caught as `ConflictError` per
+ * AD-10 rather than silently dropped.
  *
  * Returns `false` (without clearing the request) if `io.readLine` reports
- * EOF partway through — whatever was answered before that point stays
- * applied either way (Notion already reflects it, and so does any
- * SlipHistory change).
+ * EOF partway through — whatever was answered or skipped before that point
+ * stays applied either way (Notion already reflects an answered Task, and
+ * so does any SlipHistory change; a skipped Task simply stays unresolved).
  */
 async function answerNightCloseOutRequest(
   store: MemoryStore,
@@ -419,29 +456,43 @@ async function answerNightCloseOutRequest(
 
   io.writeLine(`${ACCENT}${record.data.promptText}${RESET}`);
 
+  const skippedTitles: string[] = [];
+
   for (const t of tasks) {
     for (;;) {
-      const answer = await io.readLine(`  ${t.taskTitle} — completed or slipped? `);
+      const answer = await io.readLine(`  ${t.taskTitle} — completed, slipped, or skip? `);
       if (answer === null) return false; // stdin closed mid-answer.
       if (answer.trim().length === 0) continue; // wait indefinitely (UX-DR20): re-ask, don't skip.
 
+      if (isSkipAnswer(answer)) {
+        skippedTitles.push(t.taskTitle);
+        io.writeLine(`Skipping "${t.taskTitle}" for now — nothing was recorded for it tonight.`);
+        break; // move on to the next Task without applying anything for this one.
+      }
+
       const parsed = parseNightCloseOutAnswer(answer);
       if (!parsed) {
-        io.writeLine(`I didn't understand "${answer}" — try "completed" or "slipped".`);
+        io.writeLine(`I didn't understand "${answer}" — try "completed", "slipped", or "skip" to leave it for now.`);
         continue; // re-ask the SAME question — an unparseable answer is not an answer.
       }
 
       const applied = await applyNightCloseOutConfirmation({ store, setTaskStatus }, t.taskId, parsed, closeOutDate);
       if (!applied.ok) {
-        io.writeLine(`I couldn't record that in Notion: ${applied.error.message} — let's try again.`);
-        continue; // re-ask — the Notion write must actually succeed before moving on.
+        io.writeLine(
+          `I couldn't record that in Notion: ${applied.error.message} — try again, or type "skip" to leave it for now and move on.`,
+        );
+        continue; // re-ask — the Notion write must actually succeed before moving on, unless Spencer chooses to skip.
       }
       break;
     }
   }
 
   clearNightCloseOutRequestIfOpen(store);
-  io.writeLine("Got it — thanks. I've updated Notion and factored this into tomorrow's plan.");
+  io.writeLine(
+    skippedTitles.length === 0
+      ? "Got it — thanks. I've updated Notion and factored this into tomorrow's plan."
+      : `Got it — thanks. I've updated Notion for the rest; skipped for now: ${skippedTitles.join(", ")}.`,
+  );
   return true;
 }
 
@@ -1104,17 +1155,22 @@ export async function main(env: Readonly<Record<string, string | undefined>> = p
   // isn't configured. Unlike `readTasks`, `setTaskStatus` doesn't throw on
   // missing config — it returns a `Result` failure (AD-12's own AD-8
   // exception, honored all the way up to this binding).
+  //
+  // Only `NOTION_TOKEN` is checked here (Task 19 review fix) — NOT
+  // `NOTION_TASKS_DATA_SOURCE_ID`/`NOTION_PROJECTS_DATA_SOURCE_ID`, which
+  // `notion-adapter.ts`'s `setTaskStatus` never reads (see
+  // `NotionStatusWriteConfig`'s own doc comment): those two ids address a
+  // `dataSources.query` call this write never makes. Checking them here
+  // would let an unrelated missing/misconfigured field block a Status
+  // write that has nothing to do with it.
   const setTaskStatus: SetTaskStatusFn = async (taskId, status) => {
-    const tasksDataSourceId = env["NOTION_TASKS_DATA_SOURCE_ID"];
-    const projectsDataSourceId = env["NOTION_PROJECTS_DATA_SOURCE_ID"];
     const notionToken = env["NOTION_TOKEN"];
-    if (!tasksDataSourceId || !projectsDataSourceId || !notionToken) {
+    if (!notionToken) {
       return {
         ok: false,
         error: {
           kind: "missing-field",
-          message:
-            "chat-cli: missing required environment variable(s) NOTION_TOKEN / NOTION_TASKS_DATA_SOURCE_ID / NOTION_PROJECTS_DATA_SOURCE_ID — needed to record the Night Ritual close-out",
+          message: "chat-cli: missing required environment variable NOTION_TOKEN — needed to record the Night Ritual close-out",
         },
       };
     }
@@ -1122,7 +1178,7 @@ export async function main(env: Readonly<Record<string, string | undefined>> = p
       auth: notionToken,
       ...(env["NOTION_API_VERSION"] ? { notionVersion: env["NOTION_API_VERSION"] } : {}),
     });
-    return notionSetTaskStatus(notionClient, { tasksDataSourceId, projectsDataSourceId }, taskId, status);
+    return notionSetTaskStatus(notionClient, {}, taskId, status);
   };
   try {
     await runChatCli(store, io, timeZone, llmClient, () => new Date(), readTasks, setTaskStatus);

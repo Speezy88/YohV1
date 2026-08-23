@@ -262,6 +262,26 @@ test("two consecutive slipped confirmations (across two nights) escalate the REA
   assert.equal(level.value, 2, "slip 2 should be exactly double slip 1's bump for this curve");
 });
 
+test("a resumed/re-answered close-out for the same Task on the same night does not inflate the Slip-Bump count (Task 19 review fix)", async () => {
+  // Simulates: Spencer answers Task 1 'slipped' in chat, then Ctrl-Ds
+  // before finishing the rest of the request. The request stays open, and
+  // when he re-opens chat, it re-surfaces and re-asks Task 1 from the top
+  // — re-answering 'slipped' must NOT count as a second slip for the same
+  // night.
+  const store = tempStore();
+  const first = await applyNightCloseOutConfirmation(applyDeps(store), "t1", "slipped", TODAY);
+  assert.ok(first.ok);
+  assert.equal(getSlipHistory(store, "t1")?.data.consecutiveSlipCount, 1);
+
+  const resumed = await applyNightCloseOutConfirmation(applyDeps(store), "t1", "slipped", TODAY);
+  assert.ok(resumed.ok);
+  assert.equal(
+    getSlipHistory(store, "t1")?.data.consecutiveSlipCount,
+    1,
+    "re-confirming the same Task for the same night must not double-count the slip",
+  );
+});
+
 test("a confirmed 'completed' Task with prior slip history gets clearSlip'd — not carried indefinitely", async () => {
   const store = tempStore();
   recordSlip(store, "t1", "2026-08-20");

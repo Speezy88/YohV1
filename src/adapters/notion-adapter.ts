@@ -171,10 +171,12 @@ export const DEFAULT_TASK_STATUS_OPTION_NAMES: Record<TaskStatus, string> = {
 };
 
 /**
- * Config `readNotionTasks` and `setTaskStatus` share. The two data source
- * ids are workspace-specific — sourced from wherever the caller
- * (a `rituals/*.ts` or `shell/*.ts` bootstrap, a later task) constructs them
- * from, e.g. env vars, mirroring `token-store.ts`'s
+ * `readNotionTasks`'s config. `setTaskStatus` does NOT take this type
+ * directly (Task 19 review fix) — it takes only the narrower
+ * `NotionStatusWriteConfig` slice below; see that type's own doc comment
+ * for why. The two data source ids are workspace-specific — sourced from
+ * wherever the caller (a `rituals/*.ts` or `shell/*.ts` bootstrap, a later
+ * task) constructs them from, e.g. env vars, mirroring `token-store.ts`'s
  * `loadGoogleOAuthConfigFromEnv` pattern for Google.
  */
 export interface NotionAdapterConfig {
@@ -187,6 +189,26 @@ export interface NotionAdapterConfig {
   /** Overrides `DEFAULT_TASK_STATUS_OPTION_NAMES` — used only by `setTaskStatus`. */
   readonly statusOptionNames?: Record<TaskStatus, string>;
 }
+
+/**
+ * The config slice `setTaskStatus` actually reads — `taskPropertyNames`
+ * (for its `.status` property-name field only) and `statusOptionNames`.
+ * Deliberately narrower than `NotionAdapterConfig` (Task 19 review fix):
+ * writing a Task's Status touches neither Tasks-database nor
+ * Projects-database DATA SOURCE ids (`tasksDataSourceId`/
+ * `projectsDataSourceId` — those address `dataSources.query` calls
+ * `setTaskStatus` never makes; it addresses a page directly by `taskId`)
+ * nor `projectPropertyNames` (nothing about a Project). Requiring the full
+ * `NotionAdapterConfig` here would let an unrelated missing/misconfigured
+ * field (e.g. `NOTION_PROJECTS_DATA_SOURCE_ID` unset) block a Status write
+ * that has nothing to do with it — which is exactly what
+ * `shell/chat-cli.ts`'s close-out binding used to do before this fix, and
+ * combined with the close-out answer loop having no escape hatch at the
+ * time, made that failure unrecoverable from chat. A real
+ * `NotionAdapterConfig` still satisfies this type structurally (it's a
+ * `Pick`), so nothing else in the codebase needs to change.
+ */
+export type NotionStatusWriteConfig = Pick<NotionAdapterConfig, "taskPropertyNames" | "statusOptionNames">;
 
 // ============================================================================
 // Result shape
@@ -277,10 +299,19 @@ export async function readNotionTasks(
  * YohError>` directly, so the catch-and-translate step that would otherwise
  * happen in `rituals/night-ritual.ts` happens HERE instead — nothing thrown
  * by `client.pages.update` escapes this function.
+ *
+ * **`config`'s narrower type (Task 19 review fix).** Takes
+ * `NotionStatusWriteConfig` — only `taskPropertyNames`/`statusOptionNames`
+ * — rather than the full `NotionAdapterConfig` `readNotionTasks` needs. See
+ * that type's own doc comment: a Status write addresses a page directly by
+ * `taskId` and never queries a data source, so it has no legitimate
+ * dependency on `tasksDataSourceId`/`projectsDataSourceId` at all, and
+ * requiring them here let an unrelated missing/misconfigured field block a
+ * write that had nothing to do with it.
  */
 export async function setTaskStatus(
   client: NotionWriteClient,
-  config: NotionAdapterConfig,
+  config: NotionStatusWriteConfig,
   taskId: string,
   status: TaskStatus,
 ): Promise<Result<void, YohError>> {

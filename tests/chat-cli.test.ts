@@ -1359,6 +1359,41 @@ test("runChatCli: a Notion write failure re-prompts the same Task rather than si
   store.close();
 });
 
+test("runChatCli: a PERMANENTLY-failing Notion write can be skipped, unblocking the rest of the close-out and the chat session (Task 19 review fix)", async () => {
+  const store = tempStore();
+  const today = localIsoDate(NIGHT_NOW, TEST_TIME_ZONE);
+  putPlan(store, closeOutPlan(today));
+  await runNightPromptRitual({ store, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE });
+
+  // t1 fails on EVERY attempt (simulates a Task archived/deleted in Notion
+  // between Plan generation and close-out — a permanent 404, not a
+  // transient blip retrying would fix). t2 succeeds normally, proving the
+  // rest of the close-out still completes after t1 is skipped.
+  const perTaskFailingSetTaskStatus = async (taskId: string): Promise<Result<void, YohError>> => {
+    if (taskId === "t1") {
+      return { ok: false, error: { kind: "unreachable", message: "notion: 404 — page not found" } };
+    }
+    return { ok: true, value: undefined };
+  };
+
+  const io = makeScriptedIo(["completed", "skip", "slipped"]);
+  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => NIGHT_NOW, async () => [], perTaskFailingSetTaskStatus);
+
+  assert.ok(io.written.some((l) => /skip/i.test(l)), "expected the skip to be acknowledged");
+  assert.equal(
+    getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID),
+    undefined,
+    "the request must clear once every Task is either answered or skipped — chat must not be permanently blocked",
+  );
+  assert.equal(getSlipHistory(store, "t1"), undefined, "nothing is recorded for a skipped Task — its real outcome is unknown");
+  assert.equal(
+    getSlipHistory(store, "t2")?.data.consecutiveSlipCount,
+    1,
+    "the rest of the close-out (t2) still completes normally after t1 is skipped",
+  );
+  store.close();
+});
+
 test("runChatCli: a close-out answered the NEXT MORNING records the Slip-Bump against the Plan's own date, not the day it was answered", async () => {
   const store = tempStore();
   const planDate = localIsoDate(NIGHT_NOW, TEST_TIME_ZONE);

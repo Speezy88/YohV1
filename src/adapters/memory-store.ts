@@ -615,9 +615,28 @@ export function getSlipHistory(store: MemoryStore, taskId: string): StoredRecord
  * of why THIS task (Task 17) didn't yet call it itself. Task 19's
  * `rituals/night-ritual.ts` (`applyNightCloseOutConfirmation`) is that real
  * call site now.
+ *
+ * **Idempotent per `slipDate` (Task 19 review fix).** If the currently
+ * stored `lastSlipDate` already equals `slipDate`, this is a no-op — the
+ * existing record is returned unchanged rather than incrementing the count
+ * again. Without this, a caller that legitimately invokes `recordSlip`
+ * more than once for the exact same date (the motivating case:
+ * `rituals/night-ritual.ts`'s close-out answer loop persists no per-Task
+ * progress within one interaction request — Spencer answering Task 1
+ * "slipped", then closing chat before answering Task 2, then re-opening
+ * chat, re-surfaces and re-asks Task 1 from the top; answering "slipped"
+ * again must not double-count that same night's slip) would silently
+ * inflate `consecutiveSlipCount`, and with it the Slip-Bump level, past
+ * what actually happened. Making the PRIMITIVE itself safe for a repeated
+ * same-date call — rather than only fixing the one call site that
+ * triggered this — means every future caller gets the same guarantee for
+ * free. A genuinely NEW slip on a later date still increments normally.
  */
 export function recordSlip(store: MemoryStore, taskId: string, slipDate: IsoDate): StoredRecord<SlipHistory> {
   const current = store.getRecord<SlipHistory>(SLIP_HISTORY_KIND, taskId);
+  if (current?.data.lastSlipDate === slipDate) {
+    return current; // Already recorded for this exact date — no-op, not a second increment.
+  }
   return store.readModifyWrite<SlipHistory>(SLIP_HISTORY_KIND, taskId, current?.version, (existing) => ({
     consecutiveSlipCount: (existing?.data.consecutiveSlipCount ?? 0) + 1,
     lastSlipDate: slipDate,
