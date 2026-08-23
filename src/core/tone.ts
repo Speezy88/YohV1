@@ -67,7 +67,46 @@
  *
  * Anything matching neither check — including blank input — stays
  * `casual-peer`, per the "casual is the default" framing above.
+ *
+ * ============================================================================
+ * Tone escalation (Task 18, Story 2.6, FR-19's Escalate-Under-Strain-driven
+ * urgency half)
+ * ============================================================================
+ *
+ * `computeToneEscalationLevel`/`resolveEscalatedToneSystemPrompt` below add
+ * the escalation half of this same Tone capability, extending this file
+ * additively per its own earlier note above. This does NOT touch
+ * `classifyTone`/`buildToneSystemPrompt`/`resolveToneSystemPrompt` at all —
+ * per AD-6, `tone.ts` supplies its own `EscalationCurve` to
+ * `core/escalate-under-strain.ts`'s shared `computeEscalation`, distinct
+ * from `slip-bump.ts`'s own curve even though both consume the same Task
+ * `strainCount` input (a Task's current Slip-Bump level, per FR-19's AC).
+ *
+ * Where this connects (and where it deliberately does NOT, yet): FR-19's AC
+ * is inherently about discussing a SPECIFIC Task with known slip/strain
+ * history — "no slip/strain signal exists for a Task -> no elevated urgency
+ * language appears [when discussing it]." A generic chat message handled by
+ * `resolveToneSystemPrompt` has no notion of "which Task, if any, this
+ * message is about," so escalation is NOT folded into that function — it
+ * stays exactly as Task 14 built it, unescalated by construction (there is
+ * no Task context to check in the first place), not by an ad-hoc special
+ * case. `shell/chat-cli.ts`'s `whyPrioritizedCommand` is the one place in
+ * this codebase today that already resolves a specific Task's Slip-Bump
+ * level (`computeSlipBumpLevel`) for a chat interaction — but it is a plain,
+ * deterministic string-formatting reply that never calls Claude at all (no
+ * `answerGeneralQuestion` / `systemPrompt` in its path), so there is nothing
+ * for a "system-prompt addition" to attach to there without also turning it
+ * into an LLM-backed command — a materially different, out-of-scope change
+ * this task does not make. `resolveEscalatedToneSystemPrompt` is therefore
+ * left as a tested, ready-to-use, but UNWIRED seam — the same choice
+ * Task 17 made for its own end-to-end bridge — for a future caller that
+ * discusses a specific Task with Claude and has that Task's current
+ * Slip-Bump level on hand (e.g. a future LLM-backed "why is X prioritized"
+ * follow-up, or Task 19's Night Ritual close-out).
  */
+
+import type { EscalationCurve, EscalationLevel } from "../types/domain.ts";
+import { computeEscalation } from "./escalate-under-strain.ts";
 
 // ============================================================================
 // ToneRegister
@@ -204,4 +243,109 @@ export function buildToneSystemPrompt(register: ToneRegister): string {
  */
 export function resolveToneSystemPrompt(message: string): string {
   return buildToneSystemPrompt(classifyTone(message));
+}
+
+// ============================================================================
+// Tone escalation (Task 18 / Story 2.6, FR-19) — see this file's module doc
+// comment ("Tone escalation" section) for the full design rationale,
+// including why this is left unwired into any real chat-cli.ts call site.
+// ============================================================================
+
+/**
+ * `tone.ts`'s own `EscalationCurve` (AD-6) — deliberately DISTINCT from
+ * `slip-bump.ts`'s `{ cap: 3, step: 1 }` even though both consume the same
+ * Task `strainCount` input (a Task's current Slip-Bump level, which is
+ * itself already bounded to `[0, 3]` by `slip-bump.ts`'s own cap).
+ *
+ * `{ cap: 4, step: 2 }` — worked arithmetic (via
+ * `escalate-under-strain.ts`'s `value = min(strainCount * step, cap)`):
+ *
+ *   strainCount 0 -> value 0,          atCap false   (no bump -> no escalation)
+ *   strainCount 1 -> value 2,          atCap false   (first slip -> noticeable but measured)
+ *   strainCount 2 -> value 4 (= cap),  atCap true    (full urgency reached)
+ *   strainCount 3 -> value 4,          atCap true    (plateau — slip-bump's OWN cap)
+ *   strainCount 4+-> value 4,          atCap true    (stays capped regardless)
+ *
+ * Reasoning for these specific numbers: because `strainCount` here is
+ * already a bounded Slip-Bump level (never exceeds 3), Tone escalation is
+ * deliberately calibrated to reach full urgency ONE STEP BEFORE that input
+ * ceiling — by strainCount 2, not 3. This reflects that once the priority
+ * engine has already meaningfully bumped a Task (2 out of its own max of
+ * 3), the way Yoh TALKS about it should already be unmistakably urgent;
+ * conversational tone doesn't need to keep ratcheting in lockstep with the
+ * priority engine's own more measured curve, and there is no reason to
+ * withhold full urgency in conversation until the Task has slipped the
+ * absolute maximum tracked number of days. This produces a genuinely
+ * rising-then-flat shape with two distinct pre-cap-adjacent values (0, 2)
+ * before plateauing at 4 from strainCount 2 onward — small bump on the
+ * first slip, full urgency by the second, same as `slip-bump.ts`'s own
+ * curve is a documented, defensible starting value rather than one dictated
+ * by the spine, freely tunable later once real usage exists to tune
+ * against.
+ */
+export const TONE_ESCALATION_CURVE: EscalationCurve = { cap: 4, step: 2 };
+
+/**
+ * Computes a Task's Tone escalation level from its current Slip-Bump level
+ * (`strainCount`, per FR-19's AC), via `escalate-under-strain.ts`'s shared
+ * `computeEscalation` and this file's own `TONE_ESCALATION_CURVE`. Pure and
+ * deterministic — same `strainCount` in, same `EscalationLevel` out, no
+ * clock/randomness/session-mood dependency of any kind (this file's own AC:
+ * "two days with identical slip history for a Task produce the identical
+ * Tone escalation level, regardless of day of week or elapsed time").
+ */
+export function computeToneEscalationLevel(strainCount: number): EscalationLevel {
+  return computeEscalation(strainCount, TONE_ESCALATION_CURVE);
+}
+
+/**
+ * Escalation addition layered onto a base register's instruction once a
+ * Task shows SOME strain but hasn't reached this file's escalation cap yet
+ * (`0 < value < TONE_ESCALATION_CURVE.cap`) — a noticeably more direct nudge,
+ * without yet reading as alarmed.
+ */
+const MODERATE_ESCALATION_ADDITION =
+  "One more thing: this specific Task has slipped before and is showing early strain, so let a bit more " +
+  "directness and urgency show through than usual — name plainly that it's slipping, and nudge toward " +
+  "actually doing it, without sounding alarmed.";
+
+/**
+ * Escalation addition layered on once a Task's Tone escalation has reached
+ * this file's cap (`atCap`) — unambiguous urgency, explicitly naming
+ * repeated strain, still never robotic or harsh for its own sake.
+ */
+const HIGH_ESCALATION_ADDITION =
+  "One more thing: this specific Task has slipped repeatedly and its tracked strain is at its highest " +
+  "level, so be direct and unambiguous about the urgency — name plainly that it keeps slipping and that " +
+  "it needs attention now, without being needlessly harsh or robotic about it.";
+
+/**
+ * Turns a base `ToneRegister` plus a Task's current Slip-Bump level
+ * (`strainCount`) into an escalation-aware system-prompt instruction — the
+ * function description in this task's own brief: "takes a strainCount ...
+ * and a base ToneRegister, and produces an escalation-aware system-prompt
+ * addition/modification." A future caller that is discussing a SPECIFIC
+ * Task with Claude and has that Task's current Slip-Bump level on hand can
+ * call this in place of `buildToneSystemPrompt`/`resolveToneSystemPrompt`
+ * (see this file's module doc comment for why no existing call site is
+ * wired to it yet).
+ *
+ * `strainCount <= 0` (no slip/strain signal for this Task, `computeEscalation`'s
+ * own clamp for a negative/malformed count) returns EXACTLY the base
+ * register's instruction, unmodified — per this file's own AC, "no
+ * slip/strain signal exists for a Task -> no elevated urgency language
+ * appears." Above zero, the base instruction is EXTENDED (never replaced)
+ * with `MODERATE_ESCALATION_ADDITION` below this file's cap, or
+ * `HIGH_ESCALATION_ADDITION` once `computeToneEscalationLevel` reports
+ * `atCap` — both are appended, not substituted, so the base register's own
+ * voice/register guidance always still applies even while escalated.
+ */
+export function resolveEscalatedToneSystemPrompt(register: ToneRegister, strainCount: number): string {
+  const base = buildToneSystemPrompt(register);
+  const level = computeToneEscalationLevel(strainCount);
+  if (level.value <= 0) {
+    return base;
+  }
+  const addition = level.atCap ? HIGH_ESCALATION_ADDITION : MODERATE_ESCALATION_ADDITION;
+  return `${base} ${addition}`;
 }

@@ -9,7 +9,15 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { classifyTone, buildToneSystemPrompt, resolveToneSystemPrompt, type ToneRegister } from "../src/core/tone.ts";
+import {
+  classifyTone,
+  buildToneSystemPrompt,
+  resolveToneSystemPrompt,
+  TONE_ESCALATION_CURVE,
+  computeToneEscalationLevel,
+  resolveEscalatedToneSystemPrompt,
+  type ToneRegister,
+} from "../src/core/tone.ts";
 
 // ============================================================================
 // classifyTone — casual/conversational vs. factual/intellectual
@@ -138,4 +146,141 @@ test("resolveToneSystemPrompt: composes classifyTone + buildToneSystemPrompt for
 test("resolveToneSystemPrompt: composes classifyTone + buildToneSystemPrompt for a factual question", () => {
   const instruction = resolveToneSystemPrompt("What's the difference between TCP and UDP?");
   assert.equal(instruction, buildToneSystemPrompt("concise-educational"));
+});
+
+// ============================================================================
+// Tone escalation (Task 18 / Story 2.6, FR-19) — computeToneEscalationLevel
+// and resolveEscalatedToneSystemPrompt. Per AD-6, tone.ts supplies its OWN
+// EscalationCurve to escalate-under-strain.ts's shared computeEscalation,
+// distinct from slip-bump.ts's own curve even though both consume the same
+// Task strainCount input (a Task's current Slip-Bump level).
+// ============================================================================
+
+// ----------------------------------------------------------------------------
+// (1) Determinism: identical strainCount -> identical escalation output,
+// regardless of any other varying input. tone.ts has no clock/mood/randomness
+// dependency, so this holds trivially for a pure function of strainCount
+// alone — but we assert it explicitly per the brief's AC.
+// ----------------------------------------------------------------------------
+
+test("computeToneEscalationLevel: identical strainCount always produces an identical EscalationLevel (no hidden clock/mood dependency)", () => {
+  for (const strainCount of [0, 1, 2, 3, 4, 10]) {
+    const first = computeToneEscalationLevel(strainCount);
+    const second = computeToneEscalationLevel(strainCount);
+    assert.deepEqual(first, second);
+  }
+});
+
+test("resolveEscalatedToneSystemPrompt: identical (register, strainCount) always produces an identical instruction string, called on 'different days'", () => {
+  // Simulates "two days with identical slip history for a Task": nothing
+  // about wall-clock time is ever passed in, so repeated calls with the same
+  // inputs — however far apart in real time — must match exactly.
+  for (const register of ["casual-peer", "concise-educational"] as const) {
+    for (const strainCount of [0, 1, 2, 3, 4]) {
+      const dayOne = resolveEscalatedToneSystemPrompt(register, strainCount);
+      const dayTwo = resolveEscalatedToneSystemPrompt(register, strainCount);
+      assert.equal(dayOne, dayTwo);
+    }
+  }
+});
+
+// ----------------------------------------------------------------------------
+// (2) strainCount = 0 (no slip/strain signal) -> no elevated urgency
+// language in the output; identical to the plain base instruction.
+// ----------------------------------------------------------------------------
+
+test("resolveEscalatedToneSystemPrompt: strainCount 0 (no slip/strain signal) produces exactly the base register instruction, with no elevated urgency language", () => {
+  for (const register of ["casual-peer", "concise-educational"] as const) {
+    const escalated = resolveEscalatedToneSystemPrompt(register, 0);
+    const base = buildToneSystemPrompt(register);
+    assert.equal(escalated, base, "strainCount 0 should produce exactly the unescalated base instruction");
+    assert.doesNotMatch(escalated, /urgen/i);
+    assert.doesNotMatch(escalated, /slipp/i);
+  }
+});
+
+test("computeToneEscalationLevel: strainCount 0 produces value 0, not at cap", () => {
+  assert.deepEqual(computeToneEscalationLevel(0), { value: 0, atCap: false });
+});
+
+// ----------------------------------------------------------------------------
+// (3) Escalation genuinely rises with strainCount up to tone.ts's own cap,
+// then plateaus — worked numeric example against TONE_ESCALATION_CURVE.
+// ----------------------------------------------------------------------------
+
+test("TONE_ESCALATION_CURVE: worked numbers show escalation rising with strainCount, then plateauing at tone.ts's own cap", () => {
+  const at0 = computeToneEscalationLevel(0);
+  const at1 = computeToneEscalationLevel(1);
+  const at2 = computeToneEscalationLevel(2);
+  const at3 = computeToneEscalationLevel(3);
+  const at4 = computeToneEscalationLevel(4);
+
+  // Strictly rising while below the cap.
+  assert.ok(at0.value < at1.value, "value should rise from strainCount 0 to 1");
+  assert.ok(at1.value < at2.value, "value should rise from strainCount 1 to 2");
+  assert.equal(at0.atCap, false);
+  assert.equal(at1.atCap, false);
+
+  // Cap reached and held from here on (plateau).
+  assert.equal(at2.value, TONE_ESCALATION_CURVE.cap);
+  assert.equal(at2.atCap, true);
+  assert.equal(at3.value, TONE_ESCALATION_CURVE.cap);
+  assert.equal(at3.atCap, true);
+  assert.equal(at4.value, TONE_ESCALATION_CURVE.cap);
+  assert.equal(at4.atCap, true);
+
+  // Concrete numbers this curve actually produces, spelled out so a future
+  // tuning change is forced to consciously re-examine this test rather than
+  // silently drift.
+  assert.deepEqual(
+    [at0.value, at1.value, at2.value, at3.value, at4.value],
+    [0, 2, 4, 4, 4],
+  );
+
+  // Distinct from slip-bump.ts's own curve ({ cap: 3, step: 1 }) — AD-6.
+  assert.notDeepEqual(TONE_ESCALATION_CURVE, { cap: 3, step: 1 });
+});
+
+test("computeToneEscalationLevel: value never exceeds TONE_ESCALATION_CURVE.cap for any strainCount", () => {
+  for (const strainCount of [0, 1, 2, 3, 4, 5, 10, 100]) {
+    const level = computeToneEscalationLevel(strainCount);
+    assert.ok(level.value <= TONE_ESCALATION_CURVE.cap);
+  }
+});
+
+// ----------------------------------------------------------------------------
+// (4) The escalation-aware instruction content is verifiably different from
+// the non-escalated base register's instruction — asserted on actual string
+// content, not just "a string comes back".
+// ----------------------------------------------------------------------------
+
+test("resolveEscalatedToneSystemPrompt: a Task with strain (strainCount > 0) produces an instruction that differs from, and extends, the base register instruction", () => {
+  for (const register of ["casual-peer", "concise-educational"] as const) {
+    const base = buildToneSystemPrompt(register);
+    const escalated = resolveEscalatedToneSystemPrompt(register, 1);
+    assert.notEqual(escalated, base);
+    assert.ok(escalated.includes(base), "escalated instruction should extend the base instruction, not replace it");
+    assert.match(escalated, /slipp/i);
+  }
+});
+
+test("resolveEscalatedToneSystemPrompt: at the escalation cap, the instruction reads distinctly more urgent than a below-cap escalation", () => {
+  for (const register of ["casual-peer", "concise-educational"] as const) {
+    const belowCap = resolveEscalatedToneSystemPrompt(register, 1); // value 2, not at cap
+    const atCap = resolveEscalatedToneSystemPrompt(register, 2); // value 4, at cap
+    assert.notEqual(belowCap, atCap);
+    // The at-cap instruction should explicitly name repeated/urgent strain,
+    // beyond the more measured below-cap phrasing.
+    assert.match(atCap, /repeatedly|highest|now\b/i);
+  }
+});
+
+test("resolveEscalatedToneSystemPrompt: exhaustively covers every ToneRegister at every escalation tier with a non-empty instruction", () => {
+  const registers: readonly ToneRegister[] = ["casual-peer", "concise-educational"];
+  for (const register of registers) {
+    for (const strainCount of [0, 1, 2, 3]) {
+      const instruction = resolveEscalatedToneSystemPrompt(register, strainCount);
+      assert.ok(instruction.length > 0);
+    }
+  }
 });
