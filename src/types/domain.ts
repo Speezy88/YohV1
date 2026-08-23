@@ -130,8 +130,33 @@ export interface Task {
   readonly dueDate?: IsoDate;
   readonly status?: TaskStatus;
   readonly energy?: Energy;
+  /**
+   * The id of the `Project` this Task is grouped under in Notion (its
+   * "Project" relation property), if any. Added by Task 3
+   * (`notion-adapter.ts`) — not one of FR-4's five planning fields (it's
+   * intentionally excluded from `PlanningFieldNames`/`CompleteTask`), and
+   * per Story 1.3's acceptance criteria it feeds no priority or scheduling
+   * logic in this story; it exists purely so a Project can be joined back
+   * onto a Task for display/grouping.
+   */
+  readonly projectId?: ExternalId;
   readonly createdAt: IsoDateTime;
   readonly updatedAt: IsoDateTime;
+}
+
+/**
+ * Project — organizational metadata read from Notion's Projects database
+ * alongside Tasks (`notion-adapter.ts`, Task 3/Story 1.3). Added because no
+ * task before this one needed a representation of Notion's Project
+ * grouping. Deliberately minimal (id + name only): per Story 1.3's
+ * acceptance criteria, Projects are returned as organizational metadata
+ * only — nothing about a Project feeds Derived Priority or Plan assembly in
+ * this story, so this type carries nothing beyond what a grouping label
+ * needs. Extend here, not with a parallel type, if a later story needs more.
+ */
+export interface Project {
+  readonly id: ExternalId;
+  readonly name: string;
 }
 
 /**

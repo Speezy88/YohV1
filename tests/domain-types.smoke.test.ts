@@ -22,6 +22,7 @@ import type {
   Plan,
   PlanBlock,
   PlanBlockKind,
+  Project,
   Proposal,
   Result,
   Task,
@@ -56,6 +57,16 @@ const taskMissingFields: Task = {
   title: "A task Notion hasn't fully filled in yet",
   createdAt: now,
   updatedAt: now,
+};
+
+const project: Project = {
+  id: "notion-page-project-1",
+  name: "Q3 Planning",
+};
+
+const taskWithProject: Task = {
+  ...task,
+  projectId: project.id,
 };
 
 const completeTask: CompleteTask = {
@@ -147,6 +158,9 @@ const failResult: Result<Plan, YohError> = { ok: false, error: yohError };
 test("domain.ts exported types each construct a valid value", () => {
   assert.equal(task.id, taskId);
   assert.equal(taskMissingFields.area, undefined);
+  assert.equal(project.name, "Q3 Planning");
+  assert.equal(taskWithProject.projectId, project.id);
+  assert.equal(task.projectId, undefined);
   assert.equal(completeTask.status, "completed");
   assert.equal(plan.blocks.length, 3);
   assert.equal(plan.blocks[0]?.id, "block-1");
