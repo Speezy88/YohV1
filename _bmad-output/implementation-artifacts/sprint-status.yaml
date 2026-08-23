@@ -59,13 +59,13 @@ development_status:
   2-6-tone-escalation-tied-to-escalate-under-strain: done
   epic-2-retrospective: optional
 
-  epic-3: in-progress
+  epic-3: done
   3-1-night-ritual-close-out-prompt-status-write-back: done
   3-2-capped-escalating-retry-via-email: done
-  3-3-unchecked-day-handling-rollover: backlog
+  3-3-unchecked-day-handling-rollover: done
   epic-3-retrospective: optional
 
-  epic-4: backlog
+  epic-4: in-progress
   4-1-hot-cold-memory-model: backlog
   4-2-propose-don-t-impose-confirmation-gate: backlog
   4-3-periodic-self-check: backlog
