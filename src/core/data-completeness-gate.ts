@@ -15,7 +15,7 @@
  * `Result<T, YohError>`. It does NOT call `memory-store.ts` and does not
  * persist anything itself; per the Task 5 brief's Implementer note, wiring
  * this gate's "missing field" output into an open interaction request
- * (AD-5) is the caller's job — see `shell/chat-cli.ts`'s
+ * (AD-5) is the caller's job — see `rituals/data-completeness.ts`'s
  * `syncDataCompletenessInteractionRequest`, a thin orchestration function
  * that calls this gate, then writes to `memory-store.ts`.
  *

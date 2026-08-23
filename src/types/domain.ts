@@ -191,12 +191,12 @@ export interface CompleteTask
  * prompts, so a partially-answered Task is a legitimate intermediate state.
  *
  * This is NOT itself a `CompleteTask`, and merging one onto a raw `Task`
- * (`shell/chat-cli.ts`'s `applyTaskFieldOverride`) still only ever produces
- * a plain `Task` — AD-11 still holds: only
+ * (`rituals/data-completeness.ts`'s `applyTaskFieldOverride`) still only
+ * ever produces a plain `Task` — AD-11 still holds: only
  * `core/data-completeness-gate.ts`'s `checkDataCompleteness` may upgrade the
  * merged result into a `CompleteTask`. The merge step itself lives in
- * `shell/chat-cli.ts`, not the gate, per AD-2 (the gate stays pure/I-O-free
- * and must not read `memory-store.ts` itself).
+ * `rituals/data-completeness.ts`, not the gate, per AD-2 (the gate stays
+ * pure/I-O-free and must not read `memory-store.ts` itself).
  */
 export type TaskFieldOverride = Partial<Pick<Task, PlanningFieldNames>>;
 

@@ -13,12 +13,13 @@
  * `llm-adapter.ts` (Task 13) — none of that exists yet.
  *
  * Per AD-1, this shell file contains no core/ritual logic itself: the pure
- * gate logic lives in `core/data-completeness-gate.ts`, and
- * `syncDataCompletenessInteractionRequest` below is the thin
+ * gate logic lives in `core/data-completeness-gate.ts`, and the thin
  * gate-output-to-memory-store wiring the Task 5 brief's Implementer note
- * calls for (the gate itself must stay pure/I-O-free per AD-2/AD-11, so this
- * wiring — reading the gate's `Result`, then persisting or clearing an
- * `InteractionRequest` — happens here rather than in the gate).
+ * calls for (`syncDataCompletenessInteractionRequest` — reading the gate's
+ * `Result`, then persisting or clearing an `InteractionRequest`, which the
+ * gate itself must not do since it stays pure/I-O-free per AD-2/AD-11) lives
+ * in `rituals/data-completeness.ts`, which this file imports. See the
+ * Task 10 note below for why it isn't in this file any more.
  *
  * Answering a Data-Completeness prompt (Task 5 fix): when Spencer answers a
  * missing field, the raw answer text is parsed into the correct type for

@@ -106,3 +106,73 @@ test("loadPushoverConfigFromEnv throws (rather than sending nowhere) when a vari
   assert.throws(() => loadPushoverConfigFromEnv({ PUSHOVER_APP_TOKEN: "app" }), /PUSHOVER_USER_KEY/);
   assert.throws(() => loadPushoverConfigFromEnv({ PUSHOVER_USER_KEY: "user" }), /PUSHOVER_APP_TOKEN/);
 });
+
+// ============================================================================
+// Pushover's documented size limits
+//
+// The adapter refuses an over-limit payload locally rather than letting
+// Pushover reject it remotely: a local throw names exactly which field is
+// too long and by how much, and is caught by the same AD-8 boundary in
+// `rituals/` that a remote 4xx would be. `morning-ritual.ts`'s
+// `buildNotificationBody` is what guarantees a real Plan never reaches this
+// guard; these tests cover the guard itself, so a regression in that
+// composer fails loudly here instead of silently at Pushover.
+// ============================================================================
+
+test("sendPushoverNotification refuses an over-limit message before making any HTTP call", async () => {
+  const { calls, fetch } = recordingFetch();
+
+  await assert.rejects(
+    () =>
+      sendPushoverNotification(
+        { appToken: "t", userKey: "u", fetch },
+        { title: "Today's Plan", message: "x".repeat(PUSHOVER_MESSAGE_LIMIT + 1) },
+      ),
+    (err: unknown) => {
+      assert.ok(err instanceof Error);
+      assert.match(err.message, /notification-adapter/);
+      assert.match(err.message, /message/);
+      // The message names the actual size and the limit, so a log line alone
+      // is enough to diagnose it.
+      assert.match(err.message, new RegExp(String(PUSHOVER_MESSAGE_LIMIT)));
+      return true;
+    },
+  );
+
+  assert.equal(calls.length, 0, "no wasted round trip to have Pushover reject it");
+});
+
+test("sendPushoverNotification refuses an over-limit title before making any HTTP call", async () => {
+  const { calls, fetch } = recordingFetch();
+
+  await assert.rejects(
+    () =>
+      sendPushoverNotification(
+        { appToken: "t", userKey: "u", fetch },
+        { title: "T".repeat(PUSHOVER_TITLE_LIMIT + 1), message: "a short body" },
+      ),
+    (err: unknown) => {
+      assert.ok(err instanceof Error);
+      assert.match(err.message, /notification-adapter/);
+      assert.match(err.message, /title/);
+      assert.match(err.message, new RegExp(String(PUSHOVER_TITLE_LIMIT)));
+      return true;
+    },
+  );
+
+  assert.equal(calls.length, 0);
+});
+
+test("a message and title exactly at their limits are sent (the guard is > , not >=)", async () => {
+  const { calls, fetch } = recordingFetch();
+
+  await sendPushoverNotification(
+    { appToken: "t", userKey: "u", fetch },
+    { title: "T".repeat(PUSHOVER_TITLE_LIMIT), message: "x".repeat(PUSHOVER_MESSAGE_LIMIT) },
+  );
+
+  assert.equal(calls.length, 1, "a payload exactly at the limit is legal and must not be refused");
+  const form = new URLSearchParams(calls[0]!.body);
+  assert.equal(form.get("message")?.length, PUSHOVER_MESSAGE_LIMIT);
+  assert.equal(form.get("title")?.length, PUSHOVER_TITLE_LIMIT);
+});
