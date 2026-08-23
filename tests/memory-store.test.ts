@@ -447,29 +447,45 @@ test("putTimeBudget called again replaces the value in place (upsert), not a new
   store.close();
 });
 
-test("a Time Budget declared once persists unchanged across a simulated day boundary with no explicit change", () => {
+// NOTE on the two tests below: neither one advances or mocks a clock, and
+// `getCurrentTimeBudget` takes no date argument at all — nothing at this
+// storage layer is capable of distinguishing "read immediately after
+// declaring" from "read the next day" or "read the following Monday" from
+// "read three weeks later." That's not a gap in test rigor; it's a direct
+// consequence of the design documented above (a date-blind singleton row,
+// no expiry/date-filtering code path at all). The AC's "persists across a
+// day/weekend boundary" guarantee therefore holds *by construction* — there
+// is no date-based logic anywhere in `getCurrentTimeBudget`/`putTimeBudget`
+// that a boundary-crossing test could exercise or fail. These two tests
+// document that fact (readable-by-name evidence that a maintainer reading
+// this suite understands why no simulated-clock test exists) and otherwise
+// just re-confirm the same read-after-write behavior the test three lines
+// above already covers — they intentionally add no additional coverage
+// beyond it.
+test("documents: a declared Time Budget has no per-day expiry to simulate — reading again returns it unchanged (no date-based logic exists to test)", () => {
   const store = createMemoryStore({ databasePath: tempDbPath() });
   putTimeBudget(store, makeTimeBudget({ date: "2026-08-21", totalMinutes: 360 }));
 
-  // Simulate "a new day begins" by simply reading again — nothing about the
-  // passage of time itself touches storage; there is no cron/expiry job to
-  // simulate skipping.
-  const dayLater = getCurrentTimeBudget(store);
-  assert.equal(dayLater?.data.totalMinutes, 360);
-  assert.equal(dayLater?.data.date, "2026-08-21"); // unchanged — no silent revert to a different default
-  assert.equal(dayLater?.version, 1); // no write happened
+  // Reading again is the entire test: there is no "advance to the next
+  // day" step because nothing in this file's storage reads a clock.
+  const readAgain = getCurrentTimeBudget(store);
+  assert.equal(readAgain?.data.totalMinutes, 360);
+  assert.equal(readAgain?.data.date, "2026-08-21"); // unchanged — no silent revert to a different default
+  assert.equal(readAgain?.version, 1); // no write happened
   store.close();
 });
 
-test("a Time Budget declared on a Friday persists unchanged when read the following Monday (weekend boundary)", () => {
+test("documents: the AC's Friday-declared/Monday-read weekend-boundary guarantee holds by construction, not by a simulated clock (getCurrentTimeBudget takes no date and applies no date filter)", () => {
   const store = createMemoryStore({ databasePath: tempDbPath() });
   putTimeBudget(store, makeTimeBudget({ date: "2026-08-21", totalMinutes: 360 })); // Friday
 
-  // No writes at all happen over Sat/Sun — reading again on Monday still
-  // returns Friday's declared value, verbatim.
-  const monday = getCurrentTimeBudget(store);
-  assert.equal(monday?.data.totalMinutes, 360);
-  assert.equal(monday?.data.date, "2026-08-21");
-  assert.equal(monday?.version, 1);
+  // No clock is mocked or advanced — this call happens at the same instant
+  // as the put above. It stands in for "read on Monday" only in the sense
+  // that `getCurrentTimeBudget` has no way to behave differently based on
+  // what day it's called on; see the note above the previous test.
+  const readAgain = getCurrentTimeBudget(store);
+  assert.equal(readAgain?.data.totalMinutes, 360);
+  assert.equal(readAgain?.data.date, "2026-08-21");
+  assert.equal(readAgain?.version, 1);
   store.close();
 });

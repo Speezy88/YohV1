@@ -572,9 +572,14 @@ test("runChatCli: an invalid Time Budget amount is reported as an error, not sil
   store.close();
 });
 
-test("runChatCli: unrelated input after a Time Budget was declared leaves it untouched (no silent revert/expiry)", async () => {
+test("runChatCli: routing unrelated input through the ordinary loop never calls into Time Budget storage (only demonstrates the router doesn't misfire on non-commands, not a day/expiry boundary — no clock is mocked or advanced here)", async () => {
   const store = tempStore();
-  // Declare directly (simulating an earlier day's chat-cli session).
+  // Declare directly (simulating an earlier day's chat-cli session) — the
+  // "2026-08-21" date is flavor text only; nothing below reads or advances
+  // any clock, so this cannot distinguish "declared yesterday" from
+  // "declared a moment ago." What it actually proves: lines that don't
+  // match `parseTimeBudgetCommand` fall through to the free-text placeholder
+  // without ever calling `putTimeBudget` again.
   declareTimeBudget(store, 360, "2026-08-21");
   const before = getCurrentTimeBudget(store);
 
