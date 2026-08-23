@@ -1,3 +1,8 @@
+
+
+
+
+1
 ---
 name: Yoh
 description: A personal daily-planning CLI. Plain-spoken, unhurried, no gamification — output reads like a peer's summary, not a dashboard.
