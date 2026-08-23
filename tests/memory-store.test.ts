@@ -25,8 +25,11 @@ import {
   clearInteractionRequest,
   getTaskFieldOverride,
   mergeTaskFieldOverride,
+  getCurrentTimeBudget,
+  putTimeBudget,
   type InteractionRequest,
 } from "../src/adapters/memory-store.ts";
+import type { TimeBudget } from "../src/types/domain.ts";
 
 function tempDbPath(): string {
   const dir = mkdtempSync(join(tmpdir(), "yoh-memory-store-test-"));
@@ -389,5 +392,84 @@ test("overrides for different Tasks are stored independently", () => {
 
   assert.equal(getTaskFieldOverride(store, "task-1")?.data.area, "Work");
   assert.equal(getTaskFieldOverride(store, "task-2")?.data.area, "Health");
+  store.close();
+});
+
+// ============================================================================
+// Time Budget (Task 6 / Story 1.6, FR-5) — "today's Time Budget" read/write.
+// Deliberately NOT day-keyed storage: a single singleton row is upserted, so
+// a value declared once is still the current value on every later read,
+// including across a simulated day boundary or weekend, with no explicit
+// expiry mechanism to accidentally trigger.
+// ============================================================================
+
+function makeTimeBudget(overrides: Partial<TimeBudget> = {}): TimeBudget {
+  return {
+    date: "2026-08-21", // a Friday
+    totalMinutes: 360,
+    workMinutes: 70,
+    breakMinutes: 15,
+    ...overrides,
+  };
+}
+
+test("getCurrentTimeBudget returns undefined when Spencer has never declared a Time Budget", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  assert.equal(getCurrentTimeBudget(store), undefined);
+  store.close();
+});
+
+test("putTimeBudget persists a new Time Budget retrievable via getCurrentTimeBudget, at version 1", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  putTimeBudget(store, makeTimeBudget());
+
+  const record = getCurrentTimeBudget(store);
+  assert.equal(record?.data.totalMinutes, 360);
+  assert.equal(record?.data.date, "2026-08-21");
+  assert.equal(record?.version, 1);
+  store.close();
+});
+
+test("putTimeBudget called again replaces the value in place (upsert), not a new row per day", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  putTimeBudget(store, makeTimeBudget({ date: "2026-08-21", totalMinutes: 360 }));
+  putTimeBudget(store, makeTimeBudget({ date: "2026-08-25", totalMinutes: 240 }));
+
+  // Still exactly one Time Budget row in storage, regardless of how many
+  // times it's been declared — the design this story requires: no per-day
+  // copy to silently expire.
+  assert.deepEqual(store.listRecordsByKind("time-budget").map((r) => r.id).length, 1);
+
+  const record = getCurrentTimeBudget(store);
+  assert.equal(record?.data.totalMinutes, 240);
+  assert.equal(record?.data.date, "2026-08-25");
+  assert.equal(record?.version, 2);
+  store.close();
+});
+
+test("a Time Budget declared once persists unchanged across a simulated day boundary with no explicit change", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  putTimeBudget(store, makeTimeBudget({ date: "2026-08-21", totalMinutes: 360 }));
+
+  // Simulate "a new day begins" by simply reading again — nothing about the
+  // passage of time itself touches storage; there is no cron/expiry job to
+  // simulate skipping.
+  const dayLater = getCurrentTimeBudget(store);
+  assert.equal(dayLater?.data.totalMinutes, 360);
+  assert.equal(dayLater?.data.date, "2026-08-21"); // unchanged — no silent revert to a different default
+  assert.equal(dayLater?.version, 1); // no write happened
+  store.close();
+});
+
+test("a Time Budget declared on a Friday persists unchanged when read the following Monday (weekend boundary)", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  putTimeBudget(store, makeTimeBudget({ date: "2026-08-21", totalMinutes: 360 })); // Friday
+
+  // No writes at all happen over Sat/Sun — reading again on Monday still
+  // returns Friday's declared value, verbatim.
+  const monday = getCurrentTimeBudget(store);
+  assert.equal(monday?.data.totalMinutes, 360);
+  assert.equal(monday?.data.date, "2026-08-21");
+  assert.equal(monday?.version, 1);
   store.close();
 });

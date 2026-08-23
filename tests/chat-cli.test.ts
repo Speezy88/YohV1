@@ -16,6 +16,7 @@ import {
   putOpenInteractionRequest,
   getTaskFieldOverride,
   mergeTaskFieldOverride,
+  getCurrentTimeBudget,
 } from "../src/adapters/memory-store.ts";
 import type { MemoryStore } from "../src/adapters/memory-store.ts";
 import {
@@ -27,6 +28,8 @@ import {
   applyTaskFieldOverride,
   mergeStoredOverrides,
   DATA_COMPLETENESS_REQUEST_ID,
+  parseTimeBudgetCommand,
+  declareTimeBudget,
   type ChatCliIo,
 } from "../src/shell/chat-cli.ts";
 import { checkDataCompleteness, type MissingFieldReport } from "../src/core/data-completeness-gate.ts";
@@ -445,5 +448,151 @@ test("an unparseable answer for a numeric field is rejected and re-prompted, not
     io.written.some((line) => /didn't understand|invalid|couldn't/i.test(line)),
     "expected a re-prompt/error message for the unparseable first answer",
   );
+  store.close();
+});
+
+// ============================================================================
+// parseTimeBudgetCommand — simple pattern matching for Spencer's declare/
+// change command (Task 6 / Story 1.6). Scaffolding — Task 13 replaces this
+// with real LLM routing without changing observable behavior.
+// ============================================================================
+
+test("parseTimeBudgetCommand recognizes '<N>h' shorthand", () => {
+  const result = parseTimeBudgetCommand("time budget 6h");
+  assert.deepEqual(result, { totalMinutes: 360 });
+});
+
+test("parseTimeBudgetCommand recognizes 'set time budget to <N> hours'", () => {
+  const result = parseTimeBudgetCommand("set time budget to 6 hours");
+  assert.deepEqual(result, { totalMinutes: 360 });
+});
+
+test("parseTimeBudgetCommand recognizes minutes ('<N>m', '<N> minutes')", () => {
+  assert.deepEqual(parseTimeBudgetCommand("time budget 90m"), { totalMinutes: 90 });
+  assert.deepEqual(parseTimeBudgetCommand("change time budget to 90 minutes"), { totalMinutes: 90 });
+});
+
+test("parseTimeBudgetCommand treats a bare number with no unit as hours (documented default)", () => {
+  const result = parseTimeBudgetCommand("time budget 5");
+  assert.deepEqual(result, { totalMinutes: 300 });
+});
+
+test("parseTimeBudgetCommand is case-insensitive and tolerates extra whitespace", () => {
+  const result = parseTimeBudgetCommand("  SET Time   Budget TO 2 HOURS  ");
+  assert.deepEqual(result, { totalMinutes: 120 });
+});
+
+test("parseTimeBudgetCommand accepts a fractional hour amount", () => {
+  const result = parseTimeBudgetCommand("time budget 1.5h");
+  assert.deepEqual(result, { totalMinutes: 90 });
+});
+
+test("parseTimeBudgetCommand rejects a fractional amount that doesn't land on a whole minute", () => {
+  assert.equal(parseTimeBudgetCommand("time budget 0.5m"), undefined);
+});
+
+test("parseTimeBudgetCommand returns undefined for unrelated free text (falls through to the placeholder)", () => {
+  assert.equal(parseTimeBudgetCommand("show me today's plan"), undefined);
+  assert.equal(parseTimeBudgetCommand("hello"), undefined);
+  assert.equal(parseTimeBudgetCommand(""), undefined);
+});
+
+test("parseTimeBudgetCommand returns undefined for a zero or negative amount", () => {
+  assert.equal(parseTimeBudgetCommand("time budget 0h"), undefined);
+  assert.equal(parseTimeBudgetCommand("time budget -3h"), undefined);
+});
+
+// ============================================================================
+// declareTimeBudget — the thin wiring function (core shape/validate -> persist)
+// ============================================================================
+
+test("declareTimeBudget persists a valid declaration as today's Time Budget", () => {
+  const store = tempStore();
+  const result = declareTimeBudget(store, 360, "2026-08-22");
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.value.data.totalMinutes, 360);
+  assert.equal(result.value.data.date, "2026-08-22");
+
+  const stored = getCurrentTimeBudget(store);
+  assert.equal(stored?.data.totalMinutes, 360);
+  store.close();
+});
+
+test("declareTimeBudget returns a validation error and persists nothing for an out-of-range amount", () => {
+  const store = tempStore();
+  const result = declareTimeBudget(store, 1500, "2026-08-22"); // > 24h
+
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.equal(result.error.kind, "validation");
+  assert.equal(getCurrentTimeBudget(store), undefined);
+  store.close();
+});
+
+test("declareTimeBudget called again for a later date replaces the prior value (still the one singleton row)", () => {
+  const store = tempStore();
+  declareTimeBudget(store, 360, "2026-08-21");
+  declareTimeBudget(store, 240, "2026-08-25");
+
+  const stored = getCurrentTimeBudget(store);
+  assert.equal(stored?.data.totalMinutes, 240);
+  assert.equal(stored?.data.date, "2026-08-25");
+  store.close();
+});
+
+// ============================================================================
+// runChatCli — the declare/change command path end-to-end
+// ============================================================================
+
+test("runChatCli: typing a Time Budget command persists it and confirms back to Spencer", async () => {
+  const store = tempStore();
+  const io = makeScriptedIo(["time budget 6h"]);
+
+  await runChatCli(store, io);
+
+  const stored = getCurrentTimeBudget(store);
+  assert.equal(stored?.data.totalMinutes, 360);
+  assert.ok(
+    io.written.some((line) => /360|6h|6 hours?/i.test(line)),
+    "expected a confirmation line mentioning the new Time Budget",
+  );
+  store.close();
+});
+
+test("runChatCli: an invalid Time Budget amount is reported as an error, not silently persisted", async () => {
+  const store = tempStore();
+  const io = makeScriptedIo(["time budget 30 hours"]); // 1800 minutes > 24h cap
+
+  await runChatCli(store, io);
+
+  assert.equal(getCurrentTimeBudget(store), undefined);
+  assert.ok(io.written.some((line) => /couldn't|invalid|cannot/i.test(line)));
+  store.close();
+});
+
+test("runChatCli: unrelated input after a Time Budget was declared leaves it untouched (no silent revert/expiry)", async () => {
+  const store = tempStore();
+  // Declare directly (simulating an earlier day's chat-cli session).
+  declareTimeBudget(store, 360, "2026-08-21");
+  const before = getCurrentTimeBudget(store);
+
+  const io = makeScriptedIo(["hello", "show me today's plan"]);
+  await runChatCli(store, io);
+
+  const after = getCurrentTimeBudget(store);
+  assert.deepEqual(after?.data, before?.data);
+  assert.equal(after?.version, before?.version);
+  store.close();
+});
+
+test("runChatCli: falls through to the free-text placeholder for input that isn't a Time Budget command", async () => {
+  const store = tempStore();
+  const io = makeScriptedIo(["what's the weather"]);
+
+  await runChatCli(store, io);
+
+  assert.ok(io.written.some((line) => line.includes("free-text routing arrives in a later task")));
   store.close();
 });

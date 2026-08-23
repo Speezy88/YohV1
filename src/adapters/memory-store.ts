@@ -49,7 +49,7 @@
 import Database from "better-sqlite3";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { InteractionRequest, TaskFieldOverride, YohError } from "../types/domain.ts";
+import type { InteractionRequest, TaskFieldOverride, TimeBudget, YohError } from "../types/domain.ts";
 
 // ============================================================================
 // Config
@@ -417,4 +417,67 @@ export function mergeTaskFieldOverride(
     ...existing?.data,
     ...patch,
   }));
+}
+
+// ============================================================================
+// Time Budget (Task 6 / Story 1.6, FR-5) — typed surface on `records`
+// ============================================================================
+
+/**
+ * The fixed `records.kind` partition Spencer's declared Time Budget is
+ * stored under.
+ */
+const TIME_BUDGET_KIND = "time-budget";
+
+/**
+ * The fixed singleton `records.id` the current Time Budget is always stored
+ * at. Design choice, and the crux of this story's "persists day-to-day,
+ * including weekends, until explicitly changed again — it never silently
+ * reverts to a different default" requirement: this is deliberately NOT
+ * keyed by calendar date (e.g. `id: date`), which would make "today's Time
+ * Budget" a *per-day row* that reads as absent the instant the calendar
+ * rolls over unless something re-creates it. Instead there is exactly one
+ * Time Budget row, ever — `putTimeBudget` always upserts this same id, so
+ * "today's Time Budget" is simply "whatever is currently stored here,
+ * however many days ago it was declared." Nothing in this file ever expires,
+ * clears, or age-checks this row; `core/time-budget.ts`'s
+ * `resolveTodayTimeBudget` is where "was this carried forward from an
+ * earlier day" gets *reported* (for display purposes only) — never here,
+ * and never by this row's own presence/absence.
+ *
+ * This also keeps a later Epic 4 Proposal-driven Time Budget change
+ * (AD-3: Yoh *suggesting* a change, surfaced as a `Proposal<T>` /
+ * `InteractionRequest` and only applied once Spencer accepts it) able to
+ * reuse this exact same storage: its `apply(proposal)` step would read this
+ * same singleton row (checking `Proposal.entityVersion` against the row's
+ * own `StoredRecord.version` for staleness, per that type's doc comment)
+ * and call `putTimeBudget` the same way Spencer's own explicit declaration
+ * does below — no schema change needed for that later story.
+ */
+const TIME_BUDGET_ID = "current";
+
+export type { TimeBudget };
+
+/**
+ * Reads the currently-stored Time Budget, or `undefined` if Spencer has
+ * never declared one. Per the design note above, this is unconditionally
+ * "today's Time Budget" — there is no date-based filtering or cutoff here;
+ * a value declared on any prior day is returned exactly as-is.
+ */
+export function getCurrentTimeBudget(store: MemoryStore): StoredRecord<TimeBudget> | undefined {
+  return store.getRecord<TimeBudget>(TIME_BUDGET_KIND, TIME_BUDGET_ID);
+}
+
+/**
+ * Declares (creates, or replaces if one is already stored) the current Time
+ * Budget — "put" semantics, like `putOpenInteractionRequest`: the caller
+ * doesn't need to track a version to call this. Internally reads the
+ * current record's version (if any) and passes it to `readModifyWrite`, so a
+ * genuine concurrent writer (AD-10: `ritual-cli.ts` and `chat-cli.ts` running
+ * concurrently) still surfaces `ConflictError` rather than silently
+ * clobbering a change made between this function's internal read and write.
+ */
+export function putTimeBudget(store: MemoryStore, budget: TimeBudget): StoredRecord<TimeBudget> {
+  const current = store.getRecord<TimeBudget>(TIME_BUDGET_KIND, TIME_BUDGET_ID);
+  return store.readModifyWrite<TimeBudget>(TIME_BUDGET_KIND, TIME_BUDGET_ID, current?.version, () => budget);
 }

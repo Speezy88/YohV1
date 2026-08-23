@@ -45,11 +45,22 @@ import {
   listOpenInteractionRequests,
   mergeTaskFieldOverride,
   putOpenInteractionRequest,
+  putTimeBudget,
   type MemoryStore,
   type StoredRecord,
 } from "../adapters/memory-store.ts";
 import { checkDataCompleteness, type MissingFieldReport } from "../core/data-completeness-gate.ts";
-import type { InteractionRequest, PlanningFieldNames, Task, TaskFieldOverride } from "../types/domain.ts";
+import { shapeDeclaredTimeBudget } from "../core/time-budget.ts";
+import type {
+  InteractionRequest,
+  IsoDate,
+  PlanningFieldNames,
+  Result,
+  Task,
+  TaskFieldOverride,
+  TimeBudget,
+  YohError,
+} from "../types/domain.ts";
 
 // ============================================================================
 // Rendering constants (UX-DR1, UX-DR5, DESIGN.md's `colors.accent: '#5FAFFF'`)
@@ -393,12 +404,91 @@ export async function surfaceOpenInteractionRequests(store: MemoryStore, io: Cha
   }
 }
 
+// ============================================================================
+// Time Budget declare/change command (Task 6 / Story 1.6, FR-5)
+// ============================================================================
+
 /**
- * The minimal REPL loop (Task 5): on start, and before processing every
- * subsequent line of input, surfaces any open interaction request(s) first
- * (AD-5). Free-text NLU/LLM routing (what an "unrelated command" actually
- * does) is Task 13 — this loop only acknowledges other input for now, per
- * the Task 5 brief's "does not need real free-text NLU/LLM routing yet".
+ * Recognizes a Time Budget declare/change command typed at the `yoh>`
+ * prompt. This is deliberately simple, clearly-documented pattern matching —
+ * NOT real free-text NLU. Task 13 replaces this with real LLM-based routing
+ * without changing this task's observable behavior: declaring "6 hours"
+ * persists a 360-minute budget for today regardless of how the command
+ * arrives at that parsed value.
+ *
+ * Recognized phrasing (case-insensitive, extra whitespace tolerated):
+ *   - "time budget <N>[h|hr|hrs|hour|hours]"
+ *   - "time budget <N>[m|min|mins|minute|minutes]"
+ *   - either optionally prefixed with "set " or "change ", and with "to "
+ *     before the number — e.g. "set time budget to 6 hours",
+ *     "change time budget to 90 minutes"
+ *
+ * If `<N>` has no unit at all (e.g. "time budget 5"), it's read as HOURS —
+ * documented default, since Spencer declaring a Time Budget in bare minutes
+ * ("time budget 5" meaning 5 minutes) would be an implausibly short day,
+ * while "5" meaning 5 hours is the natural reading.
+ *
+ * Returns `undefined` (not an error) for any line that doesn't match this
+ * shape at all, so `runChatCli` can fall through to the free-text
+ * placeholder rather than misreporting an unrelated line as an invalid Time
+ * Budget command.
+ */
+const TIME_BUDGET_COMMAND_RE =
+  /^(?:set\s+|change\s+)?time\s*budget(?:\s+to)?\s+(\d+(?:\.\d+)?)\s*(hours?|hrs?|h|minutes?|mins?|m)?\s*$/i;
+
+export function parseTimeBudgetCommand(line: string): { readonly totalMinutes: number } | undefined {
+  const match = TIME_BUDGET_COMMAND_RE.exec(line.trim());
+  if (!match) return undefined;
+
+  const amount = Number(match[1]);
+  if (!Number.isFinite(amount) || amount <= 0) return undefined;
+
+  const unit = (match[2] ?? "hours").toLowerCase();
+  const totalMinutes = unit.startsWith("m") ? amount : amount * 60;
+  if (!Number.isInteger(totalMinutes)) return undefined; // e.g. "0.5m" doesn't land on a whole minute.
+
+  return { totalMinutes };
+}
+
+/** Today's calendar date, ISO-8601 (`YYYY-MM-DD`), per the Consistency Conventions — Spencer's declaration is always "for today." */
+function currentIsoDate(): IsoDate {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/**
+ * The thin wiring function AD-1/AD-2 call for: runs the pure validate/shape
+ * step (`core/time-budget.ts`'s `shapeDeclaredTimeBudget`) and, only on
+ * success, persists the result as today's Time Budget in `memory-store.ts`
+ * (`putTimeBudget`) — the actual I/O `time-budget.ts` itself is forbidden
+ * from doing (AD-2). `today` is threaded in explicitly by the caller rather
+ * than read internally here, purely so this function stays trivially
+ * testable with a fixed date instead of the real system clock.
+ */
+export function declareTimeBudget(
+  store: MemoryStore,
+  totalMinutes: number,
+  today: IsoDate,
+): Result<StoredRecord<TimeBudget>, YohError> {
+  const shaped = shapeDeclaredTimeBudget({ totalMinutes, date: today });
+  if (!shaped.ok) return shaped;
+  return { ok: true, value: putTimeBudget(store, shaped.value) };
+}
+
+/** Formats a minute count for the confirmation line, e.g. `360` -> `"360 minutes (6h)"`. */
+function formatMinutesForDisplay(totalMinutes: number): string {
+  const hours = totalMinutes / 60;
+  const hoursLabel = Number.isInteger(hours) ? `${hours}h` : `${hours.toFixed(2).replace(/0+$/, "").replace(/\.$/, "")}h`;
+  return `${totalMinutes} minutes (${hoursLabel})`;
+}
+
+/**
+ * The minimal REPL loop (Task 5, extended by Task 6): on start, and before
+ * processing every subsequent line of input, surfaces any open interaction
+ * request(s) first (AD-5). Then checks whether the line is a Time Budget
+ * declare/change command (`parseTimeBudgetCommand`) and, if so, validates
+ * and persists it (`declareTimeBudget`) rather than falling through to the
+ * free-text placeholder. Real free-text NLU/LLM routing for everything else
+ * (what an "unrelated command" actually does) is Task 13.
  */
 export async function runChatCli(store: MemoryStore, io: ChatCliIo): Promise<void> {
   await surfaceOpenInteractionRequests(store, io);
@@ -413,6 +503,18 @@ export async function runChatCli(store: MemoryStore, io: ChatCliIo): Promise<voi
     await surfaceOpenInteractionRequests(store, io);
 
     if (line.trim().length === 0) continue;
+
+    const timeBudgetCommand = parseTimeBudgetCommand(line);
+    if (timeBudgetCommand) {
+      const result = declareTimeBudget(store, timeBudgetCommand.totalMinutes, currentIsoDate());
+      if (result.ok) {
+        io.writeLine(`Got it — today's Time Budget is set to ${formatMinutesForDisplay(result.value.data.totalMinutes)}.`);
+      } else {
+        io.writeLine(`I couldn't set that Time Budget: ${result.error.message}`);
+      }
+      continue;
+    }
+
     io.writeLine("(free-text routing arrives in a later task — nothing to do with that yet)");
   }
 }
