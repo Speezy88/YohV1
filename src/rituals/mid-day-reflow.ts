@@ -38,15 +38,89 @@
  * the re-fit, never partially preserved) — only the MINUTES credited to
  * "already spent" are accounted for precisely, per-Task and per-budget.
  *
- * Known, deliberate scope boundary — NOT covered by this file: Spencer
- * saying a Task ran long or was skipped despite its scheduled `end` having
- * already passed (i.e. overriding a block `isElapsed` already treated as
- * done). `chat-cli.ts`'s current trigger has no room to name which Task or
- * by how much, so nothing here can represent that. That is Story 2.4 /
- * Task 16's job (Logistics-Only Blocker Handling, FR-10), which is
- * explicitly scoped to extend THIS SAME FILE with exactly that
- * Spencer-reports-a-specific-problem path — see `isElapsed`'s own doc
- * comment for the fuller note.
+ * Historical note (this scope boundary is now CLOSED by Story 2.4 / Task
+ * 16, below): earlier, nothing here could represent "Spencer says a Task
+ * ran long or was skipped despite its scheduled `end` having already
+ * passed" — overriding a block `isElapsed` already treated as done.
+ * `chat-cli.ts`'s Mid-Day Re-Flow trigger has no room to name which Task or
+ * by how much, so that gap could only be closed by a path that does NOT
+ * need to name either — see the "Logistics-Only Blocker Handling" section
+ * below for how.
+ *
+ * ============================================================================
+ * Logistics-Only Blocker Handling (Story 2.4 / Task 16, FR-10, UX-DR12)
+ * ============================================================================
+ *
+ * FR-10's own example — "meeting ran over" — deliberately names neither
+ * WHICH Task nor HOW MUCH time was lost, and FR-10 itself says Yoh must not
+ * try to resolve/judge/problem-solve the Blocker. So this needs no free-text
+ * parsing of a Task or a duration — only a classification ("this input is
+ * reporting a logistics Blocker", `chat-cli.ts`'s `isBlockerReportCommand`)
+ * plus a MECHANICAL rule for "what was Spencer just supposed to be doing":
+ * the current/most-recently-active `work`/`break` block as of `now` (never
+ * a `calendar-anchor` — AD-4, see `findBlockerOverrideBlockId` below).
+ *
+ * `runMidDayReflow` takes an optional `blockerReported` flag rather than
+ * being a second exported function. A genuinely separate function would
+ * have to duplicate every line from "re-read Notion Tasks" through
+ * "persist" verbatim — the ONLY thing that differs is which ONE block (if
+ * any) `isElapsed` treats as an exception, and how that one block's elapsed
+ * minutes are credited. A single boolean threaded through the one function
+ * that already owns this whole pipeline keeps that pipeline in exactly one
+ * place, at the cost of two small `id === overrideBlockId` branches — a far
+ * smaller footprint than a parallel copy of ~150 lines of re-fit/merge/
+ * persist logic. The RESPONSE rendering still differs sharply between the
+ * two callers (UX-DR11's "one short block" vs UX-DR12's "one confirmation
+ * line") — that stays entirely `chat-cli.ts`'s job (see
+ * `buildBlockerConfirmationLine` below), so this shared function's own
+ * `rendered`/`plan.reasoning` fields keep meaning exactly what they already
+ * meant for Task 15, unaffected by which caller triggered this run.
+ *
+ * Block selection (`findBlockerOverrideBlockId`): the block genuinely in
+ * progress as of `now` (`start <= now < end`) if one exists, else the most
+ * recently ENDED `work`/`break` block (largest `end <= now`).
+ * `calendar-anchor` blocks are never eligible — AD-4 says Yoh never
+ * reschedules a fixed external commitment, and Blocker handling can't
+ * retroactively invent flexibility Yoh never created there. If no
+ * `work`/`break` block has started yet as of `now` (too early in the day),
+ * there is nothing to override and Blocker handling degrades gracefully to
+ * plain Task 15 behavior for that run — FR-10 still applies unconditionally
+ * (AD-3: no confirmation gate either way), it just has nothing to act on.
+ *
+ * Override effect (`elapsedMinutesSinceBlockStart`, and the two
+ * `isOverridden` branches in the main elapsed-minutes loop below): for
+ * ONLY the selected block,
+ *   - it is excluded from `pastBlocks` (so it does NOT survive verbatim —
+ *     `isElapsed` is effectively overridden to `false` for this one id),
+ *     and
+ *   - its contribution to the day's remaining Time Budget uses `now -
+ *     start` (the real wall-clock minutes since it started) REGARDLESS of
+ *     whether its scheduled `end` has already passed — i.e. Yoh charges
+ *     the Budget for genuine time lost to the disruption, including any
+ *     overrun past the original schedule, rather than pretending nothing
+ *     happened. This reuses `elapsedMinutesWithinBlock`'s own "genuinely in
+ *     progress" formula, just applied unconditionally instead of only when
+ *     `start < now < end`.
+ *   - it contributes NOTHING to that block's Task's own elapsed-minutes
+ *     tally (`elapsedMinutesByTaskId`) — deliberately, and NOT merely
+ *     "capped at zero": crediting ANY amount here would require Yoh to
+ *     guess how much genuine progress Spencer made before the disruption,
+ *     which is exactly the judgment FR-10 says Yoh must not exercise. The
+ *     Task's FULL current `estimatedDurationMinutes` is what re-enters
+ *     `outstanding` (mirroring the "never scheduled today at all" case
+ *     just below) — mechanically "whatever Spencer was just supposed to be
+ *     doing" is not-actually-done, full stop, whether the block had
+ *     genuinely just started or had already run over its scheduled `end`
+ *     by the time of the report. (A worked-math note for why this can't
+ *     instead be `duration - (now - start)`: work-break-fit.ts always
+ *     places a Task's FULL duration as one block, so block-duration ==
+ *     task-duration on a first placement; once `now` is at or past that
+ *     block's `end`, `now - start` is by construction `>= ` duration,
+ *     making that subtraction `<= 0` for EVERY blocker report on an
+ *     already-ended block — i.e. the exact reviewer-flagged scenario this
+ *     task exists to fix would always compute right back to "already
+ *     done". Crediting zero to the Task instead of that guaranteed-`<=0`
+ *     subtraction is what actually closes the gap.)
  *
  * ============================================================================
  * Where "which Tasks are still outstanding" comes from
@@ -208,6 +282,16 @@ export interface MidDayReflowDeps {
   readonly log?: (entry: MidDayReflowLogEntry) => void;
   /** Forces color on/off for `rendered`; defaults to `renderPlan`'s own `shouldUseColor()`. */
   readonly color?: boolean;
+  /**
+   * Story 2.4 / Task 16 (FR-10): set by `chat-cli.ts` when the triggering
+   * line was recognized as a logistics Blocker report (e.g. "meeting ran
+   * over"), rather than an explicit Mid-Day Re-Flow trigger. When `true`,
+   * the current/most-recently-active `work`/`break` block as of `now` is
+   * treated as NOT elapsed regardless of its scheduled `end` — see the file
+   * docstring's "Logistics-Only Blocker Handling" section. Defaults to
+   * `false` (Task 15's plain re-flow behavior, unchanged).
+   */
+  readonly blockerReported?: boolean;
 }
 
 /** What one Mid-Day Re-Flow run did. Discriminated on `status`, mirroring `MorningRitualOutcome`'s shape. */
@@ -238,6 +322,8 @@ export type MidDayReflowOutcome =
       readonly deferredTaskIds: readonly ExternalId[];
       /** Tasks the Data-Completeness Gate held back on this re-read; an open interaction request names them. */
       readonly incompleteTaskIds: readonly ExternalId[];
+      /** How many distinct Tasks were re-fit into the remainder — same count `buildReflowReasoning` embeds in `plan.reasoning`, exposed here so `buildBlockerConfirmationLine` (Task 16) can build its own, differently-worded single line without re-deriving it from `plan.blocks`' id-prefix convention. */
+      readonly refitTaskCount: number;
     };
 
 function failure(kind: YohError["kind"], message: string, detail?: unknown): Result<never, YohError> {
@@ -257,16 +343,14 @@ function describeError(err: unknown): string {
  * in-progress block (this function's `false` case) still needs to answer
  * partially, not as a flat zero.
  *
- * Known scope boundary (reviewer-flagged, ruled out of THIS task): a block
- * whose scheduled `end` has already passed is unconditionally treated as
- * fully done — there is no way here for Spencer to say "that one ran long,
- * it's NOT actually done despite its scheduled end having passed."
- * `chat-cli.ts`'s trigger regex has no room to name which Task or by how
- * much, so nothing in this file can represent that yet. Story 2.4 / Task 16
- * (Logistics-Only Blocker Handling, FR-10) is explicitly scoped to extend
- * THIS SAME FILE with exactly that Spencer-reports-a-specific-problem path;
- * building partial support for it here, ahead of that task's proper design,
- * would risk exactly the kind of premature path AD-9 warns against.
+ * By default, a block whose scheduled `end` has already passed is
+ * unconditionally treated as fully done. Story 2.4 / Task 16 (Logistics-Only
+ * Blocker Handling, FR-10) closes exactly this gap for ONE block at a time
+ * — `runMidDayReflow` itself overrides this function's result for whichever
+ * single block `findBlockerOverrideBlockId` selects, rather than this
+ * function growing a parameter of its own; see the file docstring's
+ * "Logistics-Only Blocker Handling" section for the full design and why the
+ * override lives at the call site instead of here.
  */
 function isElapsed(block: PlanBlock, nowMs: number): boolean {
   return Date.parse(block.end) <= nowMs;
@@ -309,6 +393,70 @@ function buildReflowReasoning(refitTaskCount: number, deferredCount: number): st
 }
 
 // ============================================================================
+// Logistics-Only Blocker Handling (Story 2.4 / Task 16, FR-10) — helpers
+// ============================================================================
+
+/**
+ * Selects the id of "the current/most-recently-active" `work`/`break` block
+ * as of `nowMs` — the ONE block a Blocker report overrides. See the file
+ * docstring's "Logistics-Only Blocker Handling" section for the full
+ * reasoning. Prefers a block genuinely in progress (`start <= now < end`);
+ * failing that, the most recently ENDED block (largest `end <= now`).
+ * `calendar-anchor` blocks are never eligible (AD-4). Returns `undefined` if
+ * no `work`/`break` block has started yet as of `nowMs`.
+ */
+function findBlockerOverrideBlockId(blocks: readonly PlanBlock[], nowMs: number): string | undefined {
+  const eligible = blocks.filter((b) => b.kind !== "calendar-anchor");
+
+  const inProgress = eligible.find((b) => Date.parse(b.start) <= nowMs && nowMs < Date.parse(b.end));
+  if (inProgress) return inProgress.id;
+
+  let mostRecentlyEnded: PlanBlock | undefined;
+  for (const b of eligible) {
+    const endMs = Date.parse(b.end);
+    if (endMs > nowMs) continue; // hasn't ended yet — not a candidate for "most recently ended"
+    if (!mostRecentlyEnded || endMs > Date.parse(mostRecentlyEnded.end)) mostRecentlyEnded = b;
+  }
+  return mostRecentlyEnded?.id;
+}
+
+/**
+ * `elapsedMinutesWithinBlock`'s "genuinely in progress" formula (`now -
+ * start`), applied UNCONDITIONALLY — including when `block.end` has already
+ * passed — rather than only when `start < now < end`. Only ever called for
+ * the ONE block a Blocker report overrides; see the file docstring for why
+ * this is deliberately not capped at the block's own scheduled duration.
+ */
+function elapsedMinutesSinceBlockStart(block: PlanBlock, nowMs: number): number {
+  return Math.max(0, (nowMs - Date.parse(block.start)) / MINUTES_TO_MS);
+}
+
+/**
+ * `chat-cli.ts`'s ONLY rendering for a Blocker report's outcome
+ * (`status: "reflowed"`) — UX-DR12's "single confirmation line describing
+ * the schedule change," deliberately far terser than `outcome.rendered`
+ * (UX-DR11's "one short block," reused only by Task 15's Mid-Day Re-Flow
+ * trigger, never by this path). No suggestions for resolving the underlying
+ * obstacle, no commentary or judgment — just what moved. Exported (rather
+ * than kept private like `buildReflowReasoning`) because `chat-cli.ts`, not
+ * this file, is the caller that needs it — this file's own `rendered`/
+ * `plan.reasoning` fields keep their Task 15 meaning regardless of which
+ * caller triggered the run (see the file docstring).
+ */
+export function buildBlockerConfirmationLine(outcome: {
+  readonly refitTaskCount: number;
+  readonly deferredTaskIds: readonly ExternalId[];
+}): string {
+  const deferredCount = outcome.deferredTaskIds.length;
+  const refitPart =
+    outcome.refitTaskCount > 0
+      ? `${outcome.refitTaskCount} Task${outcome.refitTaskCount === 1 ? "" : "s"} rescheduled around it`
+      : "the rest of today rescheduled around it";
+  const deferredPart = deferredCount > 0 ? `, ${deferredCount} deferred for another day` : "";
+  return `Got it — ${refitPart}${deferredPart}.`;
+}
+
+// ============================================================================
 // runMidDayReflow — this file's sole export
 // ============================================================================
 
@@ -336,8 +484,17 @@ export async function runMidDayReflow(deps: MidDayReflowDeps): Promise<Result<Mi
     return { ok: true, value: { status: "no-plan-today", date: today } };
   }
 
-  const pastBlocks = existingPlan.data.blocks.filter((b) => isElapsed(b, nowMs));
-  const remainingBlocks = existingPlan.data.blocks.filter((b) => !isElapsed(b, nowMs));
+  // --- Logistics-Only Blocker Handling override (Story 2.4 / Task 16) --------
+  // See the file docstring's "Logistics-Only Blocker Handling" section for
+  // the full design. `overrideBlockId` names the ONE block (if any)
+  // `isElapsed` is overridden for below; `undefined` (the non-Blocker
+  // default, or a Blocker report with nothing eligible yet) changes nothing.
+  const overrideBlockId = deps.blockerReported
+    ? findBlockerOverrideBlockId(existingPlan.data.blocks, nowMs)
+    : undefined;
+
+  const pastBlocks = existingPlan.data.blocks.filter((b) => isElapsed(b, nowMs) && b.id !== overrideBlockId);
+  const remainingBlocks = existingPlan.data.blocks.filter((b) => !isElapsed(b, nowMs) || b.id === overrideBlockId);
 
   // --- Re-read Notion Tasks (AD-8 boundary) ----------------------------------
   let rawTasks: readonly Task[];
@@ -380,9 +537,15 @@ export async function runMidDayReflow(deps: MidDayReflowDeps): Promise<Result<Mi
   const taskIdsWithAnyBlock = new Set<ExternalId>();
   let elapsedBudgetMinutes = 0;
   for (const b of existingPlan.data.blocks) {
-    const elapsed = elapsedMinutesWithinBlock(b, nowMs);
+    // The ONE Blocker-overridden block (if any) uses the forced "in
+    // progress" formula for the BUDGET (real wall-clock minutes lost,
+    // uncapped by its scheduled `end`) and contributes NOTHING to its
+    // Task's own elapsed tally — see the file docstring for why crediting
+    // any amount there would be exactly the judgment call FR-10 rules out.
+    const isOverridden = b.id === overrideBlockId;
+    const elapsed = isOverridden ? elapsedMinutesSinceBlockStart(b, nowMs) : elapsedMinutesWithinBlock(b, nowMs);
     if (b.kind === "work" || b.kind === "break") elapsedBudgetMinutes += elapsed;
-    if (b.kind === "work" && b.taskId !== undefined) {
+    if (!isOverridden && b.kind === "work" && b.taskId !== undefined) {
       taskIdsWithAnyBlock.add(b.taskId);
       if (elapsed > 0) {
         elapsedMinutesByTaskId.set(b.taskId, (elapsedMinutesByTaskId.get(b.taskId) ?? 0) + elapsed);
@@ -515,6 +678,7 @@ export async function runMidDayReflow(deps: MidDayReflowDeps): Promise<Result<Mi
       rendered,
       deferredTaskIds: fitted.value.deferredTaskIds,
       incompleteTaskIds,
+      refitTaskCount: refitTaskIds.size,
     },
   };
 }

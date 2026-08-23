@@ -420,6 +420,166 @@ test("runMidDayReflow: everything already elapsed and complete -> 'nothing-to-re
 });
 
 // ============================================================================
+// Story 2.4 / Task 16: Logistics-Only Blocker Handling (FR-10)
+// ============================================================================
+
+test(
+  "runMidDayReflow: Blocker report overrides a block whose scheduled end has already passed, treating its Task as outstanding and re-fitting it " +
+    "(closes the Task 15 reviewer-flagged scope gap — see mid-day-reflow.ts's isElapsed doc comment)",
+  async () => {
+    const BLOCKER_NOW = "2026-08-22T09:45:00.000Z"; // 15 minutes AFTER the block's scheduled 09:30 end.
+    const plan: Plan = {
+      id: `plan-${TODAY}`,
+      date: TODAY,
+      blocks: [
+        block({
+          id: "work-0",
+          kind: "work",
+          start: "2026-08-22T09:00:00.000Z",
+          end: "2026-08-22T09:30:00.000Z",
+          label: "Blocked Task",
+          taskId: "t-blocked",
+        }),
+      ],
+      reasoning: '"Blocked Task" leads today\'s Plan — due soonest.',
+      version: 1,
+      createdAt: "2026-08-22T09:00:00.000Z",
+      updatedAt: "2026-08-22T09:00:00.000Z",
+    };
+
+    const { deps, store } = harness({
+      tasks: [makeTask("t-blocked", "Blocked Task", { estimatedDurationMinutes: 30 })],
+      storedPlan: plan,
+      budgetMinutes: 480,
+      nowIso: BLOCKER_NOW,
+    });
+
+    // Sanity: WITHOUT the Blocker override, Task 15's ordinary path treats
+    // this block as already fully elapsed/done (its scheduled end has
+    // passed) — reproducing exactly the reviewer-flagged scope gap.
+    // `runMidDayReflow` with no `blockerReported` flag never persists on a
+    // "nothing-to-reflow" outcome, so this call is safe to make before the
+    // real (overridden) call below without needing to reset the store.
+    const withoutOverride = await runMidDayReflow(deps);
+    assert.equal(withoutOverride.ok, true);
+    if (!withoutOverride.ok) return;
+    assert.equal(
+      withoutOverride.value.status,
+      "nothing-to-reflow",
+      "sanity: without the Blocker override, Task 15's existing logic treats the block as already done",
+    );
+
+    const result = await runMidDayReflow({ ...deps, blockerReported: true });
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.equal(
+      result.value.status,
+      "reflowed",
+      "the Blocker override must make the Task outstanding again, not 'nothing-to-reflow'",
+    );
+    if (result.value.status !== "reflowed") return;
+
+    const stored = getPlan(store, TODAY);
+    assert.equal(
+      stored!.data.blocks.some((b) => b.id === "work-0"),
+      false,
+      "the original block must not survive verbatim once overridden",
+    );
+    const refit = stored!.data.blocks.find((b) => b.kind === "work" && b.taskId === "t-blocked");
+    assert.ok(refit, "the blocked Task must be re-fit into the remainder");
+    const refitDurationMinutes = (Date.parse(refit!.end) - Date.parse(refit!.start)) / 60_000;
+    assert.equal(
+      refitDurationMinutes,
+      30,
+      "the Task's FULL original duration is treated as outstanding — Yoh does not guess at partial progress during a reported Blocker",
+    );
+  },
+);
+
+test("runMidDayReflow: a calendar-anchor block is never selected as the Blocker-overridable block, even when it is the most recently active thing chronologically (AD-4)", async () => {
+  // 10:45 falls squarely inside the "Standup" calendar-anchor (10:30-11:00)
+  // in morningPlan() — the anchor IS the most recently "active" thing on the
+  // timeline at this instant, but must never be the overridden block.
+  const BLOCKER_NOW = "2026-08-22T10:45:00.000Z";
+  const { deps, store } = harness({ tasks: DEFAULT_TASKS, nowIso: BLOCKER_NOW });
+
+  const result = await runMidDayReflow({ ...deps, blockerReported: true });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.value.status, "reflowed");
+  if (result.value.status !== "reflowed") return;
+
+  const stored = getPlan(store, TODAY);
+  // The anchor itself was not yet ELAPSED as of 10:45 (its own scheduled end,
+  // 11:00, is still ahead) so — independent of any Blocker override — it is
+  // re-fit like any other still-ahead block, which legitimately gives it a
+  // fresh id (see `fitWorkBreakBlocks`/the id-prefix note in the file
+  // docstring). What matters for AD-4 is that its `start`/`end` window is
+  // never shifted — i.e. it was never treated as reschedulable.
+  const anchor = stored!.data.blocks.find(
+    (b) => b.kind === "calendar-anchor" && b.start === "2026-08-22T10:30:00.000Z" && b.end === "2026-08-22T11:00:00.000Z",
+  );
+  assert.ok(anchor, "the calendar-anchor's original 10:30-11:00 window must still be present, un-shifted (AD-4)");
+
+  // Instead, break-3 (10:15-10:30 — the most recently ENDED non-anchor
+  // block as of 10:45) is what actually gets overridden.
+  assert.equal(
+    stored!.data.blocks.some((b) => b.id === "break-3"),
+    false,
+    "the most recently ended NON-anchor block (break-3) is what gets overridden, not the anchor",
+  );
+  // work-2 (Task Two, further in the past, NOT the selected block) must
+  // remain untouched.
+  assert.ok(
+    stored!.data.blocks.some((b) => b.id === "work-2"),
+    "an older past block that wasn't selected for override must remain untouched",
+  );
+});
+
+test("runMidDayReflow: Blocker handling applies immediately and automatically — no interaction request/Proposal is opened, and the Plan updates within this single call (AD-3 carve-out)", async () => {
+  const BLOCKER_NOW = "2026-08-22T09:45:00.000Z";
+  const plan: Plan = {
+    id: `plan-${TODAY}`,
+    date: TODAY,
+    blocks: [
+      block({
+        id: "work-0",
+        kind: "work",
+        start: "2026-08-22T09:00:00.000Z",
+        end: "2026-08-22T09:30:00.000Z",
+        label: "Blocked Task",
+        taskId: "t-blocked",
+      }),
+    ],
+    reasoning: '"Blocked Task" leads today\'s Plan — due soonest.',
+    version: 1,
+    createdAt: "2026-08-22T09:00:00.000Z",
+    updatedAt: "2026-08-22T09:00:00.000Z",
+  };
+  const { deps, store } = harness({
+    tasks: [makeTask("t-blocked", "Blocked Task", { estimatedDurationMinutes: 30 })],
+    storedPlan: plan,
+    nowIso: BLOCKER_NOW,
+  });
+
+  const before = getPlan(store, TODAY);
+  assert.equal(before!.data.version, 1);
+
+  const result = await runMidDayReflow({ ...deps, blockerReported: true });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.value.status, "reflowed");
+
+  const after = getPlan(store, TODAY);
+  assert.equal(after!.data.version, 2, "the Plan must be updated immediately within this single call — no separate confirmation step exists");
+  assert.equal(
+    store.listRecordsByKind("interaction-request").length,
+    0,
+    "Blocker handling must never open a confirmation/Proposal interaction request (AD-3 carve-out — FR-10 is not bound by Propose-Don't-Impose)",
+  );
+});
+
+// ============================================================================
 // Behavior 4: no proactive trigger path exists
 // ============================================================================
 

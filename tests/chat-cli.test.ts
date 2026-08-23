@@ -30,6 +30,7 @@ import {
   declareTimeBudget,
   isMidDayReflowCommand,
   isPlanViewCommand,
+  isBlockerReportCommand,
   type ChatCliIo,
 } from "../src/shell/chat-cli.ts";
 import { localIsoDate, renderPlan } from "../src/rituals/morning-ritual.ts";
@@ -1003,6 +1004,97 @@ test("runChatCli: typing a recognized Mid-Day Re-Flow trigger calls into mid-day
 test("runChatCli: Mid-Day Re-Flow trigger says so plainly when no Plan exists yet for today", async () => {
   const store = tempStore();
   const io = makeScriptedIo(["reflow"]);
+
+  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => LATE_EVENING_UTC, async () => []);
+
+  assert.ok(io.written.some((line) => /no plan/i.test(line)));
+  store.close();
+});
+
+// ============================================================================
+// isBlockerReportCommand / runChatCli — Logistics-Only Blocker Handling
+// (Task 16 / Story 2.4, FR-10, UX-DR12)
+// ============================================================================
+
+test("isBlockerReportCommand recognizes documented starting keyword/phrase heuristics, case-insensitively", () => {
+  for (const line of [
+    "meeting ran over",
+    "the meeting ran over",
+    "running late",
+    "I'm running late",
+    "something came up",
+    "traffic",
+    "stuck in traffic",
+    "call went long",
+    "the call went long",
+    "got held up",
+    "held up",
+    "got delayed",
+    "MEETING RAN OVER",
+  ]) {
+    assert.equal(isBlockerReportCommand(line), true, `expected "${line}" to be recognized as a Blocker report`);
+  }
+});
+
+test("isBlockerReportCommand returns false for unrelated input, including other recognized commands", () => {
+  for (const line of ["hello", "time budget 6h", "show plan", "reflow my day", "what's the weather", ""]) {
+    assert.equal(isBlockerReportCommand(line), false, `expected "${line}" NOT to be recognized as a Blocker report`);
+  }
+});
+
+function blockerSamplePlan(date: IsoDate, nowIso: string): Plan {
+  const nowMs = Date.parse(nowIso);
+  const start = new Date(nowMs - 30 * 60_000).toISOString();
+  const end = new Date(nowMs - 5 * 60_000).toISOString(); // scheduled end already passed by the time of the report
+  return {
+    id: `plan-${date}`,
+    date,
+    blocks: [{ id: "work-0", kind: "work", start, end, label: "Blocked Task", taskId: "t1" }],
+    reasoning: '"Blocked Task" leads today\'s Plan — due soonest.',
+    version: 1,
+    createdAt: start,
+    updatedAt: start,
+  };
+}
+
+test("runChatCli: a recognized Blocker report reschedules immediately and responds with a single confirmation line, no discussion (UX-DR12, AD-3)", async () => {
+  const store = tempStore();
+  const BLOCKER_NOW = new Date("2026-08-22T18:30:00.000Z");
+  const today = localIsoDate(BLOCKER_NOW, TEST_TIME_ZONE);
+  putTimeBudget(store, { date: today, totalMinutes: 480, workMinutes: 70, breakMinutes: 15 });
+  putPlan(store, blockerSamplePlan(today, BLOCKER_NOW.toISOString()));
+
+  const tasks: Task[] = [makeTask("t1", "Blocked Task", { dueDate: today })];
+  const io = makeScriptedIo(["meeting ran over"]);
+  const llmClient = makeFakeLlmClient();
+
+  await runChatCli(store, io, TEST_TIME_ZONE, llmClient, () => BLOCKER_NOW, async () => tasks);
+
+  assert.equal(llmClient.calls.length, 0, "a recognized Blocker report must never fall through to the LLM catch-all");
+  assert.equal(io.written.length, 1, "a Blocker report response must be exactly one printed line");
+  const response = io.written[0]!;
+  assert.equal(response.includes("\n"), false, "the confirmation must be a single line, not multi-line");
+  assert.doesNotMatch(response, /Today's Plan for/, "must not print a full plan view");
+  assert.doesNotMatch(
+    response,
+    /should|recommend|suggest|next time|try to|advice/i,
+    "must contain no suggestions/commentary about resolving the underlying obstacle",
+  );
+
+  const updated = getPlan(store, today);
+  assert.ok(updated);
+  assert.equal(updated!.data.version, 2, "the Plan must be rescheduled immediately — no confirmation gate (AD-3)");
+  assert.equal(
+    store.listRecordsByKind("interaction-request").length,
+    0,
+    "no Proposal/interaction request may be opened for a Blocker report (AD-3 carve-out)",
+  );
+  store.close();
+});
+
+test("runChatCli: Blocker report trigger says so plainly when no Plan exists yet for today", async () => {
+  const store = tempStore();
+  const io = makeScriptedIo(["meeting ran over"]);
 
   await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => LATE_EVENING_UTC, async () => []);
 

@@ -41,6 +41,26 @@
  * it); see `mid-day-reflow.ts`'s own doc comment and
  * `tests/mid-day-reflow.test.ts`'s structural check for how that's verified.
  *
+ * Task 16 update (Story 2.4, FR-10): a FOURTH deterministic check,
+ * `isBlockerReportCommand`, is added right after `isMidDayReflowCommand`
+ * (still before the general-qa catch-all). It recognizes Spencer reporting
+ * a purely logistical Blocker in plain language ("meeting ran over",
+ * "running late", "traffic", ...) — genuinely more open-ended than
+ * `isMidDayReflowCommand`'s fixed trigger phrasing, so this is a
+ * documented STARTING keyword/phrase heuristic (same spirit as
+ * `isMidDayReflowCommand`/`parseTimeBudgetCommand`'s own "not real NLU"
+ * notes, and FR-2's even-split weights elsewhere in this codebase — a
+ * reasonable v1, not a claim of completeness; richer detection is a natural
+ * future improvement). A match calls `runMidDayReflow` again — the SAME
+ * function Mid-Day Re-Flow uses, with `blockerReported: true` — but renders
+ * the result completely differently: UX-DR12 requires a single confirmation
+ * line with no discussion or suggestions, sharply terser than Task 15's
+ * "one short block" (UX-DR11). `rituals/mid-day-reflow.ts`'s
+ * `buildBlockerConfirmationLine` builds that one line; this file never
+ * prints `outcome.rendered` for this path. Per AD-3, FR-10 is NOT bound by
+ * Propose-Don't-Impose — this reschedules immediately, with no confirmation
+ * gate, exactly like Task 15's trigger already does.
+ *
  * Task 14 update (Story 2.2, FR-18's default/contextual Tone): the catch-all
  * now classifies `line` via `core/tone.ts`'s `resolveToneSystemPrompt` and
  * passes its result as `answerGeneralQuestion`'s `systemPrompt` argument,
@@ -106,7 +126,7 @@ import type { MissingFieldReport } from "../core/data-completeness-gate.ts";
 import { shapeDeclaredTimeBudget } from "../core/time-budget.ts";
 import { resolveToneSystemPrompt } from "../core/tone.ts";
 import { DATA_COMPLETENESS_REQUEST_ID, PLANNING_FIELD_LABELS } from "../rituals/data-completeness.ts";
-import { runMidDayReflow } from "../rituals/mid-day-reflow.ts";
+import { buildBlockerConfirmationLine, runMidDayReflow } from "../rituals/mid-day-reflow.ts";
 import { ACCENT, localIsoDate, renderPlan, RESET } from "../rituals/morning-ritual.ts";
 import type {
   InteractionRequest,
@@ -541,6 +561,83 @@ async function midDayReflowCommand(
   }
 }
 
+// ============================================================================
+// Logistics-Only Blocker Handling (Task 16 / Story 2.4, FR-10, UX-DR12)
+// ============================================================================
+
+/**
+ * Recognizes Spencer reporting a purely logistical Blocker in plain
+ * language — e.g. "meeting ran over", "running late", "something came up",
+ * "traffic", "call went long". Unlike `isMidDayReflowCommand`'s fixed
+ * trigger phrasing, a Blocker report is genuinely open-ended free text
+ * (FR-10's own example names neither a Task nor a duration), so this is a
+ * documented STARTING keyword/phrase heuristic — not real NLU — covering
+ * the common shapes a logistics Blocker report tends to take. It is
+ * deliberately conservative rather than exhaustive: richer (LLM-based, or a
+ * broader phrase library) Blocker detection is a natural future
+ * improvement, not required for this task. Because these phrases can
+ * plausibly appear inside an unrelated factual question (e.g. "what's
+ * traffic like on I-95"), this check is run only AFTER
+ * `parseTimeBudgetCommand`/`isPlanViewCommand`/`isMidDayReflowCommand` have
+ * all already failed to match, and any false positive still degrades
+ * gracefully — it just reschedules the current block, which does no harm
+ * and reports back in one line.
+ */
+const BLOCKER_REPORT_PATTERNS: readonly RegExp[] = [
+  /\bran\s+over\b/i,
+  /\bran\s+late\b/i,
+  /\brunning\s+late\b/i,
+  /\bwent\s+long\b/i,
+  /\bsomething\s+came\s+up\b/i,
+  /\btraffic\b/i,
+  /\bheld\s+up\b/i,
+  /\bdelayed\b/i,
+  /\bgot\s+(interrupted|blocked|stuck)\b/i,
+  /\b(meeting|call)\s+(ran|went)\b/i,
+];
+
+export function isBlockerReportCommand(line: string): boolean {
+  const trimmed = line.trim();
+  if (trimmed.length === 0) return false;
+  return BLOCKER_REPORT_PATTERNS.some((re) => re.test(trimmed));
+}
+
+/**
+ * Answers a Blocker report: calls `rituals/mid-day-reflow.ts`'s
+ * `runMidDayReflow` with `blockerReported: true` (per AD-3, immediately and
+ * automatically — no confirmation gate) and prints ONLY a single
+ * confirmation line, per UX-DR12 — never `outcome.rendered` (that's Task
+ * 15's fuller, multi-line UX-DR11 rendering, reused only by
+ * `midDayReflowCommand` above). No suggestions for resolving the underlying
+ * obstacle, no commentary or judgment.
+ */
+async function blockerReportCommand(
+  store: MemoryStore,
+  io: ChatCliIo,
+  timeZone: string,
+  readTasks: () => Promise<readonly Task[]>,
+  now: () => Date,
+): Promise<void> {
+  const result = await runMidDayReflow({ store, readTasks, now, timeZone, blockerReported: true });
+
+  if (!result.ok) {
+    io.writeLine(`I couldn't reschedule around that: ${result.error.message}`);
+    return;
+  }
+
+  switch (result.value.status) {
+    case "no-plan-today":
+      io.writeLine("There's no Plan for today yet to reschedule.");
+      return;
+    case "nothing-to-reflow":
+      io.writeLine("Nothing needed rescheduling.");
+      return;
+    case "reflowed":
+      io.writeLine(buildBlockerConfirmationLine(result.value));
+      return;
+  }
+}
+
 /**
  * The REPL loop (Task 5, extended by Task 6, Task 11, Task 13, Task 14): on
  * start, and before processing every subsequent line of input, surfaces any
@@ -620,6 +717,11 @@ export async function runChatCli(
 
     if (isMidDayReflowCommand(line)) {
       await midDayReflowCommand(store, io, timeZone, readTasks, now);
+      continue;
+    }
+
+    if (isBlockerReportCommand(line)) {
+      await blockerReportCommand(store, io, timeZone, readTasks, now);
       continue;
     }
 
