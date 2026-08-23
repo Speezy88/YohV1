@@ -159,6 +159,8 @@ import { createInterface } from "node:readline";
 import { Client } from "@notionhq/client";
 import {
   clearInteractionRequest,
+  clearTimeBudgetDeferralStreak,
+  ConflictError,
   createMemoryStore,
   getCurrentTimeBudget,
   getOpenInteractionRequest,
@@ -571,6 +573,20 @@ export interface ProposalEntityAccessor<T> {
  * the answer, then separately clear the request" shape elsewhere in this
  * file. This keeps `apply` reusable for a future proposal kind whose
  * request-clearing story might differ.
+ *
+ * **`accessor.applyChange` is never allowed to escape as an unhandled
+ * throw (review fix, Important #2).** It ultimately calls a real
+ * `memory-store.ts` write (e.g. `putTimeBudget`), which can throw a real
+ * `ConflictError` under AD-10 — a genuine concurrent write racing
+ * `ritual-cli.ts`, the exact scenario `rituals/morning-ritual.ts`'s OWN
+ * side of this same race already wraps in try/catch. This function's own
+ * `Result<..., YohError>` signature promises no throw either, so the call
+ * is wrapped: a `ConflictError` is reported via its own already-`YohError`-shaped
+ * `.yohError` (`kind: "conflict"`) verbatim; any other thrown value is
+ * wrapped as `kind: "unreachable"` — the same kind
+ * `rituals/morning-ritual.ts` already uses for "some adapter-level I/O
+ * failed" (its `readTasks`/`readCalendarEvents`/`sendNotification` catch
+ * sites), which this is structurally the shell-layer equivalent of.
  */
 export async function apply<T>(
   proposal: Proposal<T>,
@@ -600,7 +616,22 @@ export async function apply<T>(
     };
   }
 
-  accessor.applyChange(proposal.suggested);
+  try {
+    accessor.applyChange(proposal.suggested);
+  } catch (err) {
+    if (err instanceof ConflictError) {
+      return { ok: false, error: err.yohError };
+    }
+    return {
+      ok: false,
+      error: {
+        kind: "unreachable",
+        message: `chat-cli: applying proposal "${proposal.id}" failed — ${err instanceof Error ? err.message : String(err)}`,
+        detail: err,
+      },
+    };
+  }
+
   return { ok: true, value: "applied" };
 }
 
@@ -658,7 +689,8 @@ export function parseProposalAnswer(raw: string): boolean | undefined {
  *
  * On "yes": calls `apply` with the accessor for this Proposal's `kind`.
  *  - `"applied"`: clears the request and confirms the change plainly.
- *  - `stale-proposal`: ALSO clears the request (this task's own documented
+ *  - `stale-proposal` (or any other `apply` failure, e.g. a genuine
+ *    `ConflictError`): ALSO clears the request (this task's own documented
  *    choice for "no change is applied, and the interaction request is
  *    cleared or re-surfaced with fresh data as appropriate" — re-surfacing
  *    a Proposal whose entityVersion snapshot can now never match again
@@ -670,6 +702,24 @@ export function parseProposalAnswer(raw: string): boolean | undefined {
  *    being silently discarded.
  *
  * On "no": clears the request without applying anything.
+ *
+ * **The deferral streak is reset once Spencer has genuinely ANSWERED —
+ * applied OR declined (review fix, Important #1).** Without this, "no" is
+ * never remembered: the streak (`memory-store.ts`'s
+ * `TimeBudgetDeferralStreak`) keeps growing on the very next deferral day
+ * regardless of the answer, so a fresh Proposal with the same substance
+ * reappears every subsequent day the pattern continues — exactly the
+ * "confirmation turns into daily nagging" UX-DR16 exists to prevent. And on
+ * "yes" it's worse: the budget is raised but the streak still stands, so a
+ * day-4 deferral would propose ANOTHER increase stacked on top of the one
+ * Spencer just accepted. `clearTimeBudgetDeferralStreak` — the same
+ * "cleared entirely, not floored/decremented" shape
+ * `core/time-budget.ts`'s own `nextTimeBudgetDeferralStreak` already uses
+ * for a zero-deferral day — is called only when `apply` actually resolved
+ * (`result.ok`, covering both `"applied"` and `"declined"`), NOT on a
+ * `stale-proposal`/`ConflictError` rejection: Spencer never got to
+ * genuinely decide in that case, so the streak (and whatever real pattern
+ * it reflects) is left exactly as-is for the next run to re-evaluate.
  *
  * Currently the only Proposal `kind` this codebase generates is
  * `"time-budget-change"` — see this file's module docstring for why a
@@ -718,6 +768,9 @@ async function answerProposalRequest(
     const result = await apply(proposal as Proposal<Partial<TimeBudget>>, parsed, timeBudgetEntityAccessor(store));
 
     if (result.ok) {
+      // Review fix, Important #1: reset the streak now that Spencer has
+      // genuinely answered — see this function's own doc comment above.
+      clearTimeBudgetDeferralStreak(store);
       clearThisRequest();
       io.writeLine(result.value === "applied" ? "Done — I've updated your Time Budget." : "Okay — I won't make that change.");
     } else {

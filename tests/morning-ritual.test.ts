@@ -975,3 +975,29 @@ test("Task 23: an already-open Time-Budget-change Proposal is not silently repla
   const secondProposalId = (stillOpen.data.detail as { readonly proposal?: Proposal<Partial<TimeBudget>> }).proposal?.id;
   assert.equal(secondProposalId, firstProposalId, "the same Proposal — Spencer still sees exactly what he was first shown");
 });
+
+test("Review fix (Important #3): when the deferral streak resets to zero, an already-open Time-Budget-change Proposal is invalidated (cleared), not left open with stale justification", async () => {
+  const store = tempStore();
+  putTimeBudget(store, { date: "2026-08-18", totalMinutes: 60, workMinutes: 70, breakMinutes: 15 });
+
+  for (const date of ["2026-08-20", "2026-08-21", "2026-08-22"]) {
+    await runMorningRitualOn(store, date, OVERSIZED_TASK);
+  }
+  assert.ok(
+    getOpenInteractionRequest(store, TIME_BUDGET_PROPOSAL_REQUEST_ID),
+    "sanity: a Proposal is open after 3 consecutive deferral days",
+  );
+
+  // The next day, everything fits — zero deferrals, so the streak (and the
+  // "3 consecutive days" justification the open Proposal's reason names)
+  // is no longer true as of THIS run.
+  const smallTask: readonly Task[] = [makeTask("t2", "Quick email", { estimatedDurationMinutes: 20 })];
+  const result = await runMorningRitualOn(store, "2026-08-23", smallTask);
+  assert.ok(result.ok && result.value.status === "delivered");
+
+  assert.equal(
+    getOpenInteractionRequest(store, TIME_BUDGET_PROPOSAL_REQUEST_ID),
+    undefined,
+    "the Proposal must be invalidated (cleared) — it is never left open with a justification this same run just disproved",
+  );
+});

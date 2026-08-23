@@ -12,10 +12,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   createMemoryStore,
+  ConflictError,
   getOpenInteractionRequest,
   getSlipHistory,
+  getTimeBudgetDeferralStreak,
   getUncheckedDay,
   putOpenInteractionRequest,
+  putTimeBudgetDeferralStreak,
   getTaskFieldOverride,
   mergeTaskFieldOverride,
   getCurrentTimeBudget,
@@ -41,7 +44,7 @@ import {
   type ChatCliIo,
   type ProposalEntityAccessor,
 } from "../src/shell/chat-cli.ts";
-import { localIsoDate, renderPlan } from "../src/rituals/morning-ritual.ts";
+import { localIsoDate, renderPlan, runMorningRitual, TIME_BUDGET_PROPOSAL_REQUEST_ID, type MorningRitualDeps } from "../src/rituals/morning-ritual.ts";
 // The Data-Completeness merge/gate/sync trio is its own capability and lives
 // in its own file (Task 10 review fix); `chat-cli.ts` imports it rather than
 // owning or re-exporting it. Import paths only — the behavior these tests
@@ -1736,4 +1739,128 @@ test("runChatCli surfaces an open Proposal before accepting any other input, and
   assert.equal(getOpenInteractionRequest(store, PROPOSAL_REQUEST_ID), undefined);
   assert.equal(llmClient.calls.length, 0, "the Proposal is fully resolved before the ordinary loop ever reaches the LLM catch-all");
   store.close();
+});
+
+// ============================================================================
+// Review fixes (post-review, Important #1-#3)
+// ============================================================================
+
+test("Review fix (Important #1): a 'no' answer resets the deferral streak — the NEXT deferral day starts a FRESH streak (1), not a continuation (4), and does not immediately re-propose", async () => {
+  const store = tempStore();
+  putTimeBudget(store, { date: "2026-08-20", totalMinutes: 60, workMinutes: 70, breakMinutes: 15 }); // version 1
+  putTimeBudgetDeferralStreak(store, { consecutiveDeferralDays: 3, lastDeferralDate: "2026-08-22" });
+  const proposal = makeTimeBudgetProposal({ entityVersion: "1", suggested: { totalMinutes: 75 } });
+  openTimeBudgetProposalRequest(store, proposal);
+
+  const io = makeScriptedIo(["no"]);
+  await surfaceOpenInteractionRequests(store, io);
+
+  assert.equal(getTimeBudgetDeferralStreak(store), undefined, "the streak must be reset once Spencer has genuinely answered");
+  assert.equal(getOpenInteractionRequest(store, PROPOSAL_REQUEST_ID), undefined);
+  assert.equal(getCurrentTimeBudget(store)?.data.totalMinutes, 60, "nothing was applied on 'no'");
+
+  // The very next deferral day, through the real production wiring
+  // (rituals/morning-ritual.ts's step 8.5) — not a hand-simulated streak.
+  const deps: MorningRitualDeps = {
+    store,
+    readTasks: async () => [makeTask("t1", "Rebuild the deck", { estimatedDurationMinutes: 600 })],
+    readCalendarEvents: async () => [],
+    sendNotification: async () => {},
+    now: () => new Date("2026-08-23T13:00:00.000Z"),
+    timeZone: "UTC",
+    color: false,
+  };
+  const result = await runMorningRitual(deps);
+  assert.ok(result.ok && result.value.status === "nothing-fits");
+
+  const freshStreak = getTimeBudgetDeferralStreak(store);
+  assert.equal(freshStreak?.data.consecutiveDeferralDays, 1, "a FRESH streak, not a continuation of the pre-answer count of 3 (would be 4)");
+  assert.equal(
+    getOpenInteractionRequest(store, TIME_BUDGET_PROPOSAL_REQUEST_ID),
+    undefined,
+    "no immediate re-prompt — a streak of 1 is well below the 3-day threshold",
+  );
+  store.close();
+});
+
+test("Review fix (Important #1): a 'yes' answer ALSO resets the deferral streak — the day-4 deferral does not stack a second increase on top of the one just accepted", async () => {
+  const store = tempStore();
+  putTimeBudget(store, { date: "2026-08-20", totalMinutes: 60, workMinutes: 70, breakMinutes: 15 }); // version 1
+  putTimeBudgetDeferralStreak(store, { consecutiveDeferralDays: 3, lastDeferralDate: "2026-08-22" });
+  const proposal = makeTimeBudgetProposal({ entityVersion: "1", suggested: { totalMinutes: 75 } });
+  openTimeBudgetProposalRequest(store, proposal);
+
+  const io = makeScriptedIo(["yes"]);
+  await surfaceOpenInteractionRequests(store, io);
+
+  assert.equal(getCurrentTimeBudget(store)?.data.totalMinutes, 75, "the accepted change was applied");
+  assert.equal(getTimeBudgetDeferralStreak(store), undefined, "the streak resets even on 'yes' — an accepted change must not compound");
+  store.close();
+});
+
+test("Review fix (Important #2): apply's accessor throwing a genuine ConflictError (memory-store.ts's own optimistic-concurrency check) is caught and returned as a Result failure, not an unhandled throw", async () => {
+  const store = tempStore();
+  putTimeBudget(store, { date: "2026-08-24", totalMinutes: 360, workMinutes: 70, breakMinutes: 15 }); // version 1
+  const staleVersion = getCurrentTimeBudget(store)!.version;
+  // A concurrent writer races ahead (e.g. ritual-cli.ts, AD-10) between
+  // apply()'s version check and its own write attempt.
+  putTimeBudget(store, { date: "2026-08-24", totalMinutes: 400, workMinutes: 70, breakMinutes: 15 }); // version 2
+
+  const proposal = makeTimeBudgetProposal({ entityVersion: String(staleVersion) });
+  const accessor: ProposalEntityAccessor<Partial<TimeBudget>> = {
+    currentVersion: () => String(staleVersion), // the narrow window apply() itself can't fully close
+    applyChange: () => {
+      // Forces memory-store.ts's REAL optimistic-concurrency check to fire
+      // — a genuine ConflictError, not a hand-rolled fake (mirrors
+      // tests/memory-store.test.ts's own precedent for forcing one).
+      store.readModifyWrite<TimeBudget>("time-budget", "current", staleVersion, () => ({
+        date: "2026-08-24",
+        totalMinutes: 480,
+        workMinutes: 70,
+        breakMinutes: 15,
+      }));
+    },
+  };
+
+  const result = await apply(proposal, true, accessor);
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.equal(result.error.kind, "conflict");
+  assert.equal(getCurrentTimeBudget(store)?.data.totalMinutes, 400, "the conflicting write must not have applied");
+  store.close();
+});
+
+test("Review fix (Important #2): apply's accessor throwing a plain Error is caught and returned as a Result failure (kind: 'unreachable'), not an unhandled throw", async () => {
+  const proposal = makeTimeBudgetProposal({ entityVersion: "1" });
+  const accessor: ProposalEntityAccessor<Partial<TimeBudget>> = {
+    currentVersion: () => "1",
+    applyChange: () => {
+      throw new Error("disk full");
+    },
+  };
+
+  const result = await apply(proposal, true, accessor);
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.equal(result.error.kind, "unreachable");
+  assert.match(result.error.message, /disk full/);
+});
+
+test("Review fix (Important #2): a ConflictError's own .yohError is passed through verbatim, not re-wrapped", async () => {
+  const proposal = makeTimeBudgetProposal({ entityVersion: "1" });
+  const conflict = new ConflictError("memory-store: conflicting write to time-budget/current — expected version 1, found 2", {
+    kind: "time-budget",
+    id: "current",
+  });
+  const accessor: ProposalEntityAccessor<Partial<TimeBudget>> = {
+    currentVersion: () => "1",
+    applyChange: () => {
+      throw conflict;
+    },
+  };
+
+  const result = await apply(proposal, true, accessor);
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.equal(result.error, conflict.yohError);
 });

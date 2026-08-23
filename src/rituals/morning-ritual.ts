@@ -170,6 +170,7 @@
  * coupling it doesn't already have.
  */
 import {
+  clearInteractionRequest,
   clearTimeBudgetDeferralStreak,
   getCurrentTimeBudget,
   getOpenInteractionRequest,
@@ -856,8 +857,16 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
   // saw it (same snapshot, same reason) rather than silently replaced by a
   // fresher one every day the pattern continues. Once Spencer answers it
   // (`shell/chat-cli.ts`'s `answerProposalRequest`, which clears the
-  // request), a later run is free to propose again if the pattern is still
-  // happening.
+  // request AND resets the streak — review fix, Important #1), a later run
+  // is free to propose again if the pattern is still happening.
+  //
+  // **Review fix, Important #3.** When the streak resets to zero (the
+  // `else` branch just below), any Proposal already open on the OLD streak
+  // is invalidated too — its `reason` names a "consecutive days" count that
+  // this very run just confirmed is no longer true, so leaving it open
+  // would show Spencer stale justification for a live decision. Cleared,
+  // not re-surfaced: a fresh streak must accumulate again before the same
+  // kind of Proposal is worth proposing.
   //
   // Deliberately NON-FATAL: this whole step is wrapped so that a failure to
   // record the streak or persist a Proposal (e.g. a genuine `ConflictError`
@@ -873,6 +882,13 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
       putTimeBudgetDeferralStreak(deps.store, nextStreak);
     } else {
       clearTimeBudgetDeferralStreak(deps.store);
+      // Review fix, Important #3: the signal that justified any currently
+      // open Proposal just went away — don't leave it dangling.
+      const staleOpenProposal = getOpenInteractionRequest(deps.store, TIME_BUDGET_PROPOSAL_REQUEST_ID);
+      if (staleOpenProposal) {
+        clearInteractionRequest(deps.store, TIME_BUDGET_PROPOSAL_REQUEST_ID, staleOpenProposal.version);
+        log({ level: "info", event: "morning-ritual.time-budget-proposal-invalidated", detail: { date: today } });
+      }
     }
 
     if (nextStreak && storedBudget && !getOpenInteractionRequest(deps.store, TIME_BUDGET_PROPOSAL_REQUEST_ID)) {
