@@ -682,9 +682,9 @@ test("runChatCli: routing unrelated input through the ordinary loop never calls 
 
 // ============================================================================
 // runChatCli — the free-text/general-qa catch-all routes through
-// llm-adapter.ts's routeChatMessage (Task 13), never the old placeholder
-// string. `answerGeneralQuestion`/`classifyChatIntent`'s own unit tests live
-// in tests/llm-adapter.test.ts — these exercise the wiring from
+// llm-adapter.ts's answerGeneralQuestion (Task 13), never the old
+// placeholder string. `answerGeneralQuestion`'s own unit tests live in
+// tests/llm-adapter.test.ts — these exercise the wiring from
 // `runChatCli`'s loop into that adapter.
 // ============================================================================
 

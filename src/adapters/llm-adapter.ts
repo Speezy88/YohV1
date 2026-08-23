@@ -6,64 +6,43 @@
  * table this uses the official `@anthropic-ai/sdk`, never raw HTTP.
  *
  * ============================================================================
- * Intent-routing design (Task 13's own judgment call — the brief leaves the
- * exact mechanism open, only requiring that this story "wires the routing
- * scaffold" without dictating how classification happens)
+ * Scope (post-review simplification)
  * ============================================================================
  *
  * `chat-cli.ts` already owns two cheap, deterministic, zero-API-call
  * recognizers: `parseTimeBudgetCommand` (Task 6) and `isPlanViewCommand`
- * (Task 11). Both remain exactly as they are — this file does not replace,
- * wrap, or duplicate their EXACT grammars, and `runChatCli`'s loop still
- * checks them first, unchanged, before ever reaching this file. Spending a
- * real Claude call to re-derive something a two-line regex already answers
- * for free would be pure waste on every single message Spencer types.
+ * (Task 11). `runChatCli`'s loop checks both first, unchanged, and only
+ * reaches this file's catch-all branch once a line has failed both — so, by
+ * construction, everything this file ever sees is a genuine general/factual
+ * question. `answerGeneralQuestion` (this file's primary export, AD-9) is
+ * therefore the whole of this file's job today: call Claude once and return
+ * its text response.
  *
- * What this file adds is the genuine "route free-text to an intent" piece
- * the brief asks for: `classifyChatIntent` is a pure, synchronous, local
- * classifier (no API call, no I/O) that labels ANY input — including
- * Time-Budget- and Plan-view-shaped text — with a `ChatIntent`. Its two
- * non-`general-qa` heuristics are deliberately LOOSER than `chat-cli.ts`'s
- * own grammars (existence-detection only, not exact parsing): `chat-cli.ts`
- * remains the sole owner and authority for whether a given line actually IS
- * a valid Time Budget/Plan-view command and what to do about it (AD-9 — one
- * capability, one home); this classifier exists so `llm-adapter.ts` itself
- * has a real, independently-testable routing surface, and so a rare line
- * this looser heuristic recognizes but `chat-cli.ts`'s stricter grammar
- * rejects (e.g. "time budget" with no amount) still gets labeled sensibly
- * rather than falling through unclassified. `adapters/*.ts` cannot import
- * from `shell/*.ts` (AD-1's layering runs the other way), so this is a small
- * intentional duplication of shape, not of behavior — documented here rather
- * than silently drifting.
+ * An earlier version of this file also exported a local `classifyChatIntent`
+ * (labeling input as `"time-budget"` / `"plan-view"` / `"general-qa"`) and a
+ * `routeChatMessage` wrapper that classified then always answered regardless
+ * of the label. Code review (Task 13) flagged that classification as
+ * speculative complexity: `chat-cli.ts`'s catch-all only ever read
+ * `result.response`, never `result.intent`, and `routeChatMessage` called
+ * Claude unconditionally either way — so the two non-`general-qa` labels
+ * were computed but never actually changed anything, while duplicating (in
+ * shape, not exact grammar) the same regexes `chat-cli.ts` already owns. Both
+ * were removed rather than kept as unused scaffolding.
  *
- * `ChatIntent` is a closed union today (`"time-budget" | "plan-view" |
- * "general-qa"`) but is meant to grow: Task 15 (Mid-Day Re-Flow) and Task 16
- * (Blocker reports) are expected to add their own members here rather than
- * fork a parallel type, per AD-9's "extend the shared type, never shadow it."
+ * Real intent classification/dispatch for Mid-Day Re-Flow (Task 15) and
+ * Blocker reports (Task 16) is expected to be designed BY those tasks, not
+ * pre-built here — most likely as their own dedicated checks in
+ * `runChatCli`, ahead of this file's catch-all, mirroring how
+ * `parseTimeBudgetCommand`/`isPlanViewCommand` already work. Whoever builds
+ * Task 15/16 should design that dispatch mechanism then, against the real
+ * requirements of those stories, rather than have it guessed at here.
  *
- * `routeChatMessage` is the file's primary export (AD-9): it classifies,
- * then actually calls Claude for anything this file can itself answer.
- * Today that's every non-`general-qa` label too — not just `general-qa` —
- * because this task's third acceptance criterion is unconditional ("a
- * general/factual question with no matching specific intent must still get
- * a response... never an error/refusal"), and `chat-cli.ts`'s catch-all
- * branch only ever reaches this file after its own checks have already
- * ruled out a genuine Time Budget/Plan-view command. A `time-budget`/
- * `plan-view` label reaching `routeChatMessage` therefore only ever
- * represents that rare grammar-mismatch case above, not a real command Task
- * 15/16 will later intercept — those tasks are expected to add their own
- * branch in `runChatCli` BEFORE this file's classification (mirroring how
- * `parseTimeBudgetCommand`/`isPlanViewCommand` are checked first today), not
- * to change what `routeChatMessage` does with an intent it doesn't own a
- * real handler for.
- *
- * `answerGeneralQuestion` is the actual Claude call: model, system prompt,
- * and token cap are file-local constants today. `systemPrompt` is an
- * optional override parameter specifically so Task 14 (`core/tone.ts`) can
- * hand this file a Tone-governed instruction string without changing this
- * function's signature or the caller contract — `tone.ts` stays a pure
- * `core/*.ts` classifier per AD-1/AD-2 (it cannot call Claude itself) and
- * this file remains the only place that actually calls the API.
+ * `answerGeneralQuestion`'s `systemPrompt` parameter is an optional override
+ * specifically so Task 14 (`core/tone.ts`) can hand this file a
+ * Tone-governed instruction string without changing this function's
+ * signature or the caller contract — `tone.ts` stays a pure `core/*.ts`
+ * classifier per AD-1/AD-2 (it cannot call Claude itself) and this file
+ * remains the only place that actually calls the API.
  *
  * Per AD-8, this file may throw on I/O failure rather than returning
  * `Result` itself — a transport-level SDK rejection propagates unchanged,
@@ -123,59 +102,19 @@ export function loadLlmAdapterConfigFromEnv(
 }
 
 // ============================================================================
-// Intent classification — pure, local, no API call (see module docstring)
-// ============================================================================
-
-/**
- * The full set of chat intents `llm-adapter.ts` knows how to label.
- * `"general-qa"` is the catch-all this file itself answers via Claude;
- * `"time-budget"`/`"plan-view"` name intents `chat-cli.ts` already owns real
- * handlers for. Extend this union (never fork a parallel type, AD-9) as
- * later stories in this epic add their own intents — Mid-Day Re-Flow (Task
- * 15) and Blocker reports (Task 16) are the next two expected additions.
- */
-export type ChatIntent = "time-budget" | "plan-view" | "general-qa";
-
-/**
- * Loose, classification-only recognizer for Time-Budget-shaped input — see
- * the module docstring for why this is intentionally NOT the same grammar as
- * `chat-cli.ts`'s `parseTimeBudgetCommand` (that function still owns parsing
- * the actual amount/unit and remains the sole authority on whether a line is
- * a valid command). This only needs the leading phrase.
- */
-const TIME_BUDGET_INTENT_RE = /^(?:set\s+|change\s+)?time\s*budget\b/i;
-
-/**
- * Loose, classification-only recognizer for Plan-view-shaped input — mirrors
- * the phrasings `chat-cli.ts`'s `isPlanViewCommand` recognizes (a bare
- * "plan", "what's my plan", "show plan", etc.) for classification purposes
- * only; see the module docstring.
- */
-const PLAN_VIEW_INTENT_RE =
-  /^(?:what(?:'s|\s+is)\s+(?:my|today'?s)\s+plan|show(?:\s+me)?(?:\s+(?:my|today'?s))?\s+plan|plan)\??$/i;
-
-/**
- * Classifies free-text `input` into a `ChatIntent`. Pure and synchronous —
- * makes no API call and does no I/O, so it's free to run on every message.
- * Anything that doesn't match one of the two loose recognizers above is
- * `"general-qa"`, per this story's acceptance criterion that an
- * unrecognized general/factual question always gets a real intent label
- * (never an error) rather than being left unclassified.
- */
-export function classifyChatIntent(input: string): ChatIntent {
-  const trimmed = input.trim();
-  if (TIME_BUDGET_INTENT_RE.test(trimmed)) return "time-budget";
-  if (PLAN_VIEW_INTENT_RE.test(trimmed)) return "plan-view";
-  return "general-qa";
-}
-
-// ============================================================================
-// Claude call — the real general Q&A response (AD-8: may throw on I/O failure)
+// answerGeneralQuestion — the primary export (AD-9): the real Claude call
+// (AD-8: may throw on I/O failure)
 // ============================================================================
 
 /** Default Claude model for chat responses (per the `claude-api` skill's current defaults). */
 export const CLAUDE_CHAT_MODEL: Anthropic.Model = "claude-opus-5";
 
+/**
+ * A short chat-turn cap, not a "full response" budget — Spencer's questions
+ * here are conversational REPL turns (UX-DR9), not long-form document
+ * generation, so this stays well below the SDK's usual non-streaming
+ * default rather than reserving room for output this path never produces.
+ */
 const CLAUDE_CHAT_MAX_TOKENS = 1024;
 
 /**
@@ -221,30 +160,4 @@ export async function answerGeneralQuestion(
     throw new Error("llm-adapter: Claude returned no text content for a general Q&A response");
   }
   return text;
-}
-
-// ============================================================================
-// routeChatMessage — the primary export (AD-9): classify, then answer
-// ============================================================================
-
-export interface ChatRouteResult {
-  readonly intent: ChatIntent;
-  /** Claude's response text — always populated (see module docstring: this file answers every intent it's handed, not just `"general-qa"`, so a real response is guaranteed regardless of label). */
-  readonly response: string;
-}
-
-/**
- * Classifies `input` (`classifyChatIntent`) and calls Claude for a real
- * response (`answerGeneralQuestion`) regardless of the resulting label — see
- * the module docstring for why: `chat-cli.ts`'s own deterministic checks
- * already run before this function is ever reached in the real REPL loop
- * (`runChatCli`), so by construction this only ever sees genuine
- * `"general-qa"` input in practice, plus the rare grammar-mismatch edge case
- * this file's looser classifier recognizes but `chat-cli.ts`'s stricter one
- * doesn't. Either way, Spencer gets a real answer, never a dead end.
- */
-export async function routeChatMessage(client: AnthropicMessagesClient, input: string): Promise<ChatRouteResult> {
-  const intent = classifyChatIntent(input);
-  const response = await answerGeneralQuestion(client, input);
-  return { intent, response };
 }

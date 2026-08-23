@@ -14,9 +14,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import Anthropic from "@anthropic-ai/sdk";
 import {
-  classifyChatIntent,
   answerGeneralQuestion,
-  routeChatMessage,
   loadLlmAdapterConfigFromEnv,
   CLAUDE_CHAT_MODEL,
   type AnthropicMessagesClient,
@@ -64,28 +62,6 @@ function fakeClient(response: Anthropic.Message | (() => Anthropic.Message)): {
   };
   return { calls, client };
 }
-
-// ============================================================================
-// classifyChatIntent — pure, local classification (no API call)
-// ============================================================================
-
-test("classifyChatIntent labels a Time-Budget-shaped message as 'time-budget'", () => {
-  assert.equal(classifyChatIntent("time budget 6h"), "time-budget");
-  assert.equal(classifyChatIntent("set time budget to 6 hours"), "time-budget");
-  assert.equal(classifyChatIntent("change time budget to 90 minutes"), "time-budget");
-});
-
-test("classifyChatIntent labels a Plan-view-shaped message as 'plan-view'", () => {
-  assert.equal(classifyChatIntent("what's my plan"), "plan-view");
-  assert.equal(classifyChatIntent("show plan"), "plan-view");
-  assert.equal(classifyChatIntent("plan"), "plan-view");
-});
-
-test("classifyChatIntent labels a general/factual question as 'general-qa'", () => {
-  assert.equal(classifyChatIntent("what's the capital of France"), "general-qa");
-  assert.equal(classifyChatIntent("how many ounces in a pound"), "general-qa");
-  assert.equal(classifyChatIntent("hello"), "general-qa");
-});
 
 // ============================================================================
 // answerGeneralQuestion — the real Claude call (injectable client)
@@ -139,26 +115,12 @@ test("answerGeneralQuestion propagates a rejected client call unchanged (AD-8)",
   await assert.rejects(() => answerGeneralQuestion(client, "hello"), /simulated network failure/);
 });
 
-// ============================================================================
-// routeChatMessage — classify + answer (the routing scaffold)
-// ============================================================================
-
-test("routeChatMessage classifies general-qa input and returns Claude's real response", async () => {
-  const { client } = fakeClient(textMessage("The Eiffel Tower is in Paris."));
-
-  const result = await routeChatMessage(client, "where is the Eiffel Tower");
-
-  assert.equal(result.intent, "general-qa");
-  assert.equal(result.response, "The Eiffel Tower is in Paris.");
-});
-
-test("routeChatMessage still returns a real response for a general/factual question with no matching specific intent (never errors/refuses)", async () => {
+test("answerGeneralQuestion still returns a real response for a general/factual question with no matching specific intent (never errors/refuses)", async () => {
   const { client } = fakeClient(textMessage("Water boils at 100°C at sea level."));
 
-  const result = await routeChatMessage(client, "at what temperature does water boil");
+  const response = await answerGeneralQuestion(client, "at what temperature does water boil");
 
-  assert.equal(result.intent, "general-qa");
-  assert.ok(result.response.length > 0);
+  assert.ok(response.length > 0);
 });
 
 // ============================================================================

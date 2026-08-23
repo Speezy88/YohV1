@@ -20,11 +20,14 @@
  * Budget/Plan-view checks is gone. `parseTimeBudgetCommand` and
  * `isPlanViewCommand` still run first, unchanged (cheap, deterministic, no
  * API call — see their own doc comments) — anything that falls through both
- * now routes to `adapters/llm-adapter.ts`'s `routeChatMessage`, which
- * classifies the input and calls Claude for a real answer instead of a
- * canned string. See `llm-adapter.ts`'s own module docstring for the full
- * intent-routing design and why this file's two existing checks were left
- * untouched rather than folded into that classifier.
+ * is, by construction, a genuine general/factual question, and now routes to
+ * `adapters/llm-adapter.ts`'s `answerGeneralQuestion`, which calls Claude for
+ * a real answer instead of a canned string. Real intent dispatch for
+ * Mid-Day Re-Flow (Task 15) and Blocker reports (Task 16) is expected to add
+ * its own check here, ahead of this catch-all, the same way the two checks
+ * above already work — see `llm-adapter.ts`'s own module docstring for the
+ * post-review reasoning on why this file doesn't pre-build that dispatch
+ * shape now.
  *
  * Per AD-1, this shell file contains no core/ritual logic itself: the pure
  * gate logic lives in `core/data-completeness-gate.ts`, and the thin
@@ -72,9 +75,9 @@ import {
   type StoredRecord,
 } from "../adapters/memory-store.ts";
 import {
+  answerGeneralQuestion,
   createAnthropicMessagesClient,
   loadLlmAdapterConfigFromEnv,
-  routeChatMessage,
   type AnthropicMessagesClient,
 } from "../adapters/llm-adapter.ts";
 import type { MissingFieldReport } from "../core/data-completeness-gate.ts";
@@ -456,12 +459,12 @@ function showPlanCommand(store: MemoryStore, io: ChatCliIo, today: IsoDate): voi
  * on-demand Plan-view request (`isPlanViewCommand`) — both checks are
  * unchanged from before Task 13 (see their own doc comments). Anything that
  * falls through both now routes through `llm-adapter.ts`'s
- * `routeChatMessage`, which classifies the input and calls Claude for a real
- * response — never the old placeholder string. A thrown error from that
- * call (AD-8: `adapters/*.ts` may throw on I/O failure) is caught here and
- * surfaced as a plain error line rather than crashing the whole persistent
- * session — ordinary shell-layer error handling, not the Result-conversion
- * AD-8 reserves for `rituals/*.ts`.
+ * `answerGeneralQuestion`, which calls Claude for a real response — never
+ * the old placeholder string. A thrown error from that call (AD-8:
+ * `adapters/*.ts` may throw on I/O failure) is caught here and surfaced as a
+ * plain error line rather than crashing the whole persistent session —
+ * ordinary shell-layer error handling, not the Result-conversion AD-8
+ * reserves for `rituals/*.ts`.
  *
  * `timeZone` is REQUIRED — deliberately never defaulted to UTC, matching
  * `calendar-adapter.ts`/`ritual-cli.ts`'s own convention: "today" must be
@@ -510,8 +513,8 @@ export async function runChatCli(
     }
 
     try {
-      const result = await routeChatMessage(llmClient, line);
-      io.writeLine(result.response);
+      const response = await answerGeneralQuestion(llmClient, line);
+      io.writeLine(response);
     } catch (err) {
       io.writeLine(`I hit a problem trying to answer that: ${err instanceof Error ? err.message : String(err)}`);
     }
