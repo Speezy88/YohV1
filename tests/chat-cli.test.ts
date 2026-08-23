@@ -43,6 +43,7 @@ import {
 } from "../src/rituals/data-completeness.ts";
 import { checkDataCompleteness, type MissingFieldReport } from "../src/core/data-completeness-gate.ts";
 import type { AnthropicMessagesClient } from "../src/adapters/llm-adapter.ts";
+import { resolveToneSystemPrompt } from "../src/core/tone.ts";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { IsoDate, Plan, Task } from "../src/types/domain.ts";
 
@@ -709,6 +710,39 @@ test("runChatCli: a general/factual question with no matching specific intent st
   await runChatCli(store, io, TEST_TIME_ZONE, llmClient);
 
   assert.ok(io.written.includes("The capital of France is Paris."));
+  store.close();
+});
+
+// ============================================================================
+// runChatCli — Tone integration (Task 14): the catch-all hands
+// answerGeneralQuestion a Tone-governed systemPrompt via core/tone.ts's
+// resolveToneSystemPrompt, rather than falling back to
+// answerGeneralQuestion's own DEFAULT_GENERAL_QA_SYSTEM_PROMPT.
+// ============================================================================
+
+test("runChatCli: passes core/tone.ts's resolveToneSystemPrompt(line) as the systemPrompt for a casual message", async () => {
+  const store = tempStore();
+  const llmClient = makeFakeLlmClient("hey yourself");
+  const io = makeScriptedIo(["hey, what's up"]);
+
+  await runChatCli(store, io, TEST_TIME_ZONE, llmClient);
+
+  assert.equal(llmClient.calls.length, 1);
+  assert.equal(llmClient.calls[0]!.system, resolveToneSystemPrompt("hey, what's up"));
+  store.close();
+});
+
+test("runChatCli: passes core/tone.ts's resolveToneSystemPrompt(line) as the systemPrompt for a factual question, and it differs from the casual instruction", async () => {
+  const store = tempStore();
+  const llmClient = makeFakeLlmClient("TCP is connection-oriented; UDP is not.");
+  const io = makeScriptedIo(["What's the difference between TCP and UDP?"]);
+
+  await runChatCli(store, io, TEST_TIME_ZONE, llmClient);
+
+  assert.equal(llmClient.calls.length, 1);
+  const sentSystemPrompt = llmClient.calls[0]!.system;
+  assert.equal(sentSystemPrompt, resolveToneSystemPrompt("What's the difference between TCP and UDP?"));
+  assert.notEqual(sentSystemPrompt, resolveToneSystemPrompt("hey, what's up"));
   store.close();
 });
 

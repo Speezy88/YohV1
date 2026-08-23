@@ -42,7 +42,12 @@
  * Tone-governed instruction string without changing this function's
  * signature or the caller contract — `tone.ts` stays a pure `core/*.ts`
  * classifier per AD-1/AD-2 (it cannot call Claude itself) and this file
- * remains the only place that actually calls the API.
+ * remains the only place that actually calls the API. Task 14 update: this
+ * seam is now wired up — `shell/chat-cli.ts`'s catch-all calls `tone.ts`'s
+ * `resolveToneSystemPrompt(line)` and passes its result here as
+ * `systemPrompt`, so `DEFAULT_GENERAL_QA_SYSTEM_PROMPT` below is only ever
+ * used by a caller that doesn't supply an override (e.g. this file's own
+ * unit tests).
  *
  * Per AD-8, this file may throw on I/O failure rather than returning
  * `Result` itself — a transport-level SDK rejection propagates unchanged,

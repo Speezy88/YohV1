@@ -29,6 +29,14 @@
  * post-review reasoning on why this file doesn't pre-build that dispatch
  * shape now.
  *
+ * Task 14 update (Story 2.2, FR-18's default/contextual Tone): the catch-all
+ * now classifies `line` via `core/tone.ts`'s `resolveToneSystemPrompt` and
+ * passes its result as `answerGeneralQuestion`'s `systemPrompt` argument,
+ * rather than relying on that function's own generic
+ * `DEFAULT_GENERAL_QA_SYSTEM_PROMPT`. `tone.ts` stays pure (AD-1/AD-2) — this
+ * is the one line of wiring that hands its classification to the file that
+ * actually calls Claude.
+ *
  * Per AD-1, this shell file contains no core/ritual logic itself: the pure
  * gate logic lives in `core/data-completeness-gate.ts`, and the thin
  * gate-output-to-memory-store wiring the Task 5 brief's Implementer note
@@ -82,6 +90,7 @@ import {
 } from "../adapters/llm-adapter.ts";
 import type { MissingFieldReport } from "../core/data-completeness-gate.ts";
 import { shapeDeclaredTimeBudget } from "../core/time-budget.ts";
+import { resolveToneSystemPrompt } from "../core/tone.ts";
 import { DATA_COMPLETENESS_REQUEST_ID, PLANNING_FIELD_LABELS } from "../rituals/data-completeness.ts";
 import { ACCENT, localIsoDate, renderPlan, RESET } from "../rituals/morning-ritual.ts";
 import type {
@@ -451,16 +460,18 @@ function showPlanCommand(store: MemoryStore, io: ChatCliIo, today: IsoDate): voi
 }
 
 /**
- * The REPL loop (Task 5, extended by Task 6, Task 11, Task 13): on start,
- * and before processing every subsequent line of input, surfaces any open
- * interaction request(s) first (AD-5). Then checks whether the line is a
- * Time Budget declare/change command (`parseTimeBudgetCommand`) and, if so,
- * validates and persists it (`declareTimeBudget`); then whether it's an
+ * The REPL loop (Task 5, extended by Task 6, Task 11, Task 13, Task 14): on
+ * start, and before processing every subsequent line of input, surfaces any
+ * open interaction request(s) first (AD-5). Then checks whether the line is
+ * a Time Budget declare/change command (`parseTimeBudgetCommand`) and, if
+ * so, validates and persists it (`declareTimeBudget`); then whether it's an
  * on-demand Plan-view request (`isPlanViewCommand`) — both checks are
  * unchanged from before Task 13 (see their own doc comments). Anything that
  * falls through both now routes through `llm-adapter.ts`'s
  * `answerGeneralQuestion`, which calls Claude for a real response — never
- * the old placeholder string. A thrown error from that call (AD-8:
+ * the old placeholder string — governed by `core/tone.ts`'s
+ * `resolveToneSystemPrompt(line)` as its `systemPrompt` (Task 14). A thrown
+ * error from that call (AD-8:
  * `adapters/*.ts` may throw on I/O failure) is caught here and surfaced as a
  * plain error line rather than crashing the whole persistent session —
  * ordinary shell-layer error handling, not the Result-conversion AD-8
@@ -513,7 +524,7 @@ export async function runChatCli(
     }
 
     try {
-      const response = await answerGeneralQuestion(llmClient, line);
+      const response = await answerGeneralQuestion(llmClient, line, resolveToneSystemPrompt(line));
       io.writeLine(response);
     } catch (err) {
       io.writeLine(`I hit a problem trying to answer that: ${err instanceof Error ? err.message : String(err)}`);
