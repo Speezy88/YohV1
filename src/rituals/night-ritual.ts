@@ -118,6 +118,21 @@
  * conflicting answers for the one Notion write `setTaskStatus` can make.
  * `runNightPromptRitual` therefore collects DISTINCT `taskId`s (first-seen
  * label wins), never one entry per block.
+ *
+ * ============================================================================
+ * Unchecked-Day Handling & Rollover (Story 3.3 / Task 21) — see
+ * `detectUncheckedNight`'s own doc comment
+ * ============================================================================
+ *
+ * This file's third and final addition: a pure, read-only predicate for
+ * "was this night ultimately left unchecked even after both close-out
+ * attempts." `detectUncheckedNight`'s own doc comment (near the bottom of
+ * this file) carries the full reasoning for both of this story's genuine
+ * source-text ambiguities — WHEN a night counts as unchecked (there is no
+ * fourth AD-5 subcommand to seal it) and WHAT "mandatory Blocker(s)" means
+ * concretely in this codebase's actual data model. `memory-store.ts`'s new
+ * `UncheckedDay` typed surface is the durable record; `morning-ritual.ts` is
+ * the sole writer of that record and the sole caller of this predicate.
  */
 import {
   clearInteractionRequest,
@@ -714,4 +729,126 @@ export async function runNightEscalateRitual(
 
   log({ level: "info", event: "night-ritual.escalated", detail: { date: today, taskCount: tasks.length } });
   return { ok: true, value: { status: "escalated", date: today, tasks } };
+}
+
+// ============================================================================
+// detectUncheckedNight — the unchecked-day determination (Story 3.3 / Task 21)
+// ============================================================================
+
+/**
+ * ============================================================================
+ * Task 21 (Story 3.3, FR-14, UX-DR14): resolving "when exactly is a night
+ * marked unchecked"
+ * ============================================================================
+ *
+ * AD-5 names exactly four scheduled subcommands (`morning`, `night-prompt`,
+ * `night-escalate`, `self-check`) — nothing runs specifically to "seal" a
+ * night as unchecked once the escalation cap is spent. The natural point,
+ * and the one this task settles on: the NEXT `morning` run is the first
+ * thing that ever runs again after a capped-and-still-unanswered night, so
+ * it is what checks. `detectUncheckedNight` below is the pure, read-only
+ * predicate that check needs; `rituals/morning-ritual.ts` is the caller
+ * (via an injected function on `MorningRitualDeps` — see that file's own
+ * "Task 21" docstring section for why this is injected rather than
+ * imported directly: night-ritual.ts already imports several VALUES from
+ * morning-ritual.ts, `import`ing this function the other way would open a
+ * genuine two-file runtime cycle between the pair of them).
+ *
+ * A night counts as "left unchecked" exactly when BOTH of these hold, as of
+ * the moment this is checked:
+ *
+ *  1. `night-escalate` genuinely ran FOR `priorNightDate` — i.e. its own
+ *     `RITUAL_RUN_KIND` marker's `.data.date` equals it. This is what
+ *     proves BOTH attempts (the prompt and the escalation) were actually
+ *     spent for that specific night, not merely that some scheduled trigger
+ *     fired at some point.
+ *  2. The singleton close-out interaction request is STILL open, AND still
+ *     describes `priorNightDate` (`detail.date`). This distinguishes the
+ *     "escalated because still unanswered" case from
+ *     `runNightEscalateRitual`'s own `"no-open-request"` outcome (cap
+ *     spent because Spencer genuinely answered before/during that run —
+ *     see that outcome's own doc comment): a request that has since been
+ *     cleared, or has since moved on to naming a LATER night (the
+ *     singleton is "put"/overwritten by each night's own `night-prompt`
+ *     run), means THIS night's close-out did not, in the end, go
+ *     unanswered — however that happened.
+ *
+ * Deliberately does NOT clear, read-then-write, or otherwise touch the
+ * interaction request — this is a pure read. Per this story's own
+ * constraint (UX-DR20, already established by Task 5: "every prompt waits
+ * indefinitely for a response ... FR-13's cap governs retry escalation, not
+ * a response deadline on the prompt itself"), the original prompt must keep
+ * waiting for Spencer's real answer regardless of what this predicate
+ * reports — "unchecked" is a historical record of what happened, not a
+ * mechanism that invalidates or blocks the prompt. If Spencer answers days
+ * later, `applyNightCloseOutConfirmation` still applies exactly as it
+ * always has; this function has no side effect that could interfere with
+ * that.
+ *
+ * ============================================================================
+ * Task 21: resolving "what are 'mandatory Blockers,' concretely"
+ * ============================================================================
+ *
+ * There is no persisted `Blocker` entity anywhere in this codebase — FR-10's
+ * Blocker handling (Task 16) is a transient mid-day rescheduling trigger
+ * with no lasting record, and the PRD's own Glossary defines "Blocker" only
+ * generically ("a logistical obstacle to a Plan Block"). The most
+ * defensible, implementable reading given what actually exists: an
+ * unchecked night means Spencer never confirmed which `work` Plan
+ * Blocks/Tasks completed or slipped, so every Task still named by that
+ * night's close-out request is what "rolls forward" as still needing
+ * attention. Concretely, that is simply `tasks` below, read verbatim off
+ * the still-open request's own `detail.tasks` — the same list
+ * `runNightPromptRitual` built. This also naturally handles a PARTIALLY
+ * answered close-out correctly without any extra bookkeeping:
+ * `chat-cli.ts`'s `answerNightCloseOutRequest` only ever clears the request
+ * once EVERY named Task has been answered or explicitly skipped (see that
+ * function's own doc comment) — the list of named Tasks never shrinks
+ * mid-way through a partially-completed session. So "still open" already
+ * means "not fully closed out," and everything the request names is
+ * genuinely still part of that unresolved close-out, whether or not some
+ * of them were individually confirmed to Notion before Spencer stopped
+ * partway through.
+ */
+export interface UncheckedNightCheck {
+  /** Always equal to the `priorNightDate` this was checked for — echoed back so a caller doesn't need to thread the date through separately. */
+  readonly date: IsoDate;
+  /** Every Task this night's close-out request named, verbatim — see the doc comment above for why this list is exactly "what rolled forward." */
+  readonly tasks: readonly NightCloseOutTaskDetail[];
+}
+
+/**
+ * Determines whether `priorNightDate` was left unchecked — see the two
+ * doc-comment sections immediately above this function for the full "when"
+ * and "what rolls forward" reasoning. Pure and synchronous: only reads
+ * already-stored `memory-store.ts` state, never throws, never writes
+ * anything.
+ */
+export function detectUncheckedNight(
+  store: MemoryStore,
+  priorNightDate: IsoDate,
+): UncheckedNightCheck | undefined {
+  const escalateRun = getRitualRun(store, NIGHT_ESCALATE_RITUAL_ID);
+  if (escalateRun?.data.date !== priorNightDate) {
+    // Either night-escalate hasn't run at all, or it ran for a DIFFERENT
+    // date — the cap was never spent FOR this specific night, so it cannot
+    // be "unchecked" by this predicate's own definition.
+    return undefined;
+  }
+
+  const open = getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID);
+  if (!open) {
+    // Genuinely answered and cleared (chat-cli.ts) — not unchecked.
+    return undefined;
+  }
+
+  const detail = open.data.detail as NightCloseOutRequestDetail | undefined;
+  if (detail?.date !== priorNightDate) {
+    // Still open, but no longer describing THIS night — a later night's
+    // own night-prompt has since overwritten the singleton. Whatever is
+    // now open is a separate night's own concern, not this one's.
+    return undefined;
+  }
+
+  return { date: priorNightDate, tasks: detail.tasks };
 }

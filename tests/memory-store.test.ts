@@ -31,6 +31,9 @@ import {
   recordSlip,
   clearSlip,
   listSlipHistories,
+  getUncheckedDay,
+  putUncheckedDay,
+  listUncheckedDays,
   type InteractionRequest,
 } from "../src/adapters/memory-store.ts";
 import type { TimeBudget } from "../src/types/domain.ts";
@@ -613,4 +616,76 @@ test("recordSlip: persists across a second connection to the same on-disk file (
   const read = getSlipHistory(store2, "task-1");
   assert.equal(read?.data.consecutiveSlipCount, 1);
   store2.close();
+});
+
+// ============================================================================
+// UncheckedDay (Task 21 / Story 3.3, FR-14, UX-DR14)
+// ============================================================================
+
+test("getUncheckedDay returns undefined for a date that was never left unchecked", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  assert.equal(getUncheckedDay(store, "2026-08-21"), undefined);
+  store.close();
+});
+
+test("putUncheckedDay persists a record retrievable via getUncheckedDay, at version 1", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const record = putUncheckedDay(store, {
+    date: "2026-08-21",
+    rolledForwardTasks: [{ taskId: "t1", taskTitle: "Draft the memo" }],
+    recordedAt: "2026-08-22T13:00:00.000Z",
+  });
+  assert.equal(record.version, 1);
+
+  const read = getUncheckedDay(store, "2026-08-21");
+  assert.ok(read);
+  assert.equal(read.data.date, "2026-08-21");
+  assert.deepEqual(read.data.rolledForwardTasks, [{ taskId: "t1", taskTitle: "Draft the memo" }]);
+  store.close();
+});
+
+test("an UncheckedDay row's mere presence is what distinguishes an unchecked night from a normally-closed one — a closed night has NO row at all, ever", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  // "2026-08-20" was closed out normally — nothing in this codebase ever
+  // calls putUncheckedDay for it.
+  putUncheckedDay(store, {
+    date: "2026-08-21",
+    rolledForwardTasks: [{ taskId: "t1", taskTitle: "Draft the memo" }],
+    recordedAt: "2026-08-22T13:00:00.000Z",
+  });
+
+  assert.equal(getUncheckedDay(store, "2026-08-20"), undefined, "a normally-closed day must never read back as unchecked");
+  assert.ok(getUncheckedDay(store, "2026-08-21"), "the genuinely unchecked day must read back as unchecked");
+  store.close();
+});
+
+test("putUncheckedDay called again for the same date replaces the record (upsert), not a second row", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  putUncheckedDay(store, {
+    date: "2026-08-21",
+    rolledForwardTasks: [{ taskId: "t1", taskTitle: "Draft the memo" }],
+    recordedAt: "2026-08-22T13:00:00.000Z",
+  });
+  const second = putUncheckedDay(store, {
+    date: "2026-08-21",
+    rolledForwardTasks: [{ taskId: "t1", taskTitle: "Draft the memo" }, { taskId: "t2", taskTitle: "Book the flights" }],
+    recordedAt: "2026-08-22T13:05:00.000Z",
+  });
+  assert.equal(second.version, 2);
+
+  const read = getUncheckedDay(store, "2026-08-21");
+  assert.equal(read?.data.rolledForwardTasks.length, 2);
+  assert.equal(listUncheckedDays(store).length, 1, "still exactly one row for this date, not two");
+  store.close();
+});
+
+test("listUncheckedDays lists every night ever recorded as unchecked, across every date", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  putUncheckedDay(store, { date: "2026-08-19", rolledForwardTasks: [], recordedAt: "2026-08-20T13:00:00.000Z" });
+  putUncheckedDay(store, { date: "2026-08-21", rolledForwardTasks: [], recordedAt: "2026-08-22T13:00:00.000Z" });
+
+  const all = listUncheckedDays(store);
+  assert.equal(all.length, 2);
+  assert.deepEqual(all.map((r) => r.id).sort(), ["2026-08-19", "2026-08-21"]);
+  store.close();
 });

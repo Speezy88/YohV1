@@ -39,6 +39,13 @@
  * `PUSHOVER_APP_TOKEN`/`PUSHOVER_USER_KEY` to be configured, same as
  * `morning`.
  *
+ * Task 21 update (Story 3.3): `createMorningRitualDeps` now ALSO wires
+ * `rituals/night-ritual.ts`'s `detectUncheckedNight` to
+ * `MorningRitualDeps.checkUncheckedNight` — the real "was last night left
+ * unchecked" predicate `morning` now consults on every run. No new
+ * subcommand or credentials; this is the same `MemoryStore` `morning`
+ * already opens, read one extra way.
+ *
  * Per AD-1 this shell file contains no ritual logic of its own. It does two
  * things: bind the real adapters/stores to `rituals/morning-ritual.ts`'s
  * injected seams (`createMorningRitualDeps`, below), and translate the
@@ -59,6 +66,7 @@ import { createTokenStore, loadGoogleOAuthConfigFromEnv } from "../adapters/toke
 import { computeSlipBumpLevels } from "../core/slip-bump.ts";
 import { runMorningRitual, type MorningRitualDeps, type MorningRitualOutcome } from "../rituals/morning-ritual.ts";
 import {
+  detectUncheckedNight,
   renderNightEscalateNotice,
   runNightEscalateRitual,
   runNightPromptRitual,
@@ -333,6 +341,10 @@ export function createMorningRitualDeps(
     now: () => new Date(),
     timeZone,
     bumpLevels,
+    // Task 21 (Story 3.3): `rituals/night-ritual.ts`'s own unchecked-night
+    // predicate, bound here rather than imported by `morning-ritual.ts`
+    // itself — see that file's `UncheckedNightInfo` doc comment for why.
+    checkUncheckedNight: (priorNightDate) => detectUncheckedNight(store, priorNightDate),
     log: (entry) => {
       process.stderr.write(`${JSON.stringify(entry)}\n`);
     },

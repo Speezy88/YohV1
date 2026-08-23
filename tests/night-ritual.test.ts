@@ -34,6 +34,8 @@ import {
   applyNightCloseOutConfirmation,
   buildNightCloseOutPromptText,
   buildNightEscalationEmail,
+  clearNightCloseOutRequestIfOpen,
+  detectUncheckedNight,
   NIGHT_CLOSE_OUT_REQUEST_ID,
   NIGHT_ESCALATE_RITUAL_ID,
   NIGHT_PROMPT_RITUAL_ID,
@@ -626,4 +628,124 @@ test("AD-5: night-ritual.ts's night-escalate half never waits for input either �
   const source = readFileSync(join(import.meta.dirname, "..", "src", "rituals", "night-ritual.ts"), "utf8");
   assert.doesNotMatch(source, /node:readline/);
   assert.doesNotMatch(source, /process\.stdin/);
+});
+
+// ============================================================================
+// detectUncheckedNight (Story 3.3 / Task 21)
+// ============================================================================
+
+const PRIOR_NIGHT = "2026-08-21"; // "last night", relative to TODAY ("2026-08-22")
+
+test("detectUncheckedNight: night-escalate never ran for the prior night at all — not unchecked", () => {
+  const store = tempStore();
+  const result = detectUncheckedNight(store, PRIOR_NIGHT);
+  assert.equal(result, undefined);
+});
+
+test("detectUncheckedNight: night-escalate ran, but for a DIFFERENT (earlier) date — not unchecked for THIS date", () => {
+  const store = tempStore();
+  putRitualRun(store, NIGHT_ESCALATE_RITUAL_ID, { date: "2026-08-19", ranAt: "2026-08-19T23:00:00.000Z" });
+  openCloseOutRequest(store, [{ taskId: "t1", taskTitle: "Draft the memo" }]);
+  const result = detectUncheckedNight(store, PRIOR_NIGHT);
+  assert.equal(result, undefined);
+});
+
+test("detectUncheckedNight: the cap was spent for the prior night AND the close-out request is still open for it — genuinely unchecked, names every rolled-forward Task", () => {
+  const store = tempStore();
+  putRitualRun(store, NIGHT_ESCALATE_RITUAL_ID, { date: PRIOR_NIGHT, ranAt: "2026-08-22T01:00:00.000Z" });
+  putOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID, {
+    requestKind: "night-close-out",
+    promptText: buildNightCloseOutPromptText([
+      { taskId: "t1", taskTitle: "Draft the memo" },
+      { taskId: "t2", taskTitle: "Book the flights" },
+    ]),
+    detail: {
+      date: PRIOR_NIGHT,
+      tasks: [
+        { taskId: "t1", taskTitle: "Draft the memo" },
+        { taskId: "t2", taskTitle: "Book the flights" },
+      ],
+    },
+    createdAt: "2026-08-21T22:00:00.000Z",
+  });
+
+  const result = detectUncheckedNight(store, PRIOR_NIGHT);
+  assert.ok(result, "expected the prior night to be reported as unchecked");
+  assert.equal(result.date, PRIOR_NIGHT);
+  assert.deepEqual(
+    result.tasks.map((t) => t.taskTitle),
+    ["Draft the memo", "Book the flights"],
+  );
+});
+
+test("detectUncheckedNight: the cap was spent, but the request has since been genuinely cleared (answered) — NOT unchecked", () => {
+  const store = tempStore();
+  putRitualRun(store, NIGHT_ESCALATE_RITUAL_ID, { date: PRIOR_NIGHT, ranAt: "2026-08-22T01:00:00.000Z" });
+  // No open request at all — mirrors runNightEscalateRitual's own
+  // "no-open-request" case: night-prompt ran, and it was genuinely answered
+  // and cleared before/while the cap was checked.
+  const result = detectUncheckedNight(store, PRIOR_NIGHT);
+  assert.equal(result, undefined);
+});
+
+test("detectUncheckedNight: the still-open request has since moved on to naming a LATER night — not unchecked for the ORIGINAL night by this check", () => {
+  const store = tempStore();
+  putRitualRun(store, NIGHT_ESCALATE_RITUAL_ID, { date: PRIOR_NIGHT, ranAt: "2026-08-22T01:00:00.000Z" });
+  // A later night's own night-prompt has since overwritten the singleton
+  // request (memory-store.ts's "put" semantics) — it now names TODAY, not
+  // PRIOR_NIGHT.
+  openCloseOutRequest(store, [{ taskId: "t3", taskTitle: "Pack for the trip" }]);
+  const detailForToday = getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID)!.data.detail as NightCloseOutRequestDetail;
+  assert.notEqual(detailForToday.date, PRIOR_NIGHT, "sanity: the open request now describes a different night");
+
+  const result = detectUncheckedNight(store, PRIOR_NIGHT);
+  assert.equal(result, undefined);
+});
+
+test("detectUncheckedNight does NOT clear or otherwise mutate the still-open request — it is a pure read (UX-DR20: waits indefinitely)", () => {
+  const store = tempStore();
+  putRitualRun(store, NIGHT_ESCALATE_RITUAL_ID, { date: PRIOR_NIGHT, ranAt: "2026-08-22T01:00:00.000Z" });
+  putOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID, {
+    requestKind: "night-close-out",
+    promptText: buildNightCloseOutPromptText([{ taskId: "t1", taskTitle: "Draft the memo" }]),
+    detail: { date: PRIOR_NIGHT, tasks: [{ taskId: "t1", taskTitle: "Draft the memo" }] },
+    createdAt: "2026-08-21T22:00:00.000Z",
+  });
+  const before = getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID)!;
+
+  detectUncheckedNight(store, PRIOR_NIGHT);
+
+  const after = getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID);
+  assert.ok(after, "the interaction request must still be open after the check");
+  assert.equal(after.version, before.version, "the request must be completely untouched — same version");
+  assert.equal(after.data.createdAt, before.data.createdAt);
+});
+
+test("Spencer answering the original close-out request DAYS later, after it was already reported as unchecked, still works via applyNightCloseOutConfirmation", async () => {
+  const store = tempStore();
+  putRitualRun(store, NIGHT_ESCALATE_RITUAL_ID, { date: PRIOR_NIGHT, ranAt: "2026-08-22T01:00:00.000Z" });
+  putOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID, {
+    requestKind: "night-close-out",
+    promptText: buildNightCloseOutPromptText([{ taskId: "t1", taskTitle: "Draft the memo" }]),
+    detail: { date: PRIOR_NIGHT, tasks: [{ taskId: "t1", taskTitle: "Draft the memo" }] },
+    createdAt: "2026-08-21T22:00:00.000Z",
+  });
+
+  // The unchecked-night check ran (e.g. as part of a Morning Ritual run) —
+  // this must not have disturbed the request in any way.
+  const unchecked = detectUncheckedNight(store, PRIOR_NIGHT);
+  assert.ok(unchecked);
+
+  // Spencer finally answers, days later. This must succeed exactly as it
+  // always has, completely unaffected by the unchecked-night reporting.
+  const applied = await applyNightCloseOutConfirmation(
+    { store, setTaskStatus: async () => ({ ok: true, value: undefined }) },
+    "t1",
+    "completed",
+    PRIOR_NIGHT,
+  );
+  assert.ok(applied.ok, `expected the late answer to still apply successfully, got ${JSON.stringify(applied)}`);
+
+  clearNightCloseOutRequestIfOpen(store);
+  assert.equal(getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID), undefined, "the request clears normally once answered, even late");
 });

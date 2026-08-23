@@ -55,20 +55,66 @@
  *     AD-9), stamping `version` as one past whatever Plan is already stored
  *     for the date (ordinarily none, given step 1).
  * 11. **Render it** (`renderPlan`, below — DESIGN.md's layout/color rules).
+ *     If step 1.5 (below) found a newly-unchecked prior night, its notice is
+ *     prepended as a leading unit ahead of the Plan (Task 21).
  * 12. **Persist the Plan**, then **send exactly one Pushover notification**
- *     (`buildNotificationBody` keeps it inside Pushover's real size limit),
- *     then **write the ran-today marker**. The three-way order is
- *     deliberate — see the comments at each step: the Plan is saved before
- *     the send so a delivery failure can't lose it, and the marker is
- *     written after the send so a transient Pushover failure is retried by
- *     the next trigger instead of permanently burning the day. The `Result`
- *     failure and structured log line this returns are what Epic 5's AD-7
- *     failure alerting will hang off; this task builds the shape, not the
- *     alert.
+ *     (`buildNotificationBody` keeps it inside Pushover's real size limit,
+ *     budgeted around the unchecked-night notice's own length when one is
+ *     present), then **write the ran-today marker**, then — only once that
+ *     marker write succeeds — **record the unchecked night as flagged**
+ *     (Task 21's `UncheckedDay` row, which doubles as "already shown once").
+ *     The order is deliberate — see the comments at each step: the Plan is
+ *     saved before the send so a delivery failure can't lose it, the
+ *     ran-today marker is written after the send so a transient Pushover
+ *     failure is retried by the next trigger instead of permanently burning
+ *     the day, and the `UncheckedDay` flag is written LAST of all so a
+ *     failed send never burns Spencer's one guaranteed look at it either.
+ *     The `Result` failure and structured log line this returns are what
+ *     Epic 5's AD-7 failure alerting will hang off; this task builds the
+ *     shape, not the alert.
  *
  * Between 8 and 9 there is one more gate: if `fitWorkBreakBlocks` deferred
  * EVERY Task (nothing fit the budget), the run returns `nothing-fits` rather
  * than a Plan with no Tasks in it — see that outcome's own doc comment.
+ *
+ * ----------------------------------------------------------------------------
+ * Step 1.5 — the unchecked-day flag (Task 21 / Story 3.3, FR-14, UX-DR14)
+ * ----------------------------------------------------------------------------
+ *
+ * Right after the idempotence guard, this file checks (via the injected
+ * `MorningRitualDeps.checkUncheckedNight` — see that field's own doc
+ * comment for why it is injected rather than imported directly from
+ * `rituals/night-ritual.ts`) whether YESTERDAY was left `unchecked`: both
+ * close-out attempts spent, still unanswered. If so — and only if that
+ * night hasn't already been flagged once before (`memory-store.ts`'s
+ * `UncheckedDay` row for that date is the "already shown" record) — the
+ * eventual `"delivered"` outcome carries the notice, and ONLY once that
+ * outcome's notification genuinely sends does this file write the
+ * `UncheckedDay` row that marks it shown. This is what makes UX-DR14's
+ * "shown once, not a standing repeating reminder" hold: every morning after
+ * the one that showed it, `getUncheckedDay` for that same date already
+ * returns a row, so the check is skipped entirely.
+ *
+ * A run that never reaches `"delivered"` (`nothing-to-plan`/`nothing-fits`)
+ * shows the flag on NEITHER of those outcomes and writes nothing — a
+ * deliberate scope decision: those two outcomes produce no actual "Morning
+ * Plan" at all (UX-DR14's own words), so there is nothing to attach a "last
+ * night wasn't closed" banner to. The accepted cost: on a Morning Ritual
+ * that stays stuck in one of those two outcomes for several days running
+ * (an unrelated Data-Completeness/Time-Budget gap), the flag can go unshown
+ * for longer than one day, or — if a LATER night also ends up unchecked
+ * before the first one is ever shown — the earlier night's own flag can be
+ * superseded (this file's check is always "yesterday," a moving target)
+ * without ever having been displayed. `UncheckedDay`'s own row for the
+ * earlier date still exists (or rather, in that exact scenario, never gets
+ * written at all — it simply stays available as "not yet shown" forever,
+ * silently orphaned once `checkUncheckedNight` stops being asked about it).
+ * This codebase's four-times-a-day AD-5 schedule (`morning`, `night-prompt`,
+ * `night-escalate`, plus whatever cadence Spencer keeps chat open) makes a
+ * multi-day `nothing-to-plan`/`nothing-fits` streak an edge case rather than
+ * the common path, and UX-DR14 asks for "shown once," not "shown
+ * eventually, however long it takes" — so this is a documented, deliberate
+ * scope boundary rather than an oversight.
  *
  * ----------------------------------------------------------------------------
  * The `plan-reasoning.ts` contract
@@ -127,8 +173,10 @@ import {
   getCurrentTimeBudget,
   getPlan,
   getRitualRun,
+  getUncheckedDay,
   putPlan,
   putRitualRun,
+  putUncheckedDay,
   type MemoryStore,
 } from "../adapters/memory-store.ts";
 import { PUSHOVER_MESSAGE_LIMIT, PUSHOVER_TITLE_LIMIT } from "../adapters/notification-adapter.ts";
@@ -390,6 +438,90 @@ export function localIsoDate(instant: Date, timeZone: string): IsoDate {
   return `${get("year")}-${get("month")}-${get("day")}`;
 }
 
+/**
+ * `date`'s immediately preceding calendar date (e.g. `"2026-08-22"` ->
+ * `"2026-08-21"`). Added for Task 21 (Story 3.3): `runMorningRitual` needs
+ * "last night's date" (the Plan/close-out date immediately before `today`)
+ * to check whether that night was left `unchecked`. Pure calendar-date
+ * arithmetic against UTC midnight — mirrors `formatPlanDate`'s own
+ * reasoning above: `date` and the result are both zone-less calendar
+ * dates already, so subtracting one UTC day and reformatting can never be
+ * shifted by any caller's local zone offset.
+ */
+export function previousIsoDate(date: IsoDate): IsoDate {
+  const [year, month, day] = date.split("-").map(Number);
+  const instant = new Date(Date.UTC(year ?? 1970, (month ?? 1) - 1, (day ?? 1) - 1));
+  const y = String(instant.getUTCFullYear()).padStart(4, "0");
+  const m = String(instant.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(instant.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+// ============================================================================
+// The unchecked-day flag (Task 21 / Story 3.3, FR-14, UX-DR14)
+// ============================================================================
+
+/**
+ * What `MorningRitualDeps.checkUncheckedNight` reports when the prior night
+ * genuinely was left unchecked — structurally identical to
+ * `rituals/night-ritual.ts`'s own `UncheckedNightCheck` (that file's
+ * `detectUncheckedNight` is what actually produces one), but declared
+ * separately here rather than imported: `night-ritual.ts` already imports
+ * several VALUES from THIS file (`ATTENTION`, `RESET`, `localIsoDate`,
+ * `shouldUseColor`, `PlanNotification`), so a value-level import the other
+ * way would open a genuine two-file ES-module cycle. Injecting the CHECK as
+ * a function on `MorningRitualDeps` (see that interface below) — the same
+ * shape every other cross-cutting capability in this file already uses
+ * (`readTasks`, `sendNotification`, …) — sidesteps the cycle entirely:
+ * `shell/ritual-cli.ts` (which already imports both files with no
+ * layering conflict, per AD-1's `shell -> rituals`) is what actually binds
+ * `detectUncheckedNight` to this seam in production; every existing test
+ * harness that omits this field simply never sees unchecked-night
+ * behavior, unaffected by this addition.
+ */
+export interface UncheckedNightInfo {
+  readonly date: IsoDate;
+  readonly tasks: readonly { readonly taskId: ExternalId; readonly taskTitle: string }[];
+}
+
+/**
+ * Plain-text degradation of `{colors.attention}` for the unchecked-day
+ * flag, for the one destination in this file that cannot render ANSI color
+ * at all: the Pushover push-notification body (`buildNotificationBody`'s
+ * own contract: "the notification body is always plain"). This is the same
+ * literal marker `rituals/night-ritual.ts`'s `ATTENTION_TEXT_MARKER` uses
+ * for its own un-stylable SMTP escalation email, duplicated here rather
+ * than imported — for the identical reason `UncheckedNightInfo`'s own doc
+ * comment gives (avoiding the one genuine cross-file cycle these two files
+ * must not create). Mirrors the "small, deliberate duplications" precedent
+ * this codebase already uses (`localIsoDate`'s own doc comment, above).
+ */
+export const UNCHECKED_NIGHT_TEXT_MARKER = "ATTENTION:";
+
+/**
+ * Renders the "last night wasn't closed out" notice — UX-DR6's `ATTENTION`
+ * color marker (DESIGN.md reserves it for exactly two moments: Night
+ * Ritual's second, escalated close-out attempt, Task 20; and this, the
+ * unchecked-day flag, Task 21), paired with the plain-text
+ * `UNCHECKED_NIGHT_TEXT_MARKER` wording per UX-DR20 so the meaning survives
+ * with color off. Names every rolled-forward Task by title (this story's
+ * own resolution of "mandatory Blocker(s)" — see
+ * `night-ritual.ts`'s `detectUncheckedNight` doc comment for the full
+ * reasoning). Pure formatting, no I/O — mirrors
+ * `night-ritual.ts`'s own `renderNightEscalateNotice`.
+ */
+export function renderUncheckedNightNotice(
+  info: UncheckedNightInfo,
+  options: { readonly color?: boolean } = {},
+): string {
+  const color = options.color ?? shouldUseColor();
+  const titles = info.tasks.map((t) => t.taskTitle).join(", ");
+  const text = `${UNCHECKED_NIGHT_TEXT_MARKER} ${formatPlanDate(info.date)} wasn't closed out — rolled forward: ${
+    titles.length > 0 ? titles : "nothing named"
+  }.`;
+  return paint(text, ATTENTION, color);
+}
+
 // ============================================================================
 // runMorningRitual — the orchestration itself
 // ============================================================================
@@ -493,6 +625,16 @@ export interface MorningRitualDeps {
   readonly log?: (entry: MorningRitualLogEntry) => void;
   /** Forces color on/off for the returned `rendered` text; defaults to `shouldUseColor()`. The notification body is always plain. */
   readonly color?: boolean;
+  /**
+   * Reports whether `priorNightDate` (the local calendar date immediately
+   * before today) was left `unchecked` — `rituals/night-ritual.ts`'s
+   * `detectUncheckedNight`, injected here rather than imported directly.
+   * See `UncheckedNightInfo`'s own doc comment (above) for why this is a
+   * function seam and not a plain import. Optional: every test harness
+   * (and, before this task, every prior task's) that omits it simply never
+   * exercises unchecked-night behavior. Pure/synchronous — never throws.
+   */
+  readonly checkUncheckedNight?: (priorNightDate: IsoDate) => UncheckedNightInfo | undefined;
 }
 
 /** What one Morning Ritual run did. Discriminated on `status` so a caller can't confuse "delivered" with "skipped". */
@@ -528,12 +670,33 @@ export type MorningRitualOutcome =
       readonly status: "delivered";
       readonly date: IsoDate;
       readonly plan: Plan;
-      /** The Plan as `renderPlan` produced it, for the CLI to print. */
+      /**
+       * The Plan as `renderPlan` produced it, for the CLI to print — with
+       * the unchecked-night notice (Task 21), when present, prepended
+       * ahead of it as its own leading unit. See the "Task 21" comments
+       * inside `runMorningRitual` below for why this is folded into
+       * `rendered` rather than kept as a fully separate field: both
+       * `shell/ritual-cli.ts` and `shell/chat-cli.ts`'s on-demand "what's my
+       * plan" view print this string verbatim, and both should show the
+       * flag exactly where it would otherwise be missed if a caller forgot
+       * to check `uncheckedNight` separately.
+       */
       readonly rendered: string;
       /** Tasks that could not fit today's Time Budget and were left for a future Plan (never force-fit). */
       readonly deferredTaskIds: readonly ExternalId[];
       /** Tasks the Data-Completeness Gate held back; an open interaction request names them. */
       readonly incompleteTaskIds: readonly ExternalId[];
+      /**
+       * Present exactly when this run discovered a newly-unchecked prior
+       * night and is displaying it for the first (and only) time (UX-DR14:
+       * "shown once, not a standing repeating reminder") — `undefined` on
+       * every ordinary morning, including every one before this task and
+       * every subsequent morning after the one that showed it. Exposed as
+       * its own field (in addition to being folded into `rendered`/the
+       * notification body) so a caller — and this file's own tests — can
+       * assert on it directly rather than parsing rendered text.
+       */
+      readonly uncheckedNight?: UncheckedNightInfo;
     };
 
 function failure(kind: YohError["kind"], message: string, detail?: unknown): Result<never, YohError> {
@@ -567,6 +730,31 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
   if (lastRun?.data.date === today) {
     log({ level: "info", event: "morning-ritual.already-ran", detail: { date: today } });
     return { ok: true, value: { status: "already-ran", date: today, planId: lastRun.data.planId } };
+  }
+
+  // --- 1.5. Unchecked-day detection (Task 21 / Story 3.3, FR-14, UX-DR14) --
+  // A pure read, done early and cheaply (no Notion/Calendar call needed):
+  // was YESTERDAY (the night immediately before today) left unchecked, and
+  // — separately — has that already been flagged once before? Both
+  // questions are answered here, but nothing is WRITTEN yet: whether this
+  // run ultimately reaches "delivered" (the only outcome that actually
+  // shows Spencer anything, per UX-DR14's "next Morning Plan") is decided
+  // by everything below, and the `UncheckedDay` record — which doubles as
+  // "already shown" — is only ever written once a Plan carrying this
+  // notice is actually sent (see step 12 below). A run that ends in
+  // `nothing-to-plan`/`nothing-fits` therefore shows nothing this trigger,
+  // but writes nothing either, so a LATER trigger the same day (or the
+  // gate finally clearing) can still show it — see the module docstring's
+  // own step list for why those two outcomes never write markers either.
+  const priorNightDate = previousIsoDate(today);
+  const alreadyFlagged = getUncheckedDay(deps.store, priorNightDate) !== undefined;
+  const uncheckedNight = alreadyFlagged ? undefined : deps.checkUncheckedNight?.(priorNightDate);
+  if (uncheckedNight) {
+    log({
+      level: "info",
+      event: "morning-ritual.unchecked-night-detected",
+      detail: { date: uncheckedNight.date, taskCount: uncheckedNight.tasks.length },
+    });
   }
 
   // --- 2. Read Notion Tasks (AD-8 boundary) ---------------------------------
@@ -701,11 +889,19 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
     updatedAt: nowIso,
   };
 
-  // --- 11. Render -----------------------------------------------------------
-  const rendered = renderPlan(plan, {
+  // --- 11. Render -------------------------------------------------------------
+  // Task 21: the unchecked-night notice (when present) is prepended as its
+  // own leading unit, ahead of the Plan itself — see `MorningRitualOutcome`'s
+  // `"delivered"` variant doc comment for why it is folded into `rendered`
+  // rather than left as a field callers must remember to check separately.
+  const planRendered = renderPlan(plan, {
     timeZone: deps.timeZone,
     ...(deps.color === undefined ? {} : { color: deps.color }),
   });
+  const noticeColor = deps.color ?? shouldUseColor();
+  const rendered = uncheckedNight
+    ? `${renderUncheckedNightNotice(uncheckedNight, { color: noticeColor })}\n\n${planRendered}`
+    : planRendered;
 
   // --- 12a. Persist the generated Plan --------------------------------------
   // Before the send, so a delivery failure never loses the Plan itself.
@@ -717,10 +913,27 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
   }
 
   // --- 12b. Send exactly one notification -----------------------------------
+  // The unchecked-night notice (Task 21), when present, is prepended to the
+  // plain-text notification body too — the ONE destination in this function
+  // that cannot render ANSI at all, hence `renderUncheckedNightNotice`'s own
+  // `color: false` here rather than `noticeColor` above. Its length is
+  // subtracted from `buildNotificationBody`'s own limit budget FIRST, so the
+  // combined body still never exceeds Pushover's real size limit — a
+  // silently-too-long combined message would risk losing the whole
+  // notification, notice included, exactly the failure mode
+  // `buildNotificationBody`'s own doc comment already guards against for the
+  // Plan body alone.
+  const noticePlain = uncheckedNight ? renderUncheckedNightNotice(uncheckedNight, { color: false }) : undefined;
+  const planBodyLimit = noticePlain
+    ? Math.max(0, PUSHOVER_MESSAGE_LIMIT - noticePlain.length - 2)
+    : PUSHOVER_MESSAGE_LIMIT;
+  const notificationBody = noticePlain
+    ? `${noticePlain}\n\n${buildNotificationBody(plan, deps.timeZone, planBodyLimit)}`
+    : buildNotificationBody(plan, deps.timeZone);
   try {
     await deps.sendNotification({
       title: NOTIFICATION_TITLE.slice(0, PUSHOVER_TITLE_LIMIT),
-      message: buildNotificationBody(plan, deps.timeZone),
+      message: notificationBody,
     });
   } catch (err) {
     log({ level: "error", event: "morning-ritual.notify-failed", detail: describeError(err) });
@@ -749,10 +962,45 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
     return failure("conflict", `morning-ritual: today's Plan was sent but could not be marked delivered — ${describeError(err)}`, err);
   }
 
+  // --- 12d. Record the unchecked night as flagged, AFTER a confirmed
+  // delivery (Task 21) ---------------------------------------------------
+  // Deliberately the LAST write, after the notification has genuinely been
+  // sent and the day itself is marked delivered — this `UncheckedDay` row
+  // doubles as "already shown once" (see step 1.5's own comment and
+  // `memory-store.ts`'s `UncheckedDay` doc comment): writing it any earlier
+  // would risk marking the flag "shown" for a run that then fails to
+  // actually deliver anything (e.g. a `sendNotification` failure a few
+  // lines above), silently burning Spencer's one guaranteed look at it. A
+  // failed send above already returns before reaching here, so a later
+  // retry still sees `alreadyFlagged: false` and gets a fresh chance to
+  // show it.
+  if (uncheckedNight) {
+    try {
+      putUncheckedDay(deps.store, {
+        date: uncheckedNight.date,
+        rolledForwardTasks: uncheckedNight.tasks.map((t) => ({ taskId: t.taskId, taskTitle: t.taskTitle })),
+        recordedAt: nowIso,
+      });
+    } catch (err) {
+      log({ level: "error", event: "morning-ritual.unchecked-day-record-failed", detail: describeError(err) });
+      return failure(
+        "conflict",
+        `morning-ritual: today's Plan was sent but the unchecked-night flag for ${uncheckedNight.date} could not be recorded — ${describeError(err)}`,
+        err,
+      );
+    }
+  }
+
   log({
     level: "info",
     event: "morning-ritual.delivered",
-    detail: { date: today, planId: plan.id, blocks: plan.blocks.length, deferred: fitted.value.deferredTaskIds.length },
+    detail: {
+      date: today,
+      planId: plan.id,
+      blocks: plan.blocks.length,
+      deferred: fitted.value.deferredTaskIds.length,
+      uncheckedNightDate: uncheckedNight?.date,
+    },
   });
 
   return {
@@ -764,6 +1012,7 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
       rendered,
       deferredTaskIds: fitted.value.deferredTaskIds,
       incompleteTaskIds,
+      ...(uncheckedNight ? { uncheckedNight } : {}),
     },
   };
 }
