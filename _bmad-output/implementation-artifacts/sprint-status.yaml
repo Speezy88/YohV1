@@ -35,7 +35,7 @@ project_key: NOKEY
 tracking_system: file-system
 story_location: _bmad-output/implementation-artifacts
 development_status:
-  epic-1: in-progress
+  epic-1: done
   1-1-project-scaffold-shared-domain-types: done
   1-2-google-notion-credential-setup-and-storage-bootstrap: done
   1-3-read-notion-tasks-and-projects: done
@@ -47,10 +47,10 @@ development_status:
   1-9-plan-reasoning-line: done
   1-10-generate-and-deliver-the-morning-plan: done
   1-11-on-demand-plan-view-via-chat: done
-  1-12-write-plan-blocks-to-a-dedicated-yoh-plan-calendar: backlog
+  1-12-write-plan-blocks-to-a-dedicated-yoh-plan-calendar: done
   epic-1-retrospective: optional
 
-  epic-2: backlog
+  epic-2: in-progress
   2-1-persistent-chat-session-natural-language-routing: backlog
   2-2-default-and-contextual-tone: backlog
   2-3-user-initiated-mid-day-re-flow: backlog
