@@ -49,7 +49,7 @@
 import Database from "better-sqlite3";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { InteractionRequest, YohError } from "../types/domain.ts";
+import type { InteractionRequest, TaskFieldOverride, YohError } from "../types/domain.ts";
 
 // ============================================================================
 // Config
@@ -367,4 +367,54 @@ export function listOpenInteractionRequests(store: MemoryStore): StoredRecord<In
  */
 export function clearInteractionRequest(store: MemoryStore, id: string, expectedVersion: number): void {
   store.deleteRecord(INTERACTION_REQUEST_KIND, id, expectedVersion);
+}
+
+// ============================================================================
+// Task field overrides (Task 5 fix) — typed surface on `records`
+// ============================================================================
+
+/**
+ * The fixed `records.kind` partition every Spencer-answered
+ * `TaskFieldOverride` is stored under, keyed by the overridden Task's `id`.
+ * Added as part of Task 5's fix: once Spencer answers a Data-Completeness
+ * prompt for a missing field, `chat-cli.ts` persists the parsed answer here
+ * (via `mergeTaskFieldOverride`) rather than discarding it — a raw `Task`
+ * re-read later (e.g. from `notion-adapter.ts`, which still won't have the
+ * field, since Notion write-back is Status-only per AD-12) is merged against
+ * this before being handed to the Data-Completeness Gate again.
+ */
+const TASK_FIELD_OVERRIDE_KIND = "task-field-override";
+
+export type { TaskFieldOverride };
+
+/**
+ * Reads the currently-stored `TaskFieldOverride` for `taskId`, or
+ * `undefined` if Spencer hasn't answered anything for that Task yet.
+ */
+export function getTaskFieldOverride(store: MemoryStore, taskId: string): StoredRecord<TaskFieldOverride> | undefined {
+  return store.getRecord<TaskFieldOverride>(TASK_FIELD_OVERRIDE_KIND, taskId);
+}
+
+/**
+ * Merges `patch` onto the `TaskFieldOverride` already stored for `taskId`
+ * (creating one at `{}` if none exists yet), and persists the merged
+ * result — "put a bit more" semantics, so a Task whose prompt named
+ * multiple missing fields can have each field's answer merged in one at a
+ * time (e.g. as `chat-cli.ts` asks about them one at a time) without a
+ * caller needing to track a version or re-supply fields already answered.
+ * Like `putOpenInteractionRequest`, this reads the current version
+ * internally before calling `readModifyWrite`, so a genuine concurrent
+ * writer racing on the same `taskId` still surfaces `ConflictError` per
+ * AD-10.
+ */
+export function mergeTaskFieldOverride(
+  store: MemoryStore,
+  taskId: string,
+  patch: TaskFieldOverride,
+): StoredRecord<TaskFieldOverride> {
+  const current = store.getRecord<TaskFieldOverride>(TASK_FIELD_OVERRIDE_KIND, taskId);
+  return store.readModifyWrite<TaskFieldOverride>(TASK_FIELD_OVERRIDE_KIND, taskId, current?.version, (existing) => ({
+    ...existing?.data,
+    ...patch,
+  }));
 }

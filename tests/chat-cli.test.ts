@@ -10,17 +10,26 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createMemoryStore, getOpenInteractionRequest, putOpenInteractionRequest } from "../src/adapters/memory-store.ts";
+import {
+  createMemoryStore,
+  getOpenInteractionRequest,
+  putOpenInteractionRequest,
+  getTaskFieldOverride,
+  mergeTaskFieldOverride,
+} from "../src/adapters/memory-store.ts";
 import type { MemoryStore } from "../src/adapters/memory-store.ts";
 import {
   buildMissingFieldsPromptText,
   syncDataCompletenessInteractionRequest,
   surfaceOpenInteractionRequests,
   runChatCli,
+  parseFieldAnswer,
+  applyTaskFieldOverride,
+  mergeStoredOverrides,
   DATA_COMPLETENESS_REQUEST_ID,
   type ChatCliIo,
 } from "../src/shell/chat-cli.ts";
-import type { MissingFieldReport } from "../src/core/data-completeness-gate.ts";
+import { checkDataCompleteness, type MissingFieldReport } from "../src/core/data-completeness-gate.ts";
 import type { Task } from "../src/types/domain.ts";
 
 function tempStore(): MemoryStore {
@@ -131,15 +140,33 @@ test("syncDataCompletenessInteractionRequest does not persist a request when eve
   store.close();
 });
 
-test("syncDataCompletenessInteractionRequest clears a previously-open request once every Task is complete (the Spencer-answered case)", () => {
+test("syncDataCompletenessInteractionRequest clears a previously-open request once the gate re-run's input Task set has the field present (unit-level: caller supplies the now-complete Task directly, not exercising the answer-storage path — see the end-to-end test below for that)", () => {
   const store = tempStore();
   const incompleteTask = makeTask("t1", "Call dentist", { area: undefined });
   syncDataCompletenessInteractionRequest(store, [incompleteTask]);
   assert.ok(getOpenInteractionRequest(store, DATA_COMPLETENESS_REQUEST_ID));
 
-  // Spencer answered — the field is now present when the gate re-runs.
+  // A hand-constructed already-complete Task, standing in for whatever
+  // later re-read of Task data has the field present — this test is only
+  // about syncDataCompletenessInteractionRequest's own clearing logic in
+  // isolation, not about how the field actually became present.
   const nowCompleteTask = makeTask("t1", "Call dentist");
   syncDataCompletenessInteractionRequest(store, [nowCompleteTask]);
+
+  assert.equal(getOpenInteractionRequest(store, DATA_COMPLETENESS_REQUEST_ID), undefined);
+  store.close();
+});
+
+test("syncDataCompletenessInteractionRequest merges a stored TaskFieldOverride onto the raw Task before running the gate", () => {
+  const store = tempStore();
+  const rawTask = makeTask("t1", "Call dentist", { area: undefined });
+
+  // The raw Task is still missing `area` on every re-read (e.g. from
+  // Notion) — but an override for it is already on file from a previous
+  // answer.
+  mergeTaskFieldOverride(store, "t1", { area: "Health" });
+
+  syncDataCompletenessInteractionRequest(store, [rawTask]);
 
   assert.equal(getOpenInteractionRequest(store, DATA_COMPLETENESS_REQUEST_ID), undefined);
   store.close();
@@ -234,5 +261,189 @@ test("an interaction request opened by another kind (e.g. a Proposal) is also su
 
   assert.ok(io.written.some((line) => line.includes("Did you finish today's Tasks?")));
   assert.equal(store.listRecordsByKind("interaction-request").length, 0);
+  store.close();
+});
+
+// ============================================================================
+// parseFieldAnswer — per-field parsing/validation of a raw answer (Task 5 fix)
+// ============================================================================
+
+test("parseFieldAnswer(estimatedDurationMinutes) accepts a positive whole number of minutes", () => {
+  const result = parseFieldAnswer("estimatedDurationMinutes", "30");
+  assert.equal(result.ok, true);
+  if (result.ok) assert.equal(result.value, 30);
+});
+
+test("parseFieldAnswer(estimatedDurationMinutes) rejects non-numeric, zero, negative, and fractional input", () => {
+  for (const raw of ["not a number", "0", "-5", "12.5", ""]) {
+    const result = parseFieldAnswer("estimatedDurationMinutes", raw);
+    assert.equal(result.ok, false, `expected "${raw}" to be rejected`);
+  }
+});
+
+test("parseFieldAnswer(area) accepts any non-blank free-form text", () => {
+  const result = parseFieldAnswer("area", "  Health  ");
+  assert.equal(result.ok, true);
+  if (result.ok) assert.equal(result.value, "Health");
+});
+
+test("parseFieldAnswer(area) rejects blank input", () => {
+  const result = parseFieldAnswer("area", "   ");
+  assert.equal(result.ok, false);
+});
+
+test("parseFieldAnswer(dueDate) accepts a YYYY-MM-DD date", () => {
+  const result = parseFieldAnswer("dueDate", "2026-08-25");
+  assert.equal(result.ok, true);
+  if (result.ok) assert.equal(result.value, "2026-08-25");
+});
+
+test("parseFieldAnswer(dueDate) rejects an unparseable or malformed date", () => {
+  for (const raw of ["not a date", "08/25/2026", "2026-13-40", "2026-02-30"]) {
+    const result = parseFieldAnswer("dueDate", raw);
+    assert.equal(result.ok, false, `expected "${raw}" to be rejected`);
+  }
+});
+
+test("parseFieldAnswer(status) accepts one of the fixed TaskStatus values, case/space-insensitively", () => {
+  const result = parseFieldAnswer("status", "In Progress");
+  assert.equal(result.ok, true);
+  if (result.ok) assert.equal(result.value, "in-progress");
+});
+
+test("parseFieldAnswer(status) rejects a value outside the fixed enum", () => {
+  const result = parseFieldAnswer("status", "done-ish");
+  assert.equal(result.ok, false);
+});
+
+test("parseFieldAnswer(energy) accepts one of the fixed Energy values, case-insensitively", () => {
+  const result = parseFieldAnswer("energy", "HIGH");
+  assert.equal(result.ok, true);
+  if (result.ok) assert.equal(result.value, "high");
+});
+
+test("parseFieldAnswer(energy) rejects a value outside the fixed enum", () => {
+  const result = parseFieldAnswer("energy", "extreme");
+  assert.equal(result.ok, false);
+});
+
+// ============================================================================
+// applyTaskFieldOverride / mergeStoredOverrides — pure merge helpers
+// ============================================================================
+
+test("applyTaskFieldOverride merges override fields onto a Task, leaving fields the override doesn't mention untouched", () => {
+  const task = makeTask("t1", "Call dentist", { area: undefined, dueDate: undefined });
+  const merged = applyTaskFieldOverride(task, { area: "Health" });
+  assert.equal(merged.area, "Health");
+  assert.equal(merged.dueDate, undefined);
+  assert.equal(merged.estimatedDurationMinutes, 30); // untouched, from makeTask's defaults
+});
+
+test("applyTaskFieldOverride returns the Task unchanged when there is no override", () => {
+  const task = makeTask("t1", "Call dentist");
+  assert.deepEqual(applyTaskFieldOverride(task, undefined), task);
+});
+
+test("mergeStoredOverrides applies each Task's own stored override (if any) from memory-store", () => {
+  const store = tempStore();
+  mergeTaskFieldOverride(store, "t1", { area: "Health" });
+  const t1 = makeTask("t1", "Call dentist", { area: undefined });
+  const t2 = makeTask("t2", "No override for me", { area: undefined });
+
+  const merged = mergeStoredOverrides(store, [t1, t2]);
+
+  assert.equal(merged.find((t) => t.id === "t1")?.area, "Health");
+  assert.equal(merged.find((t) => t.id === "t2")?.area, undefined);
+  store.close();
+});
+
+// ============================================================================
+// Required end-to-end test: gate rejects -> request opened -> chat-cli
+// answers it with real input -> override stored -> merging the override onto
+// the ORIGINAL raw Task and re-running the gate produces a CompleteTask.
+// ============================================================================
+
+test("end-to-end: a missing field answered through chat-cli is stored as an override that makes the original raw Task complete on the next gate run", async () => {
+  const store = tempStore();
+  const rawTask = makeTask("t1", "Call dentist", { area: undefined });
+
+  // 1. Gate rejects it; an interaction request is opened.
+  syncDataCompletenessInteractionRequest(store, [rawTask]);
+  const opened = getOpenInteractionRequest(store, DATA_COMPLETENESS_REQUEST_ID);
+  assert.ok(opened, "expected an open data-completeness interaction request");
+  assert.equal(getTaskFieldOverride(store, "t1"), undefined, "no override should exist yet");
+
+  // Sanity: the gate itself, run directly over the still-raw Task, still
+  // rejects it (nothing has been answered yet).
+  const beforeAnswer = checkDataCompleteness([rawTask]);
+  assert.equal(beforeAnswer.ok, true);
+  if (beforeAnswer.ok) assert.equal(beforeAnswer.value.completeTasks.length, 0);
+
+  // 2. chat-cli answers it with real (scripted) input.
+  const io = makeScriptedIo(["Health"]);
+  await surfaceOpenInteractionRequests(store, io);
+
+  // 3. The override is now stored...
+  const override = getTaskFieldOverride(store, "t1");
+  assert.equal(override?.data.area, "Health");
+  // ...and the interaction request is cleared.
+  assert.equal(getOpenInteractionRequest(store, DATA_COMPLETENESS_REQUEST_ID), undefined);
+
+  // 4. Merging the stored override onto the ORIGINAL raw Task (not a
+  // hand-constructed stand-in — the exact same `rawTask` object from step
+  // 1, still missing `area` itself) and re-running the gate now produces a
+  // CompleteTask.
+  const merged = mergeStoredOverrides(store, [rawTask]);
+  const afterAnswer = checkDataCompleteness(merged);
+  assert.equal(afterAnswer.ok, true);
+  if (!afterAnswer.ok) return;
+  assert.equal(afterAnswer.value.incomplete.length, 0);
+  assert.equal(afterAnswer.value.completeTasks.length, 1);
+  assert.equal(afterAnswer.value.completeTasks[0]?.area, "Health");
+
+  // 5. And the full wiring function, called again with the same raw Task,
+  // agrees: no interaction request re-opens.
+  syncDataCompletenessInteractionRequest(store, [rawTask]);
+  assert.equal(getOpenInteractionRequest(store, DATA_COMPLETENESS_REQUEST_ID), undefined);
+
+  store.close();
+});
+
+test("end-to-end: a Task missing multiple fields is answered field-by-field in one surfacing pass, each stored as its own override", async () => {
+  const store = tempStore();
+  const rawTask = makeTask("t1", "Plan trip", { area: undefined, dueDate: undefined });
+
+  syncDataCompletenessInteractionRequest(store, [rawTask]);
+  const io = makeScriptedIo(["Health", "2026-09-01"]);
+  await surfaceOpenInteractionRequests(store, io);
+
+  const override = getTaskFieldOverride(store, "t1");
+  assert.equal(override?.data.area, "Health");
+  assert.equal(override?.data.dueDate, "2026-09-01");
+  assert.equal(getOpenInteractionRequest(store, DATA_COMPLETENESS_REQUEST_ID), undefined);
+
+  const merged = mergeStoredOverrides(store, [rawTask]);
+  const result = checkDataCompleteness(merged);
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.value.completeTasks.length, 1);
+
+  store.close();
+});
+
+test("an unparseable answer for a numeric field is rejected and re-prompted, not silently stored as garbage", async () => {
+  const store = tempStore();
+  const rawTask = makeTask("t1", "Write report", { estimatedDurationMinutes: undefined });
+  syncDataCompletenessInteractionRequest(store, [rawTask]);
+  const io = makeScriptedIo(["not-a-number", "45"]);
+
+  await surfaceOpenInteractionRequests(store, io);
+
+  const override = getTaskFieldOverride(store, "t1");
+  assert.equal(override?.data.estimatedDurationMinutes, 45);
+  assert.ok(
+    io.written.some((line) => /didn't understand|invalid|couldn't/i.test(line)),
+    "expected a re-prompt/error message for the unparseable first answer",
+  );
   store.close();
 });

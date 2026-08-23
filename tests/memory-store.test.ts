@@ -23,6 +23,8 @@ import {
   getOpenInteractionRequest,
   listOpenInteractionRequests,
   clearInteractionRequest,
+  getTaskFieldOverride,
+  mergeTaskFieldOverride,
   type InteractionRequest,
 } from "../src/adapters/memory-store.ts";
 
@@ -336,5 +338,56 @@ test("full persist -> surface -> clear cycle: after clearing, a fresh put starts
   const second = putOpenInteractionRequest(store, "data-completeness", makeRequest({ promptText: "new round" }));
   assert.equal(second.version, 1);
   assert.equal(getOpenInteractionRequest(store, "data-completeness")?.data.promptText, "new round");
+  store.close();
+});
+
+// ============================================================================
+// Task field overrides (Task 5 fix) — the "Spencer answered a missing
+// field" storage half of the persist/surface/clear cycle.
+// ============================================================================
+
+test("getTaskFieldOverride returns undefined when nothing has been answered for that Task yet", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  assert.equal(getTaskFieldOverride(store, "task-1"), undefined);
+  store.close();
+});
+
+test("mergeTaskFieldOverride creates a new override record on first answer", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  mergeTaskFieldOverride(store, "task-1", { area: "Work" });
+
+  const record = getTaskFieldOverride(store, "task-1");
+  assert.deepEqual(record?.data, { area: "Work" });
+  assert.equal(record?.version, 1);
+  store.close();
+});
+
+test("mergeTaskFieldOverride called again for the same Task adds a field without clobbering a previously-answered one", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  mergeTaskFieldOverride(store, "task-1", { area: "Work" });
+  mergeTaskFieldOverride(store, "task-1", { estimatedDurationMinutes: 30 });
+
+  const record = getTaskFieldOverride(store, "task-1");
+  assert.deepEqual(record?.data, { area: "Work", estimatedDurationMinutes: 30 });
+  assert.equal(record?.version, 2);
+  store.close();
+});
+
+test("mergeTaskFieldOverride overwrites a field's previous value when answered again for the same field", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  mergeTaskFieldOverride(store, "task-1", { area: "Work" });
+  mergeTaskFieldOverride(store, "task-1", { area: "Health" });
+
+  assert.equal(getTaskFieldOverride(store, "task-1")?.data.area, "Health");
+  store.close();
+});
+
+test("overrides for different Tasks are stored independently", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  mergeTaskFieldOverride(store, "task-1", { area: "Work" });
+  mergeTaskFieldOverride(store, "task-2", { area: "Health" });
+
+  assert.equal(getTaskFieldOverride(store, "task-1")?.data.area, "Work");
+  assert.equal(getTaskFieldOverride(store, "task-2")?.data.area, "Health");
   store.close();
 });

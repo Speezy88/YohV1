@@ -181,6 +181,25 @@ export interface CompleteTask
   extends Omit<Task, PlanningFieldNames>,
     Required<Pick<Task, PlanningFieldNames>> {}
 
+/**
+ * TaskFieldOverride — a partial map of planning-field-name to a
+ * Spencer-answered value for one Task, stored by `memory-store.ts` (Task 5's
+ * fix: `kind: "task-field-override"`, keyed by `Task.id`) once Spencer
+ * answers a Data-Completeness prompt for that field. Deliberately `Partial`
+ * (not `Required`, unlike `CompleteTask` above): a Task can accumulate
+ * overrides for its missing fields one at a time across several answered
+ * prompts, so a partially-answered Task is a legitimate intermediate state.
+ *
+ * This is NOT itself a `CompleteTask`, and merging one onto a raw `Task`
+ * (`shell/chat-cli.ts`'s `applyTaskFieldOverride`) still only ever produces
+ * a plain `Task` — AD-11 still holds: only
+ * `core/data-completeness-gate.ts`'s `checkDataCompleteness` may upgrade the
+ * merged result into a `CompleteTask`. The merge step itself lives in
+ * `shell/chat-cli.ts`, not the gate, per AD-2 (the gate stays pure/I-O-free
+ * and must not read `memory-store.ts` itself).
+ */
+export type TaskFieldOverride = Partial<Pick<Task, PlanningFieldNames>>;
+
 // ============================================================================
 // Plan / PlanBlock (FR-1, FR-6–FR-8, AD-9)
 // ============================================================================
