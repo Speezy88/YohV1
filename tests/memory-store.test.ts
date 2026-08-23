@@ -34,6 +34,7 @@ import {
   getUncheckedDay,
   putUncheckedDay,
   listUncheckedDays,
+  markUncheckedDayShown,
   type InteractionRequest,
 } from "../src/adapters/memory-store.ts";
 import type { TimeBudget } from "../src/types/domain.ts";
@@ -687,5 +688,31 @@ test("listUncheckedDays lists every night ever recorded as unchecked, across eve
   const all = listUncheckedDays(store);
   assert.equal(all.length, 2);
   assert.deepEqual(all.map((r) => r.id).sort(), ["2026-08-19", "2026-08-21"]);
+  store.close();
+});
+
+test("markUncheckedDayShown stamps shownAt on an existing record without disturbing rolledForwardTasks/recordedAt, and bumps its version", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  putUncheckedDay(store, {
+    date: "2026-08-21",
+    rolledForwardTasks: [{ taskId: "t1", taskTitle: "Draft the memo" }],
+    recordedAt: "2026-08-22T01:00:00.000Z",
+  });
+  assert.equal(getUncheckedDay(store, "2026-08-21")?.data.shownAt, undefined, "sanity: not yet shown");
+
+  const stamped = markUncheckedDayShown(store, "2026-08-21", "2026-08-22T13:00:00.000Z");
+  assert.equal(stamped.version, 2, "the version increments — a real readModifyWrite, not a no-op");
+  assert.equal(stamped.data.shownAt, "2026-08-22T13:00:00.000Z");
+  assert.deepEqual(stamped.data.rolledForwardTasks, [{ taskId: "t1", taskTitle: "Draft the memo" }], "untouched by the stamp");
+  assert.equal(stamped.data.recordedAt, "2026-08-22T01:00:00.000Z", "untouched by the stamp");
+
+  const read = getUncheckedDay(store, "2026-08-21");
+  assert.equal(read?.data.shownAt, "2026-08-22T13:00:00.000Z");
+  store.close();
+});
+
+test("markUncheckedDayShown throws when no UncheckedDay record exists for that date — a caller bug or a genuine concurrent delete, either of which should surface loudly", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  assert.throws(() => markUncheckedDayShown(store, "2026-08-21", "2026-08-22T13:00:00.000Z"));
   store.close();
 });

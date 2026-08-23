@@ -34,14 +34,14 @@ import {
   UNCHECKED_NIGHT_TEXT_MARKER,
   type MorningRitualDeps,
   type PlanNotification,
-  type UncheckedNightInfo,
 } from "../src/rituals/morning-ritual.ts";
 import { DATA_COMPLETENESS_REQUEST_ID } from "../src/rituals/data-completeness.ts";
 import {
   buildNightCloseOutPromptText,
-  detectUncheckedNight,
   NIGHT_CLOSE_OUT_REQUEST_ID,
   NIGHT_ESCALATE_RITUAL_ID,
+  runNightEscalateRitual,
+  type NightCloseOutRequestDetail,
 } from "../src/rituals/night-ritual.ts";
 import { PUSHOVER_MESSAGE_LIMIT, PUSHOVER_TITLE_LIMIT } from "../src/adapters/notification-adapter.ts";
 import type { CalendarEvent, Plan, PlanBlock, Task } from "../src/types/domain.ts";
@@ -89,7 +89,6 @@ function harness(options: {
   declareBudgetMinutes?: number | undefined;
   timeZone?: string;
   store?: MemoryStore;
-  checkUncheckedNight?: MorningRitualDeps["checkUncheckedNight"];
 }): Harness {
   const store = options.store ?? tempStore();
   const notifications: PlanNotification[] = [];
@@ -112,7 +111,6 @@ function harness(options: {
     timeZone: options.timeZone ?? "UTC",
     color: false,
     ...(options.bumpLevels ? { bumpLevels: options.bumpLevels } : {}),
-    ...(options.checkUncheckedNight ? { checkUncheckedNight: options.checkUncheckedNight } : {}),
   };
 
   return { store, notifications, deps };
@@ -611,19 +609,33 @@ test("today is Spencer's local calendar date, not the UTC one", async () => {
 
 // ============================================================================
 // The unchecked-day flag (Task 21 / Story 3.3, FR-14, UX-DR14)
+//
+// Post-review redesign: detection now happens entirely inside
+// rituals/night-ritual.ts's runNightEscalateRitual, at cap-spend time — see
+// that file's own doc comment. rituals/morning-ritual.ts only ever READS
+// memory-store.ts's UncheckedDay records (via listUncheckedDays) to decide
+// what to DISPLAY, and stamps `shownAt` once it does. The unit-level tests
+// below therefore seed UncheckedDay rows directly (simulating "night-escalate
+// already recorded this"), and the end-to-end test further down exercises
+// the REAL runNightEscalateRitual -> runMorningRitual pipeline across three
+// mornings, reproducing the exact multi-day-gap scenario a code review
+// traced against the FIRST version of this task (which lost the flag
+// permanently in this scenario).
 // ============================================================================
 
-const PRIOR_NIGHT = "2026-08-21"; // TODAY's ("2026-08-22") immediately preceding calendar date
-
-function unchecked(tasks: UncheckedNightInfo["tasks"] = [{ taskId: "t1", taskTitle: "Draft the memo" }]): UncheckedNightInfo {
-  return { date: PRIOR_NIGHT, tasks };
-}
+const PRIOR_NIGHT = "2026-08-21";
 
 test("a delivered Plan carries the unchecked-night notice — visibly flagged, naming every rolled-forward Task by title", async () => {
-  const h = harness({
-    tasks: [makeTask("t1", "Draft the memo", { estimatedDurationMinutes: 60 })],
-    checkUncheckedNight: () => unchecked([{ taskId: "t1", taskTitle: "Draft the memo" }, { taskId: "t2", taskTitle: "Book the flights" }]),
+  const store = tempStore();
+  putUncheckedDay(store, {
+    date: PRIOR_NIGHT,
+    rolledForwardTasks: [
+      { taskId: "t1", taskTitle: "Draft the memo" },
+      { taskId: "t2", taskTitle: "Book the flights" },
+    ],
+    recordedAt: "2026-08-22T01:00:00.000Z",
   });
+  const h = harness({ store, tasks: [makeTask("t1", "Draft the memo", { estimatedDurationMinutes: 60 })] });
 
   const result = await runMorningRitual(h.deps);
   assert.ok(result.ok, `expected success, got ${JSON.stringify(result)}`);
@@ -644,10 +656,13 @@ test("a delivered Plan carries the unchecked-night notice — visibly flagged, n
 });
 
 test("the notice uses the ATTENTION color when color output is on — the same DESIGN.md token Task 20 reserved for exactly this second moment (UX-DR6)", async () => {
-  const h = harness({
-    tasks: [makeTask("t1", "Draft the memo", { estimatedDurationMinutes: 60 })],
-    checkUncheckedNight: () => unchecked(),
+  const store = tempStore();
+  putUncheckedDay(store, {
+    date: PRIOR_NIGHT,
+    rolledForwardTasks: [{ taskId: "t1", taskTitle: "Draft the memo" }],
+    recordedAt: "2026-08-22T01:00:00.000Z",
   });
+  const h = harness({ store, tasks: [makeTask("t1", "Draft the memo", { estimatedDurationMinutes: 60 })] });
   const deps: MorningRitualDeps = { ...h.deps, color: true };
 
   const result = await runMorningRitual(deps);
@@ -655,11 +670,8 @@ test("the notice uses the ATTENTION color when color output is on — the same D
   assert.ok(result.value.rendered.includes(ATTENTION), "expected the literal {colors.attention} escape in the colored rendering");
 });
 
-test("a normal morning (no unchecked prior night) carries no notice at all — a closed day must never be confused with an unchecked one", async () => {
-  const h = harness({
-    tasks: [makeTask("t1", "Draft the memo", { estimatedDurationMinutes: 60 })],
-    checkUncheckedNight: () => undefined, // the prior night was closed out normally
-  });
+test("a normal morning (no pending UncheckedDay record at all) carries no notice — a closed day must never be confused with an unchecked one", async () => {
+  const h = harness({ tasks: [makeTask("t1", "Draft the memo", { estimatedDurationMinutes: 60 })] });
 
   const result = await runMorningRitual(h.deps);
   assert.ok(result.ok && result.value.status === "delivered");
@@ -669,120 +681,149 @@ test("a normal morning (no unchecked prior night) carries no notice at all — a
   assert.equal(getUncheckedDay(h.store, PRIOR_NIGHT), undefined, "no UncheckedDay row should ever exist for a normally-closed night");
 });
 
-test("checkUncheckedNight is called with exactly TODAY's immediately preceding calendar date", async () => {
-  const calls: string[] = [];
-  const h = harness({
-    tasks: [makeTask("t1", "Draft the memo", { estimatedDurationMinutes: 60 })],
-    checkUncheckedNight: (priorNightDate) => {
-      calls.push(priorNightDate);
-      return undefined;
-    },
-  });
-
-  await runMorningRitual(h.deps);
-  assert.deepEqual(calls, [PRIOR_NIGHT]);
-});
-
-test("a delivered Plan carrying the notice records an UncheckedDay row for the prior night, AFTER a successful send", async () => {
-  const h = harness({
-    tasks: [makeTask("t1", "Draft the memo", { estimatedDurationMinutes: 60 })],
-    checkUncheckedNight: () => unchecked([{ taskId: "t1", taskTitle: "Draft the memo" }]),
-  });
-
-  assert.equal(getUncheckedDay(h.store, PRIOR_NIGHT), undefined, "sanity: nothing recorded before this run");
-  const result = await runMorningRitual(h.deps);
-  assert.ok(result.ok && result.value.status === "delivered");
-
-  const record = getUncheckedDay(h.store, PRIOR_NIGHT);
-  assert.ok(record, "expected an UncheckedDay row to have been written");
-  assert.deepEqual(record.data.rolledForwardTasks, [{ taskId: "t1", taskTitle: "Draft the memo" }]);
-});
-
-test("a run that ends in nothing-to-plan never writes the UncheckedDay row — nothing was actually shown to Spencer this trigger", async () => {
-  const h = harness({
-    tasks: [], // no Tasks at all -> nothing-to-plan
-    checkUncheckedNight: () => unchecked(),
-  });
-
-  const result = await runMorningRitual(h.deps);
-  assert.ok(result.ok && result.value.status === "nothing-to-plan");
-  assert.equal(getUncheckedDay(h.store, PRIOR_NIGHT), undefined, "the flag must not be burned on a run that delivered nothing");
-});
-
-test("already flagged (an UncheckedDay row already exists for the prior night): checkUncheckedNight is never even consulted, and no notice is shown again — shown once, not a standing reminder (UX-DR14)", async () => {
+test("a delivered Plan carrying the notice stamps shownAt on the UncheckedDay row, AFTER a successful send", async () => {
   const store = tempStore();
   putUncheckedDay(store, {
     date: PRIOR_NIGHT,
     rolledForwardTasks: [{ taskId: "t1", taskTitle: "Draft the memo" }],
-    recordedAt: "2026-08-22T06:00:00.000Z", // already shown by an earlier trigger today
+    recordedAt: "2026-08-22T01:00:00.000Z",
   });
+  const h = harness({ store, tasks: [makeTask("t1", "Draft the memo", { estimatedDurationMinutes: 60 })] });
 
-  let calls = 0;
-  const h = harness({
-    store,
-    tasks: [makeTask("t1", "Draft the memo", { estimatedDurationMinutes: 60 })],
-    checkUncheckedNight: () => {
-      calls += 1;
-      return unchecked();
-    },
+  assert.equal(getUncheckedDay(store, PRIOR_NIGHT)?.data.shownAt, undefined, "sanity: not yet shown before this run");
+  const result = await runMorningRitual(h.deps);
+  assert.ok(result.ok && result.value.status === "delivered");
+
+  const record = getUncheckedDay(store, PRIOR_NIGHT);
+  assert.ok(record?.data.shownAt, "expected shownAt to be stamped after a confirmed delivery");
+  assert.deepEqual(record.data.rolledForwardTasks, [{ taskId: "t1", taskTitle: "Draft the memo" }], "rolledForwardTasks is untouched by the stamp");
+});
+
+test("a run that ends in nothing-to-plan never stamps shownAt — nothing was actually shown to Spencer this trigger, so the record stays pending", async () => {
+  const store = tempStore();
+  putUncheckedDay(store, {
+    date: PRIOR_NIGHT,
+    rolledForwardTasks: [{ taskId: "t1", taskTitle: "Draft the memo" }],
+    recordedAt: "2026-08-22T01:00:00.000Z",
   });
+  const h = harness({ store, tasks: [] }); // no Tasks at all -> nothing-to-plan
+
+  const result = await runMorningRitual(h.deps);
+  assert.ok(result.ok && result.value.status === "nothing-to-plan");
+  assert.equal(getUncheckedDay(store, PRIOR_NIGHT)?.data.shownAt, undefined, "the flag must not be burned on a run that delivered nothing");
+});
+
+test("already shown (UncheckedDay.shownAt already set): the notice is NOT shown again — shown once, not a standing reminder (UX-DR14)", async () => {
+  const store = tempStore();
+  putUncheckedDay(store, {
+    date: PRIOR_NIGHT,
+    rolledForwardTasks: [{ taskId: "t1", taskTitle: "Draft the memo" }],
+    recordedAt: "2026-08-21T23:00:00.000Z",
+    shownAt: "2026-08-22T06:00:00.000Z", // already shown by an earlier trigger
+  });
+  const h = harness({ store, tasks: [makeTask("t1", "Draft the memo", { estimatedDurationMinutes: 60 })] });
 
   const result = await runMorningRitual(h.deps);
   assert.ok(result.ok && result.value.status === "delivered");
-  assert.equal(calls, 0, "checkUncheckedNight must not even be called once the night is already flagged");
   assert.equal(result.value.uncheckedNight, undefined);
   assert.doesNotMatch(result.value.rendered, /wasn't closed out/i);
 });
 
-// ============================================================================
-// End-to-end across two real mornings, using the REAL detectUncheckedNight
-// (rituals/night-ritual.ts) rather than a hand-rolled stub — this is the
-// closest thing to the actual production wiring (shell/ritual-cli.ts's
-// createMorningRitualDeps) these unit tests can exercise directly.
-// ============================================================================
-
-test("end-to-end: a capped-and-unanswered night is flagged (with rolled-forward Task names) on the very next Morning Plan, and does NOT repeat the morning after that", async () => {
+test("when multiple nights are pending, the OLDEST not-yet-shown one is displayed first — decoupled from 'yesterday specifically'", async () => {
   const store = tempStore();
-  putTimeBudget(store, { date: PRIOR_NIGHT, totalMinutes: 240, workMinutes: 70, breakMinutes: 15 });
+  putUncheckedDay(store, {
+    date: "2026-08-19",
+    rolledForwardTasks: [{ taskId: "t-old", taskTitle: "Older unresolved Task" }],
+    recordedAt: "2026-08-19T23:00:00.000Z",
+  });
+  putUncheckedDay(store, {
+    date: PRIOR_NIGHT, // 2026-08-21, more recent than 2026-08-19
+    rolledForwardTasks: [{ taskId: "t1", taskTitle: "Draft the memo" }],
+    recordedAt: "2026-08-22T01:00:00.000Z",
+  });
+  const h = harness({ store, tasks: [makeTask("t1", "Draft the memo", { estimatedDurationMinutes: 60 })] });
 
-  // Simulate what Tasks 19/20 would have left behind after both close-out
-  // attempts were spent for PRIOR_NIGHT, still unanswered.
-  putRitualRun(store, NIGHT_ESCALATE_RITUAL_ID, { date: PRIOR_NIGHT, ranAt: "2026-08-22T01:00:00.000Z" });
+  const result = await runMorningRitual(h.deps);
+  assert.ok(result.ok && result.value.status === "delivered");
+  assert.equal(result.value.uncheckedNight?.date, "2026-08-19", "the OLDER pending night must be shown first, not the more recent one");
+  assert.match(result.value.rendered, /Older unresolved Task/);
+  assert.equal(getUncheckedDay(store, "2026-08-19")?.data.shownAt !== undefined, true);
+  assert.equal(getUncheckedDay(store, PRIOR_NIGHT)?.data.shownAt, undefined, "the newer pending night is untouched — its turn comes later");
+});
+
+// ============================================================================
+// End-to-end: the REAL runNightEscalateRitual -> runMorningRitual pipeline
+// across three mornings, reproducing the exact scenario a code review traced
+// against the FIRST version of this task (Important #1): night N goes
+// unchecked, morning N+1 does NOT deliver, and — the bug being fixed here —
+// the flag must NOT be lost; it must surface on the next morning that
+// actually delivers, still correctly attributed to night N.
+// ============================================================================
+
+test("end-to-end: a capped-and-unanswered night is recorded as unchecked the MOMENT the cap is reached, survives a non-delivering morning without being lost, and is shown once on the next delivering morning", async () => {
+  const store = tempStore();
+
+  // --- Night N (2026-08-21): both close-out attempts spent, still unanswered.
   putOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID, {
     requestKind: "night-close-out",
     promptText: buildNightCloseOutPromptText([{ taskId: "t1", taskTitle: "Draft the memo" }]),
     detail: { date: PRIOR_NIGHT, tasks: [{ taskId: "t1", taskTitle: "Draft the memo" }] },
-    createdAt: "2026-08-21T22:00:00.000Z",
+    createdAt: "2026-08-21T20:00:00.000Z",
   });
-
-  const tasks = [makeTask("t1", "Draft the memo", { estimatedDurationMinutes: 60 })];
-  const h = harness({
+  const escalated = await runNightEscalateRitual({
     store,
-    tasks,
-    declareBudgetMinutes: 0, // already declared above, carries forward
-    checkUncheckedNight: (priorNightDate) => detectUncheckedNight(store, priorNightDate),
+    sendEscalationEmail: async () => {},
+    now: () => new Date(`${PRIOR_NIGHT}T23:00:00.000Z`),
+    timeZone: "UTC",
   });
+  assert.ok(escalated.ok && escalated.value.status === "escalated", `expected escalation, got ${JSON.stringify(escalated)}`);
+  assert.ok(getUncheckedDay(store, PRIOR_NIGHT), "recorded the MOMENT the cap was reached — not deferred to some later morning");
+  assert.equal(getUncheckedDay(store, PRIOR_NIGHT)?.data.shownAt, undefined);
+  assert.equal(getRitualRun(store, NIGHT_ESCALATE_RITUAL_ID)?.data.date, PRIOR_NIGHT);
 
-  // --- Morning of TODAY (2026-08-22): the very next Morning Ritual run ------
-  const first = await runMorningRitual(h.deps);
-  assert.ok(first.ok, `expected success, got ${JSON.stringify(first)}`);
-  assert.ok(first.value.status === "delivered");
-  assert.ok(first.value.uncheckedNight, "expected the newly-discovered unchecked night to be flagged");
-  assert.equal(first.value.uncheckedNight?.date, PRIOR_NIGHT);
-  assert.match(first.value.rendered, /wasn't closed out/i);
-  assert.match(first.value.rendered, /Draft the memo/);
-  assert.ok(getUncheckedDay(store, PRIOR_NIGHT), "the night is now durably recorded as unchecked");
+  // --- Morning N+1 (2026-08-22): the Morning Ritual does NOT deliver
+  //     (nothing-to-plan) — the exact scenario the review traced as
+  //     PERMANENTLY losing the flag in the first version of this task,
+  //     because that version inferred "unchecked" from state the NEXT
+  //     night's own rituals would go on to overwrite, rather than recording
+  //     it durably up front.
+  const notDelivering = harness({ store, tasks: [] });
+  const notDeliveredResult = await runMorningRitual(notDelivering.deps);
+  assert.ok(notDeliveredResult.ok && notDeliveredResult.value.status === "nothing-to-plan");
+  assert.equal(
+    getUncheckedDay(store, PRIOR_NIGHT)?.data.shownAt,
+    undefined,
+    "the recorded unchecked night must survive a non-delivering morning — not lost",
+  );
 
-  // The original interaction request must survive completely untouched —
-  // Spencer can still answer it later via the normal chat-cli.ts path.
+  // --- Night N+1 runs normally (no escalation needed) — nothing recorded for
+  //     it; this is the "later night" whose own night-prompt would, in the
+  //     OLD design, have overwritten the singletons detection used to depend
+  //     on. That dependency no longer exists.
+
+  // --- Morning N+2 (2026-08-23): the next morning that actually delivers ---
+  const delivering = harness({ store, tasks: [makeTask("t1", "Draft the memo", { estimatedDurationMinutes: 60 })] });
+  const deliveringDeps: MorningRitualDeps = { ...delivering.deps, now: () => new Date("2026-08-23T13:00:00.000Z") };
+  const delivered = await runMorningRitual(deliveringDeps);
+  assert.ok(delivered.ok, `expected success, got ${JSON.stringify(delivered)}`);
+  assert.ok(delivered.value.status === "delivered");
+  assert.ok(delivered.value.uncheckedNight, "the still-pending unchecked night must still surface — not lost");
+  assert.equal(delivered.value.uncheckedNight?.date, PRIOR_NIGHT, "still the ORIGINAL unchecked night, correctly attributed — not conflated with a later one");
+  assert.match(delivered.value.rendered, /wasn't closed out/i);
+  assert.match(delivered.value.rendered, /Draft the memo/);
+  assert.ok(getUncheckedDay(store, PRIOR_NIGHT)?.data.shownAt, "now stamped as shown");
+
+  // The original interaction request must survive completely untouched
+  // throughout — Spencer can still answer it via the normal chat-cli.ts path.
   const stillOpen = getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID);
-  assert.ok(stillOpen, "the original close-out request must not be cleared by the unchecked-day mechanism");
+  assert.ok(stillOpen, "the original close-out request must not be cleared by any of this");
+  assert.equal((stillOpen.data.detail as NightCloseOutRequestDetail).date, PRIOR_NIGHT);
 
-  // --- The morning AFTER that (2026-08-23): must NOT repeat the flag --------
-  const secondDeps: MorningRitualDeps = { ...h.deps, now: () => new Date("2026-08-23T13:00:00.000Z") };
-  const second = await runMorningRitual(secondDeps);
-  assert.ok(second.ok, `expected success, got ${JSON.stringify(second)}`);
-  assert.ok(second.value.status === "delivered");
-  assert.equal(second.value.uncheckedNight, undefined, "the flag must not repeat on a later Morning Plan");
-  assert.doesNotMatch(second.value.rendered, /wasn't closed out/i);
+  // --- A hypothetical morning N+3 must NOT show it again (shown once) -------
+  const third = harness({ store, tasks: [makeTask("t1", "Draft the memo", { estimatedDurationMinutes: 60 })] });
+  const thirdDeps: MorningRitualDeps = { ...third.deps, now: () => new Date("2026-08-24T13:00:00.000Z") };
+  const thirdResult = await runMorningRitual(thirdDeps);
+  assert.ok(thirdResult.ok && thirdResult.value.status === "delivered");
+  assert.equal(thirdResult.value.uncheckedNight, undefined, "the flag must not repeat on a later Morning Plan");
+  assert.doesNotMatch(thirdResult.value.rendered, /wasn't closed out/i);
 });

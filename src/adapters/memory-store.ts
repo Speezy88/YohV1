@@ -698,13 +698,29 @@ export function listSlipHistories(store: MemoryStore): StoredRecord<SlipHistory>
  * `UncheckedDay`'s own doc comment below). Its PRESENCE for a given date is
  * the durable, queryable distinction FR-14/this story's own AC require
  * between a night that was closed out normally (no row here, ever) and one
- * that was not (a row here, permanently) — `rituals/morning-ritual.ts` is
- * the sole writer, `rituals/night-ritual.ts`'s `detectUncheckedNight` is the
- * sole piece of logic that decides whether one SHOULD be written.
+ * that was not (a row here, permanently).
+ *
+ * **Review-fix note (Task 21, post-review).** The FIRST version of this
+ * mechanism wrote this row from `rituals/morning-ritual.ts`, INFERRING
+ * "was last night unchecked" by re-reading two other singleton records at
+ * display time. That was wrong: both of those singletons (`night-prompt`'s
+ * and `night-escalate`'s own `RitualRun` markers, and the close-out
+ * `InteractionRequest` itself) get silently overwritten by the very next
+ * night's own `night-prompt`/`night-escalate` runs, so if the Morning
+ * Ritual didn't happen to deliver on the ONE morning the inference was
+ * still valid, the unchecked status was lost forever — never written,
+ * never recoverable. The fix: `rituals/night-ritual.ts`'s
+ * `runNightEscalateRitual` is now the SOLE writer, and it writes this row
+ * immediately at the moment it confirms the cap is genuinely spent (the
+ * escalation email was just sent, and the close-out request was still
+ * open) — not inferred later from other state that can and does get
+ * overwritten. `rituals/morning-ritual.ts` now only ever READS this
+ * partition (via `listUncheckedDays`) to decide what to DISPLAY and stamps
+ * `shownAt` once it does — see `UncheckedDay.shownAt`'s own doc comment.
  */
 const UNCHECKED_DAY_KIND = "unchecked-day";
 
-/** One Task named by an unchecked night's close-out request, as of the moment it was recorded — display-only, mirrors `rituals/night-ritual.ts`'s own `NightCloseOutTaskDetail` shape structurally without importing it (see `UncheckedDay`'s own doc comment for why: importing a VALUE from `night-ritual.ts` into this file would be fine layering-wise, but this file deliberately stays a leaf with no `rituals/*.ts` imports at all, matching every other typed surface already in this file). */
+/** One Task named by an unchecked night's close-out request, as of the moment it was recorded — display-only, mirrors `rituals/night-ritual.ts`'s own `NightCloseOutTaskDetail` shape structurally without importing it (this file deliberately stays a leaf with no `rituals/*.ts` imports at all, matching every other typed surface already in this file). */
 export interface UncheckedDayTask {
   readonly taskId: ExternalId;
   readonly taskTitle: string;
@@ -714,11 +730,13 @@ export interface UncheckedDayTask {
  * UncheckedDay — the durable record that `date`'s Night Ritual close-out
  * ultimately went unanswered even after both close-out attempts (Story
  * 3.1's prompt, Story 3.2's capped escalation) were spent. Written exactly
- * once per night, by `rituals/morning-ritual.ts`, the first time the
- * FOLLOWING Morning Ritual actually delivers a Plan carrying the "last
- * night wasn't closed" notice (UX-DR14: "shown once, not a standing
- * repeating reminder") — see that file's own docstring for the full timing
- * design this task (Task 21) settled on.
+ * once per night, by `rituals/night-ritual.ts`'s `runNightEscalateRitual`,
+ * at the moment it confirms the escalation cap is genuinely spent AND the
+ * close-out request is still open — the actual "cap reached" moment this
+ * story's AC1 describes, not inferred later by `rituals/morning-ritual.ts`
+ * re-reading other state (see `UNCHECKED_DAY_KIND`'s own "review-fix note"
+ * above for why the first version got this wrong, and why detection must
+ * not depend on records the next night's own rituals can and do overwrite).
  *
  * `rolledForwardTasks` is this story's own resolution of "mandatory
  * Blocker(s)": there is no persisted `Blocker` entity anywhere in this
@@ -736,20 +754,41 @@ export interface UncheckedDayTask {
  * today's live Notion state.
  *
  * Never written by clearing or replacing the underlying
- * `InteractionRequest` this data was read from — per this story's own
- * constraint (itself derived from UX-DR20, already established by Task 5:
- * "every prompt waits indefinitely for a response ... FR-13's cap governs
- * retry escalation, not a response deadline on the prompt itself"), the
- * original close-out prompt must keep waiting for Spencer's real answer
- * indefinitely, even after this record exists. `getOpenInteractionRequest`/
- * `applyNightCloseOutConfirmation` are completely unaffected by this row's
- * presence.
+ * `InteractionRequest` this data was read from — writing this row is a
+ * plain read-then-put against `INTERACTION_REQUEST_KIND`'s own singleton
+ * row, with no delete/clear anywhere in the path. **The actual bound on
+ * "how long can Spencer still answer it," corrected (Task 21 post-review —
+ * the original doc comment here overclaimed "whenever he gets to it, even
+ * days later," which is false beyond one night):** the close-out
+ * `InteractionRequest` singleton (`NIGHT_CLOSE_OUT_REQUEST_ID`) can be
+ * answered right up until the NEXT night's own `night-prompt` run
+ * overwrites that same singleton row with a fresh request for the new
+ * night ("put" semantics — see `putOpenInteractionRequest`'s own doc
+ * comment). Recording THIS row does not shorten that window at all (it is
+ * a pure read-then-put, never a delete), but the window itself is real and
+ * finite, bounded by the next night's own `night-prompt`, not indefinite.
+ * Fully closing that gap (e.g. keying close-out requests by date instead of
+ * one singleton, so an unanswered night's own request survives even after
+ * a later night's `night-prompt` runs) is a separate, future story-scoped
+ * change — not something this task builds.
  */
 export interface UncheckedDay {
   readonly date: IsoDate;
   readonly rolledForwardTasks: readonly UncheckedDayTask[];
-  /** When the Morning Ritual actually recorded (and displayed) this — not the night's own date. */
+  /** When `night-escalate` confirmed the cap was spent and recorded this — not the night's own date. */
   readonly recordedAt: IsoDateTime;
+  /**
+   * When `rituals/morning-ritual.ts` actually displayed this on a delivered
+   * Morning Plan — `undefined` until then. This is what makes UX-DR14's
+   * "shown once, not a standing repeating reminder" hold: `undefined` means
+   * "still pending, show it on the next Plan that actually delivers,
+   * however many days that takes"; once set, it never shows again. Stamped
+   * by `markUncheckedDayShown` below, separately from the record's own
+   * creation — this is the Task 21 post-review fix that decouples
+   * "detected" from "displayed," so a run that fails to deliver (or simply
+   * doesn't happen) can never permanently lose an already-recorded night.
+   */
+  readonly shownAt?: IsoDateTime;
 }
 
 /** Reads the stored `UncheckedDay` record for `date`, or `undefined` if that night was never left unchecked (or hasn't been recorded as such yet). Its mere presence/absence is the AC's own "visibly distinguishable from a closed day" distinction — a normally-closed night never has a row here. */
@@ -762,13 +801,12 @@ export function getUncheckedDay(store: MemoryStore, date: IsoDate): StoredRecord
  * `putPlan`/`putTimeBudget`: the caller doesn't thread a version through,
  * but a genuine concurrent writer racing on the same date still surfaces
  * `ConflictError` per AD-10 (this reads the current row's version
- * internally and hands it to `readModifyWrite`). In ordinary operation this
- * is called exactly once per night (the date is only ever a "newly
- * discovered" unchecked night once — see `morning-ritual.ts`'s own "already
- * flagged" gate, which reads this same record BEFORE deciding whether to
- * check for a fresh one), but "put" rather than "create-only" semantics
- * keeps this consistent with every sibling writer in this file rather than
- * inventing a stricter primitive this one caller alone would need.
+ * internally and hands it to `readModifyWrite`). Called exactly once per
+ * night, by `rituals/night-ritual.ts`'s `runNightEscalateRitual`, at the
+ * moment it confirms the cap is genuinely spent — see `UncheckedDay`'s own
+ * doc comment. "Put" rather than "create-only" semantics keeps this
+ * consistent with every sibling writer in this file rather than inventing a
+ * stricter primitive this one caller alone would need.
  */
 export function putUncheckedDay(store: MemoryStore, day: UncheckedDay): StoredRecord<UncheckedDay> {
   const current = store.getRecord<UncheckedDay>(UNCHECKED_DAY_KIND, day.date);
@@ -776,12 +814,45 @@ export function putUncheckedDay(store: MemoryStore, day: UncheckedDay): StoredRe
 }
 
 /**
+ * Stamps `shownAt` on the already-recorded `UncheckedDay` row for `date` —
+ * "merge a bit more" semantics, like `mergeTaskFieldOverride`: reads the
+ * row's current version internally (so a genuine concurrent writer still
+ * surfaces `ConflictError` per AD-10) and patches only `shownAt`, leaving
+ * `rolledForwardTasks`/`recordedAt` untouched. Called by
+ * `rituals/morning-ritual.ts`, once, right after it has actually delivered
+ * a Plan carrying this night's notice (see `UncheckedDay.shownAt`'s own doc
+ * comment for why this is a separate step from `putUncheckedDay`).
+ *
+ * Throws if no row exists for `date` yet — a caller should only ever call
+ * this for a date it just read via `getUncheckedDay`/`listUncheckedDays`,
+ * so a missing row here means a genuine concurrent delete (nothing in this
+ * codebase currently deletes an `UncheckedDay` row) or a caller bug, either
+ * of which should surface loudly rather than silently create a
+ * `shownAt`-only row with no `rolledForwardTasks` to have ever displayed.
+ */
+export function markUncheckedDayShown(store: MemoryStore, date: IsoDate, shownAt: IsoDateTime): StoredRecord<UncheckedDay> {
+  const current = store.getRecord<UncheckedDay>(UNCHECKED_DAY_KIND, date);
+  if (!current) {
+    throw new Error(`memory-store: cannot mark ${date} as shown — no UncheckedDay record exists for it`);
+  }
+  return store.readModifyWrite<UncheckedDay>(UNCHECKED_DAY_KIND, date, current.version, (existing) => ({
+    ...(existing?.data as UncheckedDay),
+    shownAt,
+  }));
+}
+
+/**
  * Lists every night ever recorded as unchecked, across every date — the
  * same "surface whatever's stored without already knowing each id" shape
  * `listSlipHistories`/`listOpenInteractionRequests` provide elsewhere in
- * this file. Exists for a "day history" query (this story's own AC:
- * distinguishable "in the Plan or its history") even though no task before
- * this one has built such a view yet.
+ * this file. `rituals/morning-ritual.ts` is this function's real caller
+ * (Task 21 post-review fix): it finds the OLDEST row with no `shownAt` yet
+ * to decide what to display next, deliberately decoupled from "yesterday
+ * specifically" so a multi-day gap in Morning Ritual delivery delays that
+ * display rather than losing it — `listRecordsByKind`'s own `ORDER BY id`
+ * clause already returns rows in ascending date order, since ISO-8601
+ * `YYYY-MM-DD` strings sort lexicographically identically to chronological
+ * order.
  */
 export function listUncheckedDays(store: MemoryStore): StoredRecord<UncheckedDay>[] {
   return store.listRecordsByKind<UncheckedDay>(UNCHECKED_DAY_KIND);
