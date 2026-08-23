@@ -136,7 +136,7 @@ import {
   loadLlmAdapterConfigFromEnv,
   type AnthropicMessagesClient,
 } from "../adapters/llm-adapter.ts";
-import { readNotionTasks } from "../adapters/notion-adapter.ts";
+import { readNotionTasks, setTaskStatus as notionSetTaskStatus } from "../adapters/notion-adapter.ts";
 import type { MissingFieldReport } from "../core/data-completeness-gate.ts";
 import { computeSlipBumpLevel } from "../core/slip-bump.ts";
 import { shapeDeclaredTimeBudget } from "../core/time-budget.ts";
@@ -144,6 +144,13 @@ import { resolveToneSystemPrompt } from "../core/tone.ts";
 import { DATA_COMPLETENESS_REQUEST_ID, PLANNING_FIELD_LABELS } from "../rituals/data-completeness.ts";
 import { buildBlockerConfirmationLine, runMidDayReflow } from "../rituals/mid-day-reflow.ts";
 import { ACCENT, localIsoDate, renderPlan, RESET } from "../rituals/morning-ritual.ts";
+import {
+  applyNightCloseOutConfirmation,
+  clearNightCloseOutRequestIfOpen,
+  NIGHT_CLOSE_OUT_REQUEST_ID,
+  type NightCloseOutRequestDetail,
+  type NightCloseOutStatus,
+} from "../rituals/night-ritual.ts";
 import type {
   InteractionRequest,
   IsoDate,
@@ -151,6 +158,7 @@ import type {
   Result,
   Task,
   TaskFieldOverride,
+  TaskStatus,
   TimeBudget,
   YohError,
 } from "../types/domain.ts";
@@ -322,6 +330,96 @@ async function answerDataCompletenessRequest(
   return true;
 }
 
+// ============================================================================
+// Night Ritual close-out prompt (Task 19 / Story 3.1, FR-12–FR-14)
+// ============================================================================
+
+/** The shape `runChatCli`/`surfaceOpenInteractionRequests` thread through to `rituals/night-ritual.ts`'s `applyNightCloseOutConfirmation` — `notion-adapter.ts`'s `setTaskStatus`, pre-bound to its client/config (see that function's own doc comment for the binding-convention note). */
+type SetTaskStatusFn = (taskId: string, status: TaskStatus) => Promise<Result<void, YohError>>;
+
+/**
+ * Parses a raw close-out answer into `"completed"` or `"slipped"` — the same
+ * deliberately-simple, clearly-documented pattern-matching convention every
+ * other `chat-cli.ts` command parser uses (NOT real free-text NLU). Accepts
+ * a few natural synonyms case-insensitively; anything else is rejected so
+ * `answerNightCloseOutRequest` can re-prompt rather than guess.
+ */
+export function parseNightCloseOutAnswer(raw: string): NightCloseOutStatus | undefined {
+  const normalized = raw.trim().toLowerCase();
+  if (/^(completed?|done|finished)$/.test(normalized)) return "completed";
+  if (/^(slipped?|missed|didn'?t (do it|finish)|not done)$/.test(normalized)) return "slipped";
+  return undefined;
+}
+
+/**
+ * Answers the single combined `"night-close-out"` interaction request: shows
+ * its (already-built) combined prompt line, then asks one follow-up question
+ * per named Task, in the order the request lists them. Mirrors
+ * `answerDataCompletenessRequest`'s own shape exactly (Task 5's established
+ * precedent for "one prompt covering multiple items, answered and persisted
+ * one at a time, cleared only once every part is answered" — see this
+ * file's module docstring for why the Data-Completeness prompt is the
+ * closest precedent to follow rather than inventing a new shape).
+ *
+ * Each answer is parsed (`parseNightCloseOutAnswer`) and, once recognized,
+ * immediately applied via `rituals/night-ritual.ts`'s
+ * `applyNightCloseOutConfirmation` — which writes Notion FIRST and only then
+ * updates local Slip-Bump state (see that function's own doc comment for
+ * the ordering rationale). A Notion write failure re-prompts the SAME
+ * question rather than silently moving on to the next Task or clearing the
+ * request — the write must actually succeed before local state is allowed
+ * to depend on it having happened. A blank answer re-prompts indefinitely
+ * (UX-DR20), same as every other answer loop in this file.
+ *
+ * Only once every named Task has been answered is the interaction request
+ * itself cleared (`clearNightCloseOutRequestIfOpen`) — re-reading its
+ * current version immediately before clearing, same as
+ * `answerDataCompletenessRequest`, so a genuine concurrent write to it is
+ * still caught as `ConflictError` per AD-10 rather than silently dropped.
+ *
+ * Returns `false` (without clearing the request) if `io.readLine` reports
+ * EOF partway through — whatever was answered before that point stays
+ * applied either way (Notion already reflects it, and so does any
+ * SlipHistory change).
+ */
+async function answerNightCloseOutRequest(
+  store: MemoryStore,
+  io: ChatCliIo,
+  record: StoredRecord<InteractionRequest>,
+  setTaskStatus: SetTaskStatusFn,
+  today: IsoDate,
+): Promise<boolean> {
+  const detail = record.data.detail as NightCloseOutRequestDetail | undefined;
+  const tasks = detail?.tasks ?? [];
+
+  io.writeLine(`${ACCENT}${record.data.promptText}${RESET}`);
+
+  for (const t of tasks) {
+    for (;;) {
+      const answer = await io.readLine(`  ${t.taskTitle} — completed or slipped? `);
+      if (answer === null) return false; // stdin closed mid-answer.
+      if (answer.trim().length === 0) continue; // wait indefinitely (UX-DR20): re-ask, don't skip.
+
+      const parsed = parseNightCloseOutAnswer(answer);
+      if (!parsed) {
+        io.writeLine(`I didn't understand "${answer}" — try "completed" or "slipped".`);
+        continue; // re-ask the SAME question — an unparseable answer is not an answer.
+      }
+
+      const applied = await applyNightCloseOutConfirmation({ store, setTaskStatus }, t.taskId, parsed, today);
+      if (!applied.ok) {
+        io.writeLine(`I couldn't record that in Notion: ${applied.error.message} — let's try again.`);
+        continue; // re-ask — the Notion write must actually succeed before moving on.
+      }
+      break;
+    }
+  }
+
+  clearNightCloseOutRequestIfOpen(store);
+  io.writeLine("Got it — thanks. I've updated Notion and factored this into tomorrow's plan.");
+  return true;
+}
+
 /**
  * Surfaces every currently open interaction request, one at a time, each
  * blocking for Spencer's answer before moving to the next — AD-5's "an open
@@ -333,18 +431,39 @@ async function answerDataCompletenessRequest(
  *
  * The `"data-completeness"` request gets its full typed answer treatment
  * (`answerDataCompletenessRequest`, above: parse each missing field's
- * answer, persist it as a `TaskFieldOverride`, only then clear). Any other
- * open request (a future Night close-out / Self-Check / Proposal prompt,
- * none of which exist yet) falls back to the purely mechanical
+ * answer, persist it as a `TaskFieldOverride`, only then clear). The
+ * `"night-close-out"` request (Task 19) gets its own typed treatment the
+ * same way (`answerNightCloseOutRequest`, above: parse each Task's
+ * completed/slipped answer, write Notion and Slip-Bump state, only then
+ * clear). Any OTHER open request (a future Self-Check / Proposal prompt,
+ * neither of which exist yet) falls back to the purely mechanical
  * surface-then-clear-on-any-non-empty-answer behavior this file established
- * before the fix — a later task is expected to add its own typed
- * answer-application step the same way this file now does for
- * data-completeness.
+ * before the Task 5 fix — a later task is expected to add its own typed
+ * answer-application step the same way this file now does for both of the
+ * above.
+ *
+ * `setTaskStatus`/`today` are needed ONLY by the `"night-close-out"` branch;
+ * both default to values that are safe for every OTHER caller (including
+ * every pre-Task-19 test call site above, which never exercises that
+ * branch) — `setTaskStatus` defaults to a stub that throws only if actually
+ * invoked (mirrors `runChatCli`'s own `readTasks` default), and `today`
+ * defaults to `"UTC"`'s local date, which is provably never read unless a
+ * `"night-close-out"` request is actually open and answered. `runChatCli`
+ * itself always supplies its own real `timeZone`-derived `today` — see that
+ * function's own doc comment on why `timeZone` is never silently defaulted
+ * to UTC there.
  *
  * Returns once no interaction request remains open, or once `io.readLine`
  * reports EOF (stdin closed) — whichever comes first.
  */
-export async function surfaceOpenInteractionRequests(store: MemoryStore, io: ChatCliIo): Promise<void> {
+export async function surfaceOpenInteractionRequests(
+  store: MemoryStore,
+  io: ChatCliIo,
+  setTaskStatus: SetTaskStatusFn = async () => {
+    throw new Error("chat-cli: no setTaskStatus dependency configured — cannot record Night Ritual close-out");
+  },
+  today: IsoDate = localIsoDate(new Date(), "UTC"),
+): Promise<void> {
   for (;;) {
     const open = listOpenInteractionRequests(store);
     if (open.length === 0) return;
@@ -352,6 +471,12 @@ export async function surfaceOpenInteractionRequests(store: MemoryStore, io: Cha
 
     if (next.id === DATA_COMPLETENESS_REQUEST_ID && next.data.requestKind === "data-completeness") {
       const resolved = await answerDataCompletenessRequest(store, io, next);
+      if (!resolved) return; // EOF mid-answer.
+      continue;
+    }
+
+    if (next.id === NIGHT_CLOSE_OUT_REQUEST_ID && next.data.requestKind === "night-close-out") {
+      const resolved = await answerNightCloseOutRequest(store, io, next, setTaskStatus, today);
       if (!resolved) return; // EOF mid-answer.
       continue;
     }
@@ -788,6 +913,12 @@ function whyPrioritizedCommand(store: MemoryStore, io: ChatCliIo, tasks: readonl
  * command somehow reaches it anyway, which would itself be a bug worth
  * surfacing loudly rather than silently. The real entrypoint (`main`,
  * below) always supplies a real one.
+ *
+ * `setTaskStatus` (Task 19) is what `surfaceOpenInteractionRequests` threads
+ * into `answerNightCloseOutRequest` for the `"night-close-out"` branch —
+ * `notion-adapter.ts`'s own `setTaskStatus`, pre-bound to its client/config,
+ * same optional-with-a-throws-only-if-invoked-default convention as
+ * `readTasks` above.
  */
 export async function runChatCli(
   store: MemoryStore,
@@ -798,8 +929,11 @@ export async function runChatCli(
   readTasks: () => Promise<readonly Task[]> = () => {
     throw new Error("chat-cli: no readTasks dependency configured — cannot re-flow the day");
   },
+  setTaskStatus: SetTaskStatusFn = async () => {
+    throw new Error("chat-cli: no setTaskStatus dependency configured — cannot record Night Ritual close-out");
+  },
 ): Promise<void> {
-  await surfaceOpenInteractionRequests(store, io);
+  await surfaceOpenInteractionRequests(store, io, setTaskStatus, currentIsoDate(timeZone, now));
 
   for (;;) {
     const line = await io.readLine("yoh> ");
@@ -808,7 +942,7 @@ export async function runChatCli(
     // Re-check before processing anything else — a ritual running
     // concurrently (AD-10) may have opened a new interaction request since
     // the last check.
-    await surfaceOpenInteractionRequests(store, io);
+    await surfaceOpenInteractionRequests(store, io, setTaskStatus, currentIsoDate(timeZone, now));
 
     if (line.trim().length === 0) continue;
 
@@ -934,8 +1068,34 @@ export async function main(env: Readonly<Record<string, string | undefined>> = p
     });
     return (await readNotionTasks(notionClient, { tasksDataSourceId, projectsDataSourceId })).tasks;
   };
+  // Same "lazily constructed, no unrelated startup requirement" convention
+  // as `readTasks` above (Task 19) — a session that never answers a Night
+  // Ritual close-out prompt must not be unable to start just because Notion
+  // isn't configured. Unlike `readTasks`, `setTaskStatus` doesn't throw on
+  // missing config — it returns a `Result` failure (AD-12's own AD-8
+  // exception, honored all the way up to this binding).
+  const setTaskStatus: SetTaskStatusFn = async (taskId, status) => {
+    const tasksDataSourceId = env["NOTION_TASKS_DATA_SOURCE_ID"];
+    const projectsDataSourceId = env["NOTION_PROJECTS_DATA_SOURCE_ID"];
+    const notionToken = env["NOTION_TOKEN"];
+    if (!tasksDataSourceId || !projectsDataSourceId || !notionToken) {
+      return {
+        ok: false,
+        error: {
+          kind: "missing-field",
+          message:
+            "chat-cli: missing required environment variable(s) NOTION_TOKEN / NOTION_TASKS_DATA_SOURCE_ID / NOTION_PROJECTS_DATA_SOURCE_ID — needed to record the Night Ritual close-out",
+        },
+      };
+    }
+    const notionClient = new Client({
+      auth: notionToken,
+      ...(env["NOTION_API_VERSION"] ? { notionVersion: env["NOTION_API_VERSION"] } : {}),
+    });
+    return notionSetTaskStatus(notionClient, { tasksDataSourceId, projectsDataSourceId }, taskId, status);
+  };
   try {
-    await runChatCli(store, io, timeZone, llmClient, () => new Date(), readTasks);
+    await runChatCli(store, io, timeZone, llmClient, () => new Date(), readTasks, setTaskStatus);
   } finally {
     store.close();
   }

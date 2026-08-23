@@ -9,8 +9,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { runRitualCli, type RitualCliDeps } from "../src/shell/ritual-cli.ts";
+import { createMemoryStore } from "../src/adapters/memory-store.ts";
+import { recordSlip } from "../src/adapters/memory-store.ts";
+import { computeSlipBumpLevels } from "../src/core/slip-bump.ts";
+import { createMorningRitualDeps, runRitualCli, type RitualCliDeps } from "../src/shell/ritual-cli.ts";
 import type { MorningRitualOutcome } from "../src/rituals/morning-ritual.ts";
+import type { NightPromptOutcome } from "../src/rituals/night-ritual.ts";
 import type { Plan, Result, YohError } from "../src/types/domain.ts";
 
 const TODAY = "2026-08-22";
@@ -43,6 +47,29 @@ function deps(
       writeError: (l) => sink.err.push(l),
     },
     runMorning: async () => {
+      onRun?.();
+      return outcome;
+    },
+    runNightPrompt: async () => {
+      throw new Error("runNightPrompt should not be called by a `morning` dispatch test");
+    },
+  };
+}
+
+function nightPromptDeps(
+  outcome: Result<NightPromptOutcome, YohError>,
+  sink: Sink,
+  onRun?: () => void,
+): RitualCliDeps {
+  return {
+    io: {
+      writeLine: (l) => sink.out.push(l),
+      writeError: (l) => sink.err.push(l),
+    },
+    runMorning: async () => {
+      throw new Error("runMorning should not be called by a `night-prompt` dispatch test");
+    },
+    runNightPrompt: async () => {
       onRun?.();
       return outcome;
     },
@@ -133,8 +160,8 @@ test("an unknown subcommand exits 2 without running anything", async () => {
   assert.match(s.err.join("\n"), /breakfast/);
 });
 
-test("AD-5's other three subcommands are recognized as planned but not yet built (Tasks 19, 20, 24)", async () => {
-  for (const sub of ["night-prompt", "night-escalate", "self-check"]) {
+test("AD-5's remaining two subcommands are recognized as planned but not yet built (Tasks 20, 24)", async () => {
+  for (const sub of ["night-escalate", "self-check"]) {
     const s = sink();
     const code = await runRitualCli(
       [sub],
@@ -143,6 +170,124 @@ test("AD-5's other three subcommands are recognized as planned but not yet built
     assert.equal(code, 2, `${sub} should not pretend to succeed`);
     assert.match(s.err.join("\n"), /not implemented yet/i, `${sub} should say so plainly`);
   }
+});
+
+// ============================================================================
+// `night-prompt` (Task 19 / Story 3.1)
+// ============================================================================
+
+test("`night-prompt` runs the Night Ritual close-out prompt and reports it was sent, exit code 0", async () => {
+  const s = sink();
+  let ran = 0;
+  const code = await runRitualCli(
+    ["night-prompt"],
+    nightPromptDeps(
+      { ok: true, value: { status: "prompted", date: TODAY, tasks: [{ taskId: "t1", taskTitle: "Draft the memo" }] } },
+      s,
+      () => {
+        ran += 1;
+      },
+    ),
+  );
+
+  assert.equal(code, 0);
+  assert.equal(ran, 1);
+  assert.match(s.out.join("\n"), /1 Task/);
+  assert.deepEqual(s.err, []);
+});
+
+test("`night-prompt` on a night it already ran reports the no-op, exit code 0", async () => {
+  const s = sink();
+  const code = await runRitualCli(["night-prompt"], nightPromptDeps({ ok: true, value: { status: "already-ran", date: TODAY } }, s));
+
+  assert.equal(code, 0);
+  assert.match(s.out.join("\n"), /already ran/i);
+});
+
+test("`night-prompt` with no Plan generated yet reports it plainly, exit code 0", async () => {
+  const s = sink();
+  const code = await runRitualCli(["night-prompt"], nightPromptDeps({ ok: true, value: { status: "no-plan-today", date: TODAY } }, s));
+
+  assert.equal(code, 0);
+  assert.match(s.out.join("\n"), /no plan/i);
+});
+
+test("`night-prompt` with nothing to confirm reports it plainly, exit code 0", async () => {
+  const s = sink();
+  const code = await runRitualCli(["night-prompt"], nightPromptDeps({ ok: true, value: { status: "nothing-to-confirm", date: TODAY } }, s));
+
+  assert.equal(code, 0);
+  assert.match(s.out.join("\n"), /nothing to confirm/i);
+});
+
+test("a failing night-prompt ritual becomes a structured stderr line and a non-zero exit code (AD-8)", async () => {
+  const s = sink();
+  const code = await runRitualCli(
+    ["night-prompt"],
+    nightPromptDeps({ ok: false, error: { kind: "conflict", message: "night-ritual: could not persist the close-out prompt" } }, s),
+  );
+
+  assert.equal(code, 1);
+  assert.equal(s.err.length, 1);
+  const entry = JSON.parse(s.err[0]!) as { level: string; event: string; kind: string; message: string };
+  assert.equal(entry.level, "error");
+  assert.equal(entry.kind, "conflict");
+  assert.match(entry.message, /could not persist the close-out prompt/);
+});
+
+test("night-prompt no longer appears in the 'not yet built' set — it's a real, built subcommand now", async () => {
+  const s = sink();
+  const code = await runRitualCli(["night-prompt"], nightPromptDeps({ ok: true, value: { status: "already-ran", date: TODAY } }, s));
+  assert.equal(code, 0);
+  assert.doesNotMatch(s.err.join("\n"), /not implemented yet/i);
+});
+
+// ============================================================================
+// createMorningRitualDeps's bumpLevels bridge (Task 19 — Task 17's deferred
+// item, verified end-to-end): a stored SlipHistory row must genuinely
+// produce a non-empty bumpLevels map, computed via the real
+// core/slip-bump.ts computation — not just unit-tested in isolation.
+// ============================================================================
+
+const BASE_ENV: Record<string, string> = {
+  YOH_TIMEZONE: "America/New_York",
+  NOTION_TOKEN: "fake-notion-token",
+  NOTION_TASKS_DATA_SOURCE_ID: "fake-tasks-ds",
+  NOTION_PROJECTS_DATA_SOURCE_ID: "fake-projects-ds",
+  GOOGLE_CLIENT_ID: "fake-client-id",
+  GOOGLE_CLIENT_SECRET: "fake-client-secret",
+  GOOGLE_REDIRECT_URI: "http://localhost/oauth2callback",
+  GOOGLE_TOKEN_FILE_PATH: "/tmp/yoh-test-google-token-nonexistent.json",
+  PUSHOVER_APP_TOKEN: "fake-app-token",
+  PUSHOVER_USER_KEY: "fake-user-key",
+};
+
+test("createMorningRitualDeps.bumpLevels is genuinely populated from stored SlipHistory rows via the real computeSlipBumpLevels bridge", () => {
+  const store = createMemoryStore({ databasePath: ":memory:" });
+  recordSlip(store, "t1", "2026-08-21");
+  recordSlip(store, "t1", "2026-08-22"); // 2 consecutive slips
+  recordSlip(store, "t2", "2026-08-22"); // 1 slip
+
+  const deps = createMorningRitualDeps(store, BASE_ENV);
+
+  assert.ok(deps.bumpLevels, "expected a bumpLevels map to be present at all");
+  assert.notDeepEqual(deps.bumpLevels, {}, "expected a NON-EMPTY bumpLevels map — Task 17's deferred bridge, verified end-to-end");
+
+  // The bridge must produce EXACTLY what the real computeSlipBumpLevels
+  // computes from the real stored counts — not a hand-rolled/faked map.
+  const expected = computeSlipBumpLevels({ t1: 2, t2: 1 });
+  assert.deepEqual(deps.bumpLevels, expected);
+  assert.equal(deps.bumpLevels?.["t1"], 2, "2 consecutive slips -> bump level 2 (cap 3, step 1)");
+  assert.equal(deps.bumpLevels?.["t2"], 1);
+
+  store.close();
+});
+
+test("createMorningRitualDeps.bumpLevels is an empty map when no Task has ever slipped — never throws for lack of history", () => {
+  const store = createMemoryStore({ databasePath: ":memory:" });
+  const deps = createMorningRitualDeps(store, BASE_ENV);
+  assert.deepEqual(deps.bumpLevels, {});
+  store.close();
 });
 
 test("AD-5: ritual-cli.ts never waits for input — it reads no stdin at all", () => {

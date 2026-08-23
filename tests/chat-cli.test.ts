@@ -13,6 +13,7 @@ import assert from "node:assert/strict";
 import {
   createMemoryStore,
   getOpenInteractionRequest,
+  getSlipHistory,
   putOpenInteractionRequest,
   getTaskFieldOverride,
   mergeTaskFieldOverride,
@@ -22,6 +23,7 @@ import {
   putTimeBudget,
   recordSlip,
 } from "../src/adapters/memory-store.ts";
+import { NIGHT_CLOSE_OUT_REQUEST_ID, runNightPromptRitual } from "../src/rituals/night-ritual.ts";
 import type { MemoryStore } from "../src/adapters/memory-store.ts";
 import {
   surfaceOpenInteractionRequests,
@@ -51,7 +53,7 @@ import { checkDataCompleteness, type MissingFieldReport } from "../src/core/data
 import type { AnthropicMessagesClient } from "../src/adapters/llm-adapter.ts";
 import { resolveToneSystemPrompt } from "../src/core/tone.ts";
 import type Anthropic from "@anthropic-ai/sdk";
-import type { IsoDate, Plan, Task } from "../src/types/domain.ts";
+import type { IsoDate, Plan, PlanBlock, Result, Task, TaskStatus, YohError } from "../src/types/domain.ts";
 
 function tempStore(): MemoryStore {
   return createMemoryStore({ databasePath: ":memory:" });
@@ -1219,5 +1221,140 @@ test("runChatCli: 'why is X prioritized' for an unknown Task name says it couldn
   await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => new Date(NOW), async () => tasks);
 
   assert.ok(io.written.some((line) => /couldn'?t find/i.test(line)));
+  store.close();
+});
+
+// ============================================================================
+// Night Ritual close-out prompt (Task 19 / Story 3.1) — surfacing and
+// answering `requestKind: "night-close-out"` via chat-cli.ts
+// ============================================================================
+
+/** Scripted fake `setTaskStatus` (mirrors `makeFakeLlmClient`'s recording convention) — no live Notion account is available in this environment. */
+function makeFakeSetTaskStatus(): ((taskId: string, status: TaskStatus) => Promise<Result<void, YohError>>) & {
+  readonly calls: Array<{ readonly taskId: string; readonly status: TaskStatus }>;
+} {
+  const calls: Array<{ taskId: string; status: TaskStatus }> = [];
+  const fn = async (taskId: string, status: TaskStatus): Promise<Result<void, YohError>> => {
+    calls.push({ taskId, status });
+    return { ok: true, value: undefined };
+  };
+  return Object.assign(fn, { calls });
+}
+
+function closeOutPlan(date: IsoDate): Plan {
+  const blocks: PlanBlock[] = [
+    { id: "work-0", kind: "work", start: `${date}T13:00:00.000Z`, end: `${date}T14:00:00.000Z`, label: "Draft the memo", taskId: "t1" },
+    { id: "work-1", kind: "work", start: `${date}T14:15:00.000Z`, end: `${date}T15:00:00.000Z`, label: "Book the flights", taskId: "t2" },
+  ];
+  return {
+    id: `plan-${date}`,
+    date,
+    blocks,
+    reasoning: "Some reasoning.",
+    version: 1,
+    createdAt: `${date}T00:00:00.000Z`,
+    updatedAt: `${date}T00:00:00.000Z`,
+  };
+}
+
+const NIGHT_NOW = new Date("2026-08-22T22:00:00.000Z");
+
+test("runChatCli surfaces the Night Ritual close-out prompt first and accepts per-block completed/slipped answers", async () => {
+  const store = tempStore();
+  const today = localIsoDate(NIGHT_NOW, TEST_TIME_ZONE);
+  putPlan(store, closeOutPlan(today));
+  const promptRun = await runNightPromptRitual({ store, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE });
+  assert.ok(promptRun.ok && promptRun.value.status === "prompted");
+  assert.ok(getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID));
+
+  const setTaskStatus = makeFakeSetTaskStatus();
+  const io = makeScriptedIo(["completed", "slipped"]);
+  const llmClient = makeFakeLlmClient();
+
+  await runChatCli(store, io, TEST_TIME_ZONE, llmClient, () => NIGHT_NOW, async () => [], setTaskStatus);
+
+  assert.ok(io.written.some((l) => l.includes("Draft the memo")), "expected the combined close-out prompt to be printed");
+  assert.deepEqual(setTaskStatus.calls, [
+    { taskId: "t1", status: "completed" },
+    { taskId: "t2", status: "slipped" },
+  ]);
+  assert.equal(
+    getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID),
+    undefined,
+    "the request is cleared once every named Task is answered",
+  );
+  assert.equal(llmClient.calls.length, 0, "the close-out prompt is fully resolved before the ordinary loop ever reaches the LLM catch-all");
+  store.close();
+});
+
+test("runChatCli: a confirmed 'slipped' Task records a real Slip-Bump via the night-ritual answer-processing path (recordSlip, not faked)", async () => {
+  const store = tempStore();
+  const today = localIsoDate(NIGHT_NOW, TEST_TIME_ZONE);
+  putPlan(store, closeOutPlan(today));
+  await runNightPromptRitual({ store, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE });
+
+  const io = makeScriptedIo(["slipped", "completed"]);
+  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => NIGHT_NOW, async () => [], makeFakeSetTaskStatus());
+
+  const history = getSlipHistory(store, "t1");
+  assert.ok(history, "expected a real SlipHistory row for the Task confirmed slipped");
+  assert.equal(history!.data.consecutiveSlipCount, 1);
+  assert.equal(getSlipHistory(store, "t2"), undefined, "a Task confirmed completed with no prior slip history stays clear");
+  store.close();
+});
+
+test("runChatCli: a confirmed 'completed' Task with prior slip history gets it cleared via the night-ritual answer-processing path", async () => {
+  const store = tempStore();
+  recordSlip(store, "t1", "2026-08-20");
+  recordSlip(store, "t1", "2026-08-21");
+  assert.ok(getSlipHistory(store, "t1"));
+
+  const today = localIsoDate(NIGHT_NOW, TEST_TIME_ZONE);
+  putPlan(store, closeOutPlan(today));
+  await runNightPromptRitual({ store, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE });
+
+  const io = makeScriptedIo(["completed", "completed"]);
+  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => NIGHT_NOW, async () => [], makeFakeSetTaskStatus());
+
+  assert.equal(getSlipHistory(store, "t1"), undefined, "the Slip-Bump must be cleared, not carried indefinitely");
+  store.close();
+});
+
+test("runChatCli: an unrecognized close-out answer re-prompts the SAME Task rather than guessing (UX-DR20)", async () => {
+  const store = tempStore();
+  const today = localIsoDate(NIGHT_NOW, TEST_TIME_ZONE);
+  putPlan(store, closeOutPlan(today));
+  await runNightPromptRitual({ store, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE });
+
+  const setTaskStatus = makeFakeSetTaskStatus();
+  const io = makeScriptedIo(["huh?", "completed", "slipped"]);
+  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => NIGHT_NOW, async () => [], setTaskStatus);
+
+  assert.deepEqual(setTaskStatus.calls, [
+    { taskId: "t1", status: "completed" },
+    { taskId: "t2", status: "slipped" },
+  ]);
+  assert.ok(io.written.some((l) => /didn'?t understand|try/i.test(l)));
+  store.close();
+});
+
+test("runChatCli: a Notion write failure re-prompts the same Task rather than silently moving on", async () => {
+  const store = tempStore();
+  const today = localIsoDate(NIGHT_NOW, TEST_TIME_ZONE);
+  putPlan(store, closeOutPlan(today));
+  await runNightPromptRitual({ store, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE });
+
+  let attempt = 0;
+  const flakySetTaskStatus = async (taskId: string, status: TaskStatus): Promise<Result<void, YohError>> => {
+    attempt += 1;
+    if (attempt === 1) return { ok: false, error: { kind: "unreachable", message: "notion: 500" } };
+    return { ok: true, value: undefined };
+  };
+
+  const io = makeScriptedIo(["completed", "completed", "slipped"]);
+  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => NIGHT_NOW, async () => [], flakySetTaskStatus);
+
+  assert.ok(io.written.some((l) => /notion|couldn'?t/i.test(l)), "expected the failure to be surfaced, not swallowed");
+  assert.equal(getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID), undefined, "eventually resolved once the retry succeeds");
   store.close();
 });

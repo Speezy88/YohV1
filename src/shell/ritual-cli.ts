@@ -29,14 +29,20 @@
  * returned a `Result` failure, `2` a usage problem (no subcommand, unknown
  * subcommand, an unbuilt subcommand, or missing configuration).
  */
-import { createMemoryStore, type MemoryStore } from "../adapters/memory-store.ts";
+import { createMemoryStore, listSlipHistories, type MemoryStore } from "../adapters/memory-store.ts";
 import { createCalendarReadClient, readCalendarEvents } from "../adapters/calendar-adapter.ts";
 import { loadPushoverConfigFromEnv, sendPushoverNotification } from "../adapters/notification-adapter.ts";
 import { readNotionTasks } from "../adapters/notion-adapter.ts";
 import { createTokenStore, loadGoogleOAuthConfigFromEnv } from "../adapters/token-store.ts";
+import { computeSlipBumpLevels } from "../core/slip-bump.ts";
 import { runMorningRitual, type MorningRitualDeps, type MorningRitualOutcome } from "../rituals/morning-ritual.ts";
+import {
+  runNightPromptRitual,
+  type NightPromptRitualDeps,
+  type NightPromptOutcome,
+} from "../rituals/night-ritual.ts";
 import { Client } from "@notionhq/client";
-import type { Result, YohError } from "../types/domain.ts";
+import type { ExternalId, Result, YohError } from "../types/domain.ts";
 
 // ============================================================================
 // Injectable IO / ritual seams
@@ -55,17 +61,19 @@ export interface RitualCliIo {
 export interface RitualCliDeps {
   readonly io: RitualCliIo;
   readonly runMorning: () => Promise<Result<MorningRitualOutcome, YohError>>;
+  /** `rituals/night-ritual.ts`'s `runNightPromptRitual`, pre-bound to its deps (Task 19 / Story 3.1). */
+  readonly runNightPrompt: () => Promise<Result<NightPromptOutcome, YohError>>;
 }
 
-/** AD-5's full subcommand set. Only `morning` is built (Task 10); the rest are claimed here so they report honestly instead of reading as typos. */
+/** AD-5's full subcommand set. `morning` (Task 10) and `night-prompt` (Task 19) are built; the rest are claimed here so they report honestly instead of reading as typos. */
 const SUBCOMMANDS = {
   morning: "built",
-  "night-prompt": "Task 19 (Story 3.1)",
+  "night-prompt": "built",
   "night-escalate": "Task 20 (Story 3.2)",
   "self-check": "Task 24 (Story 5.1)",
 } as const;
 
-const USAGE = "usage: yoh ritual morning";
+const USAGE = "usage: yoh ritual <morning|night-prompt>";
 
 // ============================================================================
 // runRitualCli
@@ -83,25 +91,31 @@ export async function runRitualCli(argv: readonly string[], deps: RitualCliDeps)
     return 2;
   }
 
-  if (subcommand !== "morning") {
-    const planned = Object.hasOwn(SUBCOMMANDS, subcommand)
-      ? SUBCOMMANDS[subcommand as keyof typeof SUBCOMMANDS]
-      : undefined;
-    deps.io.writeError(
-      planned === undefined
-        ? `ritual-cli: unknown subcommand "${subcommand}". ${USAGE}`
-        : `ritual-cli: "${subcommand}" is not implemented yet — it arrives with ${planned}. ${USAGE}`,
-    );
-    return 2;
+  if (subcommand === "morning") {
+    return handleMorningResult(await deps.runMorning(), deps.io);
   }
 
-  const result = await deps.runMorning();
+  if (subcommand === "night-prompt") {
+    return handleNightPromptResult(await deps.runNightPrompt(), deps.io);
+  }
 
+  const planned = Object.hasOwn(SUBCOMMANDS, subcommand)
+    ? SUBCOMMANDS[subcommand as keyof typeof SUBCOMMANDS]
+    : undefined;
+  deps.io.writeError(
+    planned === undefined
+      ? `ritual-cli: unknown subcommand "${subcommand}". ${USAGE}`
+      : `ritual-cli: "${subcommand}" is not implemented yet — it arrives with ${planned}. ${USAGE}`,
+  );
+  return 2;
+}
+
+function handleMorningResult(result: Result<MorningRitualOutcome, YohError>, io: RitualCliIo): number {
   if (!result.ok) {
     // AD-7's real failure alerting is Epic 5; this is the structured log
     // line it will read. One JSON object per line so a cron mail/log
     // aggregator can parse it without guessing at prose.
-    deps.io.writeError(
+    io.writeError(
       JSON.stringify({
         level: "error",
         event: "ritual-cli.morning-failed",
@@ -114,20 +128,52 @@ export async function runRitualCli(argv: readonly string[], deps: RitualCliDeps)
 
   switch (result.value.status) {
     case "already-ran":
-      deps.io.writeLine(`The Morning Ritual already ran today (${result.value.date}) — nothing more to send.`);
+      io.writeLine(`The Morning Ritual already ran today (${result.value.date}) — nothing more to send.`);
       return 0;
     case "nothing-to-plan":
-      deps.io.writeLine(
+      io.writeLine(
         `Nothing could be planned for ${result.value.date} yet — ${result.value.incompleteTaskIds.length} Task(s) are still missing planning fields. I've left a note for you in chat.`,
       );
       return 0;
     case "nothing-fits":
-      deps.io.writeLine(
+      io.writeLine(
         `Nothing fits ${result.value.date}'s Time Budget — all ${result.value.deferredTaskIds.length} Task(s) were deferred. Declare more time in chat and run this again.`,
       );
       return 0;
     case "delivered":
-      deps.io.writeLine(result.value.rendered);
+      io.writeLine(result.value.rendered);
+      return 0;
+  }
+}
+
+/** Mirrors `handleMorningResult`'s shape/exit-code conventions for the `night-prompt` subcommand's outcomes (Task 19 / Story 3.1). */
+function handleNightPromptResult(result: Result<NightPromptOutcome, YohError>, io: RitualCliIo): number {
+  if (!result.ok) {
+    io.writeError(
+      JSON.stringify({
+        level: "error",
+        event: "ritual-cli.night-prompt-failed",
+        kind: result.error.kind,
+        message: result.error.message,
+      }),
+    );
+    return 1;
+  }
+
+  switch (result.value.status) {
+    case "already-ran":
+      io.writeLine(`The Night Ritual close-out already ran today (${result.value.date}) — nothing more to send.`);
+      return 0;
+    case "no-plan-today":
+      io.writeLine(`No Plan has been generated for ${result.value.date} yet — nothing to close out.`);
+      return 0;
+    case "nothing-to-confirm":
+      io.writeLine(`Nothing to confirm for ${result.value.date} — today's Plan has no work blocks.`);
+      return 0;
+    case "prompted":
+      io.writeLine(
+        `Asked Spencer to confirm ${result.value.tasks.length} Task${result.value.tasks.length === 1 ? "" : "s"} from today — check chat to answer.`,
+      );
       return 0;
   }
 }
@@ -147,6 +193,22 @@ export async function runRitualCli(argv: readonly string[], deps: RitualCliDeps)
  * `OAuth2Client`, only "give me today's Tasks" and "give me today's events."
  * Both still throw on I/O failure exactly as AD-8 requires; the ritual is
  * what catches them.
+ *
+ * **The `bumpLevels` bridge (Task 19 — Task 17's deferred item, closed
+ * here).** Task 17 built `slip-bump.ts`'s computation and
+ * `memory-store.ts`'s `SlipHistory` storage, but nothing populated a
+ * `SlipHistory` row until Task 19's Night Ritual close-out
+ * (`applyNightCloseOutConfirmation`, `rituals/night-ritual.ts`) exists, and
+ * nothing here ever read `listSlipHistories` to build the `bumpLevels` map
+ * `MorningRitualDeps` has always accepted. Both halves now exist: every
+ * currently-stored `SlipHistory` row is read (`listSlipHistories`) and
+ * turned into the `taskId -> bump level` map `orderByDerivedPriority`/
+ * `generatePlanReasoning` expect via the SAME `core/slip-bump.ts`
+ * computation (`computeSlipBumpLevels`) the rest of the system uses — not a
+ * re-derivation of that arithmetic here. So tomorrow's Morning Ritual now
+ * genuinely reflects tonight's close-out: a Task confirmed slipped tonight
+ * shows up bumped in tomorrow's Plan ordering, exactly as a mid-day-reported
+ * slip already did before this task existed.
  */
 export function createMorningRitualDeps(
   store: MemoryStore,
@@ -189,11 +251,50 @@ export function createMorningRitualDeps(
   );
   const pushoverConfig = loadPushoverConfigFromEnv(env);
 
+  // The bumpLevels bridge (see the doc comment above): every currently-
+  // stored SlipHistory row, turned into a `taskId -> consecutiveSlipCount`
+  // map, then the REAL `core/slip-bump.ts` computation over it — never a
+  // parallel/hand-rolled escalation here.
+  const slipCounts: Record<ExternalId, number> = {};
+  for (const record of listSlipHistories(store)) {
+    slipCounts[record.id] = record.data.consecutiveSlipCount;
+  }
+  const bumpLevels = computeSlipBumpLevels(slipCounts);
+
   return {
     store,
     readTasks: async () => (await readNotionTasks(notionClient, { tasksDataSourceId, projectsDataSourceId })).tasks,
     readCalendarEvents: () => readCalendarEvents(calendarClient, { timeZone }),
     sendNotification: (notification) => sendPushoverNotification(pushoverConfig, notification),
+    now: () => new Date(),
+    timeZone,
+    bumpLevels,
+    log: (entry) => {
+      process.stderr.write(`${JSON.stringify(entry)}\n`);
+    },
+  };
+}
+
+/**
+ * Binds the real `MemoryStore` to `runNightPromptRitual`'s injected seams
+ * (Task 19 / Story 3.1). Deliberately far lighter than
+ * `createMorningRitualDeps`: `night-prompt` only reads the already-stored
+ * Plan and persists an interaction request — no Notion, Calendar, or
+ * Pushover credentials are needed, so running it must not require them to be
+ * configured (mirrors `shell/chat-cli.ts`'s own "don't force unrelated
+ * config" convention for its lazily-constructed `readTasks`).
+ */
+export function createNightPromptRitualDeps(
+  store: MemoryStore,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): NightPromptRitualDeps {
+  const timeZone = env["YOH_TIMEZONE"];
+  if (!timeZone) {
+    throw new Error("ritual-cli: missing required environment variable YOH_TIMEZONE (e.g. America/New_York)");
+  }
+
+  return {
+    store,
     now: () => new Date(),
     timeZone,
     log: (entry) => {
@@ -202,12 +303,26 @@ export function createMorningRitualDeps(
   };
 }
 
+/** A `RitualCliDeps` runner that throws if called — used for the OTHER subcommand's slot below, mirroring `shell/chat-cli.ts`'s "throws only if actually invoked" convention for a seam a given run never exercises. */
+function unreachableRunner(label: string): () => Promise<never> {
+  return () => {
+    throw new Error(`ritual-cli: ${label} should not be invoked for this subcommand`);
+  };
+}
+
 /**
  * Real entrypoint: opens the `MemoryStore` (per `MEMORY_DB_PATH`, defaulting
  * to `./data/yoh-memory.db` — the same default `.env.example` documents and
- * `chat-cli.ts` uses), wires the real adapters, dispatches, and always
- * closes the store. Returns the exit code rather than setting it, so it stays
- * callable from a test.
+ * `chat-cli.ts` uses), wires ONLY the real adapters the requested subcommand
+ * actually needs, dispatches, and always closes the store. Returns the exit
+ * code rather than setting it, so it stays callable from a test.
+ *
+ * Deliberately branches on `argv[0]` BEFORE constructing either ritual's
+ * deps (Task 19 review note): `createMorningRitualDeps` requires Notion/
+ * Calendar/Pushover credentials that `night-prompt` has no use for at all
+ * (see `createNightPromptRitualDeps`'s own doc comment) — running
+ * `night-prompt` must not fail at startup just because those happen to be
+ * unconfigured.
  */
 export async function main(
   argv: readonly string[] = process.argv.slice(2),
@@ -224,6 +339,21 @@ export async function main(
 
   const store = createMemoryStore({ databasePath: env["MEMORY_DB_PATH"] || "./data/yoh-memory.db" });
   try {
+    if (argv[0] === "night-prompt") {
+      let deps: NightPromptRitualDeps;
+      try {
+        deps = createNightPromptRitualDeps(store, env);
+      } catch (err) {
+        io.writeError(`ritual-cli: ${err instanceof Error ? err.message : String(err)}`);
+        return 2;
+      }
+      return await runRitualCli(argv, {
+        io,
+        runMorning: unreachableRunner("runMorning"),
+        runNightPrompt: () => runNightPromptRitual(deps),
+      });
+    }
+
     let deps: MorningRitualDeps;
     try {
       deps = createMorningRitualDeps(store, env);
@@ -231,7 +361,11 @@ export async function main(
       io.writeError(`ritual-cli: ${err instanceof Error ? err.message : String(err)}`);
       return 2;
     }
-    return await runRitualCli(argv, { io, runMorning: () => runMorningRitual(deps) });
+    return await runRitualCli(argv, {
+      io,
+      runMorning: () => runMorningRitual(deps),
+      runNightPrompt: unreachableRunner("runNightPrompt"),
+    });
   } finally {
     store.close();
   }

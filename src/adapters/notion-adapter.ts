@@ -77,7 +77,7 @@ import type {
   QueryDataSourceParameters,
   QueryDataSourceResponse,
 } from "@notionhq/client";
-import type { Energy, ExternalId, IsoDate, Project, Task, TaskStatus } from "../types/domain.ts";
+import type { Energy, ExternalId, IsoDate, Project, Result, Task, TaskStatus, YohError } from "../types/domain.ts";
 
 // ============================================================================
 // Injectable client
@@ -95,6 +95,25 @@ import type { Energy, ExternalId, IsoDate, Project, Task, TaskStatus } from "../
 export interface NotionDataSourceClient {
   readonly dataSources: {
     readonly query: Client["dataSources"]["query"];
+  };
+}
+
+/**
+ * The minimal slice of `@notionhq/client`'s `Client` `setTaskStatus` needs —
+ * just `pages.update`, typed off the real `Client`'s own method signature,
+ * the same minimal-injectable-slice convention `NotionDataSourceClient`
+ * above uses for the read side. Kept as its OWN interface rather than
+ * widening `NotionDataSourceClient` to carry both: widening would force
+ * every existing `readNotionTasks` caller/test (which only ever needs
+ * `dataSources.query`) to also supply a `pages.update` stub, for a
+ * capability it never uses. A real `Client` instance satisfies both
+ * interfaces structurally at once, so `shell/ritual-cli.ts` and
+ * `shell/chat-cli.ts` bind the one real `Client` to both `readNotionTasks`
+ * and `setTaskStatus` without needing two separate client objects.
+ */
+export interface NotionWriteClient {
+  readonly pages: {
+    readonly update: Client["pages"]["update"];
   };
 }
 
@@ -134,10 +153,28 @@ export const DEFAULT_PROJECT_PROPERTY_NAMES: NotionProjectPropertyNames = {
 };
 
 /**
- * Config `readNotionTasks` (and, from Task 19, `setTaskStatus`) need. The
- * two data source ids are workspace-specific — sourced from wherever the
- * caller (a `rituals/*.ts` or `shell/*.ts` bootstrap, a later task)
- * constructs them from, e.g. env vars, mirroring `token-store.ts`'s
+ * The Notion Status-property OPTION NAME each `TaskStatus` value writes back
+ * as — the inverse of `normalizeStatus`'s read-side mapping (`"In Progress"`
+ * -> `"in-progress"`, trim/lowercase/hyphenate). Title-cased with a literal
+ * space, matching the exact option names the Task 3 brief's read-side
+ * assumption documents Spencer's workspace as using. Overridable via
+ * `NotionAdapterConfig.statusOptionNames` in case Spencer's real workspace
+ * names its Status options differently, without a code change — the same
+ * override convention `taskPropertyNames`/`projectPropertyNames` already
+ * establish.
+ */
+export const DEFAULT_TASK_STATUS_OPTION_NAMES: Record<TaskStatus, string> = {
+  "not-started": "Not Started",
+  "in-progress": "In Progress",
+  completed: "Completed",
+  slipped: "Slipped",
+};
+
+/**
+ * Config `readNotionTasks` and `setTaskStatus` share. The two data source
+ * ids are workspace-specific — sourced from wherever the caller
+ * (a `rituals/*.ts` or `shell/*.ts` bootstrap, a later task) constructs them
+ * from, e.g. env vars, mirroring `token-store.ts`'s
  * `loadGoogleOAuthConfigFromEnv` pattern for Google.
  */
 export interface NotionAdapterConfig {
@@ -147,6 +184,8 @@ export interface NotionAdapterConfig {
   readonly projectsDataSourceId: string;
   readonly taskPropertyNames?: NotionTaskPropertyNames;
   readonly projectPropertyNames?: NotionProjectPropertyNames;
+  /** Overrides `DEFAULT_TASK_STATUS_OPTION_NAMES` — used only by `setTaskStatus`. */
+  readonly statusOptionNames?: Record<TaskStatus, string>;
 }
 
 // ============================================================================
@@ -190,6 +229,84 @@ export async function readNotionTasks(
     tasks: taskPages.map((page) => toTask(page, taskPropertyNames)),
     projects: projectPages.map((page) => toProject(page, projectPropertyNames)),
   };
+}
+
+// ============================================================================
+// setTaskStatus (AD-12) — the adapter's ONE write function
+// ============================================================================
+
+/**
+ * Writes `status` to a Task's Notion Status property, and ONLY that
+ * property — no other Task field is read, sent, or otherwise touched by
+ * this call (AD-12: Status is the only Task field Yoh ever writes back to
+ * Notion). This is Task 19/Epic 3's one addition to this file; per its own
+ * brief no generic "update Task property" function may exist here alongside
+ * it — this is the entire write surface.
+ *
+ * **Implementer note on the exact parameter list (a documented choice —
+ * the Task 19 brief's "Before You Begin" guidance applies here).** The
+ * brief's Implementer note quotes `setTaskStatus(taskId: string, status:
+ * TaskStatus): Promise<Result<void, YohError>>` as "the exact signature."
+ * Read literally that would mean no injectable client/config at all, which
+ * conflicts with this file's own module docstring ("Both functions share
+ * the same injectable-client/config shape") and with AD-8's implementer
+ * note that the Notion `Client` is never constructed inside this file. The
+ * reading adopted here treats that quoted signature as describing the
+ * shape of the BOUND dependency a `rituals/*.ts`/`shell/*.ts` caller
+ * threads through (exactly the same relationship
+ * `MorningRitualDeps.readTasks: () => Promise<readonly Task[]>` already has
+ * to `readNotionTasks(client, config)` — a zero-Notion-detail thunk closing
+ * over the real client/config) — see `rituals/night-ritual.ts`'s
+ * `NightCloseOutApplyDeps.setTaskStatus` and `shell/ritual-cli.ts`'s
+ * `createMorningRitualDeps`/`shell/chat-cli.ts`'s `main` for the binding
+ * sites. The actual exported function below keeps the SAME
+ * `(client, config, ...)` leading shape `readNotionTasks` already
+ * establishes, so both functions really do "share the same
+ * injectable-client/config shape," and so this file's testing convention
+ * (an injected fake client, never a real network call) applies uniformly to
+ * both. AD-12's binding requirement — no other write/update function
+ * anywhere in this file, and this call touches Status alone — holds exactly
+ * either way this parameter-list question is read; only the calling
+ * convention was ambiguous, not the behavior.
+ *
+ * **The AD-8 exception (per the brief's Implementer note).** Every other
+ * function in this file lets `@notionhq/client`'s SDK/network errors
+ * propagate unchanged (AD-8's general rule: `adapters/*.ts` may throw,
+ * `rituals/*.ts` catches). `setTaskStatus` is the one deliberate,
+ * brief-mandated exception: its own signature returns `Result<void,
+ * YohError>` directly, so the catch-and-translate step that would otherwise
+ * happen in `rituals/night-ritual.ts` happens HERE instead — nothing thrown
+ * by `client.pages.update` escapes this function.
+ */
+export async function setTaskStatus(
+  client: NotionWriteClient,
+  config: NotionAdapterConfig,
+  taskId: string,
+  status: TaskStatus,
+): Promise<Result<void, YohError>> {
+  const statusPropertyName = (config.taskPropertyNames ?? DEFAULT_TASK_PROPERTY_NAMES).status;
+  const optionName = (config.statusOptionNames ?? DEFAULT_TASK_STATUS_OPTION_NAMES)[status];
+
+  try {
+    await client.pages.update({
+      page_id: taskId,
+      properties: {
+        [statusPropertyName]: { status: { name: optionName }, type: "status" },
+      },
+    });
+    return { ok: true, value: undefined };
+  } catch (err) {
+    return {
+      ok: false,
+      error: {
+        kind: "unreachable",
+        message: `notion-adapter: could not write Status for Task ${taskId} — ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+        detail: err,
+      },
+    };
+  }
 }
 
 // ============================================================================
