@@ -104,8 +104,24 @@
  * `core/slip-bump.ts`'s `computeSlipBumpLevel` (AD-6). This is a read-only
  * view: unlike the Mid-Day Re-Flow/Blocker triggers above, it never
  * persists anything. It deliberately does NOT add a "report a slip"
- * trigger — recording a slip is Night Ritual close-out's job (Task 19, not
- * yet built); see `core/slip-bump.ts`'s own "Scope note" docstring section.
+ * trigger — recording a slip is Night Ritual close-out's job (Task 19,
+ * below); see `core/slip-bump.ts`'s own "Scope note" docstring section.
+ *
+ * Task 19 update (Story 3.1, FR-12–FR-14, AD-12): `surfaceOpenInteractionRequests`
+ * gets a SIXTH typed branch, `answerNightCloseOutRequest`, for
+ * `requestKind: "night-close-out"` — `rituals/night-ritual.ts`'s
+ * `runNightPromptRitual` (the `night-prompt` half, triggered by
+ * `ritual-cli.ts`, never this file) persists the request; this file is
+ * where it is surfaced and answered. Mirrors `answerDataCompletenessRequest`'s
+ * shape exactly: one follow-up question per named Task, each answer
+ * immediately applied (`rituals/night-ritual.ts`'s
+ * `applyNightCloseOutConfirmation` — writes `notion-adapter.ts`'s
+ * `setTaskStatus`, then `recordSlip`/`clearSlip`), the request cleared only
+ * once every Task is answered. This is the first real call site for
+ * `core/slip-bump.ts`'s storage half (Task 17 built `recordSlip`/
+ * `clearSlip` but nothing called them until now) and closes
+ * `ritual-cli.ts`'s `createMorningRitualDeps` `bumpLevels` bridge from the
+ * other side — see that function's own doc comment.
  *
  * Task 10 update: the merge/gate/sync trio moved to
  * `rituals/data-completeness.ts` — the `rituals/*.ts` home the note above

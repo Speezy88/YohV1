@@ -79,16 +79,22 @@
  *
  * Per the epics text, "Night Ritual close-out is Slip-Bump's guaranteed,
  * authoritative trigger; Mid-Day Re-Flow is the earlier, optional one" —
- * neither exists yet (Task 19 is not yet built). This task builds only the
- * COMPUTATION (`computeSlipBumpLevel`/`computeSlipBumpLevels`, here) and
- * STORAGE (`recordSlip`/`clearSlip`/`getSlipHistory`/`listSlipHistories`,
- * `memory-store.ts`) machinery, ready for Task 19 to call from a real
- * close-out flow. It deliberately does NOT invent a new `chat-cli.ts`
- * trigger for Spencer to report a slip directly — the brief's acceptance
- * criteria only require the bump computation, the completion-clears
- * behavior, and the lineage-view command (all of which this task does
- * build); inventing an extra reporting trigger would risk conflicting with
- * whatever exact trigger shape Task 19's Night Ritual close-out settles on.
+ * neither existed at the time this task (Task 17) was written. This task
+ * built only the COMPUTATION (`computeSlipBumpLevel`/`computeSlipBumpLevels`,
+ * here) and STORAGE (`recordSlip`/`clearSlip`/`getSlipHistory`/
+ * `listSlipHistories`, `memory-store.ts`) machinery, ready for Task 19 to
+ * call from a real close-out flow. It deliberately did NOT invent a new
+ * `chat-cli.ts` trigger for Spencer to report a slip directly — the brief's
+ * acceptance criteria only required the bump computation, the
+ * completion-clears behavior, and the lineage-view command (all of which
+ * this task built); inventing an extra reporting trigger would have risked
+ * conflicting with whatever exact trigger shape Task 19's Night Ritual
+ * close-out settled on.
+ *
+ * Task 19 update: that trigger now exists —
+ * `rituals/night-ritual.ts`'s `applyNightCloseOutConfirmation` is the real
+ * call site this note anticipated, calling `recordSlip`/`clearSlip` exactly
+ * as described above, with no changes needed here.
  */
 import type { EscalationCurve, EscalationLevel, ExternalId } from "../types/domain.ts";
 import { computeEscalation } from "./escalate-under-strain.ts";

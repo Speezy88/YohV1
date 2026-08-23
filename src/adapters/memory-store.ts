@@ -610,10 +610,11 @@ export function getSlipHistory(store: MemoryStore, taskId: string): StoredRecord
  *
  * Per the epics text ("Night Ritual close-out is Slip-Bump's guaranteed,
  * authoritative trigger; Mid-Day Re-Flow is the earlier, optional one"),
- * this function is the storage primitive that trigger is expected to call
- * once it exists (Task 19) — nothing in THIS task's own scope calls it from
- * a real ritual or chat trigger yet; see `core/slip-bump.ts`'s own "Scope
- * note" docstring section for why.
+ * this function is the storage primitive that trigger calls — see
+ * `core/slip-bump.ts`'s own "Scope note" docstring section for the history
+ * of why THIS task (Task 17) didn't yet call it itself. Task 19's
+ * `rituals/night-ritual.ts` (`applyNightCloseOutConfirmation`) is that real
+ * call site now.
  */
 export function recordSlip(store: MemoryStore, taskId: string, slipDate: IsoDate): StoredRecord<SlipHistory> {
   const current = store.getRecord<SlipHistory>(SLIP_HISTORY_KIND, taskId);
@@ -648,11 +649,11 @@ export function clearSlip(store: MemoryStore, taskId: string): void {
  * Lists every Task's currently-stored `SlipHistory`, across every `taskId`
  * — the same "surface whatever's stored without already knowing each id"
  * shape `listOpenInteractionRequests` provides for interaction requests.
- * This is what a future caller (Task 19's Night Ritual, or
- * `rituals/morning-ritual.ts` itself) builds a `taskId -> consecutiveSlipCount`
- * map from before calling `core/slip-bump.ts`'s `computeSlipBumpLevels` to
- * get the `bumpLevels` shape `core/derived-priority.ts`'s
- * `orderByDerivedPriority` already accepts.
+ * Task 19's `shell/ritual-cli.ts` (`createMorningRitualDeps`'s `bumpLevels`
+ * bridge) is what builds a `taskId -> consecutiveSlipCount` map from this
+ * before calling `core/slip-bump.ts`'s `computeSlipBumpLevels` to get the
+ * `bumpLevels` shape `core/derived-priority.ts`'s `orderByDerivedPriority`
+ * already accepts.
  */
 export function listSlipHistories(store: MemoryStore): StoredRecord<SlipHistory>[] {
   return store.listRecordsByKind<SlipHistory>(SLIP_HISTORY_KIND);

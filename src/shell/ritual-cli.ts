@@ -14,9 +14,16 @@
  *
  * Task 10 introduces this file with ONE subcommand, `morning`. AD-5 names
  * three more — `night-prompt` (Task 19), `night-escalate` (Task 20), and
- * `self-check` (Task 24). They are recognized here by name and reported as
- * not yet built, rather than falling through to "unknown subcommand": a cron
- * entry someone adds early should say what's actually going on.
+ * `self-check` (Task 24). `night-prompt` is now built too (Task 19, below);
+ * the remaining two are recognized here by name and reported as not yet
+ * built, rather than falling through to "unknown subcommand": a cron entry
+ * someone adds early should say what's actually going on.
+ *
+ * Task 19 update (Story 3.1): adds the `night-prompt` subcommand
+ * (`handleNightPromptResult`, `createNightPromptRitualDeps`) with the exact
+ * same one-shot/never-blocks contract `morning` already has, and closes
+ * `createMorningRitualDeps`'s `bumpLevels` bridge — see that function's own
+ * doc comment.
  *
  * Per AD-1 this shell file contains no ritual logic of its own. It does two
  * things: bind the real adapters/stores to `rituals/morning-ritual.ts`'s
