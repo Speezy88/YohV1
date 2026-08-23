@@ -222,6 +222,30 @@ export interface Plan {
 }
 
 // ============================================================================
+// CalendarEvent (FR-1, AD-10)
+// ============================================================================
+
+/**
+ * CalendarEvent — a single event read from Spencer's primary Google
+ * Calendar (`calendar-adapter.ts`, Task 4/Story 1.4), used to build a Plan's
+ * `calendar-anchor` PlanBlocks (FR-1) around Spencer's real fixed
+ * commitments. Added because no earlier task needed a representation of a
+ * raw Calendar event; deliberately minimal (id + title + start/end) since
+ * Story 1.4's acceptance criteria requires only "every one of today's
+ * events with start/end time" — extend here, not with a parallel type, if a
+ * later story needs more (e.g. attendees, location). `start`/`end` are
+ * `IsoDateTime` (UTC), converted from the Calendar API's own
+ * `dateTime`/`date` event-time shape by `calendar-adapter.ts`.
+ */
+export interface CalendarEvent {
+  readonly id: ExternalId;
+  /** The event's title (Google Calendar's own "summary" field), used as `PlanBlock.label` for `calendar-anchor` blocks. */
+  readonly title: string;
+  readonly start: IsoDateTime;
+  readonly end: IsoDateTime;
+}
+
+// ============================================================================
 // TimeBudget (FR-5, FR-7)
 // ============================================================================
 
