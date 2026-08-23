@@ -1263,7 +1263,7 @@ test("runChatCli surfaces the Night Ritual close-out prompt first and accepts pe
   const store = tempStore();
   const today = localIsoDate(NIGHT_NOW, TEST_TIME_ZONE);
   putPlan(store, closeOutPlan(today));
-  const promptRun = await runNightPromptRitual({ store, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE });
+  const promptRun = await runNightPromptRitual({ store, sendNotification: async () => {}, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE });
   assert.ok(promptRun.ok && promptRun.value.status === "prompted");
   assert.ok(getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID));
 
@@ -1291,7 +1291,7 @@ test("runChatCli: a confirmed 'slipped' Task records a real Slip-Bump via the ni
   const store = tempStore();
   const today = localIsoDate(NIGHT_NOW, TEST_TIME_ZONE);
   putPlan(store, closeOutPlan(today));
-  await runNightPromptRitual({ store, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE });
+  await runNightPromptRitual({ store, sendNotification: async () => {}, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE });
 
   const io = makeScriptedIo(["slipped", "completed"]);
   await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => NIGHT_NOW, async () => [], makeFakeSetTaskStatus());
@@ -1311,7 +1311,7 @@ test("runChatCli: a confirmed 'completed' Task with prior slip history gets it c
 
   const today = localIsoDate(NIGHT_NOW, TEST_TIME_ZONE);
   putPlan(store, closeOutPlan(today));
-  await runNightPromptRitual({ store, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE });
+  await runNightPromptRitual({ store, sendNotification: async () => {}, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE });
 
   const io = makeScriptedIo(["completed", "completed"]);
   await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => NIGHT_NOW, async () => [], makeFakeSetTaskStatus());
@@ -1324,7 +1324,7 @@ test("runChatCli: an unrecognized close-out answer re-prompts the SAME Task rath
   const store = tempStore();
   const today = localIsoDate(NIGHT_NOW, TEST_TIME_ZONE);
   putPlan(store, closeOutPlan(today));
-  await runNightPromptRitual({ store, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE });
+  await runNightPromptRitual({ store, sendNotification: async () => {}, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE });
 
   const setTaskStatus = makeFakeSetTaskStatus();
   const io = makeScriptedIo(["huh?", "completed", "slipped"]);
@@ -1342,7 +1342,7 @@ test("runChatCli: a Notion write failure re-prompts the same Task rather than si
   const store = tempStore();
   const today = localIsoDate(NIGHT_NOW, TEST_TIME_ZONE);
   putPlan(store, closeOutPlan(today));
-  await runNightPromptRitual({ store, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE });
+  await runNightPromptRitual({ store, sendNotification: async () => {}, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE });
 
   let attempt = 0;
   const flakySetTaskStatus = async (taskId: string, status: TaskStatus): Promise<Result<void, YohError>> => {
@@ -1363,7 +1363,7 @@ test("runChatCli: a PERMANENTLY-failing Notion write can be skipped, unblocking 
   const store = tempStore();
   const today = localIsoDate(NIGHT_NOW, TEST_TIME_ZONE);
   putPlan(store, closeOutPlan(today));
-  await runNightPromptRitual({ store, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE });
+  await runNightPromptRitual({ store, sendNotification: async () => {}, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE });
 
   // t1 fails on EVERY attempt (simulates a Task archived/deleted in Notion
   // between Plan generation and close-out — a permanent 404, not a
@@ -1398,7 +1398,7 @@ test("runChatCli: a close-out answered the NEXT MORNING records the Slip-Bump ag
   const store = tempStore();
   const planDate = localIsoDate(NIGHT_NOW, TEST_TIME_ZONE);
   putPlan(store, closeOutPlan(planDate));
-  await runNightPromptRitual({ store, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE });
+  await runNightPromptRitual({ store, sendNotification: async () => {}, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE });
 
   // Spencer doesn't open chat until the NEXT day.
   const NEXT_MORNING = new Date(NIGHT_NOW.getTime() + 12 * 60 * 60_000);

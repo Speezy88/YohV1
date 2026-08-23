@@ -63,6 +63,26 @@
  * for an unparseable answer.
  *
  * ============================================================================
+ * The first attempt's own push notification (Task 20 review fix)
+ * ============================================================================
+ *
+ * `runNightPromptRitual` was originally built (Task 19) to only persist the
+ * open interaction request — discoverable exclusively by opening
+ * `chat-cli.ts`, with no active nudge at all. That silently broke Task 20's
+ * whole premise ("a channel distinct from the first attempt's push
+ * notification"): there was no first push to be distinct FROM. Fixed here by
+ * adding a `sendNotification` seam to `NightPromptRitualDeps`, the exact
+ * same shape `morning-ritual.ts`'s `MorningRitualDeps.sendNotification`
+ * already has — `runNightPromptRitual` now sends one short Pushover push
+ * (`NIGHT_PROMPT_NOTIFICATION_TITLE`, the same `promptText` the interaction
+ * request itself carries) immediately after persisting the request, and
+ * BEFORE marking the night's `night-prompt` ritual-run done — mirroring
+ * `runMorningRitual`'s own persist-then-send-then-mark ordering, so a
+ * transient Pushover failure never loses the persisted request (Spencer can
+ * still find it in chat) and is retried by the next same-night trigger
+ * rather than permanently burning the night.
+ *
+ * ============================================================================
  * Idempotence (AD-5, this task's own AC #6: "triggered twice the same night
  * doesn't re-persist a duplicate/redundant request")
  * ============================================================================
@@ -112,6 +132,7 @@ import {
   type MemoryStore,
 } from "../adapters/memory-store.ts";
 import { ATTENTION, localIsoDate, RESET, shouldUseColor } from "./morning-ritual.ts";
+import type { PlanNotification } from "./morning-ritual.ts";
 import type { EmailMessage } from "../adapters/email-adapter.ts";
 import type {
   ExternalId,
@@ -131,6 +152,15 @@ export const NIGHT_PROMPT_RITUAL_ID = "night-prompt";
 
 /** The fixed, singleton interaction-request id the Night Ritual close-out prompt is stored under — mirrors `rituals/data-completeness.ts`'s `DATA_COMPLETENESS_REQUEST_ID` (one combined request, not one per Task). */
 export const NIGHT_CLOSE_OUT_REQUEST_ID = "night-close-out";
+
+/**
+ * The `night-prompt` push notification's title (Task 20 review fix — see the
+ * module docstring's "The first attempt's own push notification" section).
+ * Plain text, like `morning-ritual.ts`'s own `NOTIFICATION_TITLE`: Pushover
+ * titles carry no styling at all, so the cue is the wording itself, not
+ * color (UX-DR20).
+ */
+export const NIGHT_PROMPT_NOTIFICATION_TITLE = "Close out today?";
 
 // ============================================================================
 // Prompt text / detail shape
@@ -182,6 +212,16 @@ export interface NightPromptLogEntry {
  */
 export interface NightPromptRitualDeps {
   readonly store: MemoryStore;
+  /**
+   * `adapters/notification-adapter.ts`'s `sendPushoverNotification`,
+   * pre-bound to its config — the SAME shape (and the same seam name) as
+   * `MorningRitualDeps.sendNotification`, added by Task 20's review fix: the
+   * first close-out attempt has to be an actively-delivered push, not merely
+   * a silently-persisted interaction request Spencer only sees if he happens
+   * to open `chat-cli.ts` — see the module docstring's "The first attempt's
+   * own push notification" section. Throws on I/O failure (AD-8).
+   */
+  readonly sendNotification: (notification: PlanNotification) => Promise<void>;
   /** Injectable clock — never `new Date()` inline, so a test can pin the night. */
   readonly now: () => Date;
   /** Spencer's IANA timezone, defining "today" — the same Plan-date key `morning-ritual.ts`/`mid-day-reflow.ts` use. */
@@ -285,10 +325,45 @@ export async function runNightPromptRitual(
 
   try {
     putOpenInteractionRequest(deps.store, NIGHT_CLOSE_OUT_REQUEST_ID, request);
-    putRitualRun(deps.store, NIGHT_PROMPT_RITUAL_ID, { date: today, ranAt: nowIso });
   } catch (err) {
     log({ level: "error", event: "night-ritual.persist-failed", detail: describeError(err) });
     return failure("conflict", `night-ritual: could not persist the close-out prompt — ${describeError(err)}`, err);
+  }
+
+  // --- Notify Spencer the close-out prompt is waiting (AD-8 boundary) -------
+  // The interaction request is already persisted above, so a delivery
+  // failure here never loses it — Spencer can still find it by opening
+  // `chat-cli.ts` even without the push. Mirrors `runMorningRitual`'s own
+  // "persist before send" ordering.
+  try {
+    await deps.sendNotification({
+      title: NIGHT_PROMPT_NOTIFICATION_TITLE,
+      message: request.promptText,
+    });
+  } catch (err) {
+    log({ level: "error", event: "night-ritual.notify-failed", detail: describeError(err) });
+    return failure(
+      "unreachable",
+      `night-ritual: could not send tonight's close-out notification — ${describeError(err)}`,
+      err,
+    );
+  }
+
+  // --- Mark the day done, AFTER a confirmed delivery -------------------------
+  // Deliberately after the send, not before — the same reasoning
+  // `runMorningRitual`'s own step 12c gives: writing this first would make
+  // the notification strictly at-most-once, but a transient Pushover outage
+  // would then permanently burn the night with nothing telling Spencer why.
+  // Leaving it unwritten on a failed send lets the next trigger retry.
+  try {
+    putRitualRun(deps.store, NIGHT_PROMPT_RITUAL_ID, { date: today, ranAt: nowIso });
+  } catch (err) {
+    log({ level: "error", event: "night-ritual.mark-run-failed", detail: describeError(err) });
+    return failure(
+      "conflict",
+      `night-ritual: tonight's close-out prompt was sent but could not be marked done — ${describeError(err)}`,
+      err,
+    );
   }
 
   log({ level: "info", event: "night-ritual.prompted", detail: { date: today, taskCount: tasks.length } });
@@ -473,7 +548,7 @@ export type NightEscalateLogEntry = NightPromptLogEntry;
  */
 export interface NightEscalateRitualDeps {
   readonly store: MemoryStore;
-  /** `adapters/email-adapter.ts`'s `sendEmail`, pre-bound to its config — the second attempt's channel, deliberately DISTINCT from `morning-ritual.ts`'s `sendNotification` (Pushover push). Throws on I/O failure (AD-8). */
+  /** `adapters/email-adapter.ts`'s `sendEmail`, pre-bound to its config — the second attempt's channel, deliberately DISTINCT from `NightPromptRitualDeps.sendNotification` above (the first attempt's own Pushover push, Task 20 review fix). Throws on I/O failure (AD-8). */
   readonly sendEscalationEmail: (message: EmailMessage) => Promise<void>;
   /** Injectable clock — never `new Date()` inline, so a test can pin the night. */
   readonly now: () => Date;
@@ -490,7 +565,22 @@ export type NightEscalateOutcome =
       readonly date: IsoDate;
     }
   | {
-      /** No close-out request is currently open — either it was never opened tonight, or (the common case) Spencer already answered it via `chat-cli.ts` before this trigger ran. Either way, nothing to escalate. */
+      /**
+       * `night-prompt` has not recorded a run for tonight yet (Task 20
+       * review fix, Important #2): there is nothing to escalate ABOUT yet —
+       * distinguished from `"no-open-request"` below by checking
+       * `NIGHT_PROMPT_RITUAL_ID`'s own ritual-run marker. Deliberately does
+       * NOT write the `NIGHT_ESCALATE_RITUAL_ID` marker, so a later
+       * same-night trigger (once `night-prompt` has actually run — whether
+       * on schedule, delayed, or manually re-run) can still escalate. Never
+       * burn the one capped attempt on a night that hasn't even asked the
+       * question yet.
+       */
+      readonly status: "not-prompted-yet";
+      readonly date: IsoDate;
+    }
+  | {
+      /** `night-prompt` DID run tonight, and the close-out request is now absent — genuinely answered and cleared by `chat-cli.ts` before this trigger ran (the only other way it could be absent, `night-prompt` simply not having run yet, is `"not-prompted-yet"` above). Nothing to escalate. */
       readonly status: "no-open-request";
       readonly date: IsoDate;
     }
@@ -514,19 +604,32 @@ export type NightEscalateOutcome =
  * reasoning): the email is sent BEFORE the `night-escalate` ran-today marker
  * is written, so a transient SMTP failure is retried by a later same-night
  * trigger instead of permanently burning the one capped attempt. Once the
- * send succeeds (or once this run determines there was nothing to send), the
- * marker is written — and from then on, per this story's own AC ("both
- * attempts have now been sent for tonight ... no third attempt is ever
- * sent"), EVERY further trigger the same night short-circuits to
- * `"already-ran"` without re-checking the request at all — even if it is
- * still open and Spencer still hasn't answered. That is deliberate: the cap
- * is unconditional, not "resend until answered."
+ * send succeeds (or once this run confirms the close-out was genuinely
+ * answered and there was nothing left to send — see the `"not-prompted-yet"`
+ * vs `"no-open-request"` distinction below), the marker is written — and
+ * from then on, per this story's own AC ("both attempts have now been sent
+ * for tonight ... no third attempt is ever sent"), EVERY further trigger the
+ * same night short-circuits to `"already-ran"` without re-checking the
+ * request at all — even if it is still open and Spencer still hasn't
+ * answered. That is deliberate: the cap is unconditional, not "resend until
+ * answered." The ONE case that does NOT write the marker at all is
+ * `"not-prompted-yet"` — see below.
  *
  * Per AD-8, this is one of the layers allowed to catch an adapter's throw:
  * `sendEscalationEmail` (which may throw on I/O failure, `email-adapter.ts`'s
  * own contract) and every `memory-store.ts` write below (which can throw
  * `ConflictError` under AD-10 concurrency with `chat-cli.ts`) are wrapped and
  * converted into a `Result` failure plus a structured log line.
+ *
+ * **Disambiguating "no open request" (Task 20 review fix, Important #2).**
+ * `getOpenInteractionRequest` returning nothing is ambiguous by itself — it
+ * cannot distinguish "Spencer already answered and `chat-cli.ts` cleared it"
+ * from "`night-prompt` hasn't fired tonight yet" (a delayed cron, a crash, a
+ * manual re-run later). Only the FIRST case should burn the escalation cap;
+ * the second must leave it un-burned so a later same-night trigger — once
+ * `night-prompt` has actually run — can still escalate. See
+ * `NightEscalateOutcome`'s `"not-prompted-yet"` vs `"no-open-request"`
+ * variants for the two outcomes this distinction produces.
  */
 export async function runNightEscalateRitual(
   deps: NightEscalateRitualDeps,
@@ -546,6 +649,27 @@ export async function runNightEscalateRitual(
   // --- Is tonight's close-out request STILL open? ---------------------------
   const open = getOpenInteractionRequest(deps.store, NIGHT_CLOSE_OUT_REQUEST_ID);
   if (!open) {
+    // Task 20 review fix (Important #2): `getOpenInteractionRequest`
+    // returning `undefined` is ambiguous on its own — it can't tell "Spencer
+    // already answered and chat-cli.ts cleared it" apart from "night-prompt
+    // hasn't fired tonight at all yet" (`clearInteractionRequest` just
+    // deletes the row; there's no audit trail). Disambiguate via
+    // `night-prompt`'s OWN ritual-run marker before deciding whether to burn
+    // the escalation cap.
+    const promptRun = getRitualRun(deps.store, NIGHT_PROMPT_RITUAL_ID);
+    if (promptRun?.data.date !== today) {
+      // night-prompt hasn't run tonight yet — nothing to escalate about, and
+      // burning the cap now would silently disable the safety net for the
+      // rest of the night if night-prompt is merely delayed. No marker
+      // written; a later same-night trigger (after night-prompt actually
+      // runs) can still escalate.
+      log({ level: "info", event: "night-ritual.escalate-not-prompted-yet", detail: { date: today } });
+      return { ok: true, value: { status: "not-prompted-yet", date: today } };
+    }
+
+    // night-prompt DID run tonight, and the request is genuinely gone —
+    // answered and cleared. Burn the cap: there is nothing left to escalate
+    // tonight, and no further trigger should re-check.
     try {
       putRitualRun(deps.store, NIGHT_ESCALATE_RITUAL_ID, { date: today, ranAt: nowIso });
     } catch (err) {

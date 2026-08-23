@@ -30,8 +30,14 @@
  * (by OS cron, outside this codebase) some hours after `night-prompt`. Same
  * one-shot/never-blocks contract; binds only `adapters/email-adapter.ts`'s
  * `sendEmail` (via `loadEmailConfigFromEnv`) plus the `MemoryStore` — no
- * Notion/Calendar/Pushover credentials are needed, mirroring
- * `createNightPromptRitualDeps`'s own "don't force unrelated config" choice.
+ * Notion/Calendar/Pushover credentials are needed for THIS subcommand.
+ *
+ * Task 20 review-fix update: `createNightPromptRitualDeps` now ALSO wires
+ * `adapters/notification-adapter.ts`'s `sendPushoverNotification` (see
+ * `rituals/night-ritual.ts`'s own "The first attempt's own push
+ * notification" docstring section for why) — `night-prompt` now requires
+ * `PUSHOVER_APP_TOKEN`/`PUSHOVER_USER_KEY` to be configured, same as
+ * `morning`.
  *
  * Per AD-1 this shell file contains no ritual logic of its own. It does two
  * things: bind the real adapters/stores to `rituals/morning-ritual.ts`'s
@@ -222,10 +228,13 @@ function handleNightEscalateResult(result: Result<NightEscalateOutcome, YohError
     case "already-ran":
       io.writeLine(`The Night Ritual escalation already ran today (${result.value.date}) — nothing more to send.`);
       return 0;
-    case "no-open-request":
+    case "not-prompted-yet":
       io.writeLine(
-        `Nothing to escalate for ${result.value.date} — the close-out was already answered (or never opened). No-op.`,
+        `Nothing to escalate for ${result.value.date} yet — night-prompt hasn't run tonight. Try again after it does.`,
       );
+      return 0;
+    case "no-open-request":
+      io.writeLine(`Nothing to escalate for ${result.value.date} — the close-out was already answered. No-op.`);
       return 0;
     case "escalated":
       io.writeLine(renderNightEscalateNotice(result.value.tasks.length, result.value.date));
@@ -331,13 +340,16 @@ export function createMorningRitualDeps(
 }
 
 /**
- * Binds the real `MemoryStore` to `runNightPromptRitual`'s injected seams
- * (Task 19 / Story 3.1). Deliberately far lighter than
- * `createMorningRitualDeps`: `night-prompt` only reads the already-stored
- * Plan and persists an interaction request — no Notion, Calendar, or
- * Pushover credentials are needed, so running it must not require them to be
- * configured (mirrors `shell/chat-cli.ts`'s own "don't force unrelated
- * config" convention for its lazily-constructed `readTasks`).
+ * Binds the real `MemoryStore` and Pushover adapter to
+ * `runNightPromptRitual`'s injected seams (Task 19 / Story 3.1; Pushover
+ * added by Task 20's review fix — see `rituals/night-ritual.ts`'s "The first
+ * attempt's own push notification" docstring section). Still lighter than
+ * `createMorningRitualDeps`: `night-prompt` reads the already-stored Plan,
+ * persists an interaction request, and sends one Pushover push — no Notion
+ * or Calendar credentials are needed, so running it must not require THOSE
+ * to be configured (mirrors `shell/chat-cli.ts`'s own "don't force unrelated
+ * config" convention for its lazily-constructed `readTasks`). Pushover
+ * credentials ARE required now, same as `morning`.
  */
 export function createNightPromptRitualDeps(
   store: MemoryStore,
@@ -347,9 +359,11 @@ export function createNightPromptRitualDeps(
   if (!timeZone) {
     throw new Error("ritual-cli: missing required environment variable YOH_TIMEZONE (e.g. America/New_York)");
   }
+  const pushoverConfig = loadPushoverConfigFromEnv(env);
 
   return {
     store,
+    sendNotification: (notification) => sendPushoverNotification(pushoverConfig, notification),
     now: () => new Date(),
     timeZone,
     log: (entry) => {

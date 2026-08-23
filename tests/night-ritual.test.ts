@@ -25,6 +25,7 @@ import {
   getSlipHistory,
   putOpenInteractionRequest,
   putPlan,
+  putRitualRun,
   recordSlip,
   type MemoryStore,
 } from "../src/adapters/memory-store.ts";
@@ -72,6 +73,7 @@ function samplePlan(blocks: readonly PlanBlock[]): Plan {
 function deps(store: MemoryStore, overrides: Partial<NightPromptRitualDeps> = {}): NightPromptRitualDeps {
   return {
     store,
+    sendNotification: async () => {},
     now: () => new Date(NOW_ISO),
     timeZone: "UTC",
     ...overrides,
@@ -195,6 +197,82 @@ test("the ran-today marker records the date night-prompt last ran", async () => 
   await runNightPromptRitual(deps(store));
   const run = getRitualRun(store, NIGHT_PROMPT_RITUAL_ID);
   assert.equal(run?.data.date, TODAY);
+});
+
+// ============================================================================
+// The first attempt's own push notification (Task 20 review fix, Important #1)
+// ============================================================================
+
+interface RecordedNightPromptNotification {
+  readonly title: string;
+  readonly message: string;
+}
+
+test("a successful night-prompt run sends exactly one Pushover push naming the Tasks to confirm", async () => {
+  const store = tempStore();
+  putPlan(
+    store,
+    samplePlan([
+      block({ id: "work-0", kind: "work", start: "2026-08-22T13:00:00.000Z", end: "2026-08-22T14:00:00.000Z", label: "Draft the memo", taskId: "t1" }),
+    ]),
+  );
+
+  const calls: RecordedNightPromptNotification[] = [];
+  const result = await runNightPromptRitual(
+    deps(store, {
+      sendNotification: async (notification) => {
+        calls.push({ title: notification.title, message: notification.message });
+      },
+    }),
+  );
+
+  assert.ok(result.ok && result.value.status === "prompted", `expected success, got ${JSON.stringify(result)}`);
+  assert.equal(calls.length, 1, "exactly one push notification is sent per night-prompt run");
+  assert.match(calls[0]!.title, /close out/i);
+  assert.match(calls[0]!.message, /Draft the memo/);
+});
+
+test("the 'nothing-to-confirm' outcome (no work blocks) sends NO push — there is nothing to ask about", async () => {
+  const store = tempStore();
+  putPlan(
+    store,
+    samplePlan([
+      block({ id: "calendar-anchor-0", kind: "calendar-anchor", start: "2026-08-22T13:00:00.000Z", end: "2026-08-22T13:30:00.000Z", label: "Standup" }),
+    ]),
+  );
+
+  const calls: RecordedNightPromptNotification[] = [];
+  const result = await runNightPromptRitual(
+    deps(store, {
+      sendNotification: async (notification) => {
+        calls.push({ title: notification.title, message: notification.message });
+      },
+    }),
+  );
+
+  assert.ok(result.ok && result.value.status === "nothing-to-confirm");
+  assert.equal(calls.length, 0);
+});
+
+test("AD-8: when the push notification fails, runNightPromptRitual converts it to a Result failure and does NOT mark the day done (so a transient failure can be retried) — consistent with runMorningRitual's own precedent", async () => {
+  const store = tempStore();
+  putPlan(
+    store,
+    samplePlan([
+      block({ id: "work-0", kind: "work", start: "2026-08-22T13:00:00.000Z", end: "2026-08-22T14:00:00.000Z", label: "Draft the memo", taskId: "t1" }),
+    ]),
+  );
+
+  const failingSend: NightPromptRitualDeps["sendNotification"] = async () => {
+    throw new Error("Pushover: 502 Bad Gateway");
+  };
+
+  const result = await runNightPromptRitual(deps(store, { sendNotification: failingSend }));
+  assert.equal(result.ok, false);
+  assert.equal(getRitualRun(store, NIGHT_PROMPT_RITUAL_ID), undefined, "a failed push must not burn tonight's night-prompt run");
+  // The already-persisted interaction request survives the failed send — a
+  // delivery failure must not lose it (Spencer can still find it in chat).
+  assert.ok(getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID), "the interaction request must survive a failed notification send");
 });
 
 // ============================================================================
@@ -428,14 +506,72 @@ test("renderNightEscalateNotice carries no ANSI at all when color is off — the
 
 test("close-out already answered before night-escalate runs: no-op, no email is sent", async () => {
   const store = tempStore();
-  // No open request at all — the same state as "already answered" (chat-cli
-  // clears the request once Spencer answers every named Task).
+  // night-prompt DID run tonight, and there's no open request — genuinely
+  // answered and cleared (chat-cli.ts clears the request once Spencer
+  // answers every named Task).
+  putRitualRun(store, NIGHT_PROMPT_RITUAL_ID, { date: TODAY, ranAt: "2026-08-22T13:00:00.000Z" });
   const { calls, send } = recordingEscalationEmail();
 
   const result = await runNightEscalateRitual(escalateDeps(store, { sendEscalationEmail: send }));
   assert.ok(result.ok, `expected success, got ${JSON.stringify(result)}`);
   assert.equal(result.value.status, "no-open-request");
   assert.equal(calls.length, 0, "no second attempt is sent once the close-out was already answered");
+  assert.ok(getRitualRun(store, NIGHT_ESCALATE_RITUAL_ID), "the cap IS burned — night-prompt ran and the request is genuinely gone");
+});
+
+// ============================================================================
+// Task 20 review fix (Important #2): distinguishing "genuinely answered"
+// from "night-prompt hasn't fired tonight yet" — only the FIRST should burn
+// the escalation cap.
+// ============================================================================
+
+test("night-prompt has not run tonight yet: night-escalate skips WITHOUT burning the cap, so a later same-night trigger can still escalate", async () => {
+  const store = tempStore();
+  // No night-prompt ritual-run marker for tonight at all, and (naturally) no
+  // open request either — night-prompt simply hasn't fired yet (delayed
+  // cron, crash, whatever).
+  const { calls, send } = recordingEscalationEmail();
+
+  const result = await runNightEscalateRitual(escalateDeps(store, { sendEscalationEmail: send }));
+  assert.ok(result.ok, `expected success, got ${JSON.stringify(result)}`);
+  assert.equal(result.value.status, "not-prompted-yet");
+  assert.equal(calls.length, 0);
+  assert.equal(
+    getRitualRun(store, NIGHT_ESCALATE_RITUAL_ID),
+    undefined,
+    "the escalation cap must NOT be burned — nothing has been asked yet tonight, so there's still a legitimate later attempt to make",
+  );
+});
+
+test("night-prompt has not run tonight yet, but DID run on a PRIOR night: still not-prompted-yet for TONIGHT, cap not burned", async () => {
+  const store = tempStore();
+  putRitualRun(store, NIGHT_PROMPT_RITUAL_ID, { date: "2026-08-21", ranAt: "2026-08-21T22:00:00.000Z" });
+  const { calls, send } = recordingEscalationEmail();
+
+  const result = await runNightEscalateRitual(escalateDeps(store, { sendEscalationEmail: send }));
+  assert.ok(result.ok);
+  assert.equal(result.value.status, "not-prompted-yet");
+  assert.equal(calls.length, 0);
+  assert.equal(getRitualRun(store, NIGHT_ESCALATE_RITUAL_ID), undefined);
+});
+
+test("the safety net actually recovers: not-prompted-yet, then night-prompt runs, then night-escalate genuinely escalates the same night", async () => {
+  const store = tempStore();
+
+  // First trigger: night-prompt hasn't run yet.
+  const before = await runNightEscalateRitual(escalateDeps(store));
+  assert.ok(before.ok && before.value.status === "not-prompted-yet");
+  assert.equal(getRitualRun(store, NIGHT_ESCALATE_RITUAL_ID), undefined, "cap still un-burned");
+
+  // night-prompt finally runs (delayed) and opens the request.
+  putRitualRun(store, NIGHT_PROMPT_RITUAL_ID, { date: TODAY, ranAt: "2026-08-22T23:00:00.000Z" });
+  openCloseOutRequest(store, [{ taskId: "t1", taskTitle: "Draft the memo" }]);
+
+  // Second trigger, same night: escalation now genuinely fires.
+  const { calls, send } = recordingEscalationEmail();
+  const after = await runNightEscalateRitual(escalateDeps(store, { sendEscalationEmail: send }));
+  assert.ok(after.ok && after.value.status === "escalated", `expected escalation, got ${JSON.stringify(after)}`);
+  assert.equal(calls.length, 1, "the safety net was NOT silently disabled by the earlier not-prompted-yet check");
 });
 
 test("both attempts already sent for tonight: a further trigger the same night sends NO third attempt, even re-triggered multiple times", async () => {
