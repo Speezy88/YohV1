@@ -1020,27 +1020,58 @@ test("isBlockerReportCommand recognizes documented starting keyword/phrase heuri
   for (const line of [
     "meeting ran over",
     "the meeting ran over",
+    "the call ran over",
     "running late",
     "I'm running late",
+    "I ran late",
     "something came up",
-    "traffic",
     "stuck in traffic",
+    "I'm stuck in traffic",
     "call went long",
     "the call went long",
+    "the meeting ran long",
     "got held up",
     "held up",
-    "got delayed",
+    "got stuck",
+    "got interrupted",
     "MEETING RAN OVER",
   ]) {
     assert.equal(isBlockerReportCommand(line), true, `expected "${line}" to be recognized as a Blocker report`);
   }
 });
 
-test("isBlockerReportCommand returns false for unrelated input, including other recognized commands", () => {
-  for (const line of ["hello", "time budget 6h", "show plan", "reflow my day", "what's the weather", ""]) {
-    assert.equal(isBlockerReportCommand(line), false, `expected "${line}" NOT to be recognized as a Blocker report`);
-  }
-});
+test(
+  "isBlockerReportCommand returns false for unrelated input, including other recognized commands and (post-review fix) plausible unrelated " +
+    "sentences that merely CONTAIN a formerly-bare-word trigger",
+  () => {
+    for (const line of [
+      "hello",
+      "time budget 6h",
+      "show plan",
+      "reflow my day",
+      "what's the weather",
+      "",
+      // Post-review Important fix: `\btraffic\b` and `\bdelayed\b` used to be
+      // bare single-word triggers, matching ANYWHERE inside free text with
+      // no co-occurring signal. Both plausibly appear in an ordinary
+      // question or an unrelated statement, and — because AD-3 makes the
+      // Blocker path unconditional with no confirmation gate — a false
+      // match here would silently mutate and persist a change to Spencer's
+      // Plan instead of answering what he actually asked/said.
+      "what's traffic like on I-95 right now",
+      "how's traffic looking this morning",
+      "my package got delayed",
+      "the flight was delayed by two hours",
+      // Post-review fix: the old `\b(meeting|call)\s+(ran|went)\b` catch-all
+      // required no continuation after "ran"/"went", so it falsely matched
+      // ordinary good-news statements too.
+      "the meeting went great",
+      "the call went really well",
+    ]) {
+      assert.equal(isBlockerReportCommand(line), false, `expected "${line}" NOT to be recognized as a Blocker report`);
+    }
+  },
+);
 
 function blockerSamplePlan(date: IsoDate, nowIso: string): Plan {
   const nowMs = Date.parse(nowIso);

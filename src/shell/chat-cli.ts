@@ -45,21 +45,23 @@
  * `isBlockerReportCommand`, is added right after `isMidDayReflowCommand`
  * (still before the general-qa catch-all). It recognizes Spencer reporting
  * a purely logistical Blocker in plain language ("meeting ran over",
- * "running late", "traffic", ...) — genuinely more open-ended than
+ * "running late", "stuck in traffic", ...) — genuinely more open-ended than
  * `isMidDayReflowCommand`'s fixed trigger phrasing, so this is a
  * documented STARTING keyword/phrase heuristic (same spirit as
  * `isMidDayReflowCommand`/`parseTimeBudgetCommand`'s own "not real NLU"
  * notes, and FR-2's even-split weights elsewhere in this codebase — a
  * reasonable v1, not a claim of completeness; richer detection is a natural
- * future improvement). A match calls `runMidDayReflow` again — the SAME
- * function Mid-Day Re-Flow uses, with `blockerReported: true` — but renders
- * the result completely differently: UX-DR12 requires a single confirmation
- * line with no discussion or suggestions, sharply terser than Task 15's
- * "one short block" (UX-DR11). `rituals/mid-day-reflow.ts`'s
- * `buildBlockerConfirmationLine` builds that one line; this file never
- * prints `outcome.rendered` for this path. Per AD-3, FR-10 is NOT bound by
- * Propose-Don't-Impose — this reschedules immediately, with no confirmation
- * gate, exactly like Task 15's trigger already does.
+ * future improvement). Every recognized phrase is deliberately multi-word
+ * (post-review tightening — see `isBlockerReportCommand`'s own doc comment)
+ * because a false positive here is unusually costly: a match calls
+ * `runMidDayReflow` again — the SAME function Mid-Day Re-Flow uses, with
+ * `blockerReported: true` — which immediately PERSISTS a real reschedule of
+ * Spencer's Plan, per AD-3, with no confirmation gate. The result renders
+ * completely differently from Task 15's trigger, though: UX-DR12 requires a
+ * single confirmation line with no discussion or suggestions, sharply
+ * terser than Task 15's "one short block" (UX-DR11).
+ * `rituals/mid-day-reflow.ts`'s `buildBlockerConfirmationLine` builds that
+ * one line; this file never prints `outcome.rendered` for this path.
  *
  * Task 14 update (Story 2.2, FR-18's default/contextual Tone): the catch-all
  * now classifies `line` via `core/tone.ts`'s `resolveToneSystemPrompt` and
@@ -568,32 +570,58 @@ async function midDayReflowCommand(
 /**
  * Recognizes Spencer reporting a purely logistical Blocker in plain
  * language — e.g. "meeting ran over", "running late", "something came up",
- * "traffic", "call went long". Unlike `isMidDayReflowCommand`'s fixed
- * trigger phrasing, a Blocker report is genuinely open-ended free text
+ * "stuck in traffic", "call went long". Unlike `isMidDayReflowCommand`'s
+ * fixed trigger phrasing, a Blocker report is genuinely open-ended free text
  * (FR-10's own example names neither a Task nor a duration), so this is a
  * documented STARTING keyword/phrase heuristic — not real NLU — covering
  * the common shapes a logistics Blocker report tends to take. It is
  * deliberately conservative rather than exhaustive: richer (LLM-based, or a
  * broader phrase library) Blocker detection is a natural future
- * improvement, not required for this task. Because these phrases can
- * plausibly appear inside an unrelated factual question (e.g. "what's
- * traffic like on I-95"), this check is run only AFTER
+ * improvement, not required for this task.
+ *
+ * Post-review tightening (Important finding): a false positive here is NOT
+ * like a false positive on `parseTimeBudgetCommand`/`isPlanViewCommand` —
+ * per AD-3 this path reschedules and PERSISTS a real change to Spencer's
+ * Plan immediately, with no confirmation gate, including zero-crediting
+ * whatever Task the current block belongs to. So every pattern below is
+ * required to be a multi-word phrase with enough co-occurring signal that
+ * it's implausible as an accidental substring match inside an unrelated
+ * sentence — no bare single common word is allowed on its own. The first
+ * version of this list included `\btraffic\b` and `\bdelayed\b` as bare
+ * single-word triggers, which matched things like "what's traffic like on
+ * I-95 right now" or "my package got delayed" and would have silently
+ * mutated Spencer's Plan in response to an ordinary question or an
+ * unrelated statement — exactly the risk AD-3's "no confirmation gate"
+ * carve-out makes unusually costly to get wrong. Both are replaced below
+ * with (or, for "delayed", simply not represented by) a stronger multi-word
+ * phrase. `\bheld\s+up\b` and `\bran\s+over\b`/`\bwent\s+long\b`/etc. are
+ * kept as-is per review guidance — already reasonably specific two-word
+ * phrases unlikely to appear by accident — though "held up" in particular
+ * still has a residual, accepted false-positive surface (e.g. a news
+ * headline about a robbery) consistent with this being a documented STARTING
+ * heuristic, not exhaustive NLU. The previous catch-all
+ * `\b(meeting|call)\s+(ran|went)\b` is dropped entirely: it required no
+ * continuation after "ran"/"went", so it falsely matched benign statements
+ * like "the meeting went great" — it added no coverage the more specific
+ * `ran over`/`ran long`/`went long` patterns below don't already provide
+ * (they're subject-agnostic, so "the call ran over" is still caught by
+ * `ran over` alone).
+ *
+ * Because these phrases can still plausibly appear inside an unrelated
+ * sentence even after tightening, this check is run only AFTER
  * `parseTimeBudgetCommand`/`isPlanViewCommand`/`isMidDayReflowCommand` have
- * all already failed to match, and any false positive still degrades
- * gracefully — it just reschedules the current block, which does no harm
- * and reports back in one line.
+ * all already failed to match.
  */
 const BLOCKER_REPORT_PATTERNS: readonly RegExp[] = [
   /\bran\s+over\b/i,
+  /\bran\s+long\b/i,
+  /\bwent\s+long\b/i,
   /\bran\s+late\b/i,
   /\brunning\s+late\b/i,
-  /\bwent\s+long\b/i,
   /\bsomething\s+came\s+up\b/i,
-  /\btraffic\b/i,
+  /\bstuck\s+in\s+traffic\b/i,
   /\bheld\s+up\b/i,
-  /\bdelayed\b/i,
   /\bgot\s+(interrupted|blocked|stuck)\b/i,
-  /\b(meeting|call)\s+(ran|went)\b/i,
 ];
 
 export function isBlockerReportCommand(line: string): boolean {
