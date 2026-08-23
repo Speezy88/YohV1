@@ -7,9 +7,14 @@
  * prompt-surfacing pattern AD-5/UX-DR20 require: on start, and before
  * accepting any unrelated input, it surfaces every currently open
  * interaction request from `memory-store.ts`, blocking indefinitely (no
- * timeout — UX-DR20) until each is answered. Later tasks (11, 19, 22, 23)
- * extend this file with on-demand Plan viewing, Mid-Day Re-Flow triggers,
- * Blocker reports, Time Budget changes, and free-text routing via
+ * timeout — UX-DR20) until each is answered. Task 6 (FR-5) added the Time
+ * Budget declare/change command, and Task 11 (Story 1.11) adds the
+ * on-demand Plan-view command below (`isPlanViewCommand`/
+ * `showPlanCommand`) — reusing `rituals/morning-ritual.ts`'s `renderPlan`
+ * directly rather than reimplementing its DESIGN.md-compliant layout, so
+ * what this shows can never drift from what the Morning Ritual notification
+ * showed. Later tasks (19, 22, 23) still extend this file with Mid-Day
+ * Re-Flow triggers, Blocker reports, and free-text routing via
  * `llm-adapter.ts` (Task 13) — none of that exists yet.
  *
  * Per AD-1, this shell file contains no core/ritual logic itself: the pure
@@ -50,6 +55,7 @@ import {
   clearInteractionRequest,
   createMemoryStore,
   getOpenInteractionRequest,
+  getPlan,
   listOpenInteractionRequests,
   mergeTaskFieldOverride,
   putTimeBudget,
@@ -59,7 +65,7 @@ import {
 import type { MissingFieldReport } from "../core/data-completeness-gate.ts";
 import { shapeDeclaredTimeBudget } from "../core/time-budget.ts";
 import { DATA_COMPLETENESS_REQUEST_ID, PLANNING_FIELD_LABELS } from "../rituals/data-completeness.ts";
-import { ACCENT, RESET } from "../rituals/morning-ritual.ts";
+import { ACCENT, renderPlan, RESET } from "../rituals/morning-ritual.ts";
 import type {
   InteractionRequest,
   IsoDate,
@@ -359,6 +365,57 @@ function formatMinutesForDisplay(totalMinutes: number): string {
   return `${totalMinutes} minutes (${hoursLabel})`;
 }
 
+// ============================================================================
+// On-demand Plan view command (Task 11 / Story 1.11)
+// ============================================================================
+
+/**
+ * Recognizes an on-demand Plan-view request typed at the `yoh>` prompt — the
+ * same kind of deliberately simple, clearly-documented pattern matching
+ * `parseTimeBudgetCommand` uses above, NOT real free-text NLU. Task 13
+ * replaces this with real LLM-based intent routing without changing this
+ * task's observable behavior.
+ *
+ * Recognized phrasing (case-insensitive, extra whitespace tolerated), per
+ * the Task 11 brief's own examples:
+ *   - a bare "plan"
+ *   - "what's my plan" / "what is my plan" / "...today's plan"
+ *   - "show plan" / "show my plan" / "show me my plan" / "show me today's
+ *     plan"
+ *
+ * Returns `false` (not an error) for any line that doesn't match this shape
+ * at all, so `runChatCli` can fall through to the Time Budget command check
+ * and then the free-text placeholder, exactly as it already does for an
+ * unrecognized line.
+ */
+const PLAN_VIEW_COMMAND_RE =
+  /^(?:what(?:'s|\s+is)\s+(?:my|today'?s)\s+plan|show(?:\s+me)?(?:\s+(?:my|today'?s))?\s+plan|plan)\??$/i;
+
+export function isPlanViewCommand(line: string): boolean {
+  return PLAN_VIEW_COMMAND_RE.test(line.trim());
+}
+
+/**
+ * Answers an on-demand Plan-view request: looks up today's stored Plan
+ * (`getPlan`) and, if one exists, prints it via `renderPlan` — the exact
+ * same pure renderer `rituals/morning-ritual.ts` uses to build the Morning
+ * Ritual's own notification, so what Spencer sees here can never drift from
+ * what the real notification showed (this task's whole point per its brief).
+ *
+ * If no Plan has been generated yet today (the Morning Ritual hasn't run,
+ * or it ran but produced `nothing-to-plan`/`nothing-fits`), this says so
+ * plainly rather than fabricating one or failing silently — the brief's
+ * second Given/When/Then.
+ */
+function showPlanCommand(store: MemoryStore, io: ChatCliIo, today: IsoDate): void {
+  const stored = getPlan(store, today);
+  if (!stored) {
+    io.writeLine("No Plan has been generated for today yet.");
+    return;
+  }
+  io.writeLine(renderPlan(stored.data));
+}
+
 /**
  * The minimal REPL loop (Task 5, extended by Task 6): on start, and before
  * processing every subsequent line of input, surfaces any open interaction
@@ -390,6 +447,11 @@ export async function runChatCli(store: MemoryStore, io: ChatCliIo): Promise<voi
       } else {
         io.writeLine(`I couldn't set that Time Budget: ${result.error.message}`);
       }
+      continue;
+    }
+
+    if (isPlanViewCommand(line)) {
+      showPlanCommand(store, io, currentIsoDate());
       continue;
     }
 

@@ -17,6 +17,7 @@ import {
   getTaskFieldOverride,
   mergeTaskFieldOverride,
   getCurrentTimeBudget,
+  putPlan,
 } from "../src/adapters/memory-store.ts";
 import type { MemoryStore } from "../src/adapters/memory-store.ts";
 import {
@@ -25,8 +26,10 @@ import {
   parseFieldAnswer,
   parseTimeBudgetCommand,
   declareTimeBudget,
+  isPlanViewCommand,
   type ChatCliIo,
 } from "../src/shell/chat-cli.ts";
+import { renderPlan } from "../src/rituals/morning-ritual.ts";
 // The Data-Completeness merge/gate/sync trio is its own capability and lives
 // in its own file (Task 10 review fix); `chat-cli.ts` imports it rather than
 // owning or re-exporting it. Import paths only — the behavior these tests
@@ -39,7 +42,7 @@ import {
   DATA_COMPLETENESS_REQUEST_ID,
 } from "../src/rituals/data-completeness.ts";
 import { checkDataCompleteness, type MissingFieldReport } from "../src/core/data-completeness-gate.ts";
-import type { Task } from "../src/types/domain.ts";
+import type { IsoDate, Plan, Task } from "../src/types/domain.ts";
 
 function tempStore(): MemoryStore {
   return createMemoryStore({ databasePath: ":memory:" });
@@ -605,5 +608,107 @@ test("runChatCli: falls through to the free-text placeholder for input that isn'
   await runChatCli(store, io);
 
   assert.ok(io.written.some((line) => line.includes("free-text routing arrives in a later task")));
+  store.close();
+});
+
+// ============================================================================
+// isPlanViewCommand / runChatCli — on-demand Plan view (Task 11 / Story 1.11)
+// ============================================================================
+
+test("isPlanViewCommand recognizes a few plan-view phrasings, case-insensitively", () => {
+  for (const line of [
+    "plan",
+    "Plan",
+    "what's my plan",
+    "what is my plan",
+    "show plan",
+    "show my plan",
+    "show me today's plan",
+    "SHOW MY PLAN",
+  ]) {
+    assert.equal(isPlanViewCommand(line), true, `expected "${line}" to be recognized as a Plan-view request`);
+  }
+});
+
+test("isPlanViewCommand returns false for unrelated input, including other recognized commands", () => {
+  for (const line of ["hello", "time budget 6h", "what's the weather", ""]) {
+    assert.equal(isPlanViewCommand(line), false, `expected "${line}" NOT to be recognized as a Plan-view request`);
+  }
+});
+
+/** Today's date the same way `chat-cli.ts`'s internal (unexported) `currentIsoDate` computes it, so a test-stored Plan is found by the real lookup regardless of what day the suite happens to run on. */
+function todayIsoDate(): IsoDate {
+  return new Date().toISOString().slice(0, 10) as IsoDate;
+}
+
+function samplePlanForToday(): Plan {
+  const today = todayIsoDate();
+  return {
+    id: `plan-${today}`,
+    date: today,
+    blocks: [
+      {
+        id: "work-1",
+        kind: "work",
+        start: `${today}T13:00:00.000Z`,
+        end: `${today}T14:00:00.000Z`,
+        label: "Draft the memo",
+        taskId: "t1",
+      },
+      {
+        id: "break-1",
+        kind: "break",
+        start: `${today}T14:00:00.000Z`,
+        end: `${today}T14:15:00.000Z`,
+        label: "Break",
+      },
+    ],
+    reasoning: '"Draft the memo" leads today\'s Plan — due soonest.',
+    version: 1,
+    createdAt: `${today}T00:00:00.000Z`,
+    updatedAt: `${today}T00:00:00.000Z`,
+  };
+}
+
+test("runChatCli: Given a Plan already exists for today, When Spencer asks \"what's my plan\", Then it displays the same ordered Plan and reasoning line via renderPlan (UX-DR18)", async () => {
+  const store = tempStore();
+  const plan = samplePlanForToday();
+  putPlan(store, plan);
+
+  const io = makeScriptedIo(["what's my plan"]);
+  await runChatCli(store, io);
+
+  const expected = renderPlan(plan);
+  assert.ok(
+    io.written.includes(expected),
+    `expected chat-cli to print exactly what renderPlan produces for today's stored Plan; got: ${JSON.stringify(io.written)}`,
+  );
+  store.close();
+});
+
+test("runChatCli: on-demand Plan view also responds to other recognized phrasings ('show plan')", async () => {
+  const store = tempStore();
+  const plan = samplePlanForToday();
+  putPlan(store, plan);
+
+  const io = makeScriptedIo(["show plan"]);
+  await runChatCli(store, io);
+
+  assert.ok(io.written.includes(renderPlan(plan)));
+  store.close();
+});
+
+test("runChatCli: Given no Plan has been generated yet for today, When Spencer asks for the Plan, Then Yoh says so plainly rather than fabricating one or erroring silently", async () => {
+  const store = tempStore();
+  const io = makeScriptedIo(["show plan"]);
+
+  await runChatCli(store, io);
+
+  assert.ok(
+    io.written.some((line) => /no plan/i.test(line)),
+    "expected a plain statement that no Plan exists yet",
+  );
+  // Not fabricating a rendered block list (which would look like "HH:MM-HH:MM  ...").
+  assert.ok(!io.written.some((line) => /\d{2}:\d{2}-\d{2}:\d{2}/.test(line)));
   store.close();
 });
