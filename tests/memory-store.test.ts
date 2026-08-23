@@ -906,10 +906,39 @@ test("queryColdMemoryPatterns: a Task that slipped 3 times over 2 weeks produces
 
   const slipPattern = patterns.find((p) => p.kind === "slip-streak" && p.taskId === "task-1");
   assert.ok(slipPattern, "expected a slip-streak pattern for task-1");
-  assert.equal(
-    slipPattern.statement,
-    `Task task-1 has slipped 3 times in the last ${COLD_MEMORY_DEFAULT_LOOKBACK_DAYS} days.`,
+  assert.equal(slipPattern.statement, "Task task-1 has an active slip streak of 3 (most recently slipped on 2026-08-22).");
+  store.close();
+});
+
+test("queryColdMemoryPatterns POST-REVIEW FIX (Important #1): a lifetime slip streak spread across months is NOT misrepresented as having all happened within the lookback window — only 1 of 5 recorded slips actually falls inside the 30-day window, and the statement must not claim otherwise", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  // Reviewer's exact reproduction scenario: a Task that keeps slipping
+  // without ever completing (so clearSlip never resets it — Task 17's
+  // design) accumulates a lifetime consecutiveSlipCount across slips spread
+  // over months. Only the LAST of these five slips (2026-08-20) actually
+  // falls inside a 30-day lookback from asOfDate 2026-08-22; the other four
+  // happened 2-3+ months earlier.
+  recordSlip(store, "task-1", "2026-05-01");
+  recordSlip(store, "task-1", "2026-05-15");
+  recordSlip(store, "task-1", "2026-06-01");
+  recordSlip(store, "task-1", "2026-06-15");
+  recordSlip(store, "task-1", "2026-08-20");
+
+  const patterns = queryColdMemoryPatterns(store, { asOfDate: "2026-08-22", lookbackDays: 30 });
+  const slipPattern = patterns.find((p) => p.kind === "slip-streak" && p.taskId === "task-1");
+
+  assert.ok(slipPattern, "the streak is still reported — it's recent (lastSlipDate is in-window), just not entirely IN the window");
+  // The count (5) is real and must still be reported (it's an honest
+  // lifetime count) — but must NOT be paired with an "in the last 30 days"
+  // claim, since only 1 of the 5 slips actually happened in that window.
+  assert.ok(
+    !slipPattern.statement.includes("in the last 30 days"),
+    `statement must not claim the count happened "in the last 30 days" when 4 of 5 slips predate that window: got "${slipPattern.statement}"`,
   );
+  assert.ok(slipPattern.statement.includes("5"), "the honest lifetime count (5) must still appear somewhere in the statement");
+  // The statement instead states the count as an undated lifetime streak,
+  // paired with the one date the data can honestly support: lastSlipDate.
+  assert.equal(slipPattern.statement, "Task task-1 has an active slip streak of 5 (most recently slipped on 2026-08-20).");
   store.close();
 });
 
@@ -997,8 +1026,67 @@ test("queryColdMemoryPatterns: multiple slipping Tasks each get their own accura
     slipStatements.map((p) => p.taskId),
     ["task-a", "task-b"],
   );
-  assert.equal(slipStatements[0]?.statement, `Task task-a has slipped 3 times in the last 30 days.`);
-  assert.equal(slipStatements[1]?.statement, `Task task-b has slipped 2 times in the last 30 days.`);
+  assert.equal(slipStatements[0]?.statement, "Task task-a has an active slip streak of 3 (most recently slipped on 2026-08-20).");
+  assert.equal(slipStatements[1]?.statement, "Task task-b has an active slip streak of 2 (most recently slipped on 2026-08-21).");
+  store.close();
+});
+
+// ----------------------------------------------------------------------------
+// Exact lookback-window boundary (Important #3 fix: these were claimed in
+// the original report but did not actually exist in the diff — added for
+// real here). Uses the same `inWindow` cutoff both slip-streak and
+// unchecked-nights patterns share: for asOfDate "2026-08-22" and the default
+// 30-day lookback, cutoffDate = addDaysToIsoDate("2026-08-22", -29) =
+// "2026-07-24".
+// ----------------------------------------------------------------------------
+
+test("queryColdMemoryPatterns: an UncheckedDay record dated EXACTLY at the lookback cutoff is INCLUDED (the window is inclusive of its own start)", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  putUncheckedDay(store, { date: "2026-07-24", rolledForwardTasks: [], recordedAt: "2026-07-25T01:00:00.000Z" }); // exactly the cutoff date
+
+  const patterns = queryColdMemoryPatterns(store, { asOfDate: "2026-08-22", lookbackDays: 30 });
+  const uncheckedPattern = patterns.find((p) => p.kind === "unchecked-nights");
+  assert.ok(uncheckedPattern, "a record dated exactly on the cutoff date must be included, not excluded");
+  assert.equal(uncheckedPattern.statement, "1 night was left unchecked in the last 30 days.");
+  store.close();
+});
+
+test("queryColdMemoryPatterns: an UncheckedDay record dated ONE DAY BEFORE the lookback cutoff is EXCLUDED", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  putUncheckedDay(store, { date: "2026-07-23", rolledForwardTasks: [], recordedAt: "2026-07-24T01:00:00.000Z" }); // one day before the cutoff
+
+  const patterns = queryColdMemoryPatterns(store, { asOfDate: "2026-08-22", lookbackDays: 30 });
+  assert.equal(
+    patterns.find((p) => p.kind === "unchecked-nights"),
+    undefined,
+    "a record dated one day before the cutoff must be excluded",
+  );
+  store.close();
+});
+
+test("queryColdMemoryPatterns: a SlipHistory record whose lastSlipDate is EXACTLY at the lookback cutoff is INCLUDED", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  recordSlip(store, "task-1", "2026-07-20");
+  recordSlip(store, "task-1", "2026-07-24"); // lastSlipDate exactly the cutoff date, count 2 (qualifies)
+
+  const patterns = queryColdMemoryPatterns(store, { asOfDate: "2026-08-22", lookbackDays: 30 });
+  const slipPattern = patterns.find((p) => p.kind === "slip-streak" && p.taskId === "task-1");
+  assert.ok(slipPattern, "a lastSlipDate exactly on the cutoff date must be included, not excluded");
+  assert.equal(slipPattern.statement, "Task task-1 has an active slip streak of 2 (most recently slipped on 2026-07-24).");
+  store.close();
+});
+
+test("queryColdMemoryPatterns: a SlipHistory record whose lastSlipDate is ONE DAY BEFORE the lookback cutoff is EXCLUDED even with a qualifying count", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  recordSlip(store, "task-1", "2026-07-22");
+  recordSlip(store, "task-1", "2026-07-23"); // lastSlipDate one day before the cutoff, count 2 (would otherwise qualify)
+
+  const patterns = queryColdMemoryPatterns(store, { asOfDate: "2026-08-22", lookbackDays: 30 });
+  assert.equal(
+    patterns.find((p) => p.kind === "slip-streak" && p.taskId === "task-1"),
+    undefined,
+    "a lastSlipDate one day before the cutoff must be excluded even though consecutiveSlipCount (2) alone would qualify",
+  );
   store.close();
 });
 

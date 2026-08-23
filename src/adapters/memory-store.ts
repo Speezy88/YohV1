@@ -984,10 +984,35 @@ export function listUncheckedDays(store: MemoryStore): StoredRecord<UncheckedDay
 // `PlanBlock`/`workBreakFit` internals this task has no brief-given
 // direction for — squarely the "real analytics/ML" the task brief says NOT
 // to build. `SlipHistory` and `UncheckedDay` are both named explicitly in
-// the brief's own example pattern-statements ("Task X has slipped N times…",
-// "Y nights were left unchecked…"), so those two are what this task
-// implements; extending to Plan history is a reasonable future addition, not
-// a gap in this one.
+// the brief's own example pattern-statements, so those two are what this
+// task implements; extending to Plan history is a reasonable future
+// addition, not a gap in this one. (The brief's own slip-pattern example
+// phrasing, "Task X has slipped N times in the last M days," is not
+// reproduced verbatim below — see `queryColdMemoryPatterns`'s own doc
+// comment and its post-review fix note for why pairing `SlipHistory`'s
+// lifetime `consecutiveSlipCount` with a bounded "in the last M days" claim
+// would misrepresent the data.)
+//
+// ----------------------------------------------------------------------------
+// The two `get*`-addressed kinds NOT covered above: also hot, same reasoning
+// ----------------------------------------------------------------------------
+//
+// `InteractionRequest` (`getOpenInteractionRequest`/`listOpenInteractionRequests`)
+// and `TaskFieldOverride` (`getTaskFieldOverride`) are the two remaining
+// record kinds in this file and are BOTH hot, for the exact same reason as
+// `Plan`/`TimeBudget`/`RitualRun` above: every read is addressed by a
+// specific `(kind, id)` via `getRecord` (never a date-range scan), and what
+// they hold is inherently current-state, not history — an interaction
+// request is either open right now or it isn't (per its own
+// persist/surface/clear cycle), and a field override is whatever Spencer's
+// most recent answer for that field currently is. Neither is folded into
+// `readHotMemory`'s `HotMemorySnapshot` alongside Plan/TimeBudget/RitualRun:
+// that struct is deliberately scoped to the three fields a ritual's own
+// "what do I run/show today" decision reads (this task's TDD requirement 1
+// names exactly those three), not an exhaustive bundle of every hot kind in
+// the file — `listOpenInteractionRequests`/`getTaskFieldOverride` remain
+// their own direct call, same as before this task, with nothing about their
+// hotness changed or newly required by this task.
 // ============================================================================
 
 /**
@@ -1098,15 +1123,28 @@ function addDaysToIsoDate(date: IsoDate, deltaDays: number): IsoDate {
  *
  * - One statement per Task whose `SlipHistory.lastSlipDate` falls within the
  *   lookback window AND whose `consecutiveSlipCount` is at least
- *   `MIN_SLIP_COUNT_FOR_PATTERN`: `"Task <id> has slipped <N> times in the
- *   last <M> days."` (`N` is the stored `consecutiveSlipCount` itself — the
- *   most defensible reading of "how many times has this Task slipped,"
- *   consistent with how `SlipHistory` is actually shaped: it tracks a
- *   running consecutive count, not a per-slip-date log, so this is exactly
- *   what the data can honestly support, not an invented number.)
+ *   `MIN_SLIP_COUNT_FOR_PATTERN`: `"Task <id> has an active slip streak of
+ *   <N> (most recently slipped on <lastSlipDate>)."` `lastSlipDate` gates
+ *   whether the streak is reported at all (a currently-active/recent one),
+ *   but `N` (`consecutiveSlipCount`) is deliberately NOT described as
+ *   having happened "in the last <M> days" — post-review fix (Task 22):
+ *   `consecutiveSlipCount` is a LIFETIME running total, reset only by
+ *   `clearSlip` on Task completion (Task 17's design), never by time
+ *   passing. A Task that keeps slipping without completing can have slips
+ *   spread across months (e.g. 2026-05-01, 05-15, 06-01, 06-15, then
+ *   08-20) while `consecutiveSlipCount` keeps counting all of them — pairing
+ *   that lifetime count with a bounded "in the last 30 days" claim would
+ *   misrepresent the timeframe for every slip before the most recent one.
+ *   The statement instead separates "how big is the streak" (the count,
+ *   undated) from "how recent is it" (`lastSlipDate`, stated explicitly),
+ *   which is what the data can honestly support.
  * - At most one statement summarizing every `UncheckedDay.date` within the
  *   lookback window: `"<N> night(s) were left unchecked in the last <M>
- *   days."` — omitted entirely when `N` is 0.
+ *   days."` — omitted entirely when `N` is 0. (This one genuinely IS a
+ *   windowed count: each `UncheckedDay` row has its own `date`, one row per
+ *   night, so counting rows whose `date` falls in the window is an accurate
+ *   windowed count — unlike `SlipHistory`'s single running total, there is
+ *   no lifetime-vs-window mismatch here.)
  *
  * Results are ordered: slip-streak patterns first (by `taskId`, ascending —
  * `listRecordsByKind`'s own `ORDER BY id` already returns them this way),
@@ -1127,7 +1165,7 @@ export function queryColdMemoryPatterns(store: MemoryStore, options: ColdMemoryQ
     patterns.push({
       kind: "slip-streak",
       taskId: record.id,
-      statement: `Task ${record.id} has slipped ${record.data.consecutiveSlipCount} times in the last ${lookbackDays} days.`,
+      statement: `Task ${record.id} has an active slip streak of ${record.data.consecutiveSlipCount} (most recently slipped on ${record.data.lastSlipDate}).`,
     });
   }
 
