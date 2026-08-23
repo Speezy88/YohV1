@@ -1,5 +1,6 @@
 /**
- * Tests for `src/adapters/calendar-adapter.ts` (Story 1.4 / Task 4).
+ * Tests for `src/adapters/calendar-adapter.ts` (Story 1.4 / Task 4, and Task
+ * 12's "Yoh Plan" write surface, Story 1.12).
  *
  * Per the Task 4 brief's implementer note (AD-10), `readCalendarEvents`
  * takes an injectable "read-scoped" client so these tests never make a real
@@ -24,6 +25,11 @@
  * (`America/New_York`, UTC-4 in August under DST) to confirm an event just
  * before/after UTC midnight is bucketed into Spencer's local "today"
  * rather than UTC's.
+ *
+ * The "Yoh Plan" write-surface tests further down (Task 12) use their own
+ * `FakeCalendarWriteClient`/`FakeCalendarIdStore` pair, typed against
+ * `CalendarWriteClient`/`CalendarIdStore` the same way — see that section's
+ * own header comment for details.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -32,8 +38,16 @@ import type { GlobalOptions } from "@googleapis/calendar";
 import {
   readCalendarEvents,
   createCalendarReadClient,
+  createCalendarWriteClient,
+  ensureYohPlanCalendar,
+  writeTodaysPlanToCalendar,
+  YOH_PLAN_CALENDAR_SUMMARY,
+  PLAN_BLOCK_ID_EXTENDED_PROPERTY,
   type CalendarReadClient,
+  type CalendarWriteClient,
+  type CalendarIdStore,
 } from "../src/adapters/calendar-adapter.ts";
+import type { PlanBlock } from "../src/types/domain.ts";
 
 // ============================================================================
 // Fake client
@@ -347,4 +361,338 @@ test("createCalendarReadClient builds a CalendarReadClient from an injected alre
   >;
   const client = createCalendarReadClient(fakeAuthClient);
   assert.equal(typeof client.events.list, "function");
+});
+
+// ============================================================================
+// "Yoh Plan" write surface (Task 12 / Story 1.12, AD-4)
+//
+// `FakeCalendarWriteClient` stands in for the `calendars.insert` +
+// `events.list`/`.insert`/`.update`/`.delete` slice of `@googleapis/calendar`
+// `CalendarWriteClient` declares — typed against the real
+// `Params$Resource$Calendars$Insert`/`Params$Resource$Events$*` shapes
+// (checked live against `node_modules/@googleapis/calendar`), so a mismatch
+// with the SDK's actual types fails to compile here too. Every call is
+// recorded so a test can assert exactly which calendarId/eventId each call
+// carried — the runtime half of AD-4's "every insert/update/delete call
+// targets only the Yoh Plan calendar" guarantee.
+// ============================================================================
+
+class FakeCalendarWriteClient implements CalendarWriteClient {
+  readonly calendarsInsertCalls: calendar_v3.Params$Resource$Calendars$Insert[] = [];
+  readonly eventsListCalls: calendar_v3.Params$Resource$Events$List[] = [];
+  readonly eventsInsertCalls: calendar_v3.Params$Resource$Events$Insert[] = [];
+  readonly eventsUpdateCalls: calendar_v3.Params$Resource$Events$Update[] = [];
+  readonly eventsDeleteCalls: calendar_v3.Params$Resource$Events$Delete[] = [];
+
+  private readonly calendarInsertResponse: calendar_v3.Schema$Calendar;
+  private readonly listQueue: calendar_v3.Schema$Events[];
+  private nextGeneratedEventId = 1;
+
+  constructor(
+    options: {
+      calendarInsertResponse?: calendar_v3.Schema$Calendar;
+      listResponses?: calendar_v3.Schema$Events[];
+    } = {},
+  ) {
+    this.calendarInsertResponse = options.calendarInsertResponse ?? { id: "yoh-plan-calendar-id" };
+    this.listQueue = [...(options.listResponses ?? [])];
+  }
+
+  calendars = {
+    insert: async (
+      params: calendar_v3.Params$Resource$Calendars$Insert,
+    ): Promise<{ data: calendar_v3.Schema$Calendar }> => {
+      this.calendarsInsertCalls.push(params);
+      return { data: this.calendarInsertResponse };
+    },
+  };
+
+  events = {
+    list: async (params: calendar_v3.Params$Resource$Events$List): Promise<{ data: calendar_v3.Schema$Events }> => {
+      this.eventsListCalls.push(params);
+      const data = this.listQueue.shift() ?? { items: [] };
+      return { data };
+    },
+    insert: async (
+      params: calendar_v3.Params$Resource$Events$Insert,
+    ): Promise<{ data: calendar_v3.Schema$Event }> => {
+      this.eventsInsertCalls.push(params);
+      const id = `generated-event-${this.nextGeneratedEventId++}`;
+      return { data: { ...params.requestBody, id } };
+    },
+    update: async (
+      params: calendar_v3.Params$Resource$Events$Update,
+    ): Promise<{ data: calendar_v3.Schema$Event }> => {
+      this.eventsUpdateCalls.push(params);
+      return { data: { ...params.requestBody, id: params.eventId ?? "" } };
+    },
+    delete: async (params: calendar_v3.Params$Resource$Events$Delete): Promise<{ data: void }> => {
+      this.eventsDeleteCalls.push(params);
+      return { data: undefined };
+    },
+  };
+}
+
+/** A fake `CalendarIdStore` — an in-memory stand-in for `token-store.ts`'s `TokenStore.getCalendarId`/`.setCalendarId`. */
+class FakeCalendarIdStore implements CalendarIdStore {
+  private calendarId: string | undefined;
+  readonly setCalendarIdCalls: string[] = [];
+
+  constructor(initialCalendarId?: string) {
+    this.calendarId = initialCalendarId;
+  }
+
+  getCalendarId = (): string | undefined => this.calendarId;
+
+  setCalendarId = (calendarId: string): void => {
+    this.calendarId = calendarId;
+    this.setCalendarIdCalls.push(calendarId);
+  };
+}
+
+function planBlock(overrides: {
+  id: string;
+  start: string;
+  end: string;
+  label: string;
+  kind?: PlanBlock["kind"];
+}): PlanBlock {
+  return {
+    id: overrides.id,
+    kind: overrides.kind ?? "work",
+    start: overrides.start,
+    end: overrides.end,
+    label: overrides.label,
+  };
+}
+
+// ---- ensureYohPlanCalendar --------------------------------------------------
+
+test("ensureYohPlanCalendar creates the 'Yoh Plan' calendar via Calendars.insert on first run and persists the returned id via setCalendarId", async () => {
+  const client = new FakeCalendarWriteClient({ calendarInsertResponse: { id: "yoh-plan-calendar-id" } });
+  const store = new FakeCalendarIdStore();
+
+  const calendarId = await ensureYohPlanCalendar(client, store);
+
+  assert.equal(calendarId, "yoh-plan-calendar-id");
+  assert.equal(client.calendarsInsertCalls.length, 1);
+  assert.equal(client.calendarsInsertCalls[0]?.requestBody?.summary, YOH_PLAN_CALENDAR_SUMMARY);
+  assert.equal(store.getCalendarId(), "yoh-plan-calendar-id");
+  assert.deepEqual(store.setCalendarIdCalls, ["yoh-plan-calendar-id"]);
+});
+
+test("ensureYohPlanCalendar is idempotent — a second call with an already-set calendar id does not create a second calendar", async () => {
+  const client = new FakeCalendarWriteClient();
+  const store = new FakeCalendarIdStore("already-existing-yoh-plan-id");
+
+  const calendarId = await ensureYohPlanCalendar(client, store);
+
+  assert.equal(calendarId, "already-existing-yoh-plan-id");
+  assert.equal(client.calendarsInsertCalls.length, 0);
+  assert.deepEqual(store.setCalendarIdCalls, []);
+});
+
+test("ensureYohPlanCalendar throws if the Calendars.insert response is missing an id", async () => {
+  const client = new FakeCalendarWriteClient({ calendarInsertResponse: {} });
+  const store = new FakeCalendarIdStore();
+
+  await assert.rejects(() => ensureYohPlanCalendar(client, store), /missing an id/);
+  assert.deepEqual(store.setCalendarIdCalls, []);
+});
+
+// ---- writeTodaysPlanToCalendar ---------------------------------------------
+
+const WRITE_FIXED_NOW = () => new Date("2026-08-22T15:00:00.000Z");
+
+test("writeTodaysPlanToCalendar targets only the Yoh Plan calendar id on every calendars.insert/events.list/events.insert call — never 'primary'", async () => {
+  const client = new FakeCalendarWriteClient({
+    calendarInsertResponse: { id: "yoh-plan-calendar-id" },
+    listResponses: [{ items: [] }],
+  });
+  const store = new FakeCalendarIdStore();
+  const blocks = [planBlock({ id: "block-1", start: "2026-08-22T13:00:00.000Z", end: "2026-08-22T14:00:00.000Z", label: "Deep work" })];
+
+  await writeTodaysPlanToCalendar(client, store, blocks, { now: WRITE_FIXED_NOW, timeZone: "UTC" });
+
+  assert.equal(client.calendarsInsertCalls.length, 1);
+  assert.equal(client.eventsListCalls.length, 1);
+  assert.equal(client.eventsListCalls[0]?.calendarId, "yoh-plan-calendar-id");
+  assert.equal(client.eventsInsertCalls.length, 1);
+  assert.equal(client.eventsInsertCalls[0]?.calendarId, "yoh-plan-calendar-id");
+  assert.notEqual(client.eventsListCalls[0]?.calendarId, "primary");
+  assert.notEqual(client.eventsInsertCalls[0]?.calendarId, "primary");
+});
+
+test("writeTodaysPlanToCalendar inserts a new block as a new event, stamped with extendedProperties.private.yohPlanBlockId", async () => {
+  const client = new FakeCalendarWriteClient({
+    calendarInsertResponse: { id: "yoh-plan-calendar-id" },
+    listResponses: [{ items: [] }],
+  });
+  const store = new FakeCalendarIdStore();
+  const blocks = [
+    planBlock({ id: "block-1", start: "2026-08-22T13:00:00.000Z", end: "2026-08-22T14:00:00.000Z", label: "Deep work" }),
+  ];
+
+  await writeTodaysPlanToCalendar(client, store, blocks, { now: WRITE_FIXED_NOW, timeZone: "UTC" });
+
+  assert.equal(client.eventsInsertCalls.length, 1);
+  const insertCall = client.eventsInsertCalls[0];
+  assert.ok(insertCall);
+  assert.equal(insertCall.requestBody?.summary, "Deep work");
+  assert.equal(insertCall.requestBody?.start?.dateTime, "2026-08-22T13:00:00.000Z");
+  assert.equal(insertCall.requestBody?.end?.dateTime, "2026-08-22T14:00:00.000Z");
+  assert.equal(insertCall.requestBody?.extendedProperties?.private?.[PLAN_BLOCK_ID_EXTENDED_PROPERTY], "block-1");
+  assert.equal(client.eventsUpdateCalls.length, 0);
+  assert.equal(client.eventsDeleteCalls.length, 0);
+});
+
+test("writeTodaysPlanToCalendar updates an existing block's event (matched by its stamped PlanBlock.id) rather than inserting a duplicate", async () => {
+  const client = new FakeCalendarWriteClient({
+    calendarInsertResponse: { id: "yoh-plan-calendar-id" },
+    listResponses: [
+      {
+        items: [
+          {
+            id: "existing-google-event-1",
+            summary: "Deep work (stale title)",
+            extendedProperties: { private: { [PLAN_BLOCK_ID_EXTENDED_PROPERTY]: "block-1" } },
+          },
+        ],
+      },
+    ],
+  });
+  const store = new FakeCalendarIdStore();
+  const blocks = [
+    planBlock({ id: "block-1", start: "2026-08-22T13:00:00.000Z", end: "2026-08-22T14:00:00.000Z", label: "Deep work" }),
+  ];
+
+  await writeTodaysPlanToCalendar(client, store, blocks, { now: WRITE_FIXED_NOW, timeZone: "UTC" });
+
+  assert.equal(client.eventsInsertCalls.length, 0);
+  assert.equal(client.eventsUpdateCalls.length, 1);
+  const updateCall = client.eventsUpdateCalls[0];
+  assert.ok(updateCall);
+  assert.equal(updateCall.eventId, "existing-google-event-1");
+  assert.equal(updateCall.calendarId, "yoh-plan-calendar-id");
+  assert.equal(updateCall.requestBody?.summary, "Deep work");
+  assert.equal(client.eventsDeleteCalls.length, 0);
+});
+
+test("writeTodaysPlanToCalendar deletes a stale block's event when it's no longer part of today's Plan Blocks", async () => {
+  const client = new FakeCalendarWriteClient({
+    calendarInsertResponse: { id: "yoh-plan-calendar-id" },
+    listResponses: [
+      {
+        items: [
+          {
+            id: "stale-google-event",
+            summary: "Old break",
+            extendedProperties: { private: { [PLAN_BLOCK_ID_EXTENDED_PROPERTY]: "block-removed-by-replan" } },
+          },
+        ],
+      },
+    ],
+  });
+  const store = new FakeCalendarIdStore();
+
+  await writeTodaysPlanToCalendar(client, store, [], { now: WRITE_FIXED_NOW, timeZone: "UTC" });
+
+  assert.equal(client.eventsDeleteCalls.length, 1);
+  const deleteCall = client.eventsDeleteCalls[0];
+  assert.ok(deleteCall);
+  assert.equal(deleteCall.eventId, "stale-google-event");
+  assert.equal(deleteCall.calendarId, "yoh-plan-calendar-id");
+  assert.equal(client.eventsInsertCalls.length, 0);
+  assert.equal(client.eventsUpdateCalls.length, 0);
+});
+
+test("writeTodaysPlanToCalendar's events.list call is scoped to only today's local calendar day window", async () => {
+  const client = new FakeCalendarWriteClient({
+    calendarInsertResponse: { id: "yoh-plan-calendar-id" },
+    listResponses: [{ items: [] }],
+  });
+  const store = new FakeCalendarIdStore();
+  const blocks = [planBlock({ id: "today-block", start: "2026-08-22T13:00:00.000Z", end: "2026-08-22T14:00:00.000Z", label: "Today's work" })];
+
+  await writeTodaysPlanToCalendar(client, store, blocks, { now: WRITE_FIXED_NOW, timeZone: "UTC" });
+
+  assert.equal(client.eventsListCalls.length, 1);
+  assert.equal(client.eventsListCalls[0]?.timeMin, "2026-08-22T00:00:00.000Z");
+  assert.equal(client.eventsListCalls[0]?.timeMax, "2026-08-23T00:00:00.000Z");
+});
+
+test("writeTodaysPlanToCalendar does not delete or modify a prior day's events when a later day's Plan Blocks are written", async () => {
+  // One shared client/store across two separate `writeTodaysPlanToCalendar`
+  // calls simulates two real ritual runs on consecutive days. Day 2's
+  // `events.list` response is `{ items: [] }` because Day 1's event (created
+  // by the first call below) falls outside Day 2's `[timeMin, timeMax)`
+  // window — exactly what the real Calendar API would return, since it
+  // filters server-side by the `timeMin`/`timeMax` this function passes.
+  const client = new FakeCalendarWriteClient({
+    calendarInsertResponse: { id: "yoh-plan-calendar-id" },
+    listResponses: [{ items: [] }, { items: [] }],
+  });
+  const store = new FakeCalendarIdStore();
+
+  const day1Blocks = [planBlock({ id: "day1-block", start: "2026-08-22T13:00:00.000Z", end: "2026-08-22T14:00:00.000Z", label: "Day 1 work" })];
+  await writeTodaysPlanToCalendar(client, store, day1Blocks, {
+    now: () => new Date("2026-08-22T15:00:00.000Z"),
+    timeZone: "UTC",
+  });
+  assert.equal(client.eventsInsertCalls.length, 1);
+
+  const day2Blocks = [planBlock({ id: "day2-block", start: "2026-08-23T13:00:00.000Z", end: "2026-08-23T14:00:00.000Z", label: "Day 2 work" })];
+  await writeTodaysPlanToCalendar(client, store, day2Blocks, {
+    now: () => new Date("2026-08-23T15:00:00.000Z"),
+    timeZone: "UTC",
+  });
+
+  // Day 1's event was never deleted or updated as a side effect of writing
+  // Day 2's Plan.
+  assert.equal(client.eventsDeleteCalls.length, 0);
+  assert.equal(client.eventsUpdateCalls.length, 0);
+  // One insert per day (Day 1's event, then Day 2's event) — no duplicate
+  // work against Day 1's already-created event.
+  assert.equal(client.eventsInsertCalls.length, 2);
+  // "Yoh Plan" calendar created exactly once, reused across both days.
+  assert.equal(client.calendarsInsertCalls.length, 1);
+});
+
+test("createCalendarWriteClient builds a CalendarWriteClient from an injected already-authenticated auth client, with no network call", () => {
+  const fakeAuthClient = { credentials: { refresh_token: "fake" } } as unknown as Exclude<
+    GlobalOptions["auth"],
+    undefined
+  >;
+  const client = createCalendarWriteClient(fakeAuthClient);
+  assert.equal(typeof client.calendars.insert, "function");
+  assert.equal(typeof client.events.list, "function");
+  assert.equal(typeof client.events.insert, "function");
+  assert.equal(typeof client.events.update, "function");
+  assert.equal(typeof client.events.delete, "function");
+});
+
+// ---- Type-level enforcement: no calendarId parameter exists to misuse -----
+
+test("writeTodaysPlanToCalendar's config type structurally cannot express a caller-supplied calendarId (compile-time check)", async () => {
+  const client = new FakeCalendarWriteClient({
+    calendarInsertResponse: { id: "yoh-plan-calendar-id" },
+    listResponses: [{ items: [] }],
+  });
+  const store = new FakeCalendarIdStore();
+
+  // @ts-expect-error `CalendarWriteConfig` has only `timeZone`/`now` — there
+  // is no `calendarId` field anywhere in `writeTodaysPlanToCalendar`'s
+  // parameter list through which a caller could target a calendar other
+  // than the one `ensureYohPlanCalendar` resolves internally (see
+  // `CalendarWriteClient`'s doc comment in calendar-adapter.ts for the full
+  // reasoning). If this stops being a compile error, someone added a
+  // `calendarId` escape hatch — the point this test guards.
+  await writeTodaysPlanToCalendar(client, store, [], { now: WRITE_FIXED_NOW, timeZone: "UTC", calendarId: "primary" });
+
+  // Runtime companion: every call this whole write-surface test section
+  // makes (including this one, since the extra property above is just
+  // ignored at runtime after type-stripping) is recorded with
+  // `calendarId: "yoh-plan-calendar-id"` — asserted directly in the tests
+  // above — never `"primary"`.
+  assert.equal(client.calendarsInsertCalls.length, 1);
 });
