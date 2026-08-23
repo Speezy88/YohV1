@@ -31,6 +31,9 @@ import {
   recordSlip,
   clearSlip,
   listSlipHistories,
+  getTimeBudgetDeferralStreak,
+  putTimeBudgetDeferralStreak,
+  clearTimeBudgetDeferralStreak,
   getUncheckedDay,
   putUncheckedDay,
   listUncheckedDays,
@@ -650,6 +653,52 @@ test("recordSlip: persists across a second connection to the same on-disk file (
   const read = getSlipHistory(store2, "task-1");
   assert.equal(read?.data.consecutiveSlipCount, 1);
   store2.close();
+});
+
+// ============================================================================
+// Time Budget deferral streak (Task 23 / Story 4.2, AD-3)
+// ============================================================================
+
+test("getTimeBudgetDeferralStreak returns undefined when no streak has ever been recorded", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  assert.equal(getTimeBudgetDeferralStreak(store), undefined);
+  store.close();
+});
+
+test("putTimeBudgetDeferralStreak persists a streak retrievable via getTimeBudgetDeferralStreak, at version 1", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const written = putTimeBudgetDeferralStreak(store, { consecutiveDeferralDays: 1, lastDeferralDate: "2026-08-20" });
+  assert.equal(written.version, 1);
+
+  const read = getTimeBudgetDeferralStreak(store);
+  assert.deepEqual(read?.data, { consecutiveDeferralDays: 1, lastDeferralDate: "2026-08-20" });
+  store.close();
+});
+
+test("putTimeBudgetDeferralStreak called again replaces the value in place (upsert), not a second row, bumping the version", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  putTimeBudgetDeferralStreak(store, { consecutiveDeferralDays: 1, lastDeferralDate: "2026-08-20" });
+  const second = putTimeBudgetDeferralStreak(store, { consecutiveDeferralDays: 2, lastDeferralDate: "2026-08-21" });
+
+  assert.equal(second.version, 2);
+  assert.deepEqual(getTimeBudgetDeferralStreak(store)?.data, { consecutiveDeferralDays: 2, lastDeferralDate: "2026-08-21" });
+  store.close();
+});
+
+test("clearTimeBudgetDeferralStreak removes the streak entirely — it reads back exactly as if it never existed", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  putTimeBudgetDeferralStreak(store, { consecutiveDeferralDays: 3, lastDeferralDate: "2026-08-22" });
+  assert.ok(getTimeBudgetDeferralStreak(store));
+
+  clearTimeBudgetDeferralStreak(store);
+  assert.equal(getTimeBudgetDeferralStreak(store), undefined);
+  store.close();
+});
+
+test("clearTimeBudgetDeferralStreak on a store with no streak recorded is a harmless no-op", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  assert.doesNotThrow(() => clearTimeBudgetDeferralStreak(store));
+  store.close();
 });
 
 // ============================================================================

@@ -170,13 +170,18 @@
  * coupling it doesn't already have.
  */
 import {
+  clearTimeBudgetDeferralStreak,
   getCurrentTimeBudget,
+  getOpenInteractionRequest,
   getPlan,
   getRitualRun,
+  getTimeBudgetDeferralStreak,
   listUncheckedDays,
   markUncheckedDayShown,
+  putOpenInteractionRequest,
   putPlan,
   putRitualRun,
+  putTimeBudgetDeferralStreak,
   type MemoryStore,
   type UncheckedDay,
 } from "../adapters/memory-store.ts";
@@ -184,7 +189,7 @@ import { PUSHOVER_MESSAGE_LIMIT, PUSHOVER_TITLE_LIMIT } from "../adapters/notifi
 import type { DataCompletenessGateResult } from "../core/data-completeness-gate.ts";
 import { orderByDerivedPriority } from "../core/derived-priority.ts";
 import { generatePlanReasoning } from "../core/plan-reasoning.ts";
-import { resolveTodayTimeBudget } from "../core/time-budget.ts";
+import { buildTimeBudgetChangeProposal, nextTimeBudgetDeferralStreak, resolveTodayTimeBudget } from "../core/time-budget.ts";
 import { fitWorkBreakBlocks } from "../core/work-break-fit.ts";
 import { runDataCompletenessGate } from "./data-completeness.ts";
 import type {
@@ -194,8 +199,10 @@ import type {
   IsoDateTime,
   Plan,
   PlanBlock,
+  Proposal,
   Result,
   Task,
+  TimeBudget,
   YohError,
 } from "../types/domain.ts";
 
@@ -491,6 +498,40 @@ export function renderUncheckedNightNotice(
 
 /** The ritual id the "already ran today" marker is stored under in `memory-store.ts`. */
 export const MORNING_RITUAL_ID = "morning";
+
+// ============================================================================
+// Time-Budget-change Proposal (Task 23 / Story 4.2, AD-3) — see step 8.5
+// inside `runMorningRitual` below for where this is actually generated and
+// persisted, and `core/time-budget.ts`'s module docstring (item 3) for the
+// full design rationale.
+// ============================================================================
+
+/**
+ * The fixed singleton interaction-request id a Time-Budget-change `Proposal`
+ * is persisted under — mirrors `DATA_COMPLETENESS_REQUEST_ID`/
+ * `NIGHT_CLOSE_OUT_REQUEST_ID`'s own "fixed id chosen by the requester"
+ * convention (`InteractionRequest`'s own doc comment in `types/domain.ts`).
+ * `shell/chat-cli.ts`'s `surfaceOpenInteractionRequests` surfaces an open
+ * Proposal by its `requestKind: "proposal"` alone, deliberately not by this
+ * id — keeping `apply(proposal)` generic for a future Proposal kind with its
+ * own id — but THIS file still needs a stable id to check "is one already
+ * open" before generating a new one each day, and to know which exact row to
+ * treat as the Time Budget proposal if it ever needs to reason about it
+ * again.
+ */
+export const TIME_BUDGET_PROPOSAL_REQUEST_ID = "time-budget-proposal";
+
+/**
+ * The accent-labeled prompt line `chat-cli.ts` shows for an open
+ * Time-Budget-change Proposal (AD-3, UX-DR16): states what Yoh wants to do
+ * and why (`proposal.reason`, already a complete sentence — see
+ * `core/time-budget.ts`'s `buildTimeBudgetChangeProposal`), then names the
+ * explicit yes/no answer it's waiting for — silence is never treated as
+ * consent.
+ */
+export function buildTimeBudgetProposalPromptText(proposal: Proposal<Partial<TimeBudget>>): string {
+  return `${proposal.reason} Reply "yes" to apply this change, or "no" to dismiss it.`;
+}
 
 /**
  * The notification's title. Plain text: DESIGN.md's
@@ -793,6 +834,70 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
   if (!fitted.ok) {
     log({ level: "error", event: "morning-ritual.fitting-rejected", detail: fitted.error });
     return fitted;
+  }
+
+  // --- 8.5. Time-Budget-deferral streak + Proposal (Task 23 / Story 4.2,
+  // AD-3) --------------------------------------------------------------------
+  // `deferredTaskIds` is already computed above by every single Morning
+  // Ritual run — the genuine signal Task 6's own AC deferred acting on
+  // ("this story only covers Spencer's own explicit declaration path, not
+  // proposal application"). Runs on BOTH a `"nothing-fits"` day (below) and a
+  // `"delivered"` one: a day where literally everything got deferred is if
+  // anything the strongest version of this same signal, not an exception to
+  // tracking it.
+  //
+  // The streak itself (`core/time-budget.ts`'s pure `nextTimeBudgetDeferralStreak`)
+  // is recomputed every run; a day with zero deferrals clears it entirely
+  // (`clearTimeBudgetDeferralStreak`) rather than pausing it — see that pure
+  // function's own doc comment. Once the streak meets the threshold, a real
+  // `Proposal<Partial<TimeBudget>>` (`buildTimeBudgetChangeProposal`) is
+  // persisted as an open interaction request — but only when none is already
+  // open: an existing unanswered Proposal is left exactly as Spencer last
+  // saw it (same snapshot, same reason) rather than silently replaced by a
+  // fresher one every day the pattern continues. Once Spencer answers it
+  // (`shell/chat-cli.ts`'s `answerProposalRequest`, which clears the
+  // request), a later run is free to propose again if the pattern is still
+  // happening.
+  //
+  // Deliberately NON-FATAL: this whole step is wrapped so that a failure to
+  // record the streak or persist a Proposal (e.g. a genuine `ConflictError`
+  // racing `chat-cli.ts`) never blocks delivering today's actual Plan — this
+  // is a secondary, propose-only signal, not part of the Plan's own critical
+  // path.
+  try {
+    const hadDeferralsToday = fitted.value.deferredTaskIds.length > 0;
+    const previousStreak = getTimeBudgetDeferralStreak(deps.store)?.data;
+    const nextStreak = nextTimeBudgetDeferralStreak(previousStreak, today, hadDeferralsToday);
+
+    if (nextStreak) {
+      putTimeBudgetDeferralStreak(deps.store, nextStreak);
+    } else {
+      clearTimeBudgetDeferralStreak(deps.store);
+    }
+
+    if (nextStreak && storedBudget && !getOpenInteractionRequest(deps.store, TIME_BUDGET_PROPOSAL_REQUEST_ID)) {
+      const proposal = buildTimeBudgetChangeProposal({
+        currentBudget: storedBudget.data,
+        currentBudgetVersion: storedBudget.version,
+        streak: nextStreak,
+        createdAt: nowIso,
+      });
+      if (proposal) {
+        putOpenInteractionRequest(deps.store, TIME_BUDGET_PROPOSAL_REQUEST_ID, {
+          requestKind: "proposal",
+          promptText: buildTimeBudgetProposalPromptText(proposal),
+          detail: { proposal },
+          createdAt: nowIso,
+        });
+        log({
+          level: "info",
+          event: "morning-ritual.time-budget-proposal-created",
+          detail: { proposalId: proposal.id, consecutiveDeferralDays: nextStreak.consecutiveDeferralDays },
+        });
+      }
+    }
+  } catch (err) {
+    log({ level: "warn", event: "morning-ritual.time-budget-proposal-sync-failed", detail: describeError(err) });
   }
 
   // Which Tasks actually made it into the Plan. Read off the emitted blocks

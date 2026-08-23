@@ -36,7 +36,10 @@ import {
   isPlanViewCommand,
   isBlockerReportCommand,
   parseWhyPrioritizedCommand,
+  apply,
+  parseProposalAnswer,
   type ChatCliIo,
+  type ProposalEntityAccessor,
 } from "../src/shell/chat-cli.ts";
 import { localIsoDate, renderPlan } from "../src/rituals/morning-ritual.ts";
 // The Data-Completeness merge/gate/sync trio is its own capability and lives
@@ -54,7 +57,7 @@ import { checkDataCompleteness, type MissingFieldReport } from "../src/core/data
 import type { AnthropicMessagesClient } from "../src/adapters/llm-adapter.ts";
 import { resolveToneSystemPrompt } from "../src/core/tone.ts";
 import type Anthropic from "@anthropic-ai/sdk";
-import type { IsoDate, Plan, PlanBlock, Result, Task, TaskStatus, YohError } from "../src/types/domain.ts";
+import type { IsoDate, Plan, PlanBlock, Proposal, Result, Task, TaskStatus, TimeBudget, YohError } from "../src/types/domain.ts";
 
 function tempStore(): MemoryStore {
   return createMemoryStore({ databasePath: ":memory:" });
@@ -1507,5 +1510,230 @@ test("runChatCli: a close-out answered the NEXT MORNING records the Slip-Bump ag
   const history = getSlipHistory(store, "t1");
   assert.ok(history);
   assert.equal(history!.data.lastSlipDate, planDate, "the slip must be recorded against the Plan's own date, not the answer date");
+  store.close();
+});
+
+// ============================================================================
+// Propose-Don't-Impose confirm/apply pathway (Task 23 / Story 4.2, AD-3)
+// ============================================================================
+
+const PROPOSAL_NOW = "2026-08-24T09:00:00.000Z";
+const PROPOSAL_REQUEST_ID = "time-budget-proposal";
+
+function makeTimeBudgetProposal(overrides: Partial<Proposal<Partial<TimeBudget>>> = {}): Proposal<Partial<TimeBudget>> {
+  return {
+    id: "time-budget-change-2026-08-24",
+    kind: "time-budget-change",
+    entityId: "current",
+    entityVersion: "1",
+    suggested: { totalMinutes: 480 },
+    reason:
+      "Tasks have been deferred for 3 consecutive days because they don't fit your declared Time Budget of 360 minutes (6h) — raising it to 480 minutes (8h) might let more of your day actually fit.",
+    createdAt: PROPOSAL_NOW,
+    ...overrides,
+  };
+}
+
+function openTimeBudgetProposalRequest(store: MemoryStore, proposal: Proposal<Partial<TimeBudget>>): void {
+  putOpenInteractionRequest(store, PROPOSAL_REQUEST_ID, {
+    requestKind: "proposal",
+    promptText: `${proposal.reason} Reply "yes" to apply this change, or "no" to dismiss it.`,
+    detail: { proposal },
+    createdAt: PROPOSAL_NOW,
+  });
+}
+
+// ---- apply() — the generic confirm/apply pathway, unit-tested directly ----
+
+test("apply: answer false ('no') applies nothing and reports 'declined' — the accessor is never even consulted", async () => {
+  const proposal = makeTimeBudgetProposal();
+  let applyChangeCalls = 0;
+  const accessor: ProposalEntityAccessor<Partial<TimeBudget>> = {
+    currentVersion: () => "1",
+    applyChange: () => {
+      applyChangeCalls++;
+    },
+  };
+
+  const result = await apply(proposal, false, accessor);
+  assert.deepEqual(result, { ok: true, value: "declined" });
+  assert.equal(applyChangeCalls, 0);
+});
+
+test("apply: answer true with a matching live version re-reads, applies the change, and reports 'applied'", async () => {
+  const proposal = makeTimeBudgetProposal({ entityVersion: "1" });
+  let applied: Partial<TimeBudget> | undefined;
+  let versionReads = 0;
+  const accessor: ProposalEntityAccessor<Partial<TimeBudget>> = {
+    currentVersion: () => {
+      versionReads++;
+      return "1";
+    },
+    applyChange: (suggested) => {
+      applied = suggested;
+    },
+  };
+
+  const result = await apply(proposal, true, accessor);
+  assert.deepEqual(result, { ok: true, value: "applied" });
+  assert.deepEqual(applied, { totalMinutes: 480 });
+  assert.ok(versionReads >= 1, "the live entity's version must actually be re-read, not assumed");
+});
+
+test("apply: answer true with a MISMATCHED live version (stale) rejects with YohError.kind: 'stale-proposal' — never applies", async () => {
+  const proposal = makeTimeBudgetProposal({ entityVersion: "1" });
+  let applyChangeCalls = 0;
+  const accessor: ProposalEntityAccessor<Partial<TimeBudget>> = {
+    currentVersion: () => "2", // the live entity has moved on since the proposal was generated
+    applyChange: () => {
+      applyChangeCalls++;
+    },
+  };
+
+  const result = await apply(proposal, true, accessor);
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.equal(result.error.kind, "stale-proposal");
+  assert.equal(applyChangeCalls, 0, "the change must never be applied against outdated state");
+});
+
+test("apply: answer true when the live entity no longer exists at all (currentVersion undefined) also rejects as stale", async () => {
+  const proposal = makeTimeBudgetProposal({ entityVersion: "1" });
+  const accessor: ProposalEntityAccessor<Partial<TimeBudget>> = {
+    currentVersion: () => undefined,
+    applyChange: () => {
+      throw new Error("must not be called");
+    },
+  };
+
+  const result = await apply(proposal, true, accessor);
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.equal(result.error.kind, "stale-proposal");
+});
+
+// ---- parseProposalAnswer ----------------------------------------------------
+
+test("parseProposalAnswer recognizes common yes/no variants and rejects anything else", () => {
+  for (const yes of ["yes", "y", "Yes", "  yes  ", "yeah", "yep", "confirm", "apply"]) {
+    assert.equal(parseProposalAnswer(yes), true, `expected "${yes}" to parse as yes`);
+  }
+  for (const no of ["no", "n", "No", "nope", "dismiss", "decline"]) {
+    assert.equal(parseProposalAnswer(no), false, `expected "${no}" to parse as no`);
+  }
+  for (const unclear of ["maybe", "sure I guess", "", "later"]) {
+    assert.equal(parseProposalAnswer(unclear), undefined, `expected "${unclear}" to be unrecognized`);
+  }
+});
+
+// ---- End-to-end via surfaceOpenInteractionRequests / runChatCli -----------
+
+test("surfaceOpenInteractionRequests: an open Proposal is surfaced, stating what Yoh wants to do and why", async () => {
+  const store = tempStore();
+  putTimeBudget(store, { date: "2026-08-24", totalMinutes: 360, workMinutes: 70, breakMinutes: 15 });
+  const proposal = makeTimeBudgetProposal({ entityVersion: "1" });
+  openTimeBudgetProposalRequest(store, proposal);
+
+  const io = makeScriptedIo(["yes"]);
+  await surfaceOpenInteractionRequests(store, io);
+
+  assert.ok(io.written.some((l) => l.includes(proposal.reason)), "expected the Proposal's reason to be surfaced");
+  store.close();
+});
+
+test("surfaceOpenInteractionRequests: a blank answer to an open Proposal is never treated as consent — it keeps waiting rather than clearing (UX-DR16)", async () => {
+  const store = tempStore();
+  putTimeBudget(store, { date: "2026-08-24", totalMinutes: 360, workMinutes: 70, breakMinutes: 15 });
+  const proposal = makeTimeBudgetProposal({ entityVersion: "1" });
+  openTimeBudgetProposalRequest(store, proposal);
+
+  const io = makeScriptedIo(["", ""]); // blank lines only, then EOF (queue exhausted)
+  await surfaceOpenInteractionRequests(store, io);
+
+  assert.ok(getOpenInteractionRequest(store, PROPOSAL_REQUEST_ID), "still open — blank lines are never consent");
+  assert.equal(getCurrentTimeBudget(store)?.data.totalMinutes, 360, "nothing was applied");
+  store.close();
+});
+
+test("surfaceOpenInteractionRequests: 'yes' re-reads the live TimeBudget, confirms its version matches, applies the change, and clears the request", async () => {
+  const store = tempStore();
+  putTimeBudget(store, { date: "2026-08-24", totalMinutes: 360, workMinutes: 70, breakMinutes: 15 }); // version 1
+  const proposal = makeTimeBudgetProposal({ entityVersion: "1", suggested: { totalMinutes: 480 } });
+  openTimeBudgetProposalRequest(store, proposal);
+
+  const io = makeScriptedIo(["yes"]);
+  await surfaceOpenInteractionRequests(store, io);
+
+  assert.equal(getCurrentTimeBudget(store)?.data.totalMinutes, 480, "the suggested change was applied");
+  assert.equal(getOpenInteractionRequest(store, PROPOSAL_REQUEST_ID), undefined);
+  assert.ok(io.written.some((l) => /updated your Time Budget/i.test(l)));
+  store.close();
+});
+
+test("surfaceOpenInteractionRequests: the live TimeBudget's version has since changed (stale) — apply rejects, no change is applied, and the request clears", async () => {
+  const store = tempStore();
+  putTimeBudget(store, { date: "2026-08-24", totalMinutes: 360, workMinutes: 70, breakMinutes: 15 }); // version 1
+  const proposal = makeTimeBudgetProposal({ entityVersion: "1", suggested: { totalMinutes: 480 } });
+  openTimeBudgetProposalRequest(store, proposal);
+
+  // The live Time Budget changes AFTER the Proposal was generated (e.g.
+  // Spencer declared a new one himself in the meantime) — version bumps to 2.
+  putTimeBudget(store, { date: "2026-08-24", totalMinutes: 200, workMinutes: 70, breakMinutes: 15 });
+
+  const io = makeScriptedIo(["yes"]);
+  await surfaceOpenInteractionRequests(store, io);
+
+  assert.equal(
+    getCurrentTimeBudget(store)?.data.totalMinutes,
+    200,
+    "the stale suggestion must never be applied over Spencer's own newer value",
+  );
+  assert.equal(getOpenInteractionRequest(store, PROPOSAL_REQUEST_ID), undefined, "the stale request is cleared, not left open forever");
+  assert.ok(io.written.some((l) => /can't apply that any more/i.test(l)));
+  store.close();
+});
+
+test("surfaceOpenInteractionRequests: 'no' applies nothing, and the request is cleared", async () => {
+  const store = tempStore();
+  putTimeBudget(store, { date: "2026-08-24", totalMinutes: 360, workMinutes: 70, breakMinutes: 15 });
+  const proposal = makeTimeBudgetProposal({ entityVersion: "1", suggested: { totalMinutes: 480 } });
+  openTimeBudgetProposalRequest(store, proposal);
+
+  const io = makeScriptedIo(["no"]);
+  await surfaceOpenInteractionRequests(store, io);
+
+  assert.equal(getCurrentTimeBudget(store)?.data.totalMinutes, 360, "nothing was applied");
+  assert.equal(getOpenInteractionRequest(store, PROPOSAL_REQUEST_ID), undefined);
+  assert.ok(io.written.some((l) => /won't make that change/i.test(l)));
+  store.close();
+});
+
+test("surfaceOpenInteractionRequests: an unrecognized answer re-prompts rather than guessing", async () => {
+  const store = tempStore();
+  putTimeBudget(store, { date: "2026-08-24", totalMinutes: 360, workMinutes: 70, breakMinutes: 15 });
+  const proposal = makeTimeBudgetProposal({ entityVersion: "1", suggested: { totalMinutes: 480 } });
+  openTimeBudgetProposalRequest(store, proposal);
+
+  const io = makeScriptedIo(["maybe later", "yes"]);
+  await surfaceOpenInteractionRequests(store, io);
+
+  assert.ok(io.written.some((l) => /"yes" or "no"/i.test(l)));
+  assert.equal(getCurrentTimeBudget(store)?.data.totalMinutes, 480, "eventually resolved once a real answer was given");
+  store.close();
+});
+
+test("runChatCli surfaces an open Proposal before accepting any other input, and never reaches the LLM catch-all for it", async () => {
+  const store = tempStore();
+  putTimeBudget(store, { date: "2026-08-24", totalMinutes: 360, workMinutes: 70, breakMinutes: 15 });
+  const proposal = makeTimeBudgetProposal({ entityVersion: "1" });
+  openTimeBudgetProposalRequest(store, proposal);
+
+  const llmClient = makeFakeLlmClient();
+  const io = makeScriptedIo(["yes"]);
+  await runChatCli(store, io, TEST_TIME_ZONE, llmClient, () => new Date(NOW));
+
+  assert.ok(io.written.some((l) => l.includes(proposal.reason)));
+  assert.equal(getOpenInteractionRequest(store, PROPOSAL_REQUEST_ID), undefined);
+  assert.equal(llmClient.calls.length, 0, "the Proposal is fully resolved before the ordinary loop ever reaches the LLM catch-all");
   store.close();
 });

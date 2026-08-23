@@ -31,6 +31,7 @@ import {
   RESET,
   renderPlan,
   runMorningRitual,
+  TIME_BUDGET_PROPOSAL_REQUEST_ID,
   UNCHECKED_NIGHT_TEXT_MARKER,
   type MorningRitualDeps,
   type PlanNotification,
@@ -46,7 +47,7 @@ import {
   type NightCloseOutRequestDetail,
 } from "../src/rituals/night-ritual.ts";
 import { PUSHOVER_MESSAGE_LIMIT, PUSHOVER_TITLE_LIMIT } from "../src/adapters/notification-adapter.ts";
-import type { CalendarEvent, Plan, PlanBlock, Task } from "../src/types/domain.ts";
+import type { CalendarEvent, Plan, PlanBlock, Proposal, Task, TimeBudget } from "../src/types/domain.ts";
 
 // ============================================================================
 // Fixtures
@@ -875,4 +876,102 @@ test("end-to-end: a night Spencer answers AFTER escalation does NOT get falsely 
   assert.equal(result.value.uncheckedNight, undefined, "a properly closed-out night must never be flagged as unchecked (AC3)");
   assert.doesNotMatch(result.value.rendered, /wasn't closed out/i);
   assert.doesNotMatch(h.notifications[0]!.message, /wasn't closed out/i);
+});
+
+// ============================================================================
+// Time-Budget-change Proposal (Task 23 / Story 4.2, AD-3) — the real
+// suggestion mechanism Task 6's own AC deferred, wired up end-to-end here.
+// ============================================================================
+
+/** Runs the ritual for one calendar `date`, against `store`, with a fixed too-small budget and whatever `tasks` are given. */
+async function runMorningRitualOn(
+  store: MemoryStore,
+  date: string,
+  tasks: readonly Task[],
+): Promise<Awaited<ReturnType<typeof runMorningRitual>>> {
+  const deps: MorningRitualDeps = {
+    store,
+    readTasks: async () => tasks,
+    readCalendarEvents: async () => [],
+    sendNotification: async () => {},
+    now: () => new Date(`${date}T13:00:00.000Z`),
+    timeZone: "UTC",
+    color: false,
+  };
+  return runMorningRitual(deps);
+}
+
+const OVERSIZED_TASK: readonly Task[] = [makeTask("t1", "Rebuild the deck", { estimatedDurationMinutes: 600 })];
+
+test("Task 23: 3 consecutive days of budget-insufficient deferrals produces a real, persisted Time-Budget-change Proposal", async () => {
+  const store = tempStore();
+  putTimeBudget(store, { date: "2026-08-18", totalMinutes: 60, workMinutes: 70, breakMinutes: 15 });
+
+  const dates = ["2026-08-20", "2026-08-21", "2026-08-22"];
+  for (const [index, date] of dates.entries()) {
+    const result = await runMorningRitualOn(store, date, OVERSIZED_TASK);
+    assert.ok(result.ok && result.value.status === "nothing-fits", `expected nothing-fits on ${date}`);
+
+    if (index < dates.length - 1) {
+      assert.equal(
+        getOpenInteractionRequest(store, TIME_BUDGET_PROPOSAL_REQUEST_ID),
+        undefined,
+        `no Proposal expected yet after ${date} — the streak hasn't met the threshold`,
+      );
+    }
+  }
+
+  const open = getOpenInteractionRequest(store, TIME_BUDGET_PROPOSAL_REQUEST_ID);
+  assert.ok(open, "expected an open Time-Budget-change Proposal interaction request after the 3rd consecutive deferral day");
+  assert.equal(open.data.requestKind, "proposal");
+  assert.match(open.data.promptText, /3 consecutive days/);
+  assert.match(open.data.promptText, /yes/i);
+  assert.match(open.data.promptText, /no/i);
+
+  const detail = open.data.detail as { readonly proposal?: Proposal<Partial<TimeBudget>> };
+  assert.ok(detail.proposal, "the interaction request carries the real Proposal, not a placeholder");
+  assert.equal(detail.proposal.kind, "time-budget-change");
+  assert.equal(detail.proposal.entityVersion, "1", "the budget was declared exactly once — StoredRecord.version 1 throughout");
+  assert.ok(detail.proposal.suggested.totalMinutes !== undefined && detail.proposal.suggested.totalMinutes > 60);
+  assert.match(detail.proposal.reason, /3 consecutive days/);
+  assert.match(detail.proposal.reason, /60 minutes/);
+});
+
+test("Task 23: a day with no deferrals clears the streak — a later partial recurrence (below threshold) produces no Proposal", async () => {
+  const store = tempStore();
+  putTimeBudget(store, { date: "2026-08-18", totalMinutes: 60, workMinutes: 70, breakMinutes: 15 });
+  const smallTask: readonly Task[] = [makeTask("t2", "Quick email", { estimatedDurationMinutes: 20 })];
+
+  await runMorningRitualOn(store, "2026-08-19", OVERSIZED_TASK); // streak: 1
+  await runMorningRitualOn(store, "2026-08-20", OVERSIZED_TASK); // streak: 2
+  const cleared = await runMorningRitualOn(store, "2026-08-21", smallTask); // fits — streak resets to 0
+  assert.ok(cleared.ok && cleared.value.status === "delivered");
+  await runMorningRitualOn(store, "2026-08-22", OVERSIZED_TASK); // streak restarts at: 1
+
+  assert.equal(
+    getOpenInteractionRequest(store, TIME_BUDGET_PROPOSAL_REQUEST_ID),
+    undefined,
+    "the reset means only 1 consecutive day has re-accumulated — below the 3-day threshold",
+  );
+});
+
+test("Task 23: an already-open Time-Budget-change Proposal is not silently replaced by a fresher one each day it stays unanswered", async () => {
+  const store = tempStore();
+  putTimeBudget(store, { date: "2026-08-18", totalMinutes: 60, workMinutes: 70, breakMinutes: 15 });
+
+  for (const date of ["2026-08-20", "2026-08-21", "2026-08-22"]) {
+    await runMorningRitualOn(store, date, OVERSIZED_TASK);
+  }
+  const firstOpen = getOpenInteractionRequest(store, TIME_BUDGET_PROPOSAL_REQUEST_ID);
+  assert.ok(firstOpen);
+  const firstProposalId = (firstOpen.data.detail as { readonly proposal?: Proposal<Partial<TimeBudget>> }).proposal?.id;
+
+  // A 4th consecutive deferral day, with the Proposal still open/unanswered.
+  await runMorningRitualOn(store, "2026-08-23", OVERSIZED_TASK);
+
+  const stillOpen = getOpenInteractionRequest(store, TIME_BUDGET_PROPOSAL_REQUEST_ID);
+  assert.ok(stillOpen);
+  assert.equal(stillOpen.version, firstOpen.version, "the SAME interaction request row — not replaced with a new one");
+  const secondProposalId = (stillOpen.data.detail as { readonly proposal?: Proposal<Partial<TimeBudget>> }).proposal?.id;
+  assert.equal(secondProposalId, firstProposalId, "the same Proposal — Spencer still sees exactly what he was first shown");
 });

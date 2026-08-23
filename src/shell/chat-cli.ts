@@ -123,6 +123,29 @@
  * `ritual-cli.ts`'s `createMorningRitualDeps` `bumpLevels` bridge from the
  * other side — see that function's own doc comment.
  *
+ * Task 23 update (Story 4.2, AD-3, Propose-Don't-Impose): the generic
+ * confirm/apply pathway lives here — `apply(proposal)`, per AD-3's own
+ * wording, is called from NOWHERE else in the codebase. `surfaceOpenInteractionRequests`
+ * gets a SEVENTH branch, matching any open request whose
+ * `requestKind === "proposal"` (deliberately not a fixed id, unlike the
+ * `"data-completeness"`/`"night-close-out"` branches — see `apply`'s own doc
+ * comment): `answerProposalRequest` shows the Proposal's reason, waits for
+ * an explicit yes/no (never silence — UX-DR16), and on "yes" calls the
+ * generic `apply` with a `ProposalEntityAccessor` for that Proposal's `kind`.
+ * `apply` itself stays generic over `Proposal<T>` — nothing about it is
+ * hardcoded to Time Budget — but the only accessor this file currently
+ * builds (`timeBudgetEntityAccessor`) is for the one real Proposal kind this
+ * codebase generates, `"time-budget-change"` (`core/time-budget.ts`'s
+ * `buildTimeBudgetChangeProposal`, wired up by `rituals/morning-ritual.ts`'s
+ * daily deferral-streak tracking). A "learned behavioral pattern" Proposal
+ * was deliberately NOT invented as a second worked example for this task —
+ * no other story in this plan ever actually generates one, and Story 1.7's
+ * AC4 ("no UI or interaction path exists" for manually setting a Task's
+ * priority) means a plausible-sounding priority-override Proposal would
+ * directly contradict an already-established invariant. `apply` staying
+ * generic (rather than hardcoded to `Partial<TimeBudget>`) is what lets a
+ * future Proposal kind add its own accessor without touching `apply` itself.
+ *
  * Task 10 update: the merge/gate/sync trio moved to
  * `rituals/data-completeness.ts` — the `rituals/*.ts` home the note above
  * always pointed at, given its own file because it is its own capability
@@ -137,6 +160,7 @@ import { Client } from "@notionhq/client";
 import {
   clearInteractionRequest,
   createMemoryStore,
+  getCurrentTimeBudget,
   getOpenInteractionRequest,
   getPlan,
   getSlipHistory,
@@ -171,6 +195,7 @@ import type {
   InteractionRequest,
   IsoDate,
   PlanningFieldNames,
+  Proposal,
   Result,
   Task,
   TaskFieldOverride,
@@ -502,6 +527,207 @@ async function answerNightCloseOutRequest(
   return true;
 }
 
+// ============================================================================
+// Propose-Don't-Impose confirm/apply pathway (Task 23 / Story 4.2, AD-3)
+// ============================================================================
+
+/**
+ * The minimal seam `apply` needs to re-read a Proposal's live entity and,
+ * once Spencer has confirmed, write the suggested change — injected per
+ * Proposal `kind` (this task's own worked example, `timeBudgetEntityAccessor`
+ * below) rather than baked into `apply` itself. This is what keeps `apply`
+ * itself generic over `Proposal<T>`, per this task's own scoping note (see
+ * this file's module docstring's Task 23 paragraph): a future Proposal kind
+ * supplies its own accessor without any change to `apply`.
+ */
+export interface ProposalEntityAccessor<T> {
+  /** The live entity's CURRENT version, formatted the same way `Proposal.entityVersion` already is (a `string`) — `undefined` if the entity no longer exists at all. Always re-reads; never returns a cached/stale value. */
+  readonly currentVersion: () => string | undefined;
+  /** Applies `suggested` against the live entity. `apply` calls this ONLY after confirming `currentVersion()` still matches `proposal.entityVersion` — never speculatively. */
+  readonly applyChange: (suggested: T) => void;
+}
+
+/**
+ * The generic Propose-Don't-Impose confirm/apply pathway AD-3 requires:
+ * `chat-cli.ts` is the sole caller anywhere in the codebase (AD-3's own
+ * wording — see this file's module docstring).
+ *
+ * - `answer: false` ("no"): applies nothing — returns
+ *   `{ok: true, value: "declined"}`. `accessor` is never even consulted.
+ * - `answer: true` ("yes"): re-reads the live entity's CURRENT version via
+ *   `accessor.currentVersion()` and compares it against
+ *   `proposal.entityVersion` — the snapshot captured when the Proposal was
+ *   generated. A mismatch (including the entity having since been deleted
+ *   entirely, which reads as `undefined`) rejects with
+ *   `YohError.kind: "stale-proposal"` WITHOUT ever calling
+ *   `accessor.applyChange` — a stale Proposal is never applied against
+ *   state that has moved on. Only on a genuine match does it call
+ *   `accessor.applyChange(proposal.suggested)` and report `"applied"`.
+ *
+ * Deliberately does NOT touch the `InteractionRequest` the Proposal was
+ * surfaced as — clearing (or re-surfacing) that request is the caller's job
+ * (`answerProposalRequest`, below), mirroring
+ * `answerDataCompletenessRequest`/`answerNightCloseOutRequest`'s own "apply
+ * the answer, then separately clear the request" shape elsewhere in this
+ * file. This keeps `apply` reusable for a future proposal kind whose
+ * request-clearing story might differ.
+ */
+export async function apply<T>(
+  proposal: Proposal<T>,
+  answer: boolean,
+  accessor: ProposalEntityAccessor<T>,
+): Promise<Result<"applied" | "declined", YohError>> {
+  if (!answer) {
+    return { ok: true, value: "declined" };
+  }
+
+  const liveVersion = accessor.currentVersion();
+  if (liveVersion !== proposal.entityVersion) {
+    return {
+      ok: false,
+      error: {
+        kind: "stale-proposal",
+        message: `chat-cli: proposal "${proposal.id}" is stale — the live entity's version (${
+          liveVersion ?? "none, it no longer exists"
+        }) no longer matches the version this proposal was generated against (${proposal.entityVersion})`,
+        detail: {
+          proposalId: proposal.id,
+          entityId: proposal.entityId,
+          expectedVersion: proposal.entityVersion,
+          actualVersion: liveVersion,
+        },
+      },
+    };
+  }
+
+  accessor.applyChange(proposal.suggested);
+  return { ok: true, value: "applied" };
+}
+
+/**
+ * `apply`'s accessor for the one real Proposal kind this codebase currently
+ * generates (`"time-budget-change"`, `core/time-budget.ts`'s
+ * `buildTimeBudgetChangeProposal`, wired up by `rituals/morning-ritual.ts`).
+ * Re-reads the live singleton Time Budget row fresh on every call (never
+ * caches it), and applies a suggested change by merging `suggested` (a
+ * `Partial<TimeBudget>`) onto the live row's own data before persisting via
+ * `putTimeBudget` — the same "put" primitive `declareTimeBudget` already
+ * uses for Spencer's own explicit declarations, so an applied Proposal reads
+ * back identically to Spencer having typed the change himself.
+ */
+function timeBudgetEntityAccessor(store: MemoryStore): ProposalEntityAccessor<Partial<TimeBudget>> {
+  return {
+    currentVersion: () => {
+      const current = getCurrentTimeBudget(store);
+      return current ? String(current.version) : undefined;
+    },
+    applyChange: (suggested) => {
+      const current = getCurrentTimeBudget(store);
+      if (!current) {
+        throw new Error("chat-cli: cannot apply a Time Budget proposal — no current Time Budget exists to change");
+      }
+      putTimeBudget(store, { ...current.data, ...suggested });
+    },
+  };
+}
+
+/**
+ * Recognizes a yes/no answer to an open Proposal, tolerant of a few natural
+ * variants — the same deliberately-simple, clearly-documented pattern
+ * matching `parseNightCloseOutAnswer` uses above (NOT real free-text NLU).
+ * Returns `undefined` for anything else, so `answerProposalRequest` re-asks
+ * rather than guessing — UX-DR16: silence (and anything that isn't a clearly
+ * recognized yes/no) is never treated as consent.
+ */
+export function parseProposalAnswer(raw: string): boolean | undefined {
+  const normalized = raw.trim().toLowerCase();
+  if (/^(y|yes|yeah|yep|confirm|apply)$/.test(normalized)) return true;
+  if (/^(n|no|nope|dismiss|decline)$/.test(normalized)) return false;
+  return undefined;
+}
+
+/**
+ * Answers a single open `requestKind: "proposal"` interaction request
+ * (AD-3): shows its `promptText` (already built by whatever wiring created
+ * it — e.g. `rituals/morning-ritual.ts`'s `buildTimeBudgetProposalPromptText`
+ * for a Time-Budget-change Proposal), then waits for an explicit yes/no
+ * answer. A blank line re-prompts indefinitely (UX-DR20); an unrecognized
+ * answer re-prompts too (UX-DR16 — silence AND an unclear answer are both
+ * never treated as consent) — only a genuinely recognized "yes" or "no"
+ * ever resolves this loop.
+ *
+ * On "yes": calls `apply` with the accessor for this Proposal's `kind`.
+ *  - `"applied"`: clears the request and confirms the change plainly.
+ *  - `stale-proposal`: ALSO clears the request (this task's own documented
+ *    choice for "no change is applied, and the interaction request is
+ *    cleared or re-surfaced with fresh data as appropriate" — re-surfacing
+ *    a Proposal whose entityVersion snapshot can now never match again
+ *    would loop forever rather than genuinely re-check anything; clearing
+ *    it and telling Spencer plainly is the honest outcome here, and a fresh
+ *    Proposal can be generated another day if the underlying deferral
+ *    pattern is still happening) — Spencer is told plainly that the entity
+ *    changed since the suggestion was made, rather than the information
+ *    being silently discarded.
+ *
+ * On "no": clears the request without applying anything.
+ *
+ * Currently the only Proposal `kind` this codebase generates is
+ * `"time-budget-change"` — see this file's module docstring for why a
+ * second worked example (e.g. a learned-behavioral-pattern Proposal) was
+ * deliberately not invented for this task. An unrecognized `kind` (a
+ * malformed record, or a future kind this file doesn't yet know how to
+ * apply) is dismissed with a plain apology rather than looping forever or
+ * crashing the session.
+ *
+ * Returns `false` (without clearing the request) if `io.readLine` reports
+ * EOF partway through — the request stays open, unanswered, for the next
+ * session (UX-DR20).
+ */
+async function answerProposalRequest(
+  store: MemoryStore,
+  io: ChatCliIo,
+  record: StoredRecord<InteractionRequest>,
+): Promise<boolean> {
+  io.writeLine(`${ACCENT}${record.data.promptText}${RESET}`);
+
+  const clearThisRequest = (): void => {
+    const current = getOpenInteractionRequest(store, record.id);
+    if (current) clearInteractionRequest(store, record.id, current.version);
+  };
+
+  const detail = record.data.detail as { readonly proposal?: Proposal<unknown> } | undefined;
+  const proposal = detail?.proposal;
+
+  if (!proposal || proposal.kind !== "time-budget-change") {
+    io.writeLine("I don't recognize this proposal any more — dismissing it.");
+    clearThisRequest();
+    return true;
+  }
+
+  for (;;) {
+    const answer = await io.readLine("  Apply this? (yes/no): ");
+    if (answer === null) return false; // stdin closed mid-answer — leave the request open, unanswered.
+    if (answer.trim().length === 0) continue; // UX-DR16: silence is never consent — keep waiting.
+
+    const parsed = parseProposalAnswer(answer);
+    if (parsed === undefined) {
+      io.writeLine('Please answer "yes" or "no".');
+      continue;
+    }
+
+    const result = await apply(proposal as Proposal<Partial<TimeBudget>>, parsed, timeBudgetEntityAccessor(store));
+
+    if (result.ok) {
+      clearThisRequest();
+      io.writeLine(result.value === "applied" ? "Done — I've updated your Time Budget." : "Okay — I won't make that change.");
+    } else {
+      clearThisRequest();
+      io.writeLine(`I can't apply that any more — ${result.error.message}`);
+    }
+    return true;
+  }
+}
+
 /**
  * Surfaces every currently open interaction request, one at a time, each
  * blocking for Spencer's answer before moving to the next — AD-5's "an open
@@ -564,6 +790,15 @@ export async function surfaceOpenInteractionRequests(
 
     if (next.id === NIGHT_CLOSE_OUT_REQUEST_ID && next.data.requestKind === "night-close-out") {
       const resolved = await answerNightCloseOutRequest(store, io, next, setTaskStatus, fallbackDate);
+      if (!resolved) return; // EOF mid-answer.
+      continue;
+    }
+
+    if (next.data.requestKind === "proposal") {
+      // Checked by `requestKind` alone, deliberately not by a fixed id —
+      // see `apply`'s own doc comment on staying generic over `Proposal<T>`
+      // for a future Proposal kind with its own request id.
+      const resolved = await answerProposalRequest(store, io, next);
       if (!resolved) return; // EOF mid-answer.
       continue;
     }

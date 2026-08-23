@@ -483,6 +483,83 @@ export function putTimeBudget(store: MemoryStore, budget: TimeBudget): StoredRec
 }
 
 // ============================================================================
+// Time Budget deferral streak (Task 23 / Story 4.2, AD-3) — typed surface on
+// `records`
+// ============================================================================
+
+/**
+ * The fixed `records.kind` partition the Time-Budget-deferral streak
+ * (`core/time-budget.ts`'s `TimeBudgetDeferralStreakSnapshot`, structurally
+ * mirrored here — see that type's own doc comment for why this file
+ * declares its own local shape rather than importing one: `adapters/*.ts`
+ * may import only from `types/`, never from `core/`, per AD-1) is stored
+ * under.
+ */
+const TIME_BUDGET_DEFERRAL_STREAK_KIND = "time-budget-deferral-streak";
+
+/**
+ * The fixed singleton `records.id` the streak is always stored at —
+ * mirrors `TIME_BUDGET_ID` immediately above: there is exactly one current
+ * Time Budget, so there is exactly one streak tracking deferrals against it.
+ */
+const TIME_BUDGET_DEFERRAL_STREAK_ID = "current";
+
+/**
+ * One day-over-day streak of "at least one Task got deferred because it
+ * didn't fit the declared Time Budget" — the raw signal
+ * `core/time-budget.ts`'s `buildTimeBudgetChangeProposal` turns into a real
+ * `Proposal<Partial<TimeBudget>>` once it crosses that file's own documented
+ * threshold. Structurally identical to that file's own
+ * `TimeBudgetDeferralStreakSnapshot` by design (see that type's doc comment)
+ * — this is this file's own copy of the same shape, not a competing one.
+ */
+export interface TimeBudgetDeferralStreak {
+  readonly consecutiveDeferralDays: number;
+  readonly lastDeferralDate: IsoDate;
+}
+
+/** Reads the currently-stored deferral streak, or `undefined` if none is stored (never started, or most recently cleared by a day with no deferrals). */
+export function getTimeBudgetDeferralStreak(store: MemoryStore): StoredRecord<TimeBudgetDeferralStreak> | undefined {
+  return store.getRecord<TimeBudgetDeferralStreak>(TIME_BUDGET_DEFERRAL_STREAK_KIND, TIME_BUDGET_DEFERRAL_STREAK_ID);
+}
+
+/**
+ * Stores `streak` — "put" semantics, like `putTimeBudget` immediately above:
+ * the caller doesn't thread a version through, but a genuine concurrent
+ * writer racing on this same singleton still surfaces `ConflictError` per
+ * AD-10 (this reads the current row's version internally and hands it to
+ * `readModifyWrite`). The caller (`rituals/morning-ritual.ts`) is expected to
+ * have already computed `streak` via `core/time-budget.ts`'s pure
+ * `nextTimeBudgetDeferralStreak` — this function is a plain storage
+ * primitive, not a second place that decides how the streak advances.
+ */
+export function putTimeBudgetDeferralStreak(
+  store: MemoryStore,
+  streak: TimeBudgetDeferralStreak,
+): StoredRecord<TimeBudgetDeferralStreak> {
+  const current = store.getRecord<TimeBudgetDeferralStreak>(TIME_BUDGET_DEFERRAL_STREAK_KIND, TIME_BUDGET_DEFERRAL_STREAK_ID);
+  return store.readModifyWrite<TimeBudgetDeferralStreak>(
+    TIME_BUDGET_DEFERRAL_STREAK_KIND,
+    TIME_BUDGET_DEFERRAL_STREAK_ID,
+    current?.version,
+    () => streak,
+  );
+}
+
+/**
+ * Clears the streak entirely — a day with no deferrals resets the count to
+ * zero rather than pausing it (see `core/time-budget.ts`'s
+ * `nextTimeBudgetDeferralStreak` doc comment for the full reasoning), and a
+ * cleared streak reads back identically to one that never started. A
+ * harmless no-op if nothing is stored — mirrors `clearSlip`'s own shape.
+ */
+export function clearTimeBudgetDeferralStreak(store: MemoryStore): void {
+  const current = store.getRecord<TimeBudgetDeferralStreak>(TIME_BUDGET_DEFERRAL_STREAK_KIND, TIME_BUDGET_DEFERRAL_STREAK_ID);
+  if (!current) return;
+  store.deleteRecord(TIME_BUDGET_DEFERRAL_STREAK_KIND, TIME_BUDGET_DEFERRAL_STREAK_ID, current.version);
+}
+
+// ============================================================================
 // Plan (Task 10 / Story 1.10, FR-1) — typed surface on `records`
 // ============================================================================
 
