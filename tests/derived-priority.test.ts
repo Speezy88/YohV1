@@ -165,10 +165,17 @@ test("AC4: the module's public surface exposes no manual-priority-setting functi
   const mod = await import("../src/core/derived-priority.ts");
   const exportedNames = Object.keys(mod).sort();
 
-  // Every export is either the ordering function itself or a documented,
-  // read-only tuning constant -- nothing that lets a caller directly set a
-  // Task's position/priority.
-  assert.deepEqual(exportedNames, ["REFERENCE_MINUTES_PER_DAY", "SECONDARY_FACTOR_WEIGHT", "orderByDerivedPriority"]);
+  // Every export is either the ordering function itself, its Task 9-added
+  // read-only introspection sibling (computeDerivedPriorityFactors, which
+  // exposes the same computed breakdown for explaining an ordering -- never
+  // for setting one), or a documented, read-only tuning constant -- nothing
+  // that lets a caller directly set a Task's position/priority.
+  assert.deepEqual(exportedNames, [
+    "REFERENCE_MINUTES_PER_DAY",
+    "SECONDARY_FACTOR_WEIGHT",
+    "computeDerivedPriorityFactors",
+    "orderByDerivedPriority",
+  ]);
 
   for (const name of exportedNames) {
     assert.doesNotMatch(name.toLowerCase(), /setpriority|manualpriority|overridepriority|setposition/);

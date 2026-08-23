@@ -219,15 +219,24 @@ function computePrimaryScore(task: CompleteTask, today: IsoDate, bumpLevel: numb
 /** Fixed canonical Energy-fit placeholder ranking -- see the file docstring's "Energy fit" section. */
 const ENERGY_RANK: Readonly<Record<Energy, number>> = { high: 0, medium: 0.5, low: 1 };
 
+/** Per-Task breakdown of the three even-split secondary sub-scores plus their combined weighted total. */
+interface SecondaryScoreDetail {
+  readonly areaSub: number;
+  readonly energySub: number;
+  readonly difficultySub: number;
+  readonly secondaryScore: number;
+}
+
 /**
- * Computes the even-split secondary score for every Task in `tasks`,
- * relative to the batch itself (Area alphabetical rank and difficulty's
- * duration normalization are both computed across this candidate set, not
- * against some fixed universal scale -- see the file docstring). Returns a
- * plain array in the same order as `tasks`, avoiding any lookup-by-id step
- * that could risk an unguaranteed-present key.
+ * Computes the even-split secondary score (and its three sub-score
+ * components, for `computeDerivedPriorityFactors` below) for every Task in
+ * `tasks`, relative to the batch itself (Area alphabetical rank and
+ * difficulty's duration normalization are both computed across this
+ * candidate set, not against some fixed universal scale -- see the file
+ * docstring). Returns a plain array in the same order as `tasks`, avoiding
+ * any lookup-by-id step that could risk an unguaranteed-present key.
  */
-function computeSecondaryScores(tasks: readonly CompleteTask[]): readonly number[] {
+function computeSecondaryScoreDetails(tasks: readonly CompleteTask[]): readonly SecondaryScoreDetail[] {
   const distinctAreasSorted = [...new Set(tasks.map((t) => t.area))].sort();
   const areaRank = new Map<string, number>(
     distinctAreasSorted.map((area, index) => [
@@ -250,7 +259,9 @@ function computeSecondaryScores(tasks: readonly CompleteTask[]): readonly number
     // there, not a bonus, so it stays a cost here too -- a longer/"harder"
     // Task gets a HIGHER (later) sub-score, never a lower one.
     const difficultySub = normalizedDuration;
-    return SECONDARY_FACTOR_WEIGHT * areaSub + SECONDARY_FACTOR_WEIGHT * energySub + SECONDARY_FACTOR_WEIGHT * difficultySub;
+    const secondaryScore =
+      SECONDARY_FACTOR_WEIGHT * areaSub + SECONDARY_FACTOR_WEIGHT * energySub + SECONDARY_FACTOR_WEIGHT * difficultySub;
+    return { areaSub, energySub, difficultySub, secondaryScore };
   });
 }
 
@@ -283,11 +294,37 @@ function computeSecondaryScores(tasks: readonly CompleteTask[]): readonly number
  * non-finite `bumpLevels` entry. A well-formed candidate set always returns
  * `ok: true`, including an empty one (`value: []`).
  */
-export function orderByDerivedPriority(
+/**
+ * Full per-Task breakdown this file computes internally on the way to an
+ * ordering -- shared by `orderByDerivedPriority` (which discards everything
+ * but `task`) and `computeDerivedPriorityFactors` below (which keeps it
+ * all). Kept private: `DerivedPriorityFactors` (the public shape) is
+ * structurally identical today, but declared as its own type below so the
+ * two can diverge later without this internal shape being a public
+ * contract.
+ */
+interface ScoredTask {
+  readonly task: CompleteTask;
+  readonly daysUntilDue: number;
+  readonly bumpLevel: number;
+  readonly primaryScore: number;
+  readonly secondaryScore: number;
+  readonly areaSub: number;
+  readonly energySub: number;
+  readonly difficultySub: number;
+}
+
+/**
+ * Shared validation + scoring + sort behind both public exports of this
+ * file. This is the exact validation/scoring/sort `orderByDerivedPriority`
+ * always performed -- extracted verbatim, not altered, so that function's
+ * behavior is unchanged by this refactor.
+ */
+function computeScored(
   tasks: readonly CompleteTask[],
   today: IsoDate,
   bumpLevels?: Readonly<Record<ExternalId, number>>,
-): Result<readonly CompleteTask[], YohError> {
+): Result<readonly ScoredTask[], YohError> {
   if (!isValidIsoDate(today)) {
     return validationError(`derived-priority: "${today}" is not a valid ISO-8601 calendar date (YYYY-MM-DD)`, {
       today,
@@ -322,13 +359,22 @@ export function orderByDerivedPriority(
     }
   }
 
-  const secondaryScores = computeSecondaryScores(tasks);
+  const secondaryDetails = computeSecondaryScoreDetails(tasks);
 
-  const scored = tasks.map((task, index) => ({
-    task,
-    primaryScore: computePrimaryScore(task, today, bumpLevels?.[task.id] ?? 0),
-    secondaryScore: secondaryScores[index] ?? 0,
-  }));
+  const scored = tasks.map((task, index) => {
+    const bumpLevel = bumpLevels?.[task.id] ?? 0;
+    const detail = secondaryDetails[index] ?? { areaSub: 0, energySub: 0, difficultySub: 0, secondaryScore: 0 };
+    return {
+      task,
+      daysUntilDue: daysBetween(today, task.dueDate),
+      bumpLevel,
+      primaryScore: computePrimaryScore(task, today, bumpLevel),
+      secondaryScore: detail.secondaryScore,
+      areaSub: detail.areaSub,
+      energySub: detail.energySub,
+      difficultySub: detail.difficultySub,
+    };
+  });
 
   scored.sort((a, b) => {
     const primaryDiff = a.primaryScore - b.primaryScore;
@@ -336,5 +382,67 @@ export function orderByDerivedPriority(
     return a.secondaryScore - b.secondaryScore;
   });
 
-  return { ok: true, value: scored.map((s) => s.task) };
+  return { ok: true, value: scored };
+}
+
+export function orderByDerivedPriority(
+  tasks: readonly CompleteTask[],
+  today: IsoDate,
+  bumpLevels?: Readonly<Record<ExternalId, number>>,
+): Result<readonly CompleteTask[], YohError> {
+  const scoredResult = computeScored(tasks, today, bumpLevels);
+  if (!scoredResult.ok) return scoredResult;
+  return { ok: true, value: scoredResult.value.map((s) => s.task) };
+}
+
+// ============================================================================
+// computeDerivedPriorityFactors -- additive introspection export (Task 9)
+// ============================================================================
+
+/**
+ * Per-Task Derived Priority breakdown: everything `orderByDerivedPriority`
+ * computes internally on the way to an ordering, kept instead of discarded.
+ * Added by Task 9 (`core/plan-reasoning.ts`) as a small, additive extension
+ * of this file (per AD-9's allowance for a later task to extend a locked
+ * file when it finds a genuine gap) -- `orderByDerivedPriority`'s own
+ * signature and behavior are unchanged by this addition; this is a new
+ * export surfacing values that were always computed but previously thrown
+ * away, so Task 9's reasoning line can explain *why* the lead Task won
+ * (due-date proximity, a duration/cost tradeoff, or a secondary-axis
+ * tie-break) instead of asserting it.
+ */
+export interface DerivedPriorityFactors {
+  readonly task: CompleteTask;
+  /** Whole calendar days from `today` to `task.dueDate` (negative if overdue), the primary axis's due-date term before the `REFERENCE_MINUTES_PER_DAY` conversion. */
+  readonly daysUntilDue: number;
+  /** The bump level applied for this Task (0 if `bumpLevels` omitted or had no entry for it) -- see the file docstring's Slip-Bump seam section. */
+  readonly bumpLevel: number;
+  /** `daysUntilDue * REFERENCE_MINUTES_PER_DAY + task.estimatedDurationMinutes - bumpLevel * REFERENCE_MINUTES_PER_DAY`. Lower sorts earlier. */
+  readonly primaryScore: number;
+  /** The even-split combination of `areaSub`/`energySub`/`difficultySub`, weighted by `SECONDARY_FACTOR_WEIGHT` each. Only ever consulted to break a primary-axis tie. Lower sorts earlier. */
+  readonly secondaryScore: number;
+  /** This Task's Area, ranked alphabetically among the candidate set's distinct Areas and normalized to [0, 1] (0 = alphabetically first). */
+  readonly areaSub: number;
+  /** This Task's Energy fit sub-score: `high` = 0, `medium` = 0.5, `low` = 1. */
+  readonly energySub: number;
+  /** This Task's `estimatedDurationMinutes`, normalized to [0, 1] across the candidate set (0 = shortest). A longer/costlier Task gets a HIGHER sub-score, matching the primary axis's own "duration is a cost" directionality. */
+  readonly difficultySub: number;
+}
+
+/**
+ * Computes the same Derived Priority ordering `orderByDerivedPriority`
+ * produces, but returns each Task's full score breakdown instead of just
+ * the reordered `CompleteTask[]` -- same validation, same scoring, same
+ * sort, same `Result<T, YohError>` failure cases (see
+ * `orderByDerivedPriority`'s own doc comment); the two functions share one
+ * internal implementation (`computeScored` above) so they cannot drift
+ * apart. `DerivedPriorityFactors[0]` is always the Task
+ * `orderByDerivedPriority`'s own output would place first.
+ */
+export function computeDerivedPriorityFactors(
+  tasks: readonly CompleteTask[],
+  today: IsoDate,
+  bumpLevels?: Readonly<Record<ExternalId, number>>,
+): Result<readonly DerivedPriorityFactors[], YohError> {
+  return computeScored(tasks, today, bumpLevels);
 }
