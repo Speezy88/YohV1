@@ -29,6 +29,18 @@
  * post-review reasoning on why this file doesn't pre-build that dispatch
  * shape now.
  *
+ * Task 15 update (Story 2.3, FR-9): a third deterministic check,
+ * `isMidDayReflowCommand`, is added to that same sequence — checked BEFORE
+ * the general-qa catch-all, same shape as the two above. It recognizes
+ * Spencer telling Yoh to re-fit the rest of today (e.g. a Task ran long or
+ * got skipped) and calls into `rituals/mid-day-reflow.ts`'s
+ * `runMidDayReflow`, which does the actual re-fitting and persistence; this
+ * file only recognizes the trigger and prints the result. This is also the
+ * ONLY place in the whole codebase that calls `runMidDayReflow` — Mid-Day
+ * Re-Flow never runs proactively (no ritual, cron, or timer path reaches
+ * it); see `mid-day-reflow.ts`'s own doc comment and
+ * `tests/mid-day-reflow.test.ts`'s structural check for how that's verified.
+ *
  * Task 14 update (Story 2.2, FR-18's default/contextual Tone): the catch-all
  * now classifies `line` via `core/tone.ts`'s `resolveToneSystemPrompt` and
  * passes its result as `answerGeneralQuestion`'s `systemPrompt` argument,
@@ -71,6 +83,7 @@
  * about its behavior changed with either move.
  */
 import { createInterface } from "node:readline";
+import { Client } from "@notionhq/client";
 import {
   clearInteractionRequest,
   createMemoryStore,
@@ -88,10 +101,12 @@ import {
   loadLlmAdapterConfigFromEnv,
   type AnthropicMessagesClient,
 } from "../adapters/llm-adapter.ts";
+import { readNotionTasks } from "../adapters/notion-adapter.ts";
 import type { MissingFieldReport } from "../core/data-completeness-gate.ts";
 import { shapeDeclaredTimeBudget } from "../core/time-budget.ts";
 import { resolveToneSystemPrompt } from "../core/tone.ts";
 import { DATA_COMPLETENESS_REQUEST_ID, PLANNING_FIELD_LABELS } from "../rituals/data-completeness.ts";
+import { runMidDayReflow } from "../rituals/mid-day-reflow.ts";
 import { ACCENT, localIsoDate, renderPlan, RESET } from "../rituals/morning-ritual.ts";
 import type {
   InteractionRequest,
@@ -459,6 +474,73 @@ function showPlanCommand(store: MemoryStore, io: ChatCliIo, today: IsoDate): voi
   io.writeLine(renderPlan(stored.data));
 }
 
+// ============================================================================
+// Mid-Day Re-Flow trigger command (Task 15 / Story 2.3, FR-9)
+// ============================================================================
+
+/**
+ * Recognizes a Mid-Day Re-Flow trigger typed at the `yoh>` prompt — the same
+ * kind of deliberately simple, clearly-documented pattern matching
+ * `parseTimeBudgetCommand`/`isPlanViewCommand` use above, NOT real free-text
+ * NLU. This is Task 15's own call on exact phrasing (per its brief): the
+ * task description's own examples — "re-flow", "refit my day", "redo my
+ * plan" — plus their natural minor variants.
+ *
+ * Recognized phrasing (case-insensitive, extra whitespace tolerated,
+ * optional leading "please"):
+ *   - a bare "reflow" / "re-flow" / "refit"
+ *   - "reflow my day" / "re-flow my plan" / "refit my day" / "refit plan"
+ *   - "redo my plan" / "redo my day" / "redo plan" / "redo day"
+ *     (bare "redo" alone is NOT recognized — an ordinary English word too
+ *     ambiguous to claim without an explicit "day"/"plan" object, unlike
+ *     "reflow"/"refit", which are unambiguously Yoh-specific)
+ *
+ * Returns `false` (not an error) for any line that doesn't match this shape
+ * at all, so `runChatCli` can fall through to the general-qa catch-all
+ * exactly as it already does for an unrecognized line.
+ */
+const MID_DAY_REFLOW_COMMAND_RE =
+  /^(?:please\s+)?(?:(?:re-?flow|refit)(?:\s+(?:my\s+)?(?:day|plan))?|redo\s+(?:my\s+)?(?:day|plan))\??$/i;
+
+export function isMidDayReflowCommand(line: string): boolean {
+  return MID_DAY_REFLOW_COMMAND_RE.test(line.trim());
+}
+
+/**
+ * Answers a Mid-Day Re-Flow trigger: calls `rituals/mid-day-reflow.ts`'s
+ * `runMidDayReflow` (the only call site of that function anywhere — see
+ * this file's own module doc comment) and prints its result. Per UX-DR11,
+ * a successful re-flow prints ONLY `outcome.rendered` — the short,
+ * remainder-only block that function already built — never the whole
+ * day's Plan again.
+ */
+async function midDayReflowCommand(
+  store: MemoryStore,
+  io: ChatCliIo,
+  timeZone: string,
+  readTasks: () => Promise<readonly Task[]>,
+  now: () => Date,
+): Promise<void> {
+  const result = await runMidDayReflow({ store, readTasks, now, timeZone });
+
+  if (!result.ok) {
+    io.writeLine(`I couldn't re-flow the rest of today: ${result.error.message}`);
+    return;
+  }
+
+  switch (result.value.status) {
+    case "no-plan-today":
+      io.writeLine("There's no Plan for today yet to re-flow.");
+      return;
+    case "nothing-to-reflow":
+      io.writeLine("Nothing left to re-flow — everything remaining is already accounted for.");
+      return;
+    case "reflowed":
+      io.writeLine(result.value.rendered);
+      return;
+  }
+}
+
 /**
  * The REPL loop (Task 5, extended by Task 6, Task 11, Task 13, Task 14): on
  * start, and before processing every subsequent line of input, surfaces any
@@ -486,6 +568,16 @@ function showPlanCommand(store: MemoryStore, io: ChatCliIo, today: IsoDate): voi
  * so no test accidentally reaches the real Claude API. `now` is injectable
  * purely so tests can pin a specific instant instead of the real system
  * clock; it defaults to the real clock for the real entrypoint.
+ *
+ * `readTasks` (Task 15) is what `midDayReflowCommand` hands to
+ * `rituals/mid-day-reflow.ts`'s `runMidDayReflow` — the same
+ * `adapters/notion-adapter.ts` seam `ritual-cli.ts`'s Morning Ritual wiring
+ * already uses. It's OPTIONAL (unlike `store`/`io`/`timeZone`/`llmClient`)
+ * so every pre-Task-15 test call site above keeps compiling unchanged; its
+ * default throws only if a test that never exercises the Mid-Day Re-Flow
+ * command somehow reaches it anyway, which would itself be a bug worth
+ * surfacing loudly rather than silently. The real entrypoint (`main`,
+ * below) always supplies a real one.
  */
 export async function runChatCli(
   store: MemoryStore,
@@ -493,6 +585,9 @@ export async function runChatCli(
   timeZone: string,
   llmClient: AnthropicMessagesClient,
   now: () => Date = () => new Date(),
+  readTasks: () => Promise<readonly Task[]> = () => {
+    throw new Error("chat-cli: no readTasks dependency configured — cannot re-flow the day");
+  },
 ): Promise<void> {
   await surfaceOpenInteractionRequests(store, io);
 
@@ -520,6 +615,11 @@ export async function runChatCli(
 
     if (isPlanViewCommand(line)) {
       showPlanCommand(store, io, currentIsoDate(timeZone, now));
+      continue;
+    }
+
+    if (isMidDayReflowCommand(line)) {
+      await midDayReflowCommand(store, io, timeZone, readTasks, now);
       continue;
     }
 
@@ -563,10 +663,14 @@ function createNodeIo(): ChatCliIo {
  * Real entrypoint: wires a real `MemoryStore` (per `MEMORY_DB_PATH`,
  * defaulting to `./data/yoh-memory.db` — same default `.env.example`
  * documents), a real `AnthropicMessagesClient` (per `CLAUDE_API_KEY` —
- * `llm-adapter.ts`'s `loadLlmAdapterConfigFromEnv`), and real stdin/stdout,
- * and runs the REPL loop. Accepts an injectable `env` map (mirroring
- * `token-store.ts`'s `loadGoogleOAuthConfigFromEnv`) so tests never need to
- * mutate real `process.env`.
+ * `llm-adapter.ts`'s `loadLlmAdapterConfigFromEnv`), a real Notion
+ * `readTasks` (Task 15 — the same `NOTION_TOKEN`/
+ * `NOTION_TASKS_DATA_SOURCE_ID`/`NOTION_PROJECTS_DATA_SOURCE_ID` env vars
+ * and `adapters/notion-adapter.ts` wiring `ritual-cli.ts`'s
+ * `createMorningRitualDeps` already uses for the Morning Ritual), and real
+ * stdin/stdout, and runs the REPL loop. Accepts an injectable `env` map
+ * (mirroring `token-store.ts`'s `loadGoogleOAuthConfigFromEnv`) so tests
+ * never need to mutate real `process.env`.
  *
  * `YOH_TIMEZONE` is read here the same way `ritual-cli.ts`'s
  * `createMorningRitualDeps` reads it — required, throwing rather than
@@ -580,11 +684,25 @@ export async function main(env: Readonly<Record<string, string | undefined>> = p
   if (!timeZone) {
     throw new Error("chat-cli: missing required environment variable YOH_TIMEZONE (e.g. America/New_York)");
   }
+  const tasksDataSourceId = env["NOTION_TASKS_DATA_SOURCE_ID"];
+  const projectsDataSourceId = env["NOTION_PROJECTS_DATA_SOURCE_ID"];
+  const notionToken = env["NOTION_TOKEN"];
+  if (!tasksDataSourceId || !projectsDataSourceId || !notionToken) {
+    throw new Error(
+      "chat-cli: missing required environment variable(s) NOTION_TOKEN / NOTION_TASKS_DATA_SOURCE_ID / NOTION_PROJECTS_DATA_SOURCE_ID",
+    );
+  }
+  const notionClient = new Client({
+    auth: notionToken,
+    ...(env["NOTION_API_VERSION"] ? { notionVersion: env["NOTION_API_VERSION"] } : {}),
+  });
   const store = createMemoryStore({ databasePath });
   const llmClient = createAnthropicMessagesClient(loadLlmAdapterConfigFromEnv(env));
   const io = createNodeIo();
+  const readTasks = async (): Promise<readonly Task[]> =>
+    (await readNotionTasks(notionClient, { tasksDataSourceId, projectsDataSourceId })).tasks;
   try {
-    await runChatCli(store, io, timeZone, llmClient);
+    await runChatCli(store, io, timeZone, llmClient, () => new Date(), readTasks);
   } finally {
     store.close();
   }

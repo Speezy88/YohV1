@@ -17,7 +17,9 @@ import {
   getTaskFieldOverride,
   mergeTaskFieldOverride,
   getCurrentTimeBudget,
+  getPlan,
   putPlan,
+  putTimeBudget,
 } from "../src/adapters/memory-store.ts";
 import type { MemoryStore } from "../src/adapters/memory-store.ts";
 import {
@@ -26,6 +28,7 @@ import {
   parseFieldAnswer,
   parseTimeBudgetCommand,
   declareTimeBudget,
+  isMidDayReflowCommand,
   isPlanViewCommand,
   type ChatCliIo,
 } from "../src/shell/chat-cli.ts";
@@ -908,5 +911,101 @@ test("runChatCli: does NOT silently display a stale prior-day Plan when today's 
     !io.written.some((line) => /\d{2}:\d{2}-\d{2}:\d{2}/.test(line)),
     "must not have printed the stale prior-day Plan's rendered block list",
   );
+  store.close();
+});
+
+// ============================================================================
+// isMidDayReflowCommand / runChatCli — Mid-Day Re-Flow trigger (Task 15 / Story 2.3)
+// ============================================================================
+
+test("isMidDayReflowCommand recognizes the documented trigger phrasings, case-insensitively", () => {
+  for (const line of [
+    "reflow",
+    "re-flow",
+    "REFLOW",
+    "refit",
+    "reflow my day",
+    "re-flow my plan",
+    "refit my day",
+    "refit plan",
+    "redo my plan",
+    "redo my day",
+    "redo plan",
+    "please reflow my day",
+    "reflow?",
+  ]) {
+    assert.equal(isMidDayReflowCommand(line), true, `expected "${line}" to be recognized as a Mid-Day Re-Flow trigger`);
+  }
+});
+
+test("isMidDayReflowCommand returns false for unrelated input, including other recognized commands and a bare 'redo'", () => {
+  for (const line of ["hello", "time budget 6h", "show plan", "what's my plan", "redo", ""]) {
+    assert.equal(isMidDayReflowCommand(line), false, `expected "${line}" NOT to be recognized as a Mid-Day Re-Flow trigger`);
+  }
+});
+
+function reflowSamplePlan(date: IsoDate, nowIso: string): Plan {
+  const nowMs = Date.parse(nowIso);
+  const past = new Date(nowMs - 30 * 60_000).toISOString();
+  const future = new Date(nowMs + 30 * 60_000).toISOString();
+  const futureEnd = new Date(nowMs + 60 * 60_000).toISOString();
+  return {
+    id: `plan-${date}`,
+    date,
+    blocks: [
+      { id: "work-0", kind: "work", start: past, end: nowIso, label: "Past Task", taskId: "t1" },
+      { id: "work-1", kind: "work", start: future, end: futureEnd, label: "Future Task", taskId: "t2" },
+    ],
+    reasoning: '"Past Task" leads today\'s Plan — due soonest.',
+    version: 1,
+    createdAt: past,
+    updatedAt: past,
+  };
+}
+
+test("runChatCli: typing a recognized Mid-Day Re-Flow trigger calls into mid-day-reflow.ts and prints only the short remainder, not the whole day", async () => {
+  const store = tempStore();
+  const REFLOW_NOW = new Date("2026-08-22T18:00:00.000Z");
+  const today = localIsoDate(REFLOW_NOW, TEST_TIME_ZONE);
+  putTimeBudget(store, { date: today, totalMinutes: 480, workMinutes: 70, breakMinutes: 15 });
+  const plan = reflowSamplePlan(today, REFLOW_NOW.toISOString());
+  putPlan(store, plan);
+
+  const tasks: Task[] = [
+    makeTask("t1", "Past Task", { dueDate: today }),
+    makeTask("t2", "Future Task", { dueDate: today }),
+  ];
+  const io = makeScriptedIo(["reflow my day"]);
+  const llmClient = makeFakeLlmClient();
+
+  await runChatCli(
+    store,
+    io,
+    TEST_TIME_ZONE,
+    llmClient,
+    () => REFLOW_NOW,
+    async () => tasks,
+  );
+
+  assert.equal(llmClient.calls.length, 0, "a recognized Mid-Day Re-Flow trigger must never fall through to the LLM catch-all");
+  assert.ok(io.written.some((line) => /Re-flowed the rest of today/.test(line)), "expected the short reflow reasoning to be printed");
+  assert.ok(!io.written.some((line) => /Today's Plan for/.test(line)), "must not re-print the whole-day header");
+  assert.ok(!io.written.some((line) => /Past Task/.test(line)), "must not re-list the already-elapsed block");
+
+  const updated = getPlan(store, today);
+  assert.ok(updated);
+  assert.equal(updated!.data.version, 2, "the stored Plan's version must be bumped by the re-flow");
+  const pastBlock = updated!.data.blocks.find((b) => b.id === "work-0");
+  assert.deepEqual(pastBlock, plan.blocks[0], "the past block must survive the round-trip through chat-cli.ts byte-identical");
+  store.close();
+});
+
+test("runChatCli: Mid-Day Re-Flow trigger says so plainly when no Plan exists yet for today", async () => {
+  const store = tempStore();
+  const io = makeScriptedIo(["reflow"]);
+
+  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => LATE_EVENING_UTC, async () => []);
+
+  assert.ok(io.written.some((line) => /no plan/i.test(line)));
   store.close();
 });
