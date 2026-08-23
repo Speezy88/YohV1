@@ -168,6 +168,21 @@ export const ACCENT = "\x1b[38;2;95;175;255m";
  */
 export const MUTED = "\x1b[38;2;107;107;107m";
 
+/**
+ * 24-bit ANSI truecolor escape for DESIGN.md's `colors.attention` (#D08A3E)
+ * — a warm amber, deliberately not red (DESIGN.md: "Yoh escalates under
+ * strain, it doesn't alarm"). Reserved for exactly the two moments
+ * DESIGN.md names ("Do reserve `{colors.attention}` for genuine escalation
+ * moments — using it more broadly would blunt the one signal it's meant to
+ * carry"): Night Ritual's second, escalated close-out attempt
+ * (`rituals/night-ritual.ts`'s `night-escalate` half, Task 20) and the
+ * unchecked-day flag (Task 21). First used by Task 20 — added here, not a
+ * private copy in that file, for the same reason `ACCENT`/`MUTED` live here
+ * rather than in `chat-cli.ts`: this is the established shared color-token
+ * home every other file already imports from.
+ */
+export const ATTENTION = "\x1b[38;2;208;138;62m";
+
 /** Ends any of the above spans, returning to the terminal's own default body color (`colors.text-default`). */
 export const RESET = "\x1b[0m";
 

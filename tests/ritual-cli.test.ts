@@ -14,7 +14,7 @@ import { recordSlip } from "../src/adapters/memory-store.ts";
 import { computeSlipBumpLevels } from "../src/core/slip-bump.ts";
 import { createMorningRitualDeps, runRitualCli, type RitualCliDeps } from "../src/shell/ritual-cli.ts";
 import type { MorningRitualOutcome } from "../src/rituals/morning-ritual.ts";
-import type { NightPromptOutcome } from "../src/rituals/night-ritual.ts";
+import type { NightEscalateOutcome, NightPromptOutcome } from "../src/rituals/night-ritual.ts";
 import type { Plan, Result, YohError } from "../src/types/domain.ts";
 
 const TODAY = "2026-08-22";
@@ -53,6 +53,9 @@ function deps(
     runNightPrompt: async () => {
       throw new Error("runNightPrompt should not be called by a `morning` dispatch test");
     },
+    runNightEscalate: async () => {
+      throw new Error("runNightEscalate should not be called by a `morning` dispatch test");
+    },
   };
 }
 
@@ -70,6 +73,32 @@ function nightPromptDeps(
       throw new Error("runMorning should not be called by a `night-prompt` dispatch test");
     },
     runNightPrompt: async () => {
+      onRun?.();
+      return outcome;
+    },
+    runNightEscalate: async () => {
+      throw new Error("runNightEscalate should not be called by a `night-prompt` dispatch test");
+    },
+  };
+}
+
+function nightEscalateDeps(
+  outcome: Result<NightEscalateOutcome, YohError>,
+  sink: Sink,
+  onRun?: () => void,
+): RitualCliDeps {
+  return {
+    io: {
+      writeLine: (l) => sink.out.push(l),
+      writeError: (l) => sink.err.push(l),
+    },
+    runMorning: async () => {
+      throw new Error("runMorning should not be called by a `night-escalate` dispatch test");
+    },
+    runNightPrompt: async () => {
+      throw new Error("runNightPrompt should not be called by a `night-escalate` dispatch test");
+    },
+    runNightEscalate: async () => {
       onRun?.();
       return outcome;
     },
@@ -160,8 +189,8 @@ test("an unknown subcommand exits 2 without running anything", async () => {
   assert.match(s.err.join("\n"), /breakfast/);
 });
 
-test("AD-5's remaining two subcommands are recognized as planned but not yet built (Tasks 20, 24)", async () => {
-  for (const sub of ["night-escalate", "self-check"]) {
+test("AD-5's remaining subcommand is recognized as planned but not yet built (Task 24)", async () => {
+  for (const sub of ["self-check"]) {
     const s = sink();
     const code = await runRitualCli(
       [sub],
@@ -238,6 +267,74 @@ test("a failing night-prompt ritual becomes a structured stderr line and a non-z
 test("night-prompt no longer appears in the 'not yet built' set — it's a real, built subcommand now", async () => {
   const s = sink();
   const code = await runRitualCli(["night-prompt"], nightPromptDeps({ ok: true, value: { status: "already-ran", date: TODAY } }, s));
+  assert.equal(code, 0);
+  assert.doesNotMatch(s.err.join("\n"), /not implemented yet/i);
+});
+
+// ============================================================================
+// `night-escalate` (Task 20 / Story 3.2)
+// ============================================================================
+
+test("`night-escalate` runs the escalation check and reports a sent email, exit code 0", async () => {
+  const s = sink();
+  let ran = 0;
+  const code = await runRitualCli(
+    ["night-escalate"],
+    nightEscalateDeps(
+      { ok: true, value: { status: "escalated", date: TODAY, tasks: [{ taskId: "t1", taskTitle: "Draft the memo" }] } },
+      s,
+      () => {
+        ran += 1;
+      },
+    ),
+  );
+
+  assert.equal(code, 0);
+  assert.equal(ran, 1);
+  assert.match(s.out.join("\n"), /email/i);
+  assert.deepEqual(s.err, []);
+});
+
+test("`night-escalate` when the close-out was already answered is a no-op, exit code 0", async () => {
+  const s = sink();
+  const code = await runRitualCli(
+    ["night-escalate"],
+    nightEscalateDeps({ ok: true, value: { status: "no-open-request", date: TODAY } }, s),
+  );
+
+  assert.equal(code, 0);
+  assert.match(s.out.join("\n"), /no-?op|already answered|nothing/i);
+});
+
+test("`night-escalate` on a night it already ran (the cap: at most one escalation) reports the no-op, exit code 0", async () => {
+  const s = sink();
+  const code = await runRitualCli(
+    ["night-escalate"],
+    nightEscalateDeps({ ok: true, value: { status: "already-ran", date: TODAY } }, s),
+  );
+
+  assert.equal(code, 0);
+  assert.match(s.out.join("\n"), /already ran/i);
+});
+
+test("a failing night-escalate ritual becomes a structured stderr line and a non-zero exit code (AD-8)", async () => {
+  const s = sink();
+  const code = await runRitualCli(
+    ["night-escalate"],
+    nightEscalateDeps({ ok: false, error: { kind: "unreachable", message: "night-ritual: could not send the escalation email" } }, s),
+  );
+
+  assert.equal(code, 1);
+  assert.equal(s.err.length, 1);
+  const entry = JSON.parse(s.err[0]!) as { level: string; event: string; kind: string; message: string };
+  assert.equal(entry.level, "error");
+  assert.equal(entry.kind, "unreachable");
+  assert.match(entry.message, /could not send the escalation email/);
+});
+
+test("night-escalate no longer appears in the 'not yet built' set — it's a real, built subcommand now", async () => {
+  const s = sink();
+  const code = await runRitualCli(["night-escalate"], nightEscalateDeps({ ok: true, value: { status: "already-ran", date: TODAY } }, s));
   assert.equal(code, 0);
   assert.doesNotMatch(s.err.join("\n"), /not implemented yet/i);
 });

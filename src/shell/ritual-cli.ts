@@ -14,8 +14,8 @@
  *
  * Task 10 introduces this file with ONE subcommand, `morning`. AD-5 names
  * three more — `night-prompt` (Task 19), `night-escalate` (Task 20), and
- * `self-check` (Task 24). `night-prompt` is now built too (Task 19, below);
- * the remaining two are recognized here by name and reported as not yet
+ * `self-check` (Task 24). `night-prompt` and `night-escalate` are now built
+ * too; `self-check` is recognized here by name and reported as not yet
  * built, rather than falling through to "unknown subcommand": a cron entry
  * someone adds early should say what's actually going on.
  *
@@ -24,6 +24,14 @@
  * same one-shot/never-blocks contract `morning` already has, and closes
  * `createMorningRitualDeps`'s `bumpLevels` bridge — see that function's own
  * doc comment.
+ *
+ * Task 20 update (Story 3.2): adds the `night-escalate` subcommand
+ * (`handleNightEscalateResult`, `createNightEscalateRitualDeps`), scheduled
+ * (by OS cron, outside this codebase) some hours after `night-prompt`. Same
+ * one-shot/never-blocks contract; binds only `adapters/email-adapter.ts`'s
+ * `sendEmail` (via `loadEmailConfigFromEnv`) plus the `MemoryStore` — no
+ * Notion/Calendar/Pushover credentials are needed, mirroring
+ * `createNightPromptRitualDeps`'s own "don't force unrelated config" choice.
  *
  * Per AD-1 this shell file contains no ritual logic of its own. It does two
  * things: bind the real adapters/stores to `rituals/morning-ritual.ts`'s
@@ -38,13 +46,18 @@
  */
 import { createMemoryStore, listSlipHistories, type MemoryStore } from "../adapters/memory-store.ts";
 import { createCalendarReadClient, readCalendarEvents } from "../adapters/calendar-adapter.ts";
+import { loadEmailConfigFromEnv, sendEmail } from "../adapters/email-adapter.ts";
 import { loadPushoverConfigFromEnv, sendPushoverNotification } from "../adapters/notification-adapter.ts";
 import { readNotionTasks } from "../adapters/notion-adapter.ts";
 import { createTokenStore, loadGoogleOAuthConfigFromEnv } from "../adapters/token-store.ts";
 import { computeSlipBumpLevels } from "../core/slip-bump.ts";
 import { runMorningRitual, type MorningRitualDeps, type MorningRitualOutcome } from "../rituals/morning-ritual.ts";
 import {
+  renderNightEscalateNotice,
+  runNightEscalateRitual,
   runNightPromptRitual,
+  type NightEscalateRitualDeps,
+  type NightEscalateOutcome,
   type NightPromptRitualDeps,
   type NightPromptOutcome,
 } from "../rituals/night-ritual.ts";
@@ -70,17 +83,19 @@ export interface RitualCliDeps {
   readonly runMorning: () => Promise<Result<MorningRitualOutcome, YohError>>;
   /** `rituals/night-ritual.ts`'s `runNightPromptRitual`, pre-bound to its deps (Task 19 / Story 3.1). */
   readonly runNightPrompt: () => Promise<Result<NightPromptOutcome, YohError>>;
+  /** `rituals/night-ritual.ts`'s `runNightEscalateRitual`, pre-bound to its deps (Task 20 / Story 3.2). */
+  readonly runNightEscalate: () => Promise<Result<NightEscalateOutcome, YohError>>;
 }
 
-/** AD-5's full subcommand set. `morning` (Task 10) and `night-prompt` (Task 19) are built; the rest are claimed here so they report honestly instead of reading as typos. */
+/** AD-5's full subcommand set. `morning` (Task 10), `night-prompt` (Task 19), and `night-escalate` (Task 20) are built; the rest are claimed here so they report honestly instead of reading as typos. */
 const SUBCOMMANDS = {
   morning: "built",
   "night-prompt": "built",
-  "night-escalate": "Task 20 (Story 3.2)",
+  "night-escalate": "built",
   "self-check": "Task 24 (Story 5.1)",
 } as const;
 
-const USAGE = "usage: yoh ritual <morning|night-prompt>";
+const USAGE = "usage: yoh ritual <morning|night-prompt|night-escalate>";
 
 // ============================================================================
 // runRitualCli
@@ -104,6 +119,10 @@ export async function runRitualCli(argv: readonly string[], deps: RitualCliDeps)
 
   if (subcommand === "night-prompt") {
     return handleNightPromptResult(await deps.runNightPrompt(), deps.io);
+  }
+
+  if (subcommand === "night-escalate") {
+    return handleNightEscalateResult(await deps.runNightEscalate(), deps.io);
   }
 
   const planned = Object.hasOwn(SUBCOMMANDS, subcommand)
@@ -181,6 +200,35 @@ function handleNightPromptResult(result: Result<NightPromptOutcome, YohError>, i
       io.writeLine(
         `Asked Spencer to confirm ${result.value.tasks.length} Task${result.value.tasks.length === 1 ? "" : "s"} from today — check chat to answer.`,
       );
+      return 0;
+  }
+}
+
+/** Mirrors `handleNightPromptResult`'s shape/exit-code conventions for the `night-escalate` subcommand's outcomes (Task 20 / Story 3.2). */
+function handleNightEscalateResult(result: Result<NightEscalateOutcome, YohError>, io: RitualCliIo): number {
+  if (!result.ok) {
+    io.writeError(
+      JSON.stringify({
+        level: "error",
+        event: "ritual-cli.night-escalate-failed",
+        kind: result.error.kind,
+        message: result.error.message,
+      }),
+    );
+    return 1;
+  }
+
+  switch (result.value.status) {
+    case "already-ran":
+      io.writeLine(`The Night Ritual escalation already ran today (${result.value.date}) — nothing more to send.`);
+      return 0;
+    case "no-open-request":
+      io.writeLine(
+        `Nothing to escalate for ${result.value.date} — the close-out was already answered (or never opened). No-op.`,
+      );
+      return 0;
+    case "escalated":
+      io.writeLine(renderNightEscalateNotice(result.value.tasks.length, result.value.date));
       return 0;
   }
 }
@@ -310,6 +358,36 @@ export function createNightPromptRitualDeps(
   };
 }
 
+/**
+ * Binds the real `MemoryStore` and `adapters/email-adapter.ts`'s `sendEmail`
+ * to `runNightEscalateRitual`'s injected seams (Task 20 / Story 3.2). Like
+ * `createNightPromptRitualDeps`, deliberately far lighter than
+ * `createMorningRitualDeps`: `night-escalate` needs only the SMTP
+ * credentials `email-adapter.ts` reads (`loadEmailConfigFromEnv`) — no
+ * Notion, Calendar, or Pushover config is required, so running it must not
+ * fail at startup for lack of them.
+ */
+export function createNightEscalateRitualDeps(
+  store: MemoryStore,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): NightEscalateRitualDeps {
+  const timeZone = env["YOH_TIMEZONE"];
+  if (!timeZone) {
+    throw new Error("ritual-cli: missing required environment variable YOH_TIMEZONE (e.g. America/New_York)");
+  }
+  const emailConfig = loadEmailConfigFromEnv(env);
+
+  return {
+    store,
+    sendEscalationEmail: (message) => sendEmail(emailConfig, message),
+    now: () => new Date(),
+    timeZone,
+    log: (entry) => {
+      process.stderr.write(`${JSON.stringify(entry)}\n`);
+    },
+  };
+}
+
 /** A `RitualCliDeps` runner that throws if called — used for the OTHER subcommand's slot below, mirroring `shell/chat-cli.ts`'s "throws only if actually invoked" convention for a seam a given run never exercises. */
 function unreachableRunner(label: string): () => Promise<never> {
   return () => {
@@ -324,11 +402,14 @@ function unreachableRunner(label: string): () => Promise<never> {
  * actually needs, dispatches, and always closes the store. Returns the exit
  * code rather than setting it, so it stays callable from a test.
  *
- * Deliberately branches on `argv[0]` BEFORE constructing either ritual's
- * deps (Task 19 review note): `createMorningRitualDeps` requires Notion/
- * Calendar/Pushover credentials that `night-prompt` has no use for at all
- * (see `createNightPromptRitualDeps`'s own doc comment) — running
- * `night-prompt` must not fail at startup just because those happen to be
+ * Deliberately branches on `argv[0]` BEFORE constructing any ritual's deps
+ * (Task 19 review note, extended by Task 20): `createMorningRitualDeps`
+ * requires Notion/Calendar/Pushover credentials that neither `night-prompt`
+ * nor `night-escalate` has any use for (see `createNightPromptRitualDeps`'s
+ * and `createNightEscalateRitualDeps`'s own doc comments), and
+ * `createNightEscalateRitualDeps` requires SMTP credentials the other two
+ * have no use for — running any one subcommand must not fail at startup
+ * just because a DIFFERENT subcommand's credentials happen to be
  * unconfigured.
  */
 export async function main(
@@ -358,6 +439,23 @@ export async function main(
         io,
         runMorning: unreachableRunner("runMorning"),
         runNightPrompt: () => runNightPromptRitual(deps),
+        runNightEscalate: unreachableRunner("runNightEscalate"),
+      });
+    }
+
+    if (argv[0] === "night-escalate") {
+      let deps: NightEscalateRitualDeps;
+      try {
+        deps = createNightEscalateRitualDeps(store, env);
+      } catch (err) {
+        io.writeError(`ritual-cli: ${err instanceof Error ? err.message : String(err)}`);
+        return 2;
+      }
+      return await runRitualCli(argv, {
+        io,
+        runMorning: unreachableRunner("runMorning"),
+        runNightPrompt: unreachableRunner("runNightPrompt"),
+        runNightEscalate: () => runNightEscalateRitual(deps),
       });
     }
 
@@ -372,6 +470,7 @@ export async function main(
       io,
       runMorning: () => runMorningRitual(deps),
       runNightPrompt: unreachableRunner("runNightPrompt"),
+      runNightEscalate: unreachableRunner("runNightEscalate"),
     });
   } finally {
     store.close();

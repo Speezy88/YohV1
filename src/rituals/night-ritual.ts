@@ -111,7 +111,8 @@ import {
   recordSlip,
   type MemoryStore,
 } from "../adapters/memory-store.ts";
-import { localIsoDate } from "./morning-ritual.ts";
+import { ATTENTION, localIsoDate, RESET, shouldUseColor } from "./morning-ritual.ts";
+import type { EmailMessage } from "../adapters/email-adapter.ts";
 import type {
   ExternalId,
   InteractionRequest,
@@ -387,4 +388,206 @@ export function clearNightCloseOutRequestIfOpen(store: MemoryStore): void {
   if (current) {
     clearInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID, current.version);
   }
+}
+
+// ============================================================================
+// runNightEscalateRitual — the capped, second-attempt escalation half
+// (Story 3.2 / Task 20)
+// ============================================================================
+
+/**
+ * The `ritual-run` marker id `night-escalate` writes/reads for its own two
+ * jobs at once: AD-5's ordinary "already ran today" idempotence guard, AND
+ * this story's own cap ("both attempts have now been sent for tonight ...
+ * no third attempt is ever sent, regardless of continued non-response").
+ * Both properties fall out of the SAME marker for the SAME reason
+ * `NIGHT_PROMPT_RITUAL_ID` gives `night-prompt` its once-per-night guard —
+ * there is deliberately no separate "escalation count" anywhere: a capped
+ * retry of exactly one further attempt IS "ran today or not," nothing more
+ * to track.
+ */
+export const NIGHT_ESCALATE_RITUAL_ID = "night-escalate";
+
+/**
+ * The plain-text degradation of DESIGN.md's `{colors.attention}` escalation
+ * marker, for the one destination in this ritual that can carry NO ANSI
+ * color at all: an SMTP plain-text email body. Mirrors
+ * `rituals/morning-ritual.ts`'s own precedent for Pushover's un-stylable
+ * notification title (`NOTIFICATION_TITLE`'s doc comment) — UX-DR20 requires
+ * every color cue be paired with plain-text wording carrying the same
+ * meaning, and here that pairing IS the only signal, since the color half
+ * has nowhere to render. `shell/ritual-cli.ts`'s own terminal confirmation
+ * line for an `"escalated"` outcome is the one place the literal
+ * `morning-ritual.ts` `ATTENTION` ANSI escape is used (see that file), for a
+ * destination that CAN render it.
+ */
+export const ATTENTION_TEXT_MARKER = "ATTENTION:";
+
+/**
+ * Builds the escalated email's subject and body. UX-DR6/UX-DR13: the second
+ * attempt escalates in DIRECTNESS OF WORDING and CHANNEL, never in volume of
+ * text or alarm language — this is deliberately only a few lines longer than
+ * `buildNightCloseOutPromptText`'s own first-attempt prompt, names the same
+ * Tasks, and adds no explanation, exclamation, or repeated restatement.
+ * Pure/no I/O, mirroring that function's own shape.
+ */
+export function buildNightEscalationEmail(tasks: readonly NightCloseOutTaskDetail[]): EmailMessage {
+  const subject = `${ATTENTION_TEXT_MARKER} Still waiting on last night's close-out`;
+  const lines = tasks.map((t) => `  - ${t.taskTitle}`);
+  const text = [
+    `${ATTENTION_TEXT_MARKER} You haven't answered tonight's close-out yet, for:`,
+    ...lines,
+    "",
+    "Reply in chat: completed or slipped.",
+  ].join("\n");
+  return { subject, text };
+}
+
+/**
+ * Renders the terminal-side confirmation line for an `"escalated"` outcome —
+ * `shell/ritual-cli.ts`'s `handleNightEscalateResult` calls this rather than
+ * composing the line itself. This is the ONE destination in this ritual that
+ * CAN render ANSI color (unlike the SMTP email body above), so it is where
+ * the literal `{colors.attention}` `ATTENTION` escape (`rituals/
+ * morning-ritual.ts`) is actually used — the same "paint the label, degrade
+ * to plain text off a TTY" shape `renderPlan`'s own `ACCENT` header uses.
+ */
+export function renderNightEscalateNotice(
+  taskCount: number,
+  date: IsoDate,
+  options: { readonly color?: boolean } = {},
+): string {
+  const color = options.color ?? shouldUseColor();
+  const text = `Sent a second, capped attempt via email for ${taskCount} Task${taskCount === 1 ? "" : "s"} still unconfirmed from ${date}.`;
+  return color ? `${ATTENTION}${text}${RESET}` : text;
+}
+
+/** One structured log line, mirroring `NightPromptLogEntry`'s shape. */
+export type NightEscalateLogEntry = NightPromptLogEntry;
+
+/**
+ * Every input/I-O edge `runNightEscalateRitual` needs, injected. Like
+ * `NightPromptRitualDeps`, this has NO `io`/`readLine` seam — AD-5 requires
+ * this half to never wait for input either, and `shell/ritual-cli.ts`'s own
+ * source-scan test covers the file as a whole.
+ */
+export interface NightEscalateRitualDeps {
+  readonly store: MemoryStore;
+  /** `adapters/email-adapter.ts`'s `sendEmail`, pre-bound to its config — the second attempt's channel, deliberately DISTINCT from `morning-ritual.ts`'s `sendNotification` (Pushover push). Throws on I/O failure (AD-8). */
+  readonly sendEscalationEmail: (message: EmailMessage) => Promise<void>;
+  /** Injectable clock — never `new Date()` inline, so a test can pin the night. */
+  readonly now: () => Date;
+  /** Spencer's IANA timezone, defining "tonight" — the same Plan-date key `runNightPromptRitual` uses. */
+  readonly timeZone: string;
+  readonly log?: (entry: NightEscalateLogEntry) => void;
+}
+
+/** What one `night-escalate` run did. Discriminated on `status`, mirroring `NightPromptOutcome`'s shape. */
+export type NightEscalateOutcome =
+  | {
+      /** `night-escalate` already ran tonight — whether it escalated or found nothing open, a further trigger the same night is a no-op. This is what makes the cap hold: see `NIGHT_ESCALATE_RITUAL_ID`'s own doc comment. */
+      readonly status: "already-ran";
+      readonly date: IsoDate;
+    }
+  | {
+      /** No close-out request is currently open — either it was never opened tonight, or (the common case) Spencer already answered it via `chat-cli.ts` before this trigger ran. Either way, nothing to escalate. */
+      readonly status: "no-open-request";
+      readonly date: IsoDate;
+    }
+  | {
+      /** The close-out request was still open — the escalation email was sent, naming every Task the (still-open) request names. */
+      readonly status: "escalated";
+      readonly date: IsoDate;
+      readonly tasks: readonly NightCloseOutTaskDetail[];
+    };
+
+/**
+ * The `night-escalate` half (AD-5, Story 3.2): checks whether tonight's
+ * close-out request (`NIGHT_CLOSE_OUT_REQUEST_ID`) is STILL open, and if so
+ * sends exactly one escalated email via the injected `sendEscalationEmail`
+ * — a second, more direct nudge, never a third. See the module-level task
+ * context (this file's own docstring predates this half; the design is
+ * summarized here): `shell/ritual-cli.ts` schedules this some hours after
+ * `night-prompt`, and it never blocks for input.
+ *
+ * Order of operations (mirrors `runMorningRitual`'s own send-before-mark
+ * reasoning): the email is sent BEFORE the `night-escalate` ran-today marker
+ * is written, so a transient SMTP failure is retried by a later same-night
+ * trigger instead of permanently burning the one capped attempt. Once the
+ * send succeeds (or once this run determines there was nothing to send), the
+ * marker is written — and from then on, per this story's own AC ("both
+ * attempts have now been sent for tonight ... no third attempt is ever
+ * sent"), EVERY further trigger the same night short-circuits to
+ * `"already-ran"` without re-checking the request at all — even if it is
+ * still open and Spencer still hasn't answered. That is deliberate: the cap
+ * is unconditional, not "resend until answered."
+ *
+ * Per AD-8, this is one of the layers allowed to catch an adapter's throw:
+ * `sendEscalationEmail` (which may throw on I/O failure, `email-adapter.ts`'s
+ * own contract) and every `memory-store.ts` write below (which can throw
+ * `ConflictError` under AD-10 concurrency with `chat-cli.ts`) are wrapped and
+ * converted into a `Result` failure plus a structured log line.
+ */
+export async function runNightEscalateRitual(
+  deps: NightEscalateRitualDeps,
+): Promise<Result<NightEscalateOutcome, YohError>> {
+  const log = deps.log ?? ((): void => {});
+  const nowDate = deps.now();
+  const nowIso = nowDate.toISOString();
+  const today = localIsoDate(nowDate, deps.timeZone);
+
+  // --- Idempotence guard AND the cap itself (this task's own AC #3) --------
+  const lastRun = getRitualRun(deps.store, NIGHT_ESCALATE_RITUAL_ID);
+  if (lastRun?.data.date === today) {
+    log({ level: "info", event: "night-ritual.escalate-already-ran", detail: { date: today } });
+    return { ok: true, value: { status: "already-ran", date: today } };
+  }
+
+  // --- Is tonight's close-out request STILL open? ---------------------------
+  const open = getOpenInteractionRequest(deps.store, NIGHT_CLOSE_OUT_REQUEST_ID);
+  if (!open) {
+    try {
+      putRitualRun(deps.store, NIGHT_ESCALATE_RITUAL_ID, { date: today, ranAt: nowIso });
+    } catch (err) {
+      log({ level: "error", event: "night-ritual.escalate-mark-run-failed", detail: describeError(err) });
+      return failure(
+        "conflict",
+        `night-ritual: could not mark night-escalate done — ${describeError(err)}`,
+        err,
+      );
+    }
+    log({ level: "info", event: "night-ritual.escalate-no-open-request", detail: { date: today } });
+    return { ok: true, value: { status: "no-open-request", date: today } };
+  }
+
+  const detail = open.data.detail as NightCloseOutRequestDetail | undefined;
+  const tasks = detail?.tasks ?? [];
+  const email = buildNightEscalationEmail(tasks);
+
+  // --- Send the (only) escalation email (AD-8 boundary) ----------------------
+  try {
+    await deps.sendEscalationEmail(email);
+  } catch (err) {
+    log({ level: "error", event: "night-ritual.escalate-send-failed", detail: describeError(err) });
+    return failure(
+      "unreachable",
+      `night-ritual: could not send the escalation email — ${describeError(err)}`,
+      err,
+    );
+  }
+
+  // --- Mark the cap spent, AFTER a confirmed send ----------------------------
+  try {
+    putRitualRun(deps.store, NIGHT_ESCALATE_RITUAL_ID, { date: today, ranAt: nowIso });
+  } catch (err) {
+    log({ level: "error", event: "night-ritual.escalate-mark-run-failed", detail: describeError(err) });
+    return failure(
+      "conflict",
+      `night-ritual: the escalation email was sent but could not be marked done — ${describeError(err)}`,
+      err,
+    );
+  }
+
+  log({ level: "info", event: "night-ritual.escalated", detail: { date: today, taskCount: tasks.length } });
+  return { ok: true, value: { status: "escalated", date: today, tasks } };
 }

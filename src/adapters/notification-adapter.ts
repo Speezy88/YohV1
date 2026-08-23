@@ -5,10 +5,14 @@
  * Today that is Pushover only — the one channel the Morning Plan is
  * delivered on. Per the Architecture Spine's Stack table, Pushover is called
  * over plain HTTP with Node's built-in `fetch`; there is deliberately no SDK
- * dependency for it. Epic 3's night-escalate story (FR-13/FR-14) later adds
- * an SMTP fallback alongside `sendPushoverNotification` — the config/inject
- * shape below is built so that addition slots in beside it rather than
- * requiring this file to be restructured.
+ * dependency for it. Epic 3's night-escalate story (FR-13/FR-14, Task 20)
+ * needs a genuinely DIFFERENT channel for its capped second attempt (this
+ * story's own AC: "a channel distinct from the first attempt's push
+ * notification, not a repeat of the identical notification"), so that email
+ * fallback lives in its own file, `adapters/email-adapter.ts`, rather than
+ * here — a second, unrelated transport (SMTP via nodemailer) alongside this
+ * one would blur the "one adapter, one external system" shape every other
+ * `adapters/*.ts` file in this codebase keeps.
  *
  * Per AD-8, `adapters/*.ts` files may throw on I/O failure rather than
  * returning `Result` themselves — `rituals/*.ts` is the only layer allowed

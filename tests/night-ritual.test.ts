@@ -23,6 +23,7 @@ import {
   getOpenInteractionRequest,
   getRitualRun,
   getSlipHistory,
+  putOpenInteractionRequest,
   putPlan,
   recordSlip,
   type MemoryStore,
@@ -31,12 +32,18 @@ import { computeSlipBumpLevel } from "../src/core/slip-bump.ts";
 import {
   applyNightCloseOutConfirmation,
   buildNightCloseOutPromptText,
+  buildNightEscalationEmail,
   NIGHT_CLOSE_OUT_REQUEST_ID,
+  NIGHT_ESCALATE_RITUAL_ID,
   NIGHT_PROMPT_RITUAL_ID,
+  renderNightEscalateNotice,
+  runNightEscalateRitual,
   runNightPromptRitual,
   type NightCloseOutRequestDetail,
+  type NightEscalateRitualDeps,
   type NightPromptRitualDeps,
 } from "../src/rituals/night-ritual.ts";
+import { ATTENTION } from "../src/rituals/morning-ritual.ts";
 import type { Plan, PlanBlock, Result, TaskStatus, YohError } from "../src/types/domain.ts";
 
 const NOW_ISO = "2026-08-22T22:00:00.000Z"; // "tonight"
@@ -316,4 +323,171 @@ test("when setTaskStatus fails, no SlipHistory is written or cleared — the Not
   const completedResult = await applyNightCloseOutConfirmation(applyDeps(store, failingSetTaskStatus), "t1", "completed", TODAY);
   assert.equal(completedResult.ok, false);
   assert.ok(getSlipHistory(store, "t1"), "the pre-existing SlipHistory must survive a failed write, not be cleared");
+});
+
+// ============================================================================
+// runNightEscalateRitual — the capped, second-attempt escalation half
+// (Story 3.2 / Task 20)
+// ============================================================================
+
+interface RecordedEmail {
+  readonly subject: string;
+  readonly text: string;
+}
+
+function escalateDeps(
+  store: MemoryStore,
+  overrides: Partial<NightEscalateRitualDeps> = {},
+): NightEscalateRitualDeps {
+  return {
+    store,
+    sendEscalationEmail: async () => {},
+    now: () => new Date(NOW_ISO),
+    timeZone: "UTC",
+    ...overrides,
+  };
+}
+
+function recordingEscalationEmail(): { readonly calls: RecordedEmail[]; readonly send: NightEscalateRitualDeps["sendEscalationEmail"] } {
+  const calls: RecordedEmail[] = [];
+  const send: NightEscalateRitualDeps["sendEscalationEmail"] = async (message) => {
+    calls.push({ subject: message.subject, text: message.text });
+  };
+  return { calls, send };
+}
+
+/** Opens the same close-out interaction request `runNightPromptRitual` would, without needing a full Plan/ritual-run fixture — this file's tests only care that ONE is currently open. */
+function openCloseOutRequest(store: MemoryStore, tasks: NightCloseOutRequestDetail["tasks"]): void {
+  putOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID, {
+    requestKind: "night-close-out",
+    promptText: buildNightCloseOutPromptText(tasks),
+    detail: { date: TODAY, tasks },
+    createdAt: "2026-08-22T13:00:00.000Z",
+  });
+}
+
+test("still unanswered hours later: night-escalate sends exactly one email, via a channel distinct from the first attempt's push notification", async () => {
+  const store = tempStore();
+  openCloseOutRequest(store, [{ taskId: "t1", taskTitle: "Draft the memo" }]);
+  const { calls, send } = recordingEscalationEmail();
+
+  const result = await runNightEscalateRitual(escalateDeps(store, { sendEscalationEmail: send }));
+  assert.ok(result.ok, `expected success, got ${JSON.stringify(result)}`);
+  assert.equal(result.value.status, "escalated");
+
+  assert.equal(calls.length, 1, "exactly one escalation email is sent");
+  // The channel is structurally distinct from morning-ritual.ts's own
+  // `sendNotification` (Pushover push) seam: `NightEscalateRitualDeps` has
+  // no push-notification dependency at all — email is the only outbound
+  // channel this ritual half can reach Spencer through.
+  assert.ok("sendEscalationEmail" in escalateDeps(store), "the escalation channel is its own distinct injected dependency, not a repeat of sendNotification");
+});
+
+test("the escalation email is marked with the attention color/marker and is short — directness, not volume", async () => {
+  const store = tempStore();
+  openCloseOutRequest(store, [
+    { taskId: "t1", taskTitle: "Draft the memo" },
+    { taskId: "t2", taskTitle: "Book the flights" },
+  ]);
+  const { calls, send } = recordingEscalationEmail();
+
+  await runNightEscalateRitual(escalateDeps(store, { sendEscalationEmail: send }));
+
+  assert.equal(calls.length, 1);
+  const email = calls[0]!;
+  // Plain-text degradation of {colors.attention} (UX-DR20's "pair every
+  // color cue with plain-text wording carrying the same meaning") — SMTP
+  // plain text can't render ANSI color at all, mirroring
+  // morning-ritual.ts's own precedent for Pushover's un-stylable title.
+  assert.match(email.subject, /ATTENTION/);
+  assert.match(email.text, /ATTENTION/);
+  assert.match(email.text, /Draft the memo/);
+  assert.match(email.text, /Book the flights/);
+  // Directness of WORDING, not volume of text: still short, not a wall of
+  // text, and no alarm/exclamation language.
+  assert.ok(email.text.length < 400, `expected a short, direct email body, got ${email.text.length} characters`);
+  assert.ok(!email.text.includes("!"), "escalates in directness, not alarm punctuation");
+});
+
+test("the {colors.attention} ANSI constant this task adds to morning-ritual.ts is genuinely the DESIGN.md #D08A3E token", () => {
+  assert.equal(ATTENTION, "\x1b[38;2;208;138;62m");
+});
+
+test("renderNightEscalateNotice paints the terminal-side escalation notice with the literal ATTENTION escape when color is on — the one destination in this ritual that CAN render it", () => {
+  const colored = renderNightEscalateNotice(2, TODAY, { color: true });
+  assert.ok(colored.includes(ATTENTION), "expected the literal {colors.attention} ANSI escape in the colored notice");
+  assert.ok(colored.includes("2 Tasks"));
+  assert.ok(colored.includes(TODAY));
+});
+
+test("renderNightEscalateNotice carries no ANSI at all when color is off — the plain-text meaning stands alone (UX-DR20)", () => {
+  const plain = renderNightEscalateNotice(1, TODAY, { color: false });
+  assert.doesNotMatch(plain, /\x1b\[/);
+  assert.ok(plain.includes("1 Task") && !plain.includes("1 Tasks"), "singular Task is not pluralized");
+});
+
+test("close-out already answered before night-escalate runs: no-op, no email is sent", async () => {
+  const store = tempStore();
+  // No open request at all — the same state as "already answered" (chat-cli
+  // clears the request once Spencer answers every named Task).
+  const { calls, send } = recordingEscalationEmail();
+
+  const result = await runNightEscalateRitual(escalateDeps(store, { sendEscalationEmail: send }));
+  assert.ok(result.ok, `expected success, got ${JSON.stringify(result)}`);
+  assert.equal(result.value.status, "no-open-request");
+  assert.equal(calls.length, 0, "no second attempt is sent once the close-out was already answered");
+});
+
+test("both attempts already sent for tonight: a further trigger the same night sends NO third attempt, even re-triggered multiple times", async () => {
+  const store = tempStore();
+  openCloseOutRequest(store, [{ taskId: "t1", taskTitle: "Draft the memo" }]);
+  const { calls, send } = recordingEscalationEmail();
+
+  const first = await runNightEscalateRitual(escalateDeps(store, { sendEscalationEmail: send }));
+  assert.ok(first.ok && first.value.status === "escalated");
+  assert.equal(calls.length, 1);
+
+  // Re-trigger several times the same night (the request is still open —
+  // chat-cli.ts never cleared it — which is exactly the scenario a naive
+  // "is it still open" check alone would re-send for).
+  for (let i = 0; i < 3; i++) {
+    const again = await runNightEscalateRitual(escalateDeps(store, { sendEscalationEmail: send }));
+    assert.ok(again.ok, `expected success, got ${JSON.stringify(again)}`);
+    assert.equal(again.value.status, "already-ran");
+  }
+
+  assert.equal(calls.length, 1, "no third (or second) attempt is ever sent, regardless of continued non-response");
+});
+
+test("the night-escalate ran-marker records tonight's date, gating any further same-night trigger", async () => {
+  const store = tempStore();
+  openCloseOutRequest(store, [{ taskId: "t1", taskTitle: "Draft the memo" }]);
+  await runNightEscalateRitual(escalateDeps(store));
+  const run = getRitualRun(store, NIGHT_ESCALATE_RITUAL_ID);
+  assert.equal(run?.data.date, TODAY);
+});
+
+test("AD-8: when the email adapter throws, runNightEscalateRitual converts it to a Result failure and does NOT mark the night done (so a transient failure can still be retried the same night)", async () => {
+  const store = tempStore();
+  openCloseOutRequest(store, [{ taskId: "t1", taskTitle: "Draft the memo" }]);
+  const failingSend: NightEscalateRitualDeps["sendEscalationEmail"] = async () => {
+    throw new Error("ECONNREFUSED smtp.example.com");
+  };
+
+  const result = await runNightEscalateRitual(escalateDeps(store, { sendEscalationEmail: failingSend }));
+  assert.equal(result.ok, false);
+  assert.equal(getRitualRun(store, NIGHT_ESCALATE_RITUAL_ID), undefined, "a failed send must not burn the capped attempt");
+});
+
+test("buildNightEscalationEmail is short and direct — a distinct message from buildNightCloseOutPromptText's own first-attempt wording", () => {
+  const email = buildNightEscalationEmail([{ taskId: "t1", taskTitle: "Draft the memo" }]);
+  assert.match(email.subject, /ATTENTION/);
+  assert.match(email.text, /Draft the memo/);
+  assert.ok(email.text.length < 400);
+});
+
+test("AD-5: night-ritual.ts's night-escalate half never waits for input either — already covered by the file-wide stdin scan above", () => {
+  const source = readFileSync(join(import.meta.dirname, "..", "src", "rituals", "night-ritual.ts"), "utf8");
+  assert.doesNotMatch(source, /node:readline/);
+  assert.doesNotMatch(source, /process\.stdin/);
 });
