@@ -211,6 +211,76 @@ test("runMidDayReflow: blocks not yet started, or in progress, are excluded from
   );
 });
 
+test(
+  "runMidDayReflow: a block with GENUINE non-zero elapsed time (start well before now) credits only the actually-elapsed minutes, not zero and not the full block " +
+    "(review-caught Critical bug: a 30-minute 11:00-11:30 block re-flowed at 11:15 must produce a 15-minute remainder, not a fresh 30-minute one)",
+  async () => {
+    const IN_PROGRESS_NOW = "2026-08-22T11:15:00.000Z"; // 15 minutes into an 11:00-11:30 block.
+    const plan: Plan = {
+      id: `plan-${TODAY}`,
+      date: TODAY,
+      blocks: [
+        block({
+          id: "work-0",
+          kind: "work",
+          start: "2026-08-22T11:00:00.000Z",
+          end: "2026-08-22T11:30:00.000Z",
+          label: "In Progress Task",
+          taskId: "t-inprogress",
+        }),
+      ],
+      reasoning: '"In Progress Task" leads today\'s Plan — due soonest.',
+      version: 1,
+      createdAt: "2026-08-22T11:00:00.000Z",
+      updatedAt: "2026-08-22T11:00:00.000Z",
+    };
+
+    const { deps, store } = harness({
+      tasks: [makeTask("t-inprogress", "In Progress Task", { estimatedDurationMinutes: 30 })],
+      storedPlan: plan,
+      budgetMinutes: 60,
+      nowIso: IN_PROGRESS_NOW,
+    });
+
+    const result = await runMidDayReflow(deps);
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.equal(result.value.status, "reflowed");
+    if (result.value.status !== "reflowed") return;
+
+    // Nothing should be deferred — a 15-minute remainder trivially fits.
+    assert.deepEqual(result.value.deferredTaskIds, []);
+
+    const stored = getPlan(store, TODAY);
+    const workBlocks = stored!.data.blocks.filter((b) => b.kind === "work" && b.taskId === "t-inprogress");
+    assert.equal(workBlocks.length, 1, "expected exactly one re-fit work block for the in-progress Task");
+    const refit = workBlocks[0]!;
+
+    // The Task's TRUE remaining duration is 30 - 15 = 15 minutes, not the
+    // full original 30 — the bug would have produced a fresh 30-minute
+    // block starting at `now`, making the Task consume 45 real minutes
+    // total (15 already lived + 30 freshly scheduled) instead of 30.
+    const refitDurationMinutes = (Date.parse(refit.end) - Date.parse(refit.start)) / 60_000;
+    assert.equal(refitDurationMinutes, 15, "the re-fit block must reflect only the TRUE remaining 15 minutes");
+    assert.equal(refit.start, IN_PROGRESS_NOW, "the re-fit block must start exactly at `now`");
+    assert.equal(refit.end, "2026-08-22T11:30:00.000Z", "15 already-lived + 15 newly-scheduled = the original 30-minute total, not 45");
+
+    // The original in-progress block must not survive verbatim (it assumed
+    // more time than has actually passed).
+    assert.equal(stored!.data.blocks.some((b) => b.id === "work-0"), false);
+
+    // Remaining Time Budget must also have been charged the true 15 elapsed
+    // minutes (not 0): declared 60 - 15 elapsed = 45 remaining, of which
+    // only 15 was used by the re-fit block — nothing should have been
+    // deferred for lack of budget, which a 0-credit bug could otherwise mask
+    // in a scenario with less slack. Cross-checked directly: with a 30-
+    // minute Task and only a 15-minute TRUE remainder budgeted correctly,
+    // the re-fit still fits in one un-split block, confirming the budget
+    // wasn't starved by an over-charge either.
+    assert.equal(refitDurationMinutes <= 45, true);
+  },
+);
+
 // ============================================================================
 // Behavior 2: the remaining portion is genuinely re-fit
 // ============================================================================

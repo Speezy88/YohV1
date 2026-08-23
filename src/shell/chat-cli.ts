@@ -664,19 +664,29 @@ function createNodeIo(): ChatCliIo {
  * defaulting to `./data/yoh-memory.db` — same default `.env.example`
  * documents), a real `AnthropicMessagesClient` (per `CLAUDE_API_KEY` —
  * `llm-adapter.ts`'s `loadLlmAdapterConfigFromEnv`), a real Notion
- * `readTasks` (Task 15 — the same `NOTION_TOKEN`/
- * `NOTION_TASKS_DATA_SOURCE_ID`/`NOTION_PROJECTS_DATA_SOURCE_ID` env vars
- * and `adapters/notion-adapter.ts` wiring `ritual-cli.ts`'s
- * `createMorningRitualDeps` already uses for the Morning Ritual), and real
- * stdin/stdout, and runs the REPL loop. Accepts an injectable `env` map
- * (mirroring `token-store.ts`'s `loadGoogleOAuthConfigFromEnv`) so tests
- * never need to mutate real `process.env`.
+ * `readTasks` (Task 15), and real stdin/stdout, and runs the REPL loop.
+ * Accepts an injectable `env` map (mirroring `token-store.ts`'s
+ * `loadGoogleOAuthConfigFromEnv`) so tests never need to mutate real
+ * `process.env`.
  *
  * `YOH_TIMEZONE` is read here the same way `ritual-cli.ts`'s
  * `createMorningRitualDeps` reads it — required, throwing rather than
  * silently defaulting to UTC, since `runChatCli`'s Plan lookup must key on
  * Spencer's local calendar day to find what `runMorningRitual` stored under
  * that same local day (Task 11 review fix).
+ *
+ * Notion's `NOTION_TOKEN`/`NOTION_TASKS_DATA_SOURCE_ID`/
+ * `NOTION_PROJECTS_DATA_SOURCE_ID` env vars (and the `Client` they
+ * construct) are DELIBERATELY read/constructed LAZILY, inside the
+ * `readTasks` closure below, rather than validated up front the way
+ * `YOH_TIMEZONE` is (review fix): most of what `chat-cli.ts` does — Time
+ * Budget commands, on-demand Plan view, general chat — needs no Notion
+ * access at all, so a session that never types a Mid-Day Re-Flow trigger
+ * must not be unable to start at all just because Notion isn't configured.
+ * `readTasks` is only ever called from inside `midDayReflowCommand`, so the
+ * check/construction only actually runs the first time Spencer triggers a
+ * re-flow — mirroring the same "throws only if actually invoked" contract
+ * `runChatCli`'s own `readTasks` default parameter already documents.
  */
 export async function main(env: Readonly<Record<string, string | undefined>> = process.env): Promise<void> {
   const databasePath = env["MEMORY_DB_PATH"] || "./data/yoh-memory.db";
@@ -684,23 +694,24 @@ export async function main(env: Readonly<Record<string, string | undefined>> = p
   if (!timeZone) {
     throw new Error("chat-cli: missing required environment variable YOH_TIMEZONE (e.g. America/New_York)");
   }
-  const tasksDataSourceId = env["NOTION_TASKS_DATA_SOURCE_ID"];
-  const projectsDataSourceId = env["NOTION_PROJECTS_DATA_SOURCE_ID"];
-  const notionToken = env["NOTION_TOKEN"];
-  if (!tasksDataSourceId || !projectsDataSourceId || !notionToken) {
-    throw new Error(
-      "chat-cli: missing required environment variable(s) NOTION_TOKEN / NOTION_TASKS_DATA_SOURCE_ID / NOTION_PROJECTS_DATA_SOURCE_ID",
-    );
-  }
-  const notionClient = new Client({
-    auth: notionToken,
-    ...(env["NOTION_API_VERSION"] ? { notionVersion: env["NOTION_API_VERSION"] } : {}),
-  });
   const store = createMemoryStore({ databasePath });
   const llmClient = createAnthropicMessagesClient(loadLlmAdapterConfigFromEnv(env));
   const io = createNodeIo();
-  const readTasks = async (): Promise<readonly Task[]> =>
-    (await readNotionTasks(notionClient, { tasksDataSourceId, projectsDataSourceId })).tasks;
+  const readTasks = async (): Promise<readonly Task[]> => {
+    const tasksDataSourceId = env["NOTION_TASKS_DATA_SOURCE_ID"];
+    const projectsDataSourceId = env["NOTION_PROJECTS_DATA_SOURCE_ID"];
+    const notionToken = env["NOTION_TOKEN"];
+    if (!tasksDataSourceId || !projectsDataSourceId || !notionToken) {
+      throw new Error(
+        "chat-cli: missing required environment variable(s) NOTION_TOKEN / NOTION_TASKS_DATA_SOURCE_ID / NOTION_PROJECTS_DATA_SOURCE_ID — needed to re-flow the day",
+      );
+    }
+    const notionClient = new Client({
+      auth: notionToken,
+      ...(env["NOTION_API_VERSION"] ? { notionVersion: env["NOTION_API_VERSION"] } : {}),
+    });
+    return (await readNotionTasks(notionClient, { tasksDataSourceId, projectsDataSourceId })).tasks;
+  };
   try {
     await runChatCli(store, io, timeZone, llmClient, () => new Date(), readTasks);
   } finally {

@@ -25,13 +25,28 @@
  * exactly as-is (same id, same start/end/content) is what "does not touch
  * already-completed blocks" means in practice. A block that hasn't started
  * yet, OR is currently in progress (`start <= now < end`), is "remaining"
- * and gets folded into the re-fit — including a currently in-progress
- * block, which is re-fit in FULL (from `now`, using its Task's full
- * remaining duration) rather than split mid-block; this file does not try
- * to account for the few minutes of an in-progress block already spent
- * before Spencer triggered the re-flow, since that would require guessing
- * at a finer-grained "how much of this exact minute is done" than any
- * upstream data actually carries. See `isElapsed` below.
+ * and gets folded into the re-fit, replaced rather than surviving verbatim
+ * — see `isElapsed` below.
+ *
+ * A genuinely in-progress block (`start < now < end`) does NOT get re-fit
+ * for its Task's FULL original duration, though — a review caught and this
+ * file now fixes exactly that bug. `elapsedMinutesWithinBlock` credits the
+ * real `now - start` minutes already spent as elapsed (for both that Task's
+ * remaining duration and the day's remaining Time Budget) before the
+ * re-fit recomputes the genuinely remaining chunk; it does not fabricate a
+ * finer split of the block itself (the block is still wholly replaced by
+ * the re-fit, never partially preserved) — only the MINUTES credited to
+ * "already spent" are accounted for precisely, per-Task and per-budget.
+ *
+ * Known, deliberate scope boundary — NOT covered by this file: Spencer
+ * saying a Task ran long or was skipped despite its scheduled `end` having
+ * already passed (i.e. overriding a block `isElapsed` already treated as
+ * done). `chat-cli.ts`'s current trigger has no room to name which Task or
+ * by how much, so nothing here can represent that. That is Story 2.4 /
+ * Task 16's job (Logistics-Only Blocker Handling, FR-10), which is
+ * explicitly scoped to extend THIS SAME FILE with exactly that
+ * Spencer-reports-a-specific-problem path — see `isElapsed`'s own doc
+ * comment for the fuller note.
  *
  * ============================================================================
  * Where "which Tasks are still outstanding" comes from
@@ -153,7 +168,6 @@ import type {
   CompleteTask,
   ExternalId,
   IsoDate,
-  IsoDateTime,
   Plan,
   PlanBlock,
   Result,
@@ -234,13 +248,52 @@ function describeError(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function minutesBetween(startIso: IsoDateTime, endIso: IsoDateTime): number {
-  return (Date.parse(endIso) - Date.parse(startIso)) / MINUTES_TO_MS;
-}
-
-/** Whether `block` has been fully lived through as of `nowMs` — see the file docstring's "not-yet-completed" design note. */
+/**
+ * Whether `block` has been fully lived through as of `nowMs` — used ONLY to
+ * decide which blocks survive VERBATIM into the merged output (see the file
+ * docstring's "not-yet-completed" design note). This is deliberately NOT
+ * the same question as "how many of this Task's minutes have actually
+ * elapsed" — see `elapsedMinutesWithinBlock` below, which a genuinely
+ * in-progress block (this function's `false` case) still needs to answer
+ * partially, not as a flat zero.
+ *
+ * Known scope boundary (reviewer-flagged, ruled out of THIS task): a block
+ * whose scheduled `end` has already passed is unconditionally treated as
+ * fully done — there is no way here for Spencer to say "that one ran long,
+ * it's NOT actually done despite its scheduled end having passed."
+ * `chat-cli.ts`'s trigger regex has no room to name which Task or by how
+ * much, so nothing in this file can represent that yet. Story 2.4 / Task 16
+ * (Logistics-Only Blocker Handling, FR-10) is explicitly scoped to extend
+ * THIS SAME FILE with exactly that Spencer-reports-a-specific-problem path;
+ * building partial support for it here, ahead of that task's proper design,
+ * would risk exactly the kind of premature path AD-9 warns against.
+ */
 function isElapsed(block: PlanBlock, nowMs: number): boolean {
   return Date.parse(block.end) <= nowMs;
+}
+
+/**
+ * How many of `block`'s minutes have ACTUALLY elapsed as of `nowMs` — the
+ * fix for a Critical bug a review caught by direct execution: a block still
+ * running at trigger time (`start < now < end`) is genuinely "remaining"
+ * (see `isElapsed` above — it does NOT survive verbatim, it gets re-fit),
+ * but that does not mean ZERO of its minutes have happened. A 30-minute
+ * block running 11:00-11:30, re-flowed at 11:15, has genuinely used 15
+ * minutes of both the Task's own duration and the day's Time Budget — credit
+ * exactly that, not the full 30 (which would let the Task consume 45
+ * minutes of real time: 15 already lived + 30 freshly re-scheduled) and not
+ * 0 (which would silently overstate the remaining Time Budget by the same
+ * 15 minutes). Three cases, uniformly:
+ *   - fully elapsed (`end <= now`): the whole block's duration.
+ *   - not yet started (`start >= now`): zero.
+ *   - genuinely in progress (`start < now < end`): `now - start`.
+ */
+function elapsedMinutesWithinBlock(block: PlanBlock, nowMs: number): number {
+  const startMs = Date.parse(block.start);
+  const endMs = Date.parse(block.end);
+  if (endMs <= nowMs) return (endMs - startMs) / MINUTES_TO_MS;
+  if (startMs >= nowMs) return 0;
+  return (nowMs - startMs) / MINUTES_TO_MS;
 }
 
 /** Short, change-only reasoning line — UX-DR11: never re-explains or re-justifies the whole day, only names what the re-flow did. */
@@ -314,28 +367,32 @@ export async function runMidDayReflow(deps: MidDayReflowDeps): Promise<Result<Mi
   const incompleteTaskIds = gate.value.incomplete.map((report) => report.taskId);
 
   // --- Which Tasks are still outstanding? (see file docstring) ---------------
-  const pastMinutesByTaskId = new Map<ExternalId, number>();
-  const remainingMinutesByTaskId = new Map<ExternalId, number>();
-  for (const b of pastBlocks) {
+  // Elapsed-minutes crediting runs over EVERY block in the stored Plan (past
+  // AND remaining) via `elapsedMinutesWithinBlock`, not just `pastBlocks` —
+  // a genuinely in-progress block (still "remaining" per `isElapsed`, so it
+  // still gets re-fit, not preserved verbatim) must still credit its
+  // already-elapsed portion, not zero (see that function's own doc comment
+  // for the bug this fixes). `taskIdsWithAnyBlock` tracks "did this Task
+  // appear anywhere in today's Plan at all" independent of how much of it
+  // has elapsed, since a Task can have a non-zero elapsed credit that's
+  // still less than its full duration.
+  const elapsedMinutesByTaskId = new Map<ExternalId, number>();
+  const taskIdsWithAnyBlock = new Set<ExternalId>();
+  let elapsedBudgetMinutes = 0;
+  for (const b of existingPlan.data.blocks) {
+    const elapsed = elapsedMinutesWithinBlock(b, nowMs);
+    if (b.kind === "work" || b.kind === "break") elapsedBudgetMinutes += elapsed;
     if (b.kind === "work" && b.taskId !== undefined) {
-      pastMinutesByTaskId.set(b.taskId, (pastMinutesByTaskId.get(b.taskId) ?? 0) + minutesBetween(b.start, b.end));
-    }
-  }
-  for (const b of remainingBlocks) {
-    if (b.kind === "work" && b.taskId !== undefined) {
-      remainingMinutesByTaskId.set(
-        b.taskId,
-        (remainingMinutesByTaskId.get(b.taskId) ?? 0) + minutesBetween(b.start, b.end),
-      );
+      taskIdsWithAnyBlock.add(b.taskId);
+      if (elapsed > 0) {
+        elapsedMinutesByTaskId.set(b.taskId, (elapsedMinutesByTaskId.get(b.taskId) ?? 0) + elapsed);
+      }
     }
   }
 
   const outstanding: CompleteTask[] = [];
   for (const task of gate.value.completeTasks) {
-    const pastMinutes = pastMinutesByTaskId.get(task.id) ?? 0;
-    const hadAnyBlockToday = pastMinutesByTaskId.has(task.id) || remainingMinutesByTaskId.has(task.id);
-
-    if (!hadAnyBlockToday) {
+    if (!taskIdsWithAnyBlock.has(task.id)) {
       // Never scheduled today at all — either deferred by this morning's
       // fit, or a Task that has appeared/become complete since. Outstanding
       // at its full current duration.
@@ -343,7 +400,8 @@ export async function runMidDayReflow(deps: MidDayReflowDeps): Promise<Result<Mi
       continue;
     }
 
-    const remainingDurationMinutes = task.estimatedDurationMinutes - pastMinutes;
+    const elapsedMinutesForTask = elapsedMinutesByTaskId.get(task.id) ?? 0;
+    const remainingDurationMinutes = task.estimatedDurationMinutes - elapsedMinutesForTask;
     if (remainingDurationMinutes <= 0) continue; // Already fully lived through.
     outstanding.push({ ...task, estimatedDurationMinutes: remainingDurationMinutes });
   }
@@ -362,13 +420,14 @@ export async function runMidDayReflow(deps: MidDayReflowDeps): Promise<Result<Mi
       "mid-day-reflow: no Time Budget has been declared yet — tell Yoh how much time you have (e.g. `time budget 6 hours` in chat) and re-trigger the re-flow",
     );
   }
-  const elapsedMinutes = pastBlocks
-    .filter((b) => b.kind === "work" || b.kind === "break")
-    .reduce((sum, b) => sum + minutesBetween(b.start, b.end), 0);
+  // `elapsedBudgetMinutes` was computed above via `elapsedMinutesWithinBlock`
+  // over EVERY block (not just `pastBlocks`) — it already correctly credits
+  // an in-progress block's partial elapsed time rather than crediting it 0
+  // (the same fix `elapsedMinutesByTaskId` above needed).
   // Clamped to >= 1 — `fitWorkBreakBlocks` requires a positive integer total;
   // see the file docstring's "Remaining Time Budget" section for why 1
   // (rather than a second no-budget-left branch) is the right minimum here.
-  const remainingBudgetMinutes = Math.max(1, Math.round(storedBudget.data.totalMinutes - elapsedMinutes));
+  const remainingBudgetMinutes = Math.max(1, Math.round(storedBudget.data.totalMinutes - elapsedBudgetMinutes));
 
   // --- Calendar anchors still ahead, reused verbatim from the stored Plan ----
   const remainingAnchorEvents: readonly CalendarEvent[] = remainingBlocks
