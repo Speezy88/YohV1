@@ -50,16 +50,16 @@ development_status:
   1-12-write-plan-blocks-to-a-dedicated-yoh-plan-calendar: done
   epic-1-retrospective: optional
 
-  epic-2: in-progress
+  epic-2: done
   2-1-persistent-chat-session-natural-language-routing: done
   2-2-default-and-contextual-tone: done
   2-3-user-initiated-mid-day-re-flow: done
   2-4-logistics-only-blocker-handling: done
   2-5-slip-bump-escalating-priority-for-slipped-tasks: done
-  2-6-tone-escalation-tied-to-escalate-under-strain: backlog
+  2-6-tone-escalation-tied-to-escalate-under-strain: done
   epic-2-retrospective: optional
 
-  epic-3: backlog
+  epic-3: in-progress
   3-1-night-ritual-close-out-prompt-status-write-back: backlog
   3-2-capped-escalating-retry-via-email: backlog
   3-3-unchecked-day-handling-rollover: backlog
