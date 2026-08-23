@@ -29,7 +29,8 @@ import {
   type MorningRitualDeps,
   type PlanNotification,
 } from "../src/rituals/morning-ritual.ts";
-import { DATA_COMPLETENESS_REQUEST_ID } from "../src/shell/chat-cli.ts";
+import { DATA_COMPLETENESS_REQUEST_ID } from "../src/rituals/data-completeness.ts";
+import { PUSHOVER_MESSAGE_LIMIT, PUSHOVER_TITLE_LIMIT } from "../src/adapters/notification-adapter.ts";
 import type { CalendarEvent, Plan, PlanBlock, Task } from "../src/types/domain.ts";
 
 // ============================================================================
@@ -420,7 +421,7 @@ test("AD-8: a Calendar adapter throw is caught and converted to a Result failure
   assert.equal(h.notifications.length, 0);
 });
 
-test("AD-8: a notification-adapter throw is caught, and the Plan stays persisted so the day isn't replanned", async () => {
+test("AD-8: a notification-adapter throw is caught, the Plan stays persisted, and the day is NOT marked done", async () => {
   const h = harness({
     tasks: [makeTask("t1", "Draft the memo")],
     sendNotification: async () => {
@@ -431,7 +432,117 @@ test("AD-8: a notification-adapter throw is caught, and the Plan stays persisted
 
   assert.ok(!result.ok);
   assert.equal(result.error.kind, "unreachable");
-  assert.ok(getPlan(h.store, TODAY), "the Plan was persisted before the send was attempted");
+  assert.ok(getPlan(h.store, TODAY), "the generated Plan is persisted, not thrown away");
+  assert.equal(
+    getRitualRun(h.store, MORNING_RITUAL_ID),
+    undefined,
+    "a failed send must not burn the day — the marker is only written after delivery succeeds",
+  );
+});
+
+test("a transient send failure is retried by the next trigger, and then delivered exactly once", async () => {
+  const store = tempStore();
+  const failing = harness({
+    store,
+    tasks: [makeTask("t1", "Draft the memo")],
+    sendNotification: async () => {
+      throw new Error("pushover: network blip");
+    },
+  });
+  assert.ok(!(await runMorningRitual(failing.deps)).ok);
+
+  // Same day, next cron trigger: Pushover is back.
+  const retry = harness({ store, tasks: [makeTask("t1", "Draft the memo")], declareBudgetMinutes: 0 });
+  const retried = await runMorningRitual(retry.deps);
+  assert.ok(retried.ok && retried.value.status === "delivered", "the retry is not short-circuited by already-ran");
+  assert.equal(retry.notifications.length, 1);
+
+  // And a third trigger, after a successful delivery, is the no-op it should be.
+  const third = harness({ store, tasks: [makeTask("t1", "Draft the memo")], declareBudgetMinutes: 0 });
+  const thirdResult = await runMorningRitual(third.deps);
+  assert.ok(thirdResult.ok && thirdResult.value.status === "already-ran");
+  assert.equal(third.notifications.length, 0);
+});
+
+// ============================================================================
+// All-deferred day (review finding #1) and Pushover's real size limits (#3)
+// ============================================================================
+
+test("a day where nothing fits the Time Budget is its own outcome — never a Plan whose reasoning names an absent Task", async () => {
+  const store = tempStore();
+  putTimeBudget(store, { date: TODAY, totalMinutes: 60, workMinutes: 70, breakMinutes: 15 });
+  const h = harness({
+    store,
+    declareBudgetMinutes: 0,
+    tasks: [makeTask("t1", "Rebuild the deck", { estimatedDurationMinutes: 600 })],
+    events: [{ id: "e1", title: "Standup", start: "2026-08-22T15:00:00.000Z", end: "2026-08-22T15:30:00.000Z" }],
+  });
+
+  const result = await runMorningRitual(h.deps);
+  assert.ok(result.ok, `expected success, got ${JSON.stringify(result)}`);
+  assert.equal(result.value.status, "nothing-fits");
+  assert.equal(h.notifications.length, 0, "no notification claims a Plan that has no Tasks in it");
+  assert.equal(getRitualRun(h.store, MORNING_RITUAL_ID), undefined, "a bigger Time Budget later today can still produce a Plan");
+  assert.ok(result.value.status === "nothing-fits");
+  assert.deepEqual(result.value.deferredTaskIds, ["t1"]);
+});
+
+test("when some Tasks are deferred, the reasoning line names one that is actually in the Plan", async () => {
+  const store = tempStore();
+  // 100 minutes: the 600-minute Task can never fit; the 30-minute one can.
+  putTimeBudget(store, { date: TODAY, totalMinutes: 100, workMinutes: 70, breakMinutes: 15 });
+  const h = harness({
+    store,
+    declareBudgetMinutes: 0,
+    tasks: [
+      makeTask("t1", "Rebuild the deck", { estimatedDurationMinutes: 600, dueDate: "2026-08-22" }),
+      makeTask("t2", "Tidy the inbox", { estimatedDurationMinutes: 30, dueDate: "2026-08-24" }),
+    ],
+  });
+
+  const result = await runMorningRitual(h.deps);
+  assert.ok(result.ok && result.value.status === "delivered");
+  assert.deepEqual(result.value.deferredTaskIds, ["t1"]);
+  assert.match(result.value.plan.reasoning, /Tidy the inbox/, "the reasoning names the Task that made it in");
+  assert.doesNotMatch(result.value.plan.reasoning, /Rebuild the deck/, "never a deferred Task");
+
+  const sent = h.notifications[0]!;
+  assert.match(sent.message, /Tidy the inbox/);
+  assert.doesNotMatch(sent.message, /Rebuild the deck/);
+});
+
+test("the notification body never exceeds Pushover's documented message limit, however busy the day", async () => {
+  const store = tempStore();
+  putTimeBudget(store, { date: TODAY, totalMinutes: 1400, workMinutes: 70, breakMinutes: 15 });
+  const longTitle = "Draft the extremely long and unusually detailed quarterly planning memorandum";
+  const tasks = Array.from({ length: 14 }, (_, i) =>
+    makeTask(`t${i}`, `${longTitle} number ${i}`, { estimatedDurationMinutes: 60, dueDate: "2026-08-22" }),
+  );
+  const h = harness({ store, declareBudgetMinutes: 0, tasks });
+
+  const result = await runMorningRitual(h.deps);
+  assert.ok(result.ok && result.value.status === "delivered");
+
+  const sent = h.notifications[0]!;
+  assert.ok(
+    sent.message.length <= PUSHOVER_MESSAGE_LIMIT,
+    `notification body is ${sent.message.length} chars, over Pushover's ${PUSHOVER_MESSAGE_LIMIT} limit`,
+  );
+  assert.ok(sent.title.length <= PUSHOVER_TITLE_LIMIT);
+  assert.match(sent.message, /more block/, "truncation is stated plainly rather than silently cutting the Plan off");
+  assert.ok(
+    sent.message.includes(result.value.plan.reasoning),
+    "the reasoning line survives truncation — it is the one piece DESIGN.md requires in the body",
+  );
+  // The terminal render is NOT truncated: it has no such limit.
+  assert.ok(result.value.rendered.length > PUSHOVER_MESSAGE_LIMIT);
+});
+
+test("a short day's notification body is not truncated at all", async () => {
+  const h = harness({ tasks: [makeTask("t1", "Draft the memo", { estimatedDurationMinutes: 60 })] });
+  const result = await runMorningRitual(h.deps);
+  assert.ok(result.ok && result.value.status === "delivered");
+  assert.doesNotMatch(h.notifications[0]!.message, /more block/);
 });
 
 test("no declared Time Budget: fails with a missing-field Result rather than inventing one", async () => {
@@ -451,10 +562,24 @@ test("a carried-forward Time Budget from a prior day is used as-is (Story 1.6 �
   const h = harness({ tasks: [makeTask("t1", "Draft the memo", { estimatedDurationMinutes: 200 })], store, declareBudgetMinutes: 0 });
 
   const result = await runMorningRitual(h.deps);
-  assert.ok(result.ok && result.value.status === "delivered");
   // 200 minutes cannot fit a 120-minute budget, so the Task is deferred —
-  // proof the carried-forward 120 (not a fresh default) was the budget used.
+  // proof the carried-forward 120 (not a fresh default, and not an
+  // unlimited one) was the budget actually used. With every Task deferred
+  // this is a `nothing-fits` day, not a Plan with nothing in it.
+  assert.ok(result.ok && result.value.status === "nothing-fits");
   assert.deepEqual(result.value.deferredTaskIds, ["t1"]);
+  assert.equal(h.notifications.length, 0);
+});
+
+test("a carried-forward Time Budget still produces a real Plan for a Task that fits it", async () => {
+  const store = tempStore();
+  putTimeBudget(store, { date: "2026-08-19", totalMinutes: 120, workMinutes: 70, breakMinutes: 15 });
+  const h = harness({ tasks: [makeTask("t1", "Draft the memo", { estimatedDurationMinutes: 100 })], store, declareBudgetMinutes: 0 });
+
+  const result = await runMorningRitual(h.deps);
+  assert.ok(result.ok && result.value.status === "delivered");
+  assert.deepEqual(result.value.deferredTaskIds, []);
+  assert.equal(h.notifications.length, 1);
 });
 
 test("today is Spencer's local calendar date, not the UTC one", async () => {

@@ -55,13 +55,20 @@
  *     AD-9), stamping `version` as one past whatever Plan is already stored
  *     for the date (ordinarily none, given step 1).
  * 11. **Render it** (`renderPlan`, below — DESIGN.md's layout/color rules).
- * 12. **Persist the Plan and the ran-today marker**, THEN **send exactly one
- *     Pushover notification.** The order is deliberate: persisting first
- *     makes the notification at-most-once (Story 1.10's explicit criterion),
- *     at the documented cost that a Pushover outage means no notification
- *     that day rather than a retry. The `Result` failure and structured log
- *     line this returns are what Epic 5's AD-7 failure alerting will hang
- *     off; this task builds the shape, not the alert.
+ * 12. **Persist the Plan**, then **send exactly one Pushover notification**
+ *     (`buildNotificationBody` keeps it inside Pushover's real size limit),
+ *     then **write the ran-today marker**. The three-way order is
+ *     deliberate — see the comments at each step: the Plan is saved before
+ *     the send so a delivery failure can't lose it, and the marker is
+ *     written after the send so a transient Pushover failure is retried by
+ *     the next trigger instead of permanently burning the day. The `Result`
+ *     failure and structured log line this returns are what Epic 5's AD-7
+ *     failure alerting will hang off; this task builds the shape, not the
+ *     alert.
+ *
+ * Between 8 and 9 there is one more gate: if `fitWorkBreakBlocks` deferred
+ * EVERY Task (nothing fit the budget), the run returns `nothing-fits` rather
+ * than a Plan with no Tasks in it — see that outcome's own doc comment.
  *
  * ----------------------------------------------------------------------------
  * The `plan-reasoning.ts` contract
@@ -78,31 +85,26 @@
  * `fitWorkBreakBlocks` receives the ordering derived from them. There is no
  * second, separately-filtered task list anywhere in this function.
  *
- * Known edge (documented rather than silently papered over): if the lead
- * Task is DEFERRED by `fitWorkBreakBlocks` because it cannot fit today's
- * remaining budget, the reasoning line still names it as leading the Plan
- * while no block for it appears. Filtering the deferred Tasks back out and
- * re-deriving would break the "same array" contract above AND could change
- * the ordering itself (`derived-priority.ts`'s secondary sub-scores are
- * normalized across the candidate set, so removing a member can reorder the
- * survivors). The contract is honored as written; the deferral wording is
- * left for whichever later story owns "here's what didn't fit today."
+ * Deferral is handled WITHOUT breaking that contract. `fitWorkBreakBlocks`
+ * may defer a Task that cannot fit the remaining budget, leaving it out of
+ * the Plan; naming such a Task as "leading today's Plan" would describe a
+ * position that doesn't exist. Re-deriving over a filtered array would fix
+ * the sentence but break the contract above — and could change the ordering
+ * itself, since `derived-priority.ts`'s secondary sub-scores are normalized
+ * across the candidate set, so removing a member can reorder the survivors.
+ * Instead, `generatePlanReasoning`'s `eligibleTaskIds` parameter (added by
+ * this task, additively) narrows only WHICH Task the sentence may describe,
+ * leaving the derivation over the full set exactly as the contract requires.
+ * This file passes the ids that actually got a `work` PlanBlock.
  *
  * ----------------------------------------------------------------------------
- * Where the gate wiring lives (moved here from `shell/chat-cli.ts`)
+ * Where the gate wiring lives
  * ----------------------------------------------------------------------------
  *
- * `applyTaskFieldOverride` / `mergeStoredOverrides` /
- * `syncDataCompletenessInteractionRequest` were written in
- * `shell/chat-cli.ts` by Task 5, whose own doc comment recorded why: "a
- * `rituals/*.ts` file would be the more natural home once one exists for
- * this concern, but none is owned by this task." This is that file, and this
- * ritual needs the exact same merge-then-gate-then-sync sequence chat-cli
- * does — duplicating a *stateful* sync that writes the same singleton
- * `"data-completeness"` request from two files would let the two drift.
- * They therefore live here now and `shell/chat-cli.ts` re-exports them
- * unchanged (AD-1 allows `shell -> rituals`, never the reverse), so nothing
- * about chat-cli's public surface or behavior changes.
+ * NOT here. The merge-then-gate-then-sync sequence is its own capability
+ * with two callers in two layers (this file and `shell/chat-cli.ts`), so per
+ * AD-9 it lives in its own file, `rituals/data-completeness.ts`, which both
+ * import directly. See that file's docstring for the full history.
  *
  * ----------------------------------------------------------------------------
  * Rendering lives here, not in `core/` or `shell/`
@@ -116,41 +118,35 @@
  * shells import (AD-1: `shell -> rituals`). The DESIGN.md color tokens
  * (`ACCENT`, `MUTED`, `RESET`) are exported from here for the same reason —
  * Task 5 had no shared home for them and kept a private copy in
- * `chat-cli.ts`; that copy is now gone.
+ * `chat-cli.ts`; that copy is now gone. They stay with the renderer that is
+ * their heaviest user rather than moving to a file of their own: Task 11
+ * imports `renderPlan` from here regardless, so this costs `chat-cli.ts` no
+ * coupling it doesn't already have.
  */
 import {
-  clearInteractionRequest,
   getCurrentTimeBudget,
-  getOpenInteractionRequest,
   getPlan,
   getRitualRun,
-  getTaskFieldOverride,
-  putOpenInteractionRequest,
   putPlan,
   putRitualRun,
   type MemoryStore,
 } from "../adapters/memory-store.ts";
-import {
-  checkDataCompleteness,
-  type DataCompletenessGateResult,
-  type MissingFieldReport,
-} from "../core/data-completeness-gate.ts";
+import { PUSHOVER_MESSAGE_LIMIT, PUSHOVER_TITLE_LIMIT } from "../adapters/notification-adapter.ts";
+import type { DataCompletenessGateResult } from "../core/data-completeness-gate.ts";
 import { orderByDerivedPriority } from "../core/derived-priority.ts";
 import { generatePlanReasoning } from "../core/plan-reasoning.ts";
 import { resolveTodayTimeBudget } from "../core/time-budget.ts";
 import { fitWorkBreakBlocks } from "../core/work-break-fit.ts";
+import { runDataCompletenessGate } from "./data-completeness.ts";
 import type {
   CalendarEvent,
   ExternalId,
-  InteractionRequest,
   IsoDate,
   IsoDateTime,
   Plan,
   PlanBlock,
-  PlanningFieldNames,
   Result,
   Task,
-  TaskFieldOverride,
   YohError,
 } from "../types/domain.ts";
 
@@ -194,137 +190,6 @@ export function shouldUseColor(
   if (env["NO_COLOR"] !== undefined) return false;
   if (env["TERM"] === "dumb") return false;
   return isTty;
-}
-
-// ============================================================================
-// Data-Completeness Gate wiring (moved from `shell/chat-cli.ts`, Task 5)
-// ============================================================================
-
-/** Human-readable labels for `PlanningFieldNames`, used only in prompt text — the gate itself (`core/data-completeness-gate.ts`) stays presentation-agnostic per its Implementer note. */
-export const PLANNING_FIELD_LABELS: Record<PlanningFieldNames, string> = {
-  estimatedDurationMinutes: "Estimated Duration",
-  area: "Area",
-  dueDate: "Due Date",
-  status: "Status",
-  energy: "Energy",
-};
-
-/**
- * Turns the gate's `MissingFieldReport[]` into the single combined prompt
- * text UX-DR10 requires: "one prompt may cover multiple missing fields
- * across multiple Tasks if needed" — never a bulk "clean up your whole
- * database" request, and never one prompt per Task. Pure/no I/O; the caller
- * applies the accent-color wrapping when actually printing it.
- */
-export function buildMissingFieldsPromptText(incomplete: readonly MissingFieldReport[]): string {
-  const subject = incomplete.length === 1 ? "this Task" : "these Tasks";
-  const lines = incomplete.map((report) => {
-    const fields = report.missingFields.map((field) => PLANNING_FIELD_LABELS[field]).join(", ");
-    return `  - "${report.taskTitle}": ${fields}`;
-  });
-  return [`I need a bit more before I can plan around ${subject}:`, ...lines].join("\n");
-}
-
-/**
- * Merges a `TaskFieldOverride` onto `task`: every field the override sets
- * wins; every field it leaves unset keeps `task`'s own value (which may
- * itself still be `undefined`, if Spencer hasn't answered that one yet).
- * Pure — no I/O — but deliberately not inside `core/data-completeness-gate.ts`
- * per AD-2: the gate must not read `memory-store.ts`, so it cannot know
- * about overrides itself. The result is still a plain `Task`, never a
- * `CompleteTask` — AD-11 holds: only `checkDataCompleteness` may produce a
- * `CompleteTask`, and it's still the next call to it that does so once every
- * field is present, merged or otherwise.
- */
-export function applyTaskFieldOverride(task: Task, override: TaskFieldOverride | undefined): Task {
-  if (!override) return task;
-  // `override`'s fields are typed as present-or-absent (not
-  // present-with-possible-undefined) under `exactOptionalPropertyTypes`, so
-  // spreading it after `task` only ever overwrites a field with a real
-  // value, never with an explicit `undefined` — the cast documents that
-  // runtime guarantee to the type checker, mirroring
-  // `data-completeness-gate.ts`'s own `toCompleteTask` cast.
-  return { ...task, ...override } as Task;
-}
-
-/**
- * Merges each Task's own stored `TaskFieldOverride` (if any) from
- * `memory-store.ts` onto it, returning the merged Task list — the
- * caller-side merge step applied before handing Tasks to the gate. A Task
- * with no stored override is returned unchanged.
- */
-export function mergeStoredOverrides(store: MemoryStore, tasks: readonly Task[]): Task[] {
-  return tasks.map((task) => applyTaskFieldOverride(task, getTaskFieldOverride(store, task.id)?.data));
-}
-
-/** The fixed, singleton `id` the Data-Completeness Gate's open interaction request is stored under (so multiple incomplete Tasks collapse into one request, per UX-DR10, rather than one row per Task). */
-export const DATA_COMPLETENESS_REQUEST_ID = "data-completeness";
-
-/**
- * Merges any stored `TaskFieldOverride`s onto `tasks` (so a
- * previously-answered field actually counts), runs the pure
- * Data-Completeness Gate over the result, then persists or clears the single
- * combined `"data-completeness"` interaction request in `memory-store.ts` to
- * match — the wiring the gate itself is forbidden from doing (AD-2/AD-11:
- * the gate must stay pure) — and returns the gate's own result so the caller
- * can go on to plan the Tasks that DID pass.
- *
- * - Every (merged) Task complete, no request currently open: no-op.
- * - Every (merged) Task complete, a request WAS open (Spencer answered the
- *   missing field(s), the override was stored, and the gate re-ran with the
- *   merged Task): the request is cleared — Story 1.5's "the interaction
- *   request is cleared" criterion.
- * - Any (merged) Task still incomplete: the request is opened (or replaced,
- *   if one is already open with stale content) naming exactly the missing
- *   field(s) on exactly the Tasks that have them — while the complete Tasks
- *   are still returned for planning (UX-DR10's "gate what you can, prompt
- *   for the rest").
- *
- * Returns the gate's `Result` rather than throwing on a malformed candidate
- * set (currently: duplicate Task ids), so a `rituals/*.ts` caller can convert
- * it per AD-8. `syncDataCompletenessInteractionRequest` below is the
- * throwing wrapper `shell/chat-cli.ts` has always used.
- */
-export function runDataCompletenessGate(
-  store: MemoryStore,
-  tasks: readonly Task[],
-): Result<DataCompletenessGateResult, YohError> {
-  const merged = mergeStoredOverrides(store, tasks);
-  const result = checkDataCompleteness(merged);
-  if (!result.ok) return result;
-
-  const existing = getOpenInteractionRequest(store, DATA_COMPLETENESS_REQUEST_ID);
-
-  if (result.value.incomplete.length === 0) {
-    if (existing) {
-      clearInteractionRequest(store, DATA_COMPLETENESS_REQUEST_ID, existing.version);
-    }
-    return result;
-  }
-
-  const request: InteractionRequest<{ incomplete: readonly MissingFieldReport[] }> = {
-    requestKind: "data-completeness",
-    promptText: buildMissingFieldsPromptText(result.value.incomplete),
-    detail: { incomplete: result.value.incomplete },
-    createdAt: new Date().toISOString(),
-  };
-  putOpenInteractionRequest(store, DATA_COMPLETENESS_REQUEST_ID, request);
-  return result;
-}
-
-/**
- * `runDataCompletenessGate` with the throw-on-malformed-input behavior
- * `shell/chat-cli.ts` established in Task 5 and its callers still expect.
- * Kept as a separate wrapper (rather than changing that behavior) so this
- * move is behavior-preserving for `shell/`: AD-8's "never throws" rule binds
- * `core/*.ts`, not the shell, and chat-cli has no `Result` channel to
- * surface a duplicate-id bug through.
- */
-export function syncDataCompletenessInteractionRequest(store: MemoryStore, tasks: readonly Task[]): void {
-  const result = runDataCompletenessGate(store, tasks);
-  if (!result.ok) {
-    throw new Error(`chat-cli: data-completeness-gate rejected the candidate Task set: ${result.error.message}`);
-  }
 }
 
 // ============================================================================
@@ -532,6 +397,56 @@ export interface PlanNotification {
   readonly message: string;
 }
 
+/**
+ * Builds the push-notification body: the Plan's block list plus its
+ * reasoning line, plain text, guaranteed to fit `limit` characters.
+ *
+ * `width` is unbounded on purpose — DESIGN.md's 80-column wrap exists so
+ * TERMINAL output stays readable without resizing, but a phone reflows text
+ * to its own screen width, so pre-wrapping at 80 would only produce ragged
+ * double-wrapped lines (and would split the reasoning line mid-sentence).
+ *
+ * Length, though, is a hard external constraint: Pushover rejects a message
+ * over `PUSHOVER_MESSAGE_LIMIT` outright, and a busy day (a dozen blocks
+ * carrying full Notion titles) genuinely reaches it. A rejected send is
+ * especially costly here because it means the day's ONLY notification is
+ * lost, so this function never hands the adapter something over the limit:
+ * it drops whole block lines from the END (the latest blocks — the ones
+ * furthest from "what do I do next") and says plainly how many it dropped.
+ *
+ * The reasoning line is preserved in preference to blocks, because DESIGN.md
+ * names it as the notification body's required content
+ * (`{components.notification}`); only if it alone still doesn't fit is it
+ * itself truncated with an ellipsis, which is the last resort.
+ */
+export function buildNotificationBody(
+  plan: Plan,
+  timeZone: string,
+  limit: number = PUSHOVER_MESSAGE_LIMIT,
+): string {
+  const blockLines = plan.blocks.flatMap((block) =>
+    renderBlockLine(block, timeZone, Number.POSITIVE_INFINITY),
+  );
+  const tail = plan.reasoning.length > 0 ? `\n\n${plan.reasoning}` : "";
+
+  const full = `${blockLines.join("\n")}${tail}`;
+  if (full.length <= limit) return full;
+
+  // Drop block lines from the end until the body (plus an honest "and N
+  // more" note) fits. `kept` counts down rather than searching, so this
+  // always terminates and always lands under the limit.
+  for (let kept = blockLines.length - 1; kept >= 0; kept--) {
+    const dropped = blockLines.length - kept;
+    const note = `... and ${dropped} more block${dropped === 1 ? "" : "s"} — see the terminal for the full Plan.`;
+    const candidate = `${[...blockLines.slice(0, kept), note].join("\n")}${tail}`;
+    if (candidate.length <= limit) return candidate;
+  }
+
+  // Even zero blocks plus the reasoning line is too long — truncate the
+  // reasoning itself rather than emit something the adapter will refuse.
+  return `${plan.reasoning.slice(0, Math.max(0, limit - 1))}…`.slice(0, limit);
+}
+
 /** One structured log line. AD-7's real failure alerting is Epic 5; this is the seam it will read from. */
 export interface MorningRitualLogEntry {
   readonly level: "info" | "warn" | "error";
@@ -575,6 +490,23 @@ export type MorningRitualOutcome =
   | {
       readonly status: "nothing-to-plan";
       readonly date: IsoDate;
+      readonly incompleteTaskIds: readonly ExternalId[];
+    }
+  | {
+      /**
+       * Every plannable Task was deferred — nothing fit today's Time Budget,
+       * so there is no ordered Plan to send. Deliberately its own outcome
+       * rather than a `delivered` Plan with an empty block list: a
+       * notification reading "Nothing is scheduled" above a sentence about
+       * which Task "leads today's Plan" would be self-contradictory, and
+       * FR-3's reasoning line has no lead item's position to explain when no
+       * item has a position. Like `nothing-to-plan`, this writes no
+       * ran-today marker, so raising the Time Budget and re-triggering can
+       * still produce a real Plan today.
+       */
+      readonly status: "nothing-fits";
+      readonly date: IsoDate;
+      readonly deferredTaskIds: readonly ExternalId[];
       readonly incompleteTaskIds: readonly ExternalId[];
     }
   | {
@@ -698,11 +630,43 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
     return fitted;
   }
 
+  // Which Tasks actually made it into the Plan. Read off the emitted blocks
+  // rather than inverting `deferredTaskIds`, so this is direct evidence of
+  // "has a block in this Plan" rather than a second derivation that could
+  // disagree with the rendered output.
+  const plannedTaskIds = new Set<ExternalId>(
+    fitted.value.blocks.flatMap((block) =>
+      block.kind === "work" && block.taskId !== undefined ? [block.taskId] : [],
+    ),
+  );
+
+  // Every plannable Task was deferred — see `"nothing-fits"`'s doc comment.
+  if (plannedTaskIds.size === 0) {
+    log({
+      level: "info",
+      event: "morning-ritual.nothing-fits",
+      detail: { date: today, deferred: fitted.value.deferredTaskIds.length, budget: resolvedBudget.budget.totalMinutes },
+    });
+    return {
+      ok: true,
+      value: {
+        status: "nothing-fits",
+        date: today,
+        deferredTaskIds: fitted.value.deferredTaskIds,
+        incompleteTaskIds,
+      },
+    };
+  }
+
   // The SAME `candidates` array and the SAME `bumpLevels` reference that
   // produced `ordered` above — see the module docstring's contract note.
+  // `eligibleTaskIds` narrows only WHICH Task the sentence describes, never
+  // the scoring: a Task that got deferred must not be described as leading
+  // a Plan it has no block in.
   const reasoning = generatePlanReasoning({
     tasks: candidates,
     today,
+    eligibleTaskIds: plannedTaskIds,
     ...(deps.bumpLevels ? { bumpLevels: deps.bumpLevels } : {}),
   });
   if (!reasoning.ok) {
@@ -728,10 +692,10 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
     ...(deps.color === undefined ? {} : { color: deps.color }),
   });
 
-  // --- 12a. Persist BEFORE notifying (at-most-once) -------------------------
+  // --- 12a. Persist the generated Plan --------------------------------------
+  // Before the send, so a delivery failure never loses the Plan itself.
   try {
     putPlan(deps.store, plan);
-    putRitualRun(deps.store, MORNING_RITUAL_ID, { date: today, ranAt: nowIso, planId: plan.id });
   } catch (err) {
     log({ level: "error", event: "morning-ritual.persist-failed", detail: describeError(err) });
     return failure("conflict", `morning-ritual: could not persist today's Plan — ${describeError(err)}`, err);
@@ -740,24 +704,34 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
   // --- 12b. Send exactly one notification -----------------------------------
   try {
     await deps.sendNotification({
-      title: NOTIFICATION_TITLE,
-      // The Plan's block list plus its reasoning line, plain text: the
-      // notification's own title already carries the label, and a push
-      // notification must never carry ANSI escapes. `width` is unbounded
-      // here on purpose — DESIGN.md's 80-column wrap exists so terminal
-      // output stays readable without resizing, but a phone reflows text to
-      // its own screen width, so pre-wrapping at 80 would only produce
-      // ragged double-wrapped lines (and would split the reasoning line).
-      message: renderPlan(plan, {
-        timeZone: deps.timeZone,
-        color: false,
-        includeHeader: false,
-        width: Number.POSITIVE_INFINITY,
-      }),
+      title: NOTIFICATION_TITLE.slice(0, PUSHOVER_TITLE_LIMIT),
+      message: buildNotificationBody(plan, deps.timeZone),
     });
   } catch (err) {
     log({ level: "error", event: "morning-ritual.notify-failed", detail: describeError(err) });
     return failure("unreachable", `morning-ritual: could not send today's Plan notification — ${describeError(err)}`, err);
+  }
+
+  // --- 12c. Mark the day done, AFTER a confirmed delivery -------------------
+  // Deliberately after the send, not before. Writing it first would make the
+  // notification strictly at-most-once, but at the cost that ANY transient
+  // Pushover failure (a network blip, a brief outage) permanently burns the
+  // day: every later trigger would return `already-ran` and Spencer would
+  // simply never get a Plan, with nothing visible to tell him why. Writing
+  // it after means a failed send is retried by the next trigger — which
+  // re-reads and re-fits against the current time, so the retry delivers a
+  // Plan that is still accurate rather than a stale one.
+  //
+  // The residual risk this accepts: if the send succeeds and THIS write then
+  // throws, the next trigger sends a second notification. That window is a
+  // local SQLite write on a singleton row only this ritual ever writes,
+  // immediately after a successful network call — far narrower than the
+  // outage window it replaces, and it fails loud rather than silent.
+  try {
+    putRitualRun(deps.store, MORNING_RITUAL_ID, { date: today, ranAt: nowIso, planId: plan.id });
+  } catch (err) {
+    log({ level: "error", event: "morning-ritual.mark-run-failed", detail: describeError(err) });
+    return failure("conflict", `morning-ritual: today's Plan was sent but could not be marked delivered — ${describeError(err)}`, err);
   }
 
   log({

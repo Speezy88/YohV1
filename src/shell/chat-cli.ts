@@ -35,11 +35,14 @@
  * override-merge step lives outside `data-completeness-gate.ts` per AD-2 —
  * the gate stays pure and must not read `memory-store.ts` itself.
  *
- * Task 10 update: the merge/gate/sync trio and DESIGN.md's ANSI color
- * tokens now live in `rituals/morning-ritual.ts` (the `rituals/*.ts` home
- * the note below always pointed at), and are imported/re-exported here — see
- * the "Re-exported gate wiring" block below. Nothing about this file's
- * public surface or behavior changed with that move.
+ * Task 10 update: the merge/gate/sync trio moved to
+ * `rituals/data-completeness.ts` — the `rituals/*.ts` home the note above
+ * always pointed at, given its own file because it is its own capability
+ * with callers in two layers (AD-9). DESIGN.md's ANSI color tokens moved to
+ * `rituals/morning-ritual.ts` alongside the Plan renderer that is their
+ * heaviest user. This file imports both directly (AD-1 permits
+ * `shell -> rituals`, never the reverse) and re-exports neither; nothing
+ * about its behavior changed with either move.
  */
 import { createInterface } from "node:readline";
 import {
@@ -54,12 +57,8 @@ import {
 } from "../adapters/memory-store.ts";
 import type { MissingFieldReport } from "../core/data-completeness-gate.ts";
 import { shapeDeclaredTimeBudget } from "../core/time-budget.ts";
-import {
-  ACCENT,
-  DATA_COMPLETENESS_REQUEST_ID,
-  PLANNING_FIELD_LABELS,
-  RESET,
-} from "../rituals/morning-ritual.ts";
+import { DATA_COMPLETENESS_REQUEST_ID, PLANNING_FIELD_LABELS } from "../rituals/data-completeness.ts";
+import { ACCENT, RESET } from "../rituals/morning-ritual.ts";
 import type {
   InteractionRequest,
   IsoDate,
@@ -70,37 +69,6 @@ import type {
   TimeBudget,
   YohError,
 } from "../types/domain.ts";
-
-// ============================================================================
-// Re-exported gate wiring and color tokens (moved to `rituals/morning-ritual.ts`)
-// ============================================================================
-
-/**
- * `buildMissingFieldsPromptText`, `applyTaskFieldOverride`,
- * `mergeStoredOverrides`, `syncDataCompletenessInteractionRequest` and
- * `DATA_COMPLETENESS_REQUEST_ID` were authored here by Task 5, whose own
- * note above records why: "a `rituals/*.ts` file would be the more natural
- * home once one exists for this concern, but none is owned by this task."
- * Task 10 created that file, and the Morning Ritual needs the identical
- * merge-then-gate-then-sync sequence — duplicating a stateful sync that
- * writes the same singleton `"data-completeness"` request from two places
- * would let the two drift apart. They therefore live in
- * `rituals/morning-ritual.ts` now and are re-exported here unchanged, so
- * this file's public surface and behavior are exactly what they were
- * (AD-1 permits `shell -> rituals`, never the reverse).
- *
- * The `ACCENT`/`RESET` ANSI constants moved for the same reason: Task 5 kept
- * a private copy because there was no shared home for DESIGN.md's color
- * tokens; `rituals/morning-ritual.ts` is that home now (it also owns
- * `MUTED`, which the Plan reasoning line needs), so the duplicate is gone.
- */
-export {
-  applyTaskFieldOverride,
-  buildMissingFieldsPromptText,
-  DATA_COMPLETENESS_REQUEST_ID,
-  mergeStoredOverrides,
-  syncDataCompletenessInteractionRequest,
-} from "../rituals/morning-ritual.ts";
 
 // ============================================================================
 // REPL IO abstraction — injectable so tests never need a real TTY/stdin

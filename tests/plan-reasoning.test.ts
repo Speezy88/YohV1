@@ -236,3 +236,92 @@ test("never throws, even on wildly invalid input", () => {
     generatePlanReasoning({ tasks: [makeCompleteTask("a", { dueDate: "" })], today: "" });
   });
 });
+
+// ============================================================================
+// eligibleTaskIds (Task 10 fix) -- the lead named must be a Task that
+// actually made it into the Plan, never one that got deferred by fitting.
+//
+// The DERIVATION still runs over the full candidate set (that's the
+// contract `morning-ritual.ts` honors by passing the same array it gave
+// `orderByDerivedPriority`); only the SELECTION of which Task is described
+// as leading is restricted. Omitting the parameter keeps the exact
+// pre-existing behavior, so every test above is unaffected.
+// ============================================================================
+
+test("eligibleTaskIds: the lead named is the highest-priority Task that survived fitting, not the deferred one", () => {
+  const deferred = makeCompleteTask("deferred", {
+    title: "Rebuild the deck",
+    dueDate: "2026-08-22", // due today -- would otherwise lead outright
+    estimatedDurationMinutes: 600,
+  });
+  const planned = makeCompleteTask("planned", {
+    title: "Tidy inbox",
+    dueDate: "2026-08-24",
+    estimatedDurationMinutes: 30,
+  });
+
+  const unrestricted = generatePlanReasoning({ tasks: [deferred, planned], today: TODAY });
+  assert.ok(unrestricted.ok);
+  assert.match(unrestricted.value, /Rebuild the deck/, "without the parameter, the deferred Task still leads (unchanged behavior)");
+
+  const restricted = generatePlanReasoning({
+    tasks: [deferred, planned],
+    today: TODAY,
+    eligibleTaskIds: new Set(["planned"]),
+  });
+  assert.ok(restricted.ok);
+  assert.match(restricted.value, /^"Tidy inbox"/, "the reasoning names the Task actually in the Plan");
+  assert.doesNotMatch(restricted.value, /Rebuild the deck/, "a deferred Task is never described as leading");
+});
+
+test("eligibleTaskIds: the runner-up compared against is also restricted to Tasks in the Plan", () => {
+  const deferred = makeCompleteTask("deferred", { title: "Rebuild the deck", dueDate: "2026-08-22", estimatedDurationMinutes: 600 });
+  const first = makeCompleteTask("first", { title: "Tidy inbox", dueDate: "2026-08-24", estimatedDurationMinutes: 30 });
+  const second = makeCompleteTask("second", { title: "File receipts", dueDate: "2026-08-27", estimatedDurationMinutes: 30 });
+
+  const result = generatePlanReasoning({
+    tasks: [deferred, first, second],
+    today: TODAY,
+    eligibleTaskIds: new Set(["first", "second"]),
+  });
+  assert.ok(result.ok);
+  assert.match(result.value, /^"Tidy inbox"/);
+  assert.doesNotMatch(result.value, /Rebuild the deck/, "the comparison never explains a position against an absent Task");
+  assert.doesNotMatch(result.value, /only Task in it/, "two Tasks are in the Plan, so this is not the single-Task shape");
+});
+
+test("eligibleTaskIds: a single surviving Task still reads as the only Task in the Plan", () => {
+  const deferred = makeCompleteTask("deferred", { title: "Rebuild the deck", dueDate: "2026-08-22", estimatedDurationMinutes: 600 });
+  const planned = makeCompleteTask("planned", { title: "Tidy inbox", dueDate: "2026-08-24", estimatedDurationMinutes: 30 });
+
+  const result = generatePlanReasoning({
+    tasks: [deferred, planned],
+    today: TODAY,
+    eligibleTaskIds: new Set(["planned"]),
+  });
+  assert.ok(result.ok);
+  assert.match(result.value, /only Task in it/);
+});
+
+test("eligibleTaskIds: an all-deferred candidate set produces an honest line that claims no lead at all", () => {
+  const a = makeCompleteTask("a", { title: "Rebuild the deck", estimatedDurationMinutes: 600 });
+  const b = makeCompleteTask("b", { title: "Repaint the hall", estimatedDurationMinutes: 400 });
+
+  const result = generatePlanReasoning({ tasks: [a, b], today: TODAY, eligibleTaskIds: new Set() });
+  assert.ok(result.ok);
+  assert.doesNotMatch(result.value, /leads/, "nothing can lead a Plan it isn't in");
+  assert.doesNotMatch(result.value, /Rebuild the deck/);
+  assert.doesNotMatch(result.value, /Repaint the hall/);
+  assert.ok(result.value.length > 0);
+});
+
+test("eligibleTaskIds: an id in the set that isn't in the candidate set is simply ignored, never crashes", () => {
+  const planned = makeCompleteTask("planned", { title: "Tidy inbox" });
+  const result = generatePlanReasoning({
+    tasks: [planned],
+    today: TODAY,
+    eligibleTaskIds: new Set(["planned", "not-a-real-task"]),
+  });
+  assert.ok(result.ok);
+  assert.match(result.value, /Tidy inbox/);
+});

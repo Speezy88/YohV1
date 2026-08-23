@@ -20,18 +20,24 @@ import {
 } from "../src/adapters/memory-store.ts";
 import type { MemoryStore } from "../src/adapters/memory-store.ts";
 import {
-  buildMissingFieldsPromptText,
-  syncDataCompletenessInteractionRequest,
   surfaceOpenInteractionRequests,
   runChatCli,
   parseFieldAnswer,
-  applyTaskFieldOverride,
-  mergeStoredOverrides,
-  DATA_COMPLETENESS_REQUEST_ID,
   parseTimeBudgetCommand,
   declareTimeBudget,
   type ChatCliIo,
 } from "../src/shell/chat-cli.ts";
+// The Data-Completeness merge/gate/sync trio is its own capability and lives
+// in its own file (Task 10 review fix); `chat-cli.ts` imports it rather than
+// owning or re-exporting it. Import paths only — the behavior these tests
+// assert is unchanged.
+import {
+  buildMissingFieldsPromptText,
+  syncDataCompletenessInteractionRequest,
+  applyTaskFieldOverride,
+  mergeStoredOverrides,
+  DATA_COMPLETENESS_REQUEST_ID,
+} from "../src/rituals/data-completeness.ts";
 import { checkDataCompleteness, type MissingFieldReport } from "../src/core/data-completeness-gate.ts";
 import type { Task } from "../src/types/domain.ts";
 

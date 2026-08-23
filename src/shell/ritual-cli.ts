@@ -121,6 +121,11 @@ export async function runRitualCli(argv: readonly string[], deps: RitualCliDeps)
         `Nothing could be planned for ${result.value.date} yet — ${result.value.incompleteTaskIds.length} Task(s) are still missing planning fields. I've left a note for you in chat.`,
       );
       return 0;
+    case "nothing-fits":
+      deps.io.writeLine(
+        `Nothing fits ${result.value.date}'s Time Budget — all ${result.value.deferredTaskIds.length} Task(s) were deferred. Declare more time in chat and run this again.`,
+      );
+      return 0;
     case "delivered":
       deps.io.writeLine(result.value.rendered);
       return 0;

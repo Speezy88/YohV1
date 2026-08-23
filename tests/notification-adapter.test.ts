@@ -10,6 +10,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   PUSHOVER_MESSAGES_ENDPOINT,
+  PUSHOVER_MESSAGE_LIMIT,
+  PUSHOVER_TITLE_LIMIT,
   loadPushoverConfigFromEnv,
   sendPushoverNotification,
   type FetchLike,

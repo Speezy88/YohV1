@@ -79,6 +79,18 @@ export type FetchLike = (
 /** Pushover's Messages API endpoint (see the module docstring's documented assumptions). */
 export const PUSHOVER_MESSAGES_ENDPOINT = "https://api.pushover.net/1/messages.json";
 
+/**
+ * Pushover's documented maximum `message` length, in characters. Exported
+ * because the LENGTH constraint belongs to Pushover but the TRUNCATION
+ * decision belongs to whoever composes the message (only they know what is
+ * safe to drop) — `rituals/morning-ritual.ts`'s `buildNotificationBody`
+ * reads this to keep the Plan body inside it.
+ */
+export const PUSHOVER_MESSAGE_LIMIT = 1024;
+
+/** Pushover's documented maximum `title` length, in characters. */
+export const PUSHOVER_TITLE_LIMIT = 250;
+
 export interface PushoverConfig {
   /** The Pushover *application* token (`PUSHOVER_APP_TOKEN`). */
   readonly appToken: string;
@@ -150,6 +162,23 @@ export async function sendPushoverNotification(
   config: PushoverConfig,
   notification: PushoverNotification,
 ): Promise<void> {
+  // Refuse an over-limit payload locally rather than spending a round trip
+  // to have Pushover reject it: a local throw names exactly which field is
+  // too long and by how much, and is caught by the same AD-8 boundary in
+  // `rituals/` that a remote rejection would be. Callers are expected to
+  // compose within these limits (see `PUSHOVER_MESSAGE_LIMIT`); this is the
+  // backstop that makes a regression there loud instead of silent.
+  if (notification.message.length > PUSHOVER_MESSAGE_LIMIT) {
+    throw new Error(
+      `notification-adapter: message is ${notification.message.length} characters, over Pushover's ${PUSHOVER_MESSAGE_LIMIT}-character limit`,
+    );
+  }
+  if (notification.title.length > PUSHOVER_TITLE_LIMIT) {
+    throw new Error(
+      `notification-adapter: title is ${notification.title.length} characters, over Pushover's ${PUSHOVER_TITLE_LIMIT}-character limit`,
+    );
+  }
+
   const httpFetch = config.fetch ?? (globalThis.fetch as FetchLike);
   const endpoint = config.endpoint ?? PUSHOVER_MESSAGES_ENDPOINT;
 

@@ -54,6 +54,19 @@
  * (no Tasks at all) are both handled as their own honest, non-generic
  * cases below rather than forced through the three-way comparison above.
  *
+ * ============================================================================
+ * Derivation vs. selection (`eligibleTaskIds`, added by Task 10)
+ * ============================================================================
+ *
+ * Scoring happens over the whole candidate set; picking WHICH Task the
+ * sentence describes is a separate step that happens after. Task 10 added
+ * the optional `eligibleTaskIds` parameter to narrow that second step to the
+ * Tasks that actually survived `core/work-break-fit.ts`'s deferral rule, so
+ * the line can never name a Task that has no block in the Plan it claims to
+ * lead. Scoring is untouched by it, and omitting it reproduces the exact
+ * pre-Task-10 behavior. See that parameter's own doc comment for the full
+ * reasoning.
+ *
  * This three-way split is a reasonable-default design for "genuinely tied
  * to the real computed factors" (the brief gives one example phrase, not a
  * template) -- documented here and in this task's report for visibility.
@@ -80,6 +93,34 @@ export interface GeneratePlanReasoningInput {
   readonly tasks: readonly CompleteTask[];
   readonly today: IsoDate;
   readonly bumpLevels?: Readonly<Record<ExternalId, number>>;
+  /**
+   * Restricts which Task may be DESCRIBED as leading the Plan (and which
+   * may be its runner-up) to Tasks that actually appear in it — added by
+   * Task 10, additively, once assembling a real Plan exposed the gap.
+   *
+   * The distinction this parameter rests on: `computeDerivedPriorityFactors`
+   * below derives every Task's score across the WHOLE candidate set (that
+   * is the contract `rituals/morning-ritual.ts` honors by handing this
+   * function the same array it handed `orderByDerivedPriority`), and only
+   * afterwards is a lead picked out of the result. Those are two independent
+   * steps, so narrowing the second one changes nothing about the scoring
+   * that produced the ordering — the numbers quoted in the sentence are
+   * still the real ones computed against every candidate.
+   *
+   * Why it's needed: `core/work-break-fit.ts` DEFERS a Task that cannot fit
+   * the remaining Time Budget, leaving it out of the Plan entirely. Without
+   * this parameter, a deferred Task could still be named as "leading
+   * today's Plan" while no block for it is rendered — a sentence describing
+   * a position that does not exist, which is exactly what FR-3's "references
+   * the actual Derived Priority factors that produced the lead item's
+   * position" forbids.
+   *
+   * Omit it (the default) and behavior is byte-identical to before this
+   * parameter existed: every Task is eligible. An id in the set that isn't
+   * in `tasks` is ignored. An EMPTY set means "no Task made it into the
+   * Plan" and produces its own honest line that claims no lead at all.
+   */
+  readonly eligibleTaskIds?: ReadonlySet<ExternalId>;
 }
 
 // ============================================================================
@@ -122,8 +163,10 @@ function formatFactorList(factors: readonly string[]): string {
  * `ok: true`, including an empty one.
  */
 export function generatePlanReasoning(input: GeneratePlanReasoningInput): Result<string, YohError> {
-  const { tasks, today, bumpLevels } = input;
+  const { tasks, today, bumpLevels, eligibleTaskIds } = input;
 
+  // Derivation: always across the FULL candidate set, per this function's
+  // contract with `orderByDerivedPriority`.
   const factorsResult = computeDerivedPriorityFactors(tasks, today, bumpLevels);
   if (!factorsResult.ok) return factorsResult;
   const factors = factorsResult.value;
@@ -132,16 +175,32 @@ export function generatePlanReasoning(input: GeneratePlanReasoningInput): Result
     return { ok: true, value: "No Tasks are scheduled in today's Plan yet." };
   }
 
-  const lead = factors[0]!;
+  // Selection: an independent step, optionally narrowed to the Tasks that
+  // actually made it into the Plan (see `eligibleTaskIds`' doc comment).
+  // `filter` preserves the derived ordering, so `describable[0]` is still
+  // "the highest-priority of these", exactly as `factors[0]` was.
+  const describable =
+    eligibleTaskIds === undefined ? factors : factors.filter((entry) => eligibleTaskIds.has(entry.task.id));
 
-  if (factors.length === 1) {
+  if (describable.length === 0) {
+    return {
+      ok: true,
+      // Deliberately names no Task and makes no claim about a lead: there
+      // is no position to explain when nothing made it into the Plan.
+      value: "None of today's Tasks fit the time available — every one of them is still waiting.",
+    };
+  }
+
+  const lead = describable[0]!;
+
+  if (describable.length === 1) {
     return {
       ok: true,
       value: `"${lead.task.title}" leads today's Plan as the only Task in it — due ${describeDaysUntilDue(lead.daysUntilDue)}, a ${lead.task.estimatedDurationMinutes}-minute chunk.`,
     };
   }
 
-  const runnerUp = factors[1]!;
+  const runnerUp = describable[1]!;
   const primaryDiff = lead.primaryScore - runnerUp.primaryScore;
 
   if (Math.abs(primaryDiff) <= TIE_EPSILON) {
