@@ -617,8 +617,22 @@ export function putPlan(store: MemoryStore, plan: Plan): StoredRecord<Plan> {
  * rather than one row per ritual-per-day: the only question ever asked of it
  * is "did this ritual already run *today*", and a per-day key would
  * accumulate an unbounded row per calendar day with nothing ever reading the
- * old ones. Epic 3's night rituals (Tasks 19/20) and Epic 5's self-check
- * (Task 24) reuse this same shape with their own ritual ids.
+ * old ones. Epic 3's night rituals (Tasks 19/20) reuse this same shape with
+ * their own ritual ids.
+ *
+ * **Self-Check (Task 24 / Story 4.3) deliberately does NOT reuse this
+ * kind.** An earlier note here anticipated it would; it doesn't, because the
+ * question `RITUAL_RUN_KIND` answers ("did this ritual already run today")
+ * is the wrong question for a ~4-day-cadence ritual — Self-Check needs "is
+ * TODAY the (randomized) due day," not "did today already see a run," and a
+ * `RitualRun.date` marker only ever encodes the latter. `SelfCheckState`
+ * (below) already carries `nextDueDate`/`nextDueMinuteOfDay`, which gives
+ * `rituals/self-check.ts` the exact same "was this already handled" guard a
+ * `RitualRun` marker would (a second same-day trigger before the due date
+ * reads "not due" from this row alone; a second trigger after the open
+ * request has already been persisted is caught by that request's own
+ * presence) without a second, redundant marker to keep in sync with it — see
+ * that file's own docstring for the full reasoning.
  */
 const RITUAL_RUN_KIND = "ritual-run";
 
@@ -992,6 +1006,69 @@ export function clearUncheckedDay(store: MemoryStore, date: IsoDate): void {
  */
 export function listUncheckedDays(store: MemoryStore): StoredRecord<UncheckedDay>[] {
   return store.listRecordsByKind<UncheckedDay>(UNCHECKED_DAY_KIND);
+}
+
+// ============================================================================
+// Self-Check (Task 24 / Story 4.3, FR-17, AD-6) — typed surface on `records`
+// ============================================================================
+
+/** The fixed `records.kind` partition the Periodic Self-Check's schedule/last-answer snapshot is stored under. */
+const SELF_CHECK_KIND = "self-check";
+
+/**
+ * The fixed singleton `records.id` the Self-Check state is always stored at
+ * — mirrors `TIME_BUDGET_ID`: there is exactly one current schedule, ever,
+ * upserted in place, never one row per day/per check-in. History of past
+ * answers is deliberately NOT accumulated here (unlike `SlipHistory`'s
+ * running count or `UncheckedDay`'s one-row-per-night log) — Self-Check's own
+ * AC is about the SINGLE most recent score alone ("triggered from that single
+ * low score alone rather than waiting for a trend," FR-17), so only the last
+ * answer needs to be on hand to compute the next interval; `rituals/
+ * self-check.ts`'s own docstring covers this design choice in full.
+ */
+const SELF_CHECK_ID = "current";
+
+/**
+ * The Periodic Self-Check's persisted schedule, plus a snapshot of the most
+ * recent answer. `nextDueDate`/`nextDueMinuteOfDay` are always present —
+ * even on a fresh (cold-start) row, `rituals/self-check.ts`'s
+ * `runSelfCheckRitual` initializes them on its very first run rather than
+ * leaving them unset — see that file's own "cold start" docstring section
+ * for why the very first day never itself demands an immediate check-in.
+ * `lastCheckInDate`/`lastScore`/`lastReason` stay `undefined` until Spencer
+ * has genuinely answered at least once.
+ */
+export interface SelfCheckState {
+  /** The local calendar date (Spencer's own timezone, per `rituals/self-check.ts`'s `localIsoDate` usage) the next Self-Check becomes due. */
+  readonly nextDueDate: IsoDate;
+  /** The randomized target time-of-day the next Self-Check becomes due on `nextDueDate`, as minutes since local midnight (0-1439) — `rituals/self-check.ts`'s `isSelfCheckDueNow` compares the ritual's own current local time-of-day against this. */
+  readonly nextDueMinuteOfDay: number;
+  /** The local calendar date of the most recent genuine answer, or `undefined` if Spencer has never answered one yet. */
+  readonly lastCheckInDate?: IsoDate;
+  /** The most recent numeric score (1-10), or `undefined` if Spencer has never answered one yet. */
+  readonly lastScore?: number;
+  /** The most recent short written reason accompanying `lastScore` — UX-DR15 requires both together, so this is always present exactly when `lastScore` is. */
+  readonly lastReason?: string;
+}
+
+/** Reads the currently-stored Self-Check schedule, or `undefined` if it has never been initialized yet (cold start — before this Task's very first `ritual-cli.ts self-check` run). */
+export function getSelfCheckState(store: MemoryStore): StoredRecord<SelfCheckState> | undefined {
+  return store.getRecord<SelfCheckState>(SELF_CHECK_KIND, SELF_CHECK_ID);
+}
+
+/**
+ * Stores `state` — "put" semantics, like `putTimeBudget`/`putUncheckedDay`:
+ * the caller doesn't thread a version through, but a genuine concurrent
+ * writer racing on this same singleton still surfaces `ConflictError` per
+ * AD-10 (this reads the current row's version internally and hands it to
+ * `readModifyWrite`). Called both by `rituals/self-check.ts`'s
+ * `runSelfCheckRitual` (cold-start initialization — `lastCheckInDate`/
+ * `lastScore`/`lastReason` all `undefined`) and by that file's
+ * `applySelfCheckAnswer` (a genuine answer — every field populated).
+ */
+export function putSelfCheckState(store: MemoryStore, state: SelfCheckState): StoredRecord<SelfCheckState> {
+  const current = store.getRecord<SelfCheckState>(SELF_CHECK_KIND, SELF_CHECK_ID);
+  return store.readModifyWrite<SelfCheckState>(SELF_CHECK_KIND, SELF_CHECK_ID, current?.version, () => state);
 }
 
 // ============================================================================

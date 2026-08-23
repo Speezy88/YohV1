@@ -39,6 +39,8 @@ import {
   listUncheckedDays,
   markUncheckedDayShown,
   clearUncheckedDay,
+  getSelfCheckState,
+  putSelfCheckState,
   putPlan,
   putRitualRun,
   readHotMemory,
@@ -856,6 +858,47 @@ test("clearUncheckedDay only removes the record for its OWN date — a different
   clearUncheckedDay(store, "2026-08-21");
   assert.equal(getUncheckedDay(store, "2026-08-21"), undefined);
   assert.ok(getUncheckedDay(store, "2026-08-19"), "the other date's record must survive untouched");
+  store.close();
+});
+
+// ============================================================================
+// SelfCheckState (Task 24 / Story 4.3, FR-17, AD-6)
+// ============================================================================
+
+test("getSelfCheckState returns undefined before any schedule has ever been initialized (cold start)", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  assert.equal(getSelfCheckState(store), undefined);
+  store.close();
+});
+
+test("putSelfCheckState persists a record retrievable via getSelfCheckState, at version 1", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const record = putSelfCheckState(store, { nextDueDate: "2026-08-26", nextDueMinuteOfDay: 600 });
+  assert.equal(record.version, 1);
+
+  const read = getSelfCheckState(store);
+  assert.ok(read);
+  assert.equal(read.data.nextDueDate, "2026-08-26");
+  assert.equal(read.data.nextDueMinuteOfDay, 600);
+  assert.equal(read.data.lastCheckInDate, undefined);
+  store.close();
+});
+
+test("putSelfCheckState called again replaces the value in place (upsert), not a second row", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  putSelfCheckState(store, { nextDueDate: "2026-08-26", nextDueMinuteOfDay: 600 });
+  const second = putSelfCheckState(store, {
+    nextDueDate: "2026-08-28",
+    nextDueMinuteOfDay: 720,
+    lastCheckInDate: "2026-08-24",
+    lastScore: 7,
+    lastReason: "feeling on top of things",
+  });
+  assert.equal(second.version, 2);
+
+  const read = getSelfCheckState(store);
+  assert.equal(read?.data.nextDueDate, "2026-08-28");
+  assert.equal(read?.data.lastScore, 7);
   store.close();
 });
 

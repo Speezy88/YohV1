@@ -193,6 +193,7 @@ import {
   type NightCloseOutRequestDetail,
   type NightCloseOutStatus,
 } from "../rituals/night-ritual.ts";
+import { applySelfCheckAnswer, isValidSelfCheckScore, SELF_CHECK_REQUEST_ID } from "../rituals/self-check.ts";
 import type {
   InteractionRequest,
   IsoDate,
@@ -530,6 +531,105 @@ async function answerNightCloseOutRequest(
 }
 
 // ============================================================================
+// Periodic Self-Check prompt (Task 24 / Story 4.3, FR-17, UX-DR15)
+// ============================================================================
+
+/**
+ * Parses a raw Self-Check answer line into a score/reason pair. Per UX-DR15
+ * both are required together — this is enforced structurally by the regex
+ * itself, not by a separate "is the reason present" check afterward: a bare
+ * number alone (or a number followed only by whitespace) simply fails to
+ * MATCH, so it is indistinguishable from any other unparseable answer to
+ * `answerSelfCheckRequest`'s loop below, which re-prompts exactly the same
+ * way it would for a blank/nonsense line — no special-cased "you gave a
+ * number but no reason" branch needed. The same deliberately-simple,
+ * clearly-documented pattern-matching convention every other `chat-cli.ts`
+ * answer parser uses (NOT real free-text NLU): a leading 1-2 digit whole
+ * number, at least one space, then the rest of the line as the reason
+ * (trimmed, must be non-blank). `isValidSelfCheckScore` (`rituals/
+ * self-check.ts`) is the single source of truth for the valid range (1-10) —
+ * duplicated nowhere here.
+ */
+const SELF_CHECK_ANSWER_RE = /^\s*(\d{1,2})\s+(.+?)\s*$/;
+
+export interface SelfCheckAnswer {
+  readonly score: number;
+  readonly reason: string;
+}
+
+export function parseSelfCheckAnswer(raw: string): SelfCheckAnswer | undefined {
+  const match = SELF_CHECK_ANSWER_RE.exec(raw);
+  if (!match) return undefined;
+  const score = Number(match[1]);
+  const reason = match[2]!.trim();
+  if (!isValidSelfCheckScore(score) || reason.length === 0) return undefined;
+  return { score, reason };
+}
+
+/**
+ * Answers the open `"self-check"` interaction request: shows the prompt,
+ * then waits for ONE line carrying both a numeric score and a short written
+ * reason (UX-DR15). A blank line re-prompts indefinitely (UX-DR20, the same
+ * "wait indefinitely" pattern every other answer loop in this file uses); an
+ * unparseable answer — including a bare number with no reason — ALSO
+ * re-prompts the SAME question rather than guessing or accepting a partial
+ * answer, per `parseSelfCheckAnswer`'s own doc comment.
+ *
+ * On a valid answer: persists it and the freshly-computed next-due schedule
+ * via `rituals/self-check.ts`'s `applySelfCheckAnswer` — which is what
+ * actually calls the shared `computeEscalation` curve (AD-6) via that file's
+ * own `scheduleNextSelfCheck`; nothing here re-derives that arithmetic —
+ * then clears the request, re-reading its current version immediately
+ * before clearing (same as `answerDataCompletenessRequest`/
+ * `answerNightCloseOutRequest`), so a genuine concurrent write to it is
+ * still caught as `ConflictError` per AD-10 rather than silently dropped. A
+ * failure to persist (a rare `ConflictError`) re-prompts the same question
+ * rather than silently dropping the answer.
+ *
+ * `today` is the local calendar date this check-in is recorded against —
+ * `runChatCli` passes its own current local date (the same value already
+ * threaded through as `fallbackDate` for the night-close-out branch).
+ * `random` defaults to `Math.random` in production and is only ever
+ * overridden by a test.
+ *
+ * Returns `false` (without clearing the request) if `io.readLine` reports
+ * EOF partway through — the request stays open, unanswered, for the next
+ * session (UX-DR20).
+ */
+async function answerSelfCheckRequest(
+  store: MemoryStore,
+  io: ChatCliIo,
+  record: StoredRecord<InteractionRequest>,
+  today: IsoDate,
+  random: () => number,
+): Promise<boolean> {
+  io.writeLine(`${ACCENT}${record.data.promptText}${RESET}`);
+
+  for (;;) {
+    const answer = await io.readLine("  Score + reason: ");
+    if (answer === null) return false; // stdin closed mid-answer.
+    if (answer.trim().length === 0) continue; // wait indefinitely (UX-DR20): re-ask, don't clear.
+
+    const parsed = parseSelfCheckAnswer(answer);
+    if (!parsed) {
+      io.writeLine('I need both a number (1-10) and a short reason — e.g. "7 feeling on top of things".');
+      continue; // re-ask — UX-DR15: a bare number alone is not a complete answer.
+    }
+
+    const applied = applySelfCheckAnswer(store, { today, score: parsed.score, reason: parsed.reason, random });
+    if (!applied.ok) {
+      io.writeLine(`I couldn't record that: ${applied.error.message} — try again.`);
+      continue;
+    }
+
+    const current = getOpenInteractionRequest(store, SELF_CHECK_REQUEST_ID);
+    if (current) clearInteractionRequest(store, SELF_CHECK_REQUEST_ID, current.version);
+    io.writeLine("Thanks — got it. I'll check in again before too long.");
+    return true;
+  }
+}
+
+// ============================================================================
 // Propose-Don't-Impose confirm/apply pathway (Task 23 / Story 4.2, AD-3)
 // ============================================================================
 
@@ -796,12 +896,14 @@ async function answerProposalRequest(
  * `"night-close-out"` request (Task 19) gets its own typed treatment the
  * same way (`answerNightCloseOutRequest`, above: parse each Task's
  * completed/slipped answer, write Notion and Slip-Bump state, only then
- * clear). Any OTHER open request (a future Self-Check / Proposal prompt,
- * neither of which exist yet) falls back to the purely mechanical
- * surface-then-clear-on-any-non-empty-answer behavior this file established
- * before the Task 5 fix — a later task is expected to add its own typed
- * answer-application step the same way this file now does for both of the
- * above.
+ * clear). The `"self-check"` request (Task 24) gets its own typed treatment
+ * too (`answerSelfCheckRequest`, above: parse a combined score+reason
+ * answer, persist it and the next-due schedule, only then clear). Any OTHER
+ * open request (a future Proposal prompt) falls back to the purely
+ * mechanical surface-then-clear-on-any-non-empty-answer behavior this file
+ * established before the Task 5 fix — a later task is expected to add its
+ * own typed answer-application step the same way this file now does for
+ * each of the above.
  *
  * `setTaskStatus`/`fallbackDate` are needed ONLY by the `"night-close-out"`
  * branch; both default to values that are safe for every OTHER caller
@@ -817,7 +919,15 @@ async function answerProposalRequest(
  * record with no `detail.date` at all, so it is provably never read in the
  * ordinary case. `runChatCli` itself always supplies its own real
  * `timeZone`-derived date — see that function's own doc comment on why
- * `timeZone` is never silently defaulted to UTC there.
+ * `timeZone` is never silently defaulted to UTC there. `fallbackDate` is
+ * ALSO what `answerSelfCheckRequest` uses as its own `today` — unlike
+ * night-close-out, a Self-Check answer has no earlier "Plan date" to prefer,
+ * so the date Spencer is actually answering on is the right one to schedule
+ * the next interval from.
+ *
+ * `random` (Task 24) is `rituals/self-check.ts`'s injectable `[0, 1)` RNG,
+ * threaded through to `answerSelfCheckRequest` — defaults to `Math.random`
+ * in production, overridden only by a test.
  *
  * Returns once no interaction request remains open, or once `io.readLine`
  * reports EOF (stdin closed) — whichever comes first.
@@ -829,6 +939,7 @@ export async function surfaceOpenInteractionRequests(
     throw new Error("chat-cli: no setTaskStatus dependency configured — cannot record Night Ritual close-out");
   },
   fallbackDate: IsoDate = localIsoDate(new Date(), "UTC"),
+  random: () => number = Math.random,
 ): Promise<void> {
   for (;;) {
     const open = listOpenInteractionRequests(store);
@@ -843,6 +954,12 @@ export async function surfaceOpenInteractionRequests(
 
     if (next.id === NIGHT_CLOSE_OUT_REQUEST_ID && next.data.requestKind === "night-close-out") {
       const resolved = await answerNightCloseOutRequest(store, io, next, setTaskStatus, fallbackDate);
+      if (!resolved) return; // EOF mid-answer.
+      continue;
+    }
+
+    if (next.id === SELF_CHECK_REQUEST_ID && next.data.requestKind === "self-check") {
+      const resolved = await answerSelfCheckRequest(store, io, next, fallbackDate, random);
       if (!resolved) return; // EOF mid-answer.
       continue;
     }

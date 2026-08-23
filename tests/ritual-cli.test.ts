@@ -12,9 +12,10 @@ import { join } from "node:path";
 import { createMemoryStore } from "../src/adapters/memory-store.ts";
 import { recordSlip } from "../src/adapters/memory-store.ts";
 import { computeSlipBumpLevels } from "../src/core/slip-bump.ts";
-import { createMorningRitualDeps, runRitualCli, type RitualCliDeps } from "../src/shell/ritual-cli.ts";
+import { createMorningRitualDeps, createSelfCheckRitualDeps, runRitualCli, type RitualCliDeps } from "../src/shell/ritual-cli.ts";
 import type { MorningRitualOutcome } from "../src/rituals/morning-ritual.ts";
 import type { NightEscalateOutcome, NightPromptOutcome } from "../src/rituals/night-ritual.ts";
+import type { SelfCheckOutcome } from "../src/rituals/self-check.ts";
 import type { Plan, Result, YohError } from "../src/types/domain.ts";
 
 const TODAY = "2026-08-22";
@@ -56,6 +57,9 @@ function deps(
     runNightEscalate: async () => {
       throw new Error("runNightEscalate should not be called by a `morning` dispatch test");
     },
+    runSelfCheck: async () => {
+      throw new Error("runSelfCheck should not be called by a `morning` dispatch test");
+    },
   };
 }
 
@@ -79,6 +83,9 @@ function nightPromptDeps(
     runNightEscalate: async () => {
       throw new Error("runNightEscalate should not be called by a `night-prompt` dispatch test");
     },
+    runSelfCheck: async () => {
+      throw new Error("runSelfCheck should not be called by a `night-prompt` dispatch test");
+    },
   };
 }
 
@@ -99,6 +106,35 @@ function nightEscalateDeps(
       throw new Error("runNightPrompt should not be called by a `night-escalate` dispatch test");
     },
     runNightEscalate: async () => {
+      onRun?.();
+      return outcome;
+    },
+    runSelfCheck: async () => {
+      throw new Error("runSelfCheck should not be called by a `night-escalate` dispatch test");
+    },
+  };
+}
+
+function selfCheckDeps(
+  outcome: Result<SelfCheckOutcome, YohError>,
+  sink: Sink,
+  onRun?: () => void,
+): RitualCliDeps {
+  return {
+    io: {
+      writeLine: (l) => sink.out.push(l),
+      writeError: (l) => sink.err.push(l),
+    },
+    runMorning: async () => {
+      throw new Error("runMorning should not be called by a `self-check` dispatch test");
+    },
+    runNightPrompt: async () => {
+      throw new Error("runNightPrompt should not be called by a `self-check` dispatch test");
+    },
+    runNightEscalate: async () => {
+      throw new Error("runNightEscalate should not be called by a `self-check` dispatch test");
+    },
+    runSelfCheck: async () => {
       onRun?.();
       return outcome;
     },
@@ -187,18 +223,6 @@ test("an unknown subcommand exits 2 without running anything", async () => {
   assert.equal(code, 2);
   assert.equal(ran, 0);
   assert.match(s.err.join("\n"), /breakfast/);
-});
-
-test("AD-5's remaining subcommand is recognized as planned but not yet built (Task 24)", async () => {
-  for (const sub of ["self-check"]) {
-    const s = sink();
-    const code = await runRitualCli(
-      [sub],
-      deps({ ok: true, value: { status: "already-ran", date: TODAY, planId: undefined } }, s),
-    );
-    assert.equal(code, 2, `${sub} should not pretend to succeed`);
-    assert.match(s.err.join("\n"), /not implemented yet/i, `${sub} should say so plainly`);
-  }
 });
 
 // ============================================================================
@@ -337,6 +361,91 @@ test("night-escalate no longer appears in the 'not yet built' set — it's a rea
   const code = await runRitualCli(["night-escalate"], nightEscalateDeps({ ok: true, value: { status: "already-ran", date: TODAY } }, s));
   assert.equal(code, 0);
   assert.doesNotMatch(s.err.join("\n"), /not implemented yet/i);
+});
+
+// ============================================================================
+// `self-check` (Task 24 / Story 4.3)
+// ============================================================================
+
+test("`self-check` runs the ritual and reports today's Self-Check was sent, exit code 0", async () => {
+  const s = sink();
+  let ran = 0;
+  const code = await runRitualCli(
+    ["self-check"],
+    selfCheckDeps({ ok: true, value: { status: "prompted", date: TODAY } }, s, () => {
+      ran += 1;
+    }),
+  );
+
+  assert.equal(code, 0);
+  assert.equal(ran, 1);
+  assert.match(s.out.join("\n"), /self-check/i);
+  assert.deepEqual(s.err, []);
+});
+
+test("`self-check` on a day that isn't due reports the no-op, exit code 0", async () => {
+  const s = sink();
+  const code = await runRitualCli(
+    ["self-check"],
+    selfCheckDeps({ ok: true, value: { status: "not-due", date: TODAY, nextDueDate: "2026-08-26" } }, s),
+  );
+
+  assert.equal(code, 0);
+  assert.match(s.out.join("\n"), /not due/i);
+});
+
+test("`self-check` on its very first-ever run reports the schedule was initialized, exit code 0", async () => {
+  const s = sink();
+  const code = await runRitualCli(
+    ["self-check"],
+    selfCheckDeps({ ok: true, value: { status: "initialized", date: TODAY, nextDueDate: "2026-08-26" } }, s),
+  );
+
+  assert.equal(code, 0);
+  assert.match(s.out.join("\n"), /initialized/i);
+});
+
+test("`self-check` when a prompt from an earlier trigger is still open reports the no-op, exit code 0", async () => {
+  const s = sink();
+  const code = await runRitualCli(["self-check"], selfCheckDeps({ ok: true, value: { status: "already-open", date: TODAY } }, s));
+
+  assert.equal(code, 0);
+  assert.match(s.out.join("\n"), /already waiting|check chat/i);
+});
+
+test("a failing self-check ritual becomes a structured stderr line and a non-zero exit code (AD-8)", async () => {
+  const s = sink();
+  const code = await runRitualCli(
+    ["self-check"],
+    selfCheckDeps({ ok: false, error: { kind: "conflict", message: "self-check: could not persist the Self-Check prompt" } }, s),
+  );
+
+  assert.equal(code, 1);
+  assert.equal(s.err.length, 1);
+  const entry = JSON.parse(s.err[0]!) as { level: string; event: string; kind: string; message: string };
+  assert.equal(entry.level, "error");
+  assert.equal(entry.kind, "conflict");
+  assert.match(entry.message, /could not persist the Self-Check prompt/);
+});
+
+test("self-check no longer appears in the 'not yet built' set — it's a real, built subcommand now (all four AD-5 subcommands are built)", async () => {
+  const s = sink();
+  const code = await runRitualCli(["self-check"], selfCheckDeps({ ok: true, value: { status: "not-due", date: TODAY, nextDueDate: TODAY } }, s));
+  assert.equal(code, 0);
+  assert.doesNotMatch(s.err.join("\n"), /not implemented yet/i);
+});
+
+test("createSelfCheckRitualDeps requires YOH_TIMEZONE and needs no Notion/Calendar/Pushover/SMTP credentials at all", () => {
+  const store = createMemoryStore({ databasePath: ":memory:" });
+
+  assert.throws(() => createSelfCheckRitualDeps(store, {}), /YOH_TIMEZONE/);
+
+  const deps = createSelfCheckRitualDeps(store, { YOH_TIMEZONE: "America/New_York" });
+  assert.equal(deps.timeZone, "America/New_York");
+  assert.equal(typeof deps.now, "function");
+  assert.equal(typeof deps.random, "function");
+
+  store.close();
 });
 
 // ============================================================================

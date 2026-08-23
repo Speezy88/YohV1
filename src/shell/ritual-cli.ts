@@ -47,6 +47,16 @@
  * through its own `store`. No new subcommand, no new dep to bind here —
  * see both ritual files' own docstrings for the design.
  *
+ * Task 24 update (Story 4.3, FR-17, AD-6): adds the FOURTH and final AD-5
+ * subcommand, `self-check` (`handleSelfCheckResult`,
+ * `createSelfCheckRitualDeps`) — the last of AD-5's four named subcommands
+ * is now built; `SUBCOMMANDS` no longer names anything as "planned but not
+ * yet built." Lighter still than every other subcommand's deps: `self-check`
+ * needs only `YOH_TIMEZONE` (defining "today" and the local time-of-day its
+ * randomized due time compares against) — no Notion, Calendar, Pushover, or
+ * SMTP credentials at all.
+ *
+
  * Per AD-1 this shell file contains no ritual logic of its own. It does two
  * things: bind the real adapters/stores to `rituals/morning-ritual.ts`'s
  * injected seams (`createMorningRitualDeps`, below), and translate the
@@ -75,6 +85,7 @@ import {
   type NightPromptRitualDeps,
   type NightPromptOutcome,
 } from "../rituals/night-ritual.ts";
+import { runSelfCheckRitual, type SelfCheckOutcome, type SelfCheckRitualDeps } from "../rituals/self-check.ts";
 import { Client } from "@notionhq/client";
 import type { ExternalId, Result, YohError } from "../types/domain.ts";
 
@@ -99,17 +110,19 @@ export interface RitualCliDeps {
   readonly runNightPrompt: () => Promise<Result<NightPromptOutcome, YohError>>;
   /** `rituals/night-ritual.ts`'s `runNightEscalateRitual`, pre-bound to its deps (Task 20 / Story 3.2). */
   readonly runNightEscalate: () => Promise<Result<NightEscalateOutcome, YohError>>;
+  /** `rituals/self-check.ts`'s `runSelfCheckRitual`, pre-bound to its deps (Task 24 / Story 4.3). */
+  readonly runSelfCheck: () => Promise<Result<SelfCheckOutcome, YohError>>;
 }
 
-/** AD-5's full subcommand set. `morning` (Task 10), `night-prompt` (Task 19), and `night-escalate` (Task 20) are built; the rest are claimed here so they report honestly instead of reading as typos. */
+/** AD-5's full subcommand set — all four are now built. */
 const SUBCOMMANDS = {
   morning: "built",
   "night-prompt": "built",
   "night-escalate": "built",
-  "self-check": "Task 24 (Story 5.1)",
+  "self-check": "built",
 } as const;
 
-const USAGE = "usage: yoh ritual <morning|night-prompt|night-escalate>";
+const USAGE = "usage: yoh ritual <morning|night-prompt|night-escalate|self-check>";
 
 // ============================================================================
 // runRitualCli
@@ -137,6 +150,10 @@ export async function runRitualCli(argv: readonly string[], deps: RitualCliDeps)
 
   if (subcommand === "night-escalate") {
     return handleNightEscalateResult(await deps.runNightEscalate(), deps.io);
+  }
+
+  if (subcommand === "self-check") {
+    return handleSelfCheckResult(await deps.runSelfCheck(), deps.io);
   }
 
   const planned = Object.hasOwn(SUBCOMMANDS, subcommand)
@@ -246,6 +263,36 @@ function handleNightEscalateResult(result: Result<NightEscalateOutcome, YohError
       return 0;
     case "escalated":
       io.writeLine(renderNightEscalateNotice(result.value.tasks.length, result.value.date));
+      return 0;
+  }
+}
+
+/** Mirrors `handleNightPromptResult`'s shape/exit-code conventions for the `self-check` subcommand's outcomes (Task 24 / Story 4.3). */
+function handleSelfCheckResult(result: Result<SelfCheckOutcome, YohError>, io: RitualCliIo): number {
+  if (!result.ok) {
+    io.writeError(
+      JSON.stringify({
+        level: "error",
+        event: "ritual-cli.self-check-failed",
+        kind: result.error.kind,
+        message: result.error.message,
+      }),
+    );
+    return 1;
+  }
+
+  switch (result.value.status) {
+    case "initialized":
+      io.writeLine(`Self-Check schedule initialized for the first time — next check-in around ${result.value.nextDueDate}.`);
+      return 0;
+    case "not-due":
+      io.writeLine(`Not due for a Self-Check yet — next one around ${result.value.nextDueDate}.`);
+      return 0;
+    case "already-open":
+      io.writeLine(`Already waiting on Spencer's answer to the last Self-Check prompt — check chat.`);
+      return 0;
+    case "prompted":
+      io.writeLine(`Asked Spencer for a Self-Check — check chat to answer.`);
       return 0;
   }
 }
@@ -410,6 +457,33 @@ export function createNightEscalateRitualDeps(
   };
 }
 
+/**
+ * Binds the real `MemoryStore` to `runSelfCheckRitual`'s injected seams
+ * (Task 24 / Story 4.3). The lightest of the four — no Notion, Calendar,
+ * Pushover, or SMTP credentials are needed; `random` binds to the real
+ * `Math.random`, injected the same way every other non-deterministic seam in
+ * this codebase is (see `rituals/self-check.ts`'s own docstring).
+ */
+export function createSelfCheckRitualDeps(
+  store: MemoryStore,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): SelfCheckRitualDeps {
+  const timeZone = env["YOH_TIMEZONE"];
+  if (!timeZone) {
+    throw new Error("ritual-cli: missing required environment variable YOH_TIMEZONE (e.g. America/New_York)");
+  }
+
+  return {
+    store,
+    now: () => new Date(),
+    timeZone,
+    random: Math.random,
+    log: (entry) => {
+      process.stderr.write(`${JSON.stringify(entry)}\n`);
+    },
+  };
+}
+
 /** A `RitualCliDeps` runner that throws if called — used for the OTHER subcommand's slot below, mirroring `shell/chat-cli.ts`'s "throws only if actually invoked" convention for a seam a given run never exercises. */
 function unreachableRunner(label: string): () => Promise<never> {
   return () => {
@@ -462,6 +536,7 @@ export async function main(
         runMorning: unreachableRunner("runMorning"),
         runNightPrompt: () => runNightPromptRitual(deps),
         runNightEscalate: unreachableRunner("runNightEscalate"),
+        runSelfCheck: unreachableRunner("runSelfCheck"),
       });
     }
 
@@ -478,6 +553,24 @@ export async function main(
         runMorning: unreachableRunner("runMorning"),
         runNightPrompt: unreachableRunner("runNightPrompt"),
         runNightEscalate: () => runNightEscalateRitual(deps),
+        runSelfCheck: unreachableRunner("runSelfCheck"),
+      });
+    }
+
+    if (argv[0] === "self-check") {
+      let deps: SelfCheckRitualDeps;
+      try {
+        deps = createSelfCheckRitualDeps(store, env);
+      } catch (err) {
+        io.writeError(`ritual-cli: ${err instanceof Error ? err.message : String(err)}`);
+        return 2;
+      }
+      return await runRitualCli(argv, {
+        io,
+        runMorning: unreachableRunner("runMorning"),
+        runNightPrompt: unreachableRunner("runNightPrompt"),
+        runNightEscalate: unreachableRunner("runNightEscalate"),
+        runSelfCheck: () => runSelfCheckRitual(deps),
       });
     }
 
@@ -493,6 +586,7 @@ export async function main(
       runMorning: () => runMorningRitual(deps),
       runNightPrompt: unreachableRunner("runNightPrompt"),
       runNightEscalate: unreachableRunner("runNightEscalate"),
+      runSelfCheck: unreachableRunner("runSelfCheck"),
     });
   } finally {
     store.close();

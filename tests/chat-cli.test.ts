@@ -26,8 +26,11 @@ import {
   putPlan,
   putTimeBudget,
   recordSlip,
+  getSelfCheckState,
+  putSelfCheckState,
 } from "../src/adapters/memory-store.ts";
 import { NIGHT_CLOSE_OUT_REQUEST_ID, runNightEscalateRitual, runNightPromptRitual } from "../src/rituals/night-ritual.ts";
+import { runSelfCheckRitual, SELF_CHECK_REQUEST_ID } from "../src/rituals/self-check.ts";
 import type { MemoryStore } from "../src/adapters/memory-store.ts";
 import {
   surfaceOpenInteractionRequests,
@@ -39,6 +42,7 @@ import {
   isPlanViewCommand,
   isBlockerReportCommand,
   parseWhyPrioritizedCommand,
+  parseSelfCheckAnswer,
   apply,
   parseProposalAnswer,
   type ChatCliIo,
@@ -1514,6 +1518,111 @@ test("runChatCli: a close-out answered the NEXT MORNING records the Slip-Bump ag
   assert.ok(history);
   assert.equal(history!.data.lastSlipDate, planDate, "the slip must be recorded against the Plan's own date, not the answer date");
   store.close();
+});
+
+// ============================================================================
+// Periodic Self-Check prompt (Task 24 / Story 4.3, FR-17, UX-DR15) —
+// surfacing and answering `requestKind: "self-check"` via chat-cli.ts
+// ============================================================================
+
+const SELF_CHECK_NOW = new Date("2026-08-22T15:00:00.000Z");
+
+/** Persists an already-due, already-open Self-Check request via the REAL production ritual, so these tests exercise the real persisted shape rather than a hand-seeded fixture. */
+async function openSelfCheckRequest(store: MemoryStore): Promise<IsoDate> {
+  const today = localIsoDate(SELF_CHECK_NOW, TEST_TIME_ZONE);
+  putSelfCheckState(store, { nextDueDate: today, nextDueMinuteOfDay: 0 }); // due any time today
+  const result = await runSelfCheckRitual({ store, now: () => SELF_CHECK_NOW, timeZone: TEST_TIME_ZONE, random: () => 0 });
+  assert.ok(result.ok && result.value.status === "prompted", `test setup sanity: expected a prompted Self-Check, got ${JSON.stringify(result)}`);
+  return today;
+}
+
+test("runChatCli surfaces the Self-Check prompt and, given a complete answer (score + reason), persists it and clears the request", async () => {
+  const store = tempStore();
+  await openSelfCheckRequest(store);
+
+  const io = makeScriptedIo(["8 things are going well"]);
+  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => SELF_CHECK_NOW, async () => []);
+
+  assert.ok(io.written.some((l) => /1-10|number/i.test(l)), "expected the Self-Check prompt itself to be printed");
+  assert.equal(getOpenInteractionRequest(store, SELF_CHECK_REQUEST_ID), undefined, "the request is cleared once a complete answer is given");
+
+  const state = getSelfCheckState(store);
+  assert.equal(state?.data.lastScore, 8);
+  assert.equal(state?.data.lastReason, "things are going well");
+});
+
+test("UX-DR15: a score-only answer (no written reason) is NOT accepted as complete — the request stays open and re-prompts", async () => {
+  const store = tempStore();
+  await openSelfCheckRequest(store);
+
+  // "7" alone (a bare number, no reason) must not resolve the prompt.
+  const io = makeScriptedIo(["7"]);
+  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => SELF_CHECK_NOW, async () => []);
+
+  assert.ok(
+    getOpenInteractionRequest(store, SELF_CHECK_REQUEST_ID),
+    "a bare number alone must not clear the request — both a score AND a reason are required",
+  );
+  assert.equal(getSelfCheckState(store)?.data.lastScore, undefined, "nothing should have been recorded from an incomplete answer");
+  assert.ok(io.written.some((l) => /reason|both/i.test(l)), "expected Yoh to explain that both a number and a reason are needed");
+});
+
+test("a score-only answer re-prompts the SAME question rather than moving on, and a subsequent complete answer resolves it", async () => {
+  const store = tempStore();
+  await openSelfCheckRequest(store);
+
+  const io = makeScriptedIo(["7", "4 felt a bit off this week"]);
+  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => SELF_CHECK_NOW, async () => []);
+
+  assert.equal(getOpenInteractionRequest(store, SELF_CHECK_REQUEST_ID), undefined, "resolved once a genuinely complete answer follows");
+  const state = getSelfCheckState(store);
+  assert.equal(state?.data.lastScore, 4);
+  assert.equal(state?.data.lastReason, "felt a bit off this week");
+});
+
+test("runChatCli: a blank line to an open Self-Check prompt keeps waiting rather than clearing (UX-DR20)", async () => {
+  const store = tempStore();
+  await openSelfCheckRequest(store);
+
+  const io = makeScriptedIo(["", "9 all good"]);
+  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => SELF_CHECK_NOW, async () => []);
+
+  assert.equal(getOpenInteractionRequest(store, SELF_CHECK_REQUEST_ID), undefined);
+  assert.equal(getSelfCheckState(store)?.data.lastScore, 9);
+});
+
+test("runChatCli: EOF mid-Self-Check-answer leaves the request open, unanswered, for the next session", async () => {
+  const store = tempStore();
+  await openSelfCheckRequest(store);
+
+  const io = makeScriptedIo([]); // immediate EOF
+  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => SELF_CHECK_NOW, async () => []);
+
+  assert.ok(getOpenInteractionRequest(store, SELF_CHECK_REQUEST_ID), "the request must survive an EOF mid-answer");
+});
+
+test("a low Self-Check score genuinely shortens the next scheduled interval via the real shared curve, end-to-end through chat-cli.ts", async () => {
+  const store = tempStore();
+  const today = await openSelfCheckRequest(store);
+
+  const io = makeScriptedIo(["2 really struggling this week"]);
+  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => SELF_CHECK_NOW, async () => []);
+
+  const state = getSelfCheckState(store);
+  assert.ok(state);
+  const daysUntilNextDue = (Date.parse(`${state!.data.nextDueDate}T00:00:00.000Z`) - Date.parse(`${today}T00:00:00.000Z`)) / 86_400_000;
+  assert.ok(daysUntilNextDue < 4, `expected a shortened interval for a low score, got ${daysUntilNextDue} days`);
+  assert.equal(daysUntilNextDue, 2, "worked number: default 4 days minus this file's curve value (2) = 2");
+});
+
+test("parseSelfCheckAnswer: accepts a valid score + reason on one line, rejects a bare number", () => {
+  assert.deepEqual(parseSelfCheckAnswer("7 feeling good"), { score: 7, reason: "feeling good" });
+  assert.deepEqual(parseSelfCheckAnswer("10 everything is on track"), { score: 10, reason: "everything is on track" });
+  assert.equal(parseSelfCheckAnswer("7"), undefined, "a bare number with no reason must not parse as complete (UX-DR15)");
+  assert.equal(parseSelfCheckAnswer("7 "), undefined, "trailing whitespace with no actual reason text must not parse as complete");
+  assert.equal(parseSelfCheckAnswer("not a number at all"), undefined);
+  assert.equal(parseSelfCheckAnswer("11 out of range"), undefined, "score must be 1-10");
+  assert.equal(parseSelfCheckAnswer("0 out of range"), undefined, "score must be 1-10");
 });
 
 // ============================================================================
