@@ -49,7 +49,7 @@
 import Database from "better-sqlite3";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { InteractionRequest, TaskFieldOverride, TimeBudget, YohError } from "../types/domain.ts";
+import type { InteractionRequest, IsoDate, IsoDateTime, Plan, TaskFieldOverride, TimeBudget, YohError } from "../types/domain.ts";
 
 // ============================================================================
 // Config
@@ -480,4 +480,91 @@ export function getCurrentTimeBudget(store: MemoryStore): StoredRecord<TimeBudge
 export function putTimeBudget(store: MemoryStore, budget: TimeBudget): StoredRecord<TimeBudget> {
   const current = store.getRecord<TimeBudget>(TIME_BUDGET_KIND, TIME_BUDGET_ID);
   return store.readModifyWrite<TimeBudget>(TIME_BUDGET_KIND, TIME_BUDGET_ID, current?.version, () => budget);
+}
+
+// ============================================================================
+// Plan (Task 10 / Story 1.10, FR-1) — typed surface on `records`
+// ============================================================================
+
+/**
+ * The fixed `records.kind` partition each day's generated `Plan` is stored
+ * under, keyed by the Plan's own `date` (`YYYY-MM-DD`). Keyed by date — NOT
+ * a singleton like `TIME_BUDGET_ID` — because FR-1 is explicitly "one
+ * ordered Plan per day": yesterday's Plan must remain readable after today's
+ * is written (Epic 3's Night Ritual close-out and Epic 4's pattern learning
+ * both read back a day's Plan), which a singleton row would destroy.
+ */
+const PLAN_KIND = "plan";
+
+export type { Plan };
+
+/** Reads the stored `Plan` for `date`, or `undefined` if none has been generated for that day. */
+export function getPlan(store: MemoryStore, date: IsoDate): StoredRecord<Plan> | undefined {
+  return store.getRecord<Plan>(PLAN_KIND, date);
+}
+
+/**
+ * Stores `plan` under its own `date` — "put" semantics, like
+ * `putTimeBudget`/`putOpenInteractionRequest`: the caller doesn't thread a
+ * version through, but a genuine concurrent writer racing on the same date
+ * still surfaces `ConflictError` per AD-10 (this reads the current row's
+ * version internally and hands it to `readModifyWrite`).
+ *
+ * The row is stored verbatim: `Plan.version` (the domain field AD-10's
+ * optimistic-concurrency pattern is expressed through for a Plan) is the
+ * caller's to set — `rituals/morning-ritual.ts` reads any existing Plan for
+ * the date and stamps `version: existing + 1` before calling this, and a
+ * later Mid-Day Re-Flow does the same. That keeps this function a pure
+ * storage primitive rather than a second, hidden versioning mechanism
+ * competing with `StoredRecord.version`.
+ */
+export function putPlan(store: MemoryStore, plan: Plan): StoredRecord<Plan> {
+  const current = store.getRecord<Plan>(PLAN_KIND, plan.date);
+  return store.readModifyWrite<Plan>(PLAN_KIND, plan.date, current?.version, () => plan);
+}
+
+// ============================================================================
+// Ritual run markers (Task 10 / Story 1.10) — typed surface on `records`
+// ============================================================================
+
+/**
+ * The fixed `records.kind` partition each ritual's "when did I last run"
+ * marker is stored under, keyed by the ritual's own id (e.g. `"morning"`).
+ * This is what makes Story 1.10's "the Morning Ritual has already run once
+ * today -> no second Plan-generation notification is sent" hold across
+ * separate one-shot `ritual-cli.ts` processes: a cron trigger has no memory
+ * of an earlier trigger, so the marker on disk is the only thing that can
+ * carry that fact.
+ *
+ * Deliberately ONE singleton row per ritual (holding the date it last ran)
+ * rather than one row per ritual-per-day: the only question ever asked of it
+ * is "did this ritual already run *today*", and a per-day key would
+ * accumulate an unbounded row per calendar day with nothing ever reading the
+ * old ones. Epic 3's night rituals (Tasks 19/20) and Epic 5's self-check
+ * (Task 24) reuse this same shape with their own ritual ids.
+ */
+const RITUAL_RUN_KIND = "ritual-run";
+
+/** The marker one ritual writes after a successful run. */
+export interface RitualRun {
+  /** The local calendar date the ritual last completed a run for. */
+  readonly date: IsoDate;
+  readonly ranAt: IsoDateTime;
+  /** The `Plan.id` this run produced, when the ritual produces one. */
+  readonly planId?: string;
+}
+
+/** Reads `ritualId`'s last-run marker, or `undefined` if it has never completed a run. */
+export function getRitualRun(store: MemoryStore, ritualId: string): StoredRecord<RitualRun> | undefined {
+  return store.getRecord<RitualRun>(RITUAL_RUN_KIND, ritualId);
+}
+
+/**
+ * Records that `ritualId` completed a run — "put" semantics with the same
+ * internal version read (and so the same AD-10 conflict detection) every
+ * other typed writer in this file uses.
+ */
+export function putRitualRun(store: MemoryStore, ritualId: string, run: RitualRun): StoredRecord<RitualRun> {
+  const current = store.getRecord<RitualRun>(RITUAL_RUN_KIND, ritualId);
+  return store.readModifyWrite<RitualRun>(RITUAL_RUN_KIND, ritualId, current?.version, () => run);
 }

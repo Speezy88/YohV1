@@ -32,25 +32,34 @@
  * (`mergeStoredOverrides`) before being handed to the gate again, so an
  * answered field actually makes the Task eligible to produce a
  * `CompleteTask` on the next gate run, not just clears the prompt. The
- * override-merge step lives here (`shell/`), not inside
- * `data-completeness-gate.ts`, per AD-2 — the gate stays pure and must not
- * read `memory-store.ts` itself.
+ * override-merge step lives outside `data-completeness-gate.ts` per AD-2 —
+ * the gate stays pure and must not read `memory-store.ts` itself.
+ *
+ * Task 10 update: the merge/gate/sync trio and DESIGN.md's ANSI color
+ * tokens now live in `rituals/morning-ritual.ts` (the `rituals/*.ts` home
+ * the note below always pointed at), and are imported/re-exported here — see
+ * the "Re-exported gate wiring" block below. Nothing about this file's
+ * public surface or behavior changed with that move.
  */
 import { createInterface } from "node:readline";
 import {
   clearInteractionRequest,
   createMemoryStore,
   getOpenInteractionRequest,
-  getTaskFieldOverride,
   listOpenInteractionRequests,
   mergeTaskFieldOverride,
-  putOpenInteractionRequest,
   putTimeBudget,
   type MemoryStore,
   type StoredRecord,
 } from "../adapters/memory-store.ts";
-import { checkDataCompleteness, type MissingFieldReport } from "../core/data-completeness-gate.ts";
+import type { MissingFieldReport } from "../core/data-completeness-gate.ts";
 import { shapeDeclaredTimeBudget } from "../core/time-budget.ts";
+import {
+  ACCENT,
+  DATA_COMPLETENESS_REQUEST_ID,
+  PLANNING_FIELD_LABELS,
+  RESET,
+} from "../rituals/morning-ritual.ts";
 import type {
   InteractionRequest,
   IsoDate,
@@ -63,135 +72,35 @@ import type {
 } from "../types/domain.ts";
 
 // ============================================================================
-// Rendering constants (UX-DR1, UX-DR5, DESIGN.md's `colors.accent: '#5FAFFF'`)
-// ============================================================================
-
-/** 24-bit ANSI truecolor escape for DESIGN.md's `colors.accent` (#5FAFFF) — the "accent-colored prompt line" Story 1.5's acceptance criteria and UX-DR5 require. */
-const ACCENT = "\x1b[38;2;95;175;255m";
-const RESET = "\x1b[0m";
-
-/** Human-readable labels for `PlanningFieldNames`, used only in prompt text — the gate itself (`core/data-completeness-gate.ts`) stays presentation-agnostic per its Implementer note. */
-const PLANNING_FIELD_LABELS: Record<PlanningFieldNames, string> = {
-  estimatedDurationMinutes: "Estimated Duration",
-  area: "Area",
-  dueDate: "Due Date",
-  status: "Status",
-  energy: "Energy",
-};
-
-// ============================================================================
-// buildMissingFieldsPromptText — pure prompt-text formatting
+// Re-exported gate wiring and color tokens (moved to `rituals/morning-ritual.ts`)
 // ============================================================================
 
 /**
- * Turns the gate's `MissingFieldReport[]` into the single combined prompt
- * text UX-DR10 requires: "one prompt may cover multiple missing fields
- * across multiple Tasks if needed" — never a bulk "clean up your whole
- * database" request, and never one prompt per Task. Pure/no I/O; the caller
- * (`surfaceOpenInteractionRequests`, below) applies the accent-color
- * wrapping when actually printing it.
- */
-export function buildMissingFieldsPromptText(incomplete: readonly MissingFieldReport[]): string {
-  const subject = incomplete.length === 1 ? "this Task" : "these Tasks";
-  const lines = incomplete.map((report) => {
-    const fields = report.missingFields.map((field) => PLANNING_FIELD_LABELS[field]).join(", ");
-    return `  - "${report.taskTitle}": ${fields}`;
-  });
-  return [`I need a bit more before I can plan around ${subject}:`, ...lines].join("\n");
-}
-
-// ============================================================================
-// TaskFieldOverride merging — the answer-application half of the cycle
-// ============================================================================
-
-/**
- * Merges a `TaskFieldOverride` onto `task`: every field the override sets
- * wins; every field it leaves unset keeps `task`'s own value (which may
- * itself still be `undefined`, if Spencer hasn't answered that one yet).
- * Pure — no I/O — but lives here rather than in `core/data-completeness-gate.ts`
- * per AD-2/the fix's own direction: the gate must not read `memory-store.ts`,
- * so it cannot know about overrides itself. The result is still a plain
- * `Task`, never a `CompleteTask` — AD-11 holds: only
- * `checkDataCompleteness` may produce a `CompleteTask`, and it's still the
- * next call to it (in `syncDataCompletenessInteractionRequest`, below) that
- * does so once every field is present, merged or otherwise.
- */
-export function applyTaskFieldOverride(task: Task, override: TaskFieldOverride | undefined): Task {
-  if (!override) return task;
-  // `override`'s fields are typed as present-or-absent (not
-  // present-with-possible-undefined) under `exactOptionalPropertyTypes`, so
-  // spreading it after `task` only ever overwrites a field with a real
-  // value, never with an explicit `undefined` — the cast documents that
-  // runtime guarantee to the type checker, mirroring
-  // `data-completeness-gate.ts`'s own `toCompleteTask` cast.
-  return { ...task, ...override } as Task;
-}
-
-/**
- * Merges each Task's own stored `TaskFieldOverride` (if any) from
- * `memory-store.ts` onto it, returning the merged Task list — the
- * "caller-side merge step" the Task 5 fix calls for, applied before handing
- * Tasks to the gate. A Task with no stored override is returned unchanged.
- */
-export function mergeStoredOverrides(store: MemoryStore, tasks: readonly Task[]): Task[] {
-  return tasks.map((task) => applyTaskFieldOverride(task, getTaskFieldOverride(store, task.id)?.data));
-}
-
-// ============================================================================
-// syncDataCompletenessInteractionRequest — thin gate -> memory-store wiring
-// ============================================================================
-
-/** The fixed, singleton `id` the Data-Completeness Gate's open interaction request is stored under (so multiple incomplete Tasks collapse into one request, per UX-DR10, rather than one row per Task). */
-export const DATA_COMPLETENESS_REQUEST_ID = "data-completeness";
-
-/**
- * Merges any stored `TaskFieldOverride`s onto `tasks` (so a
- * previously-answered field actually counts), then runs the pure
- * Data-Completeness Gate over the result, then persists or clears the
- * single combined `"data-completeness"` interaction request in
- * `memory-store.ts` to match — the wiring the gate itself is forbidden from
- * doing (AD-2/AD-11: the gate must stay pure). This is a thin orchestration
- * function living in `shell/` per the Task 5 brief's Implementer note (a
- * `rituals/*.ts` file would be the more natural home once one exists for
- * this concern, but none is owned by this task).
+ * `buildMissingFieldsPromptText`, `applyTaskFieldOverride`,
+ * `mergeStoredOverrides`, `syncDataCompletenessInteractionRequest` and
+ * `DATA_COMPLETENESS_REQUEST_ID` were authored here by Task 5, whose own
+ * note above records why: "a `rituals/*.ts` file would be the more natural
+ * home once one exists for this concern, but none is owned by this task."
+ * Task 10 created that file, and the Morning Ritual needs the identical
+ * merge-then-gate-then-sync sequence — duplicating a stateful sync that
+ * writes the same singleton `"data-completeness"` request from two places
+ * would let the two drift apart. They therefore live in
+ * `rituals/morning-ritual.ts` now and are re-exported here unchanged, so
+ * this file's public surface and behavior are exactly what they were
+ * (AD-1 permits `shell -> rituals`, never the reverse).
  *
- * - Every (merged) Task complete, no request currently open: no-op.
- * - Every (merged) Task complete, a request WAS open (Spencer answered the
- *   missing field(s), the override was stored, and the gate re-ran with the
- *   merged Task): the request is cleared — Story 1.5's "the interaction
- *   request is cleared" criterion.
- * - Any (merged) Task still incomplete: the request is opened (or replaced,
- *   if one is already open with stale content) naming exactly the missing
- *   field(s) on exactly the Tasks that have them.
+ * The `ACCENT`/`RESET` ANSI constants moved for the same reason: Task 5 kept
+ * a private copy because there was no shared home for DESIGN.md's color
+ * tokens; `rituals/morning-ritual.ts` is that home now (it also owns
+ * `MUTED`, which the Plan reasoning line needs), so the duplicate is gone.
  */
-export function syncDataCompletenessInteractionRequest(store: MemoryStore, tasks: readonly Task[]): void {
-  const merged = mergeStoredOverrides(store, tasks);
-  const result = checkDataCompleteness(merged);
-  if (!result.ok) {
-    // A malformed candidate set (currently: duplicate Task ids) — not a
-    // per-Task missing-field case this function can meaningfully turn into
-    // a prompt. Surfacing this as a thrown error matches AD-8's rule that
-    // only `core/*.ts` must never throw; this file is `shell/`.
-    throw new Error(`chat-cli: data-completeness-gate rejected the candidate Task set: ${result.error.message}`);
-  }
-
-  const existing = getOpenInteractionRequest(store, DATA_COMPLETENESS_REQUEST_ID);
-
-  if (result.value.incomplete.length === 0) {
-    if (existing) {
-      clearInteractionRequest(store, DATA_COMPLETENESS_REQUEST_ID, existing.version);
-    }
-    return;
-  }
-
-  const request: InteractionRequest<{ incomplete: readonly MissingFieldReport[] }> = {
-    requestKind: "data-completeness",
-    promptText: buildMissingFieldsPromptText(result.value.incomplete),
-    detail: { incomplete: result.value.incomplete },
-    createdAt: new Date().toISOString(),
-  };
-  putOpenInteractionRequest(store, DATA_COMPLETENESS_REQUEST_ID, request);
-}
+export {
+  applyTaskFieldOverride,
+  buildMissingFieldsPromptText,
+  DATA_COMPLETENESS_REQUEST_ID,
+  mergeStoredOverrides,
+  syncDataCompletenessInteractionRequest,
+} from "../rituals/morning-ritual.ts";
 
 // ============================================================================
 // REPL IO abstraction — injectable so tests never need a real TTY/stdin
