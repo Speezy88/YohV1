@@ -5,6 +5,7 @@
     "moduleResolution": "nodenext",
     "lib": ["ES2023"],
     "types": ["node"],
+    "erasableSyntaxOnly": true,
     "rootDir": ".",
     "outDir": "dist",
     "noEmit": true,
