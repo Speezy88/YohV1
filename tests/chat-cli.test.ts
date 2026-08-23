@@ -29,7 +29,7 @@ import {
   isPlanViewCommand,
   type ChatCliIo,
 } from "../src/shell/chat-cli.ts";
-import { renderPlan } from "../src/rituals/morning-ritual.ts";
+import { localIsoDate, renderPlan } from "../src/rituals/morning-ritual.ts";
 // The Data-Completeness merge/gate/sync trio is its own capability and lives
 // in its own file (Task 10 review fix); `chat-cli.ts` imports it rather than
 // owning or re-exporting it. Import paths only — the behavior these tests
@@ -47,6 +47,16 @@ import type { IsoDate, Plan, Task } from "../src/types/domain.ts";
 function tempStore(): MemoryStore {
   return createMemoryStore({ databasePath: ":memory:" });
 }
+
+/**
+ * `runChatCli`'s `timeZone` is a required parameter as of the Task 11 review
+ * fix (never defaulted to UTC — see `chat-cli.ts`'s `currentIsoDate` doc
+ * comment). Deliberately a REAL non-UTC zone (not `"UTC"`) for every test
+ * below that doesn't care about the exact date, precisely so that any test
+ * that silently reintroduces a UTC-date assumption would be exercised
+ * against a zone where UTC-date and local-date can genuinely disagree.
+ */
+const TEST_TIME_ZONE = "America/New_York";
 
 const NOW = "2026-08-22T12:00:00.000Z";
 
@@ -239,7 +249,7 @@ test("runChatCli surfaces an open interaction request before accepting any other
   // "unrelated command" if it were processed before the prompt.
   const io = makeScriptedIo(["Work", "show me today's plan"]);
 
-  await runChatCli(store, io);
+  await runChatCli(store, io, TEST_TIME_ZONE);
 
   const promptIndex = io.written.findIndex((line) => line.includes("Call dentist"));
   assert.ok(promptIndex !== -1, "expected the interaction request to be surfaced");
@@ -254,7 +264,7 @@ test("runChatCli proceeds straight to the ordinary loop when no interaction requ
   const store = tempStore();
   const io = makeScriptedIo(["hello"]);
 
-  await runChatCli(store, io);
+  await runChatCli(store, io, TEST_TIME_ZONE);
 
   assert.ok(!io.written.some((line) => line.includes("I need a bit more")));
   store.close();
@@ -559,7 +569,7 @@ test("runChatCli: typing a Time Budget command persists it and confirms back to 
   const store = tempStore();
   const io = makeScriptedIo(["time budget 6h"]);
 
-  await runChatCli(store, io);
+  await runChatCli(store, io, TEST_TIME_ZONE);
 
   const stored = getCurrentTimeBudget(store);
   assert.equal(stored?.data.totalMinutes, 360);
@@ -574,7 +584,7 @@ test("runChatCli: an invalid Time Budget amount is reported as an error, not sil
   const store = tempStore();
   const io = makeScriptedIo(["time budget 30 hours"]); // 1800 minutes > 24h cap
 
-  await runChatCli(store, io);
+  await runChatCli(store, io, TEST_TIME_ZONE);
 
   assert.equal(getCurrentTimeBudget(store), undefined);
   assert.ok(io.written.some((line) => /couldn't|invalid|cannot/i.test(line)));
@@ -593,7 +603,7 @@ test("runChatCli: routing unrelated input through the ordinary loop never calls 
   const before = getCurrentTimeBudget(store);
 
   const io = makeScriptedIo(["hello", "show me today's plan"]);
-  await runChatCli(store, io);
+  await runChatCli(store, io, TEST_TIME_ZONE);
 
   const after = getCurrentTimeBudget(store);
   assert.deepEqual(after?.data, before?.data);
@@ -605,7 +615,7 @@ test("runChatCli: falls through to the free-text placeholder for input that isn'
   const store = tempStore();
   const io = makeScriptedIo(["what's the weather"]);
 
-  await runChatCli(store, io);
+  await runChatCli(store, io, TEST_TIME_ZONE);
 
   assert.ok(io.written.some((line) => line.includes("free-text routing arrives in a later task")));
   store.close();
@@ -636,63 +646,77 @@ test("isPlanViewCommand returns false for unrelated input, including other recog
   }
 });
 
-/** Today's date the same way `chat-cli.ts`'s internal (unexported) `currentIsoDate` computes it, so a test-stored Plan is found by the real lookup regardless of what day the suite happens to run on. */
-function todayIsoDate(): IsoDate {
-  return new Date().toISOString().slice(0, 10) as IsoDate;
-}
+/**
+ * A fixed instant (Task 11 review fix) picked so that the UTC calendar date
+ * and Spencer's LOCAL calendar date in `TEST_TIME_ZONE`
+ * (`America/New_York`, UTC-4 in August under DST) genuinely disagree: as UTC
+ * time this is 2026-08-23 (02:00), but it is still 2026-08-22 (22:00 EDT) in
+ * New York. Using a fixed `now` — rather than the real wall clock — means
+ * the tests below exercise the local-vs-UTC mismatch deterministically,
+ * regardless of what day the suite happens to run on. They would have
+ * FAILED against the pre-fix `currentIsoDate()`, which computed
+ * `new Date().toISOString().slice(0, 10)` (the UTC date) unconditionally,
+ * ignoring both `timeZone` and any injected clock.
+ */
+const LATE_EVENING_UTC = new Date("2026-08-23T02:00:00.000Z");
+/** The LOCAL date `LATE_EVENING_UTC` falls on in `TEST_TIME_ZONE` — "2026-08-22", one day BEHIND its UTC date ("2026-08-23"). */
+const LOCAL_TODAY_FOR_LATE_EVENING = localIsoDate(LATE_EVENING_UTC, TEST_TIME_ZONE);
 
-function samplePlanForToday(): Plan {
-  const today = todayIsoDate();
+function samplePlanForDate(date: IsoDate): Plan {
   return {
-    id: `plan-${today}`,
-    date: today,
+    id: `plan-${date}`,
+    date,
     blocks: [
       {
         id: "work-1",
         kind: "work",
-        start: `${today}T13:00:00.000Z`,
-        end: `${today}T14:00:00.000Z`,
+        start: `${date}T13:00:00.000Z`,
+        end: `${date}T14:00:00.000Z`,
         label: "Draft the memo",
         taskId: "t1",
       },
       {
         id: "break-1",
         kind: "break",
-        start: `${today}T14:00:00.000Z`,
-        end: `${today}T14:15:00.000Z`,
+        start: `${date}T14:00:00.000Z`,
+        end: `${date}T14:15:00.000Z`,
         label: "Break",
       },
     ],
     reasoning: '"Draft the memo" leads today\'s Plan — due soonest.',
     version: 1,
-    createdAt: `${today}T00:00:00.000Z`,
-    updatedAt: `${today}T00:00:00.000Z`,
+    createdAt: `${date}T00:00:00.000Z`,
+    updatedAt: `${date}T00:00:00.000Z`,
   };
 }
 
-test("runChatCli: Given a Plan already exists for today, When Spencer asks \"what's my plan\", Then it displays the same ordered Plan and reasoning line via renderPlan (UX-DR18)", async () => {
+test("runChatCli: Given a Plan already exists for today, When Spencer asks \"what's my plan\", Then it displays the same ordered Plan and reasoning line via renderPlan (UX-DR18) — keyed by Spencer's LOCAL day, not the UTC one", async () => {
   const store = tempStore();
-  const plan = samplePlanForToday();
+  // Stored under the LOCAL date — what `runMorningRitual` actually keys a
+  // Plan by — which is one day BEHIND the UTC date at `LATE_EVENING_UTC`.
+  // This is exactly the "false negative" regime the Task 11 review flagged:
+  // a UTC-based lookup would compute "2026-08-23" here and find nothing.
+  const plan = samplePlanForDate(LOCAL_TODAY_FOR_LATE_EVENING);
   putPlan(store, plan);
 
   const io = makeScriptedIo(["what's my plan"]);
-  await runChatCli(store, io);
+  await runChatCli(store, io, TEST_TIME_ZONE, () => LATE_EVENING_UTC);
 
   const expected = renderPlan(plan);
   assert.ok(
     io.written.includes(expected),
-    `expected chat-cli to print exactly what renderPlan produces for today's stored Plan; got: ${JSON.stringify(io.written)}`,
+    `expected chat-cli to find and print today's LOCAL-dated Plan even though the UTC date has already rolled over; got: ${JSON.stringify(io.written)}`,
   );
   store.close();
 });
 
 test("runChatCli: on-demand Plan view also responds to other recognized phrasings ('show plan')", async () => {
   const store = tempStore();
-  const plan = samplePlanForToday();
+  const plan = samplePlanForDate(LOCAL_TODAY_FOR_LATE_EVENING);
   putPlan(store, plan);
 
   const io = makeScriptedIo(["show plan"]);
-  await runChatCli(store, io);
+  await runChatCli(store, io, TEST_TIME_ZONE, () => LATE_EVENING_UTC);
 
   assert.ok(io.written.includes(renderPlan(plan)));
   store.close();
@@ -702,7 +726,7 @@ test("runChatCli: Given no Plan has been generated yet for today, When Spencer a
   const store = tempStore();
   const io = makeScriptedIo(["show plan"]);
 
-  await runChatCli(store, io);
+  await runChatCli(store, io, TEST_TIME_ZONE, () => LATE_EVENING_UTC);
 
   assert.ok(
     io.written.some((line) => /no plan/i.test(line)),
@@ -710,5 +734,35 @@ test("runChatCli: Given no Plan has been generated yet for today, When Spencer a
   );
   // Not fabricating a rendered block list (which would look like "HH:MM-HH:MM  ...").
   assert.ok(!io.written.some((line) => /\d{2}:\d{2}-\d{2}:\d{2}/.test(line)));
+  store.close();
+});
+
+test("runChatCli: does NOT silently display a stale prior-day Plan when today's LOCAL Plan doesn't exist yet, even though a row happens to exist under the UTC date (Task 11 review fix — stale-plan false positive)", async () => {
+  const store = tempStore();
+  // A zone AHEAD of UTC, in the early local morning: UTC is still
+  // "yesterday" while the local calendar day has already rolled over — the
+  // exact regime the Task 11 review flagged as a false positive, where an
+  // old UTC-based lookup would find and silently display YESTERDAY's Plan.
+  const timeZone = "Asia/Tokyo";
+  const earlyMorningUtc = new Date("2026-08-22T16:00:00.000Z"); // 2026-08-23 01:00 JST
+  const utcDateOnly = "2026-08-22"; // what the OLD UTC-based lookup would have used
+  const localToday = localIsoDate(earlyMorningUtc, timeZone); // "2026-08-23" — the correct key
+
+  assert.notEqual(utcDateOnly, localToday, "test setup sanity: the two dates must genuinely differ");
+  // Only yesterday's (UTC-dated) row exists — nothing has been generated yet
+  // for the real local "today".
+  putPlan(store, samplePlanForDate(utcDateOnly));
+
+  const io = makeScriptedIo(["show plan"]);
+  await runChatCli(store, io, timeZone, () => earlyMorningUtc);
+
+  assert.ok(
+    io.written.some((line) => /no plan/i.test(line)),
+    "expected chat-cli to say no Plan exists for today rather than silently showing yesterday's stale stored Plan",
+  );
+  assert.ok(
+    !io.written.some((line) => /\d{2}:\d{2}-\d{2}:\d{2}/.test(line)),
+    "must not have printed the stale prior-day Plan's rendered block list",
+  );
   store.close();
 });

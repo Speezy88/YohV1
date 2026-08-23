@@ -65,7 +65,7 @@ import {
 import type { MissingFieldReport } from "../core/data-completeness-gate.ts";
 import { shapeDeclaredTimeBudget } from "../core/time-budget.ts";
 import { DATA_COMPLETENESS_REQUEST_ID, PLANNING_FIELD_LABELS } from "../rituals/data-completeness.ts";
-import { ACCENT, renderPlan, RESET } from "../rituals/morning-ritual.ts";
+import { ACCENT, localIsoDate, renderPlan, RESET } from "../rituals/morning-ritual.ts";
 import type {
   InteractionRequest,
   IsoDate,
@@ -334,9 +334,23 @@ export function parseTimeBudgetCommand(line: string): { readonly totalMinutes: n
   return { totalMinutes };
 }
 
-/** Today's calendar date, ISO-8601 (`YYYY-MM-DD`), per the Consistency Conventions — Spencer's declaration is always "for today." */
-function currentIsoDate(): IsoDate {
-  return new Date().toISOString().slice(0, 10);
+/**
+ * Today's calendar date, ISO-8601 (`YYYY-MM-DD`) — Spencer's own LOCAL
+ * calendar day in `timeZone`, never the UTC one (Task 11 review fix: this
+ * previously used `new Date().toISOString().slice(0, 10)`, the UTC date,
+ * which could name the wrong day for any Spencer session that falls between
+ * his local midnight and UTC midnight — e.g. it silently reported "no Plan
+ * yet" for a Plan that was in fact stored under today's LOCAL date, and
+ * could just as easily have shown a stale prior-day Plan as if it were
+ * today's). Delegates to `rituals/morning-ritual.ts`'s `localIsoDate`, the
+ * exact same local-day computation `runMorningRitual` uses to key the Plan
+ * this function looks up (`memory-store.ts`'s `PLAN_KIND` rows are keyed by
+ * that same local date) — see that function's own doc comment for why "today"
+ * must be the local day. `now` is injectable purely so tests can pin a
+ * specific instant instead of the real system clock.
+ */
+function currentIsoDate(timeZone: string, now: () => Date = () => new Date()): IsoDate {
+  return localIsoDate(now(), timeZone);
 }
 
 /**
@@ -417,15 +431,29 @@ function showPlanCommand(store: MemoryStore, io: ChatCliIo, today: IsoDate): voi
 }
 
 /**
- * The minimal REPL loop (Task 5, extended by Task 6): on start, and before
- * processing every subsequent line of input, surfaces any open interaction
- * request(s) first (AD-5). Then checks whether the line is a Time Budget
- * declare/change command (`parseTimeBudgetCommand`) and, if so, validates
- * and persists it (`declareTimeBudget`) rather than falling through to the
- * free-text placeholder. Real free-text NLU/LLM routing for everything else
- * (what an "unrelated command" actually does) is Task 13.
+ * The minimal REPL loop (Task 5, extended by Task 6, Task 11): on start, and
+ * before processing every subsequent line of input, surfaces any open
+ * interaction request(s) first (AD-5). Then checks whether the line is a
+ * Time Budget declare/change command (`parseTimeBudgetCommand`) and, if so,
+ * validates and persists it (`declareTimeBudget`); then whether it's an
+ * on-demand Plan-view request (`isPlanViewCommand`); otherwise falls through
+ * to the free-text placeholder. Real free-text NLU/LLM routing for
+ * everything else (what an "unrelated command" actually does) is Task 13.
+ *
+ * `timeZone` is REQUIRED — deliberately never defaulted to UTC, matching
+ * `calendar-adapter.ts`/`ritual-cli.ts`'s own convention: "today" must be
+ * Spencer's own local calendar day for `showPlanCommand`'s Plan lookup to
+ * find the exact same date `runMorningRitual` stored it under (Task 11
+ * review fix — see `currentIsoDate`'s doc comment). `now` is injectable
+ * purely so tests can pin a specific instant instead of the real system
+ * clock; it defaults to the real clock for the real entrypoint.
  */
-export async function runChatCli(store: MemoryStore, io: ChatCliIo): Promise<void> {
+export async function runChatCli(
+  store: MemoryStore,
+  io: ChatCliIo,
+  timeZone: string,
+  now: () => Date = () => new Date(),
+): Promise<void> {
   await surfaceOpenInteractionRequests(store, io);
 
   for (;;) {
@@ -441,7 +469,7 @@ export async function runChatCli(store: MemoryStore, io: ChatCliIo): Promise<voi
 
     const timeBudgetCommand = parseTimeBudgetCommand(line);
     if (timeBudgetCommand) {
-      const result = declareTimeBudget(store, timeBudgetCommand.totalMinutes, currentIsoDate());
+      const result = declareTimeBudget(store, timeBudgetCommand.totalMinutes, currentIsoDate(timeZone, now));
       if (result.ok) {
         io.writeLine(`Got it — today's Time Budget is set to ${formatMinutesForDisplay(result.value.data.totalMinutes)}.`);
       } else {
@@ -451,7 +479,7 @@ export async function runChatCli(store: MemoryStore, io: ChatCliIo): Promise<voi
     }
 
     if (isPlanViewCommand(line)) {
-      showPlanCommand(store, io, currentIsoDate());
+      showPlanCommand(store, io, currentIsoDate(timeZone, now));
       continue;
     }
 
@@ -486,13 +514,30 @@ function createNodeIo(): ChatCliIo {
   };
 }
 
-/** Real entrypoint: wires a real `MemoryStore` (per `MEMORY_DB_PATH`, defaulting to `./data/yoh-memory.db` — same default `.env.example` documents) to real stdin/stdout, and runs the REPL loop. Accepts an injectable `env` map (mirroring `token-store.ts`'s `loadGoogleOAuthConfigFromEnv`) so tests never need to mutate real `process.env`. */
+/**
+ * Real entrypoint: wires a real `MemoryStore` (per `MEMORY_DB_PATH`,
+ * defaulting to `./data/yoh-memory.db` — same default `.env.example`
+ * documents) to real stdin/stdout, and runs the REPL loop. Accepts an
+ * injectable `env` map (mirroring `token-store.ts`'s
+ * `loadGoogleOAuthConfigFromEnv`) so tests never need to mutate real
+ * `process.env`.
+ *
+ * `YOH_TIMEZONE` is read here the same way `ritual-cli.ts`'s
+ * `createMorningRitualDeps` reads it — required, throwing rather than
+ * silently defaulting to UTC, since `runChatCli`'s Plan lookup must key on
+ * Spencer's local calendar day to find what `runMorningRitual` stored under
+ * that same local day (Task 11 review fix).
+ */
 export async function main(env: Readonly<Record<string, string | undefined>> = process.env): Promise<void> {
   const databasePath = env["MEMORY_DB_PATH"] || "./data/yoh-memory.db";
+  const timeZone = env["YOH_TIMEZONE"];
+  if (!timeZone) {
+    throw new Error("chat-cli: missing required environment variable YOH_TIMEZONE (e.g. America/New_York)");
+  }
   const store = createMemoryStore({ databasePath });
   const io = createNodeIo();
   try {
-    await runChatCli(store, io);
+    await runChatCli(store, io, timeZone);
   } finally {
     store.close();
   }
