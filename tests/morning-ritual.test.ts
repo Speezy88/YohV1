@@ -37,7 +37,9 @@ import {
 } from "../src/rituals/morning-ritual.ts";
 import { DATA_COMPLETENESS_REQUEST_ID } from "../src/rituals/data-completeness.ts";
 import {
+  applyNightCloseOutConfirmation,
   buildNightCloseOutPromptText,
+  clearNightCloseOutRequestIfOpen,
   NIGHT_CLOSE_OUT_REQUEST_ID,
   NIGHT_ESCALATE_RITUAL_ID,
   runNightEscalateRitual,
@@ -826,4 +828,48 @@ test("end-to-end: a capped-and-unanswered night is recorded as unchecked the MOM
   assert.ok(thirdResult.ok && thirdResult.value.status === "delivered");
   assert.equal(thirdResult.value.uncheckedNight, undefined, "the flag must not repeat on a later Morning Plan");
   assert.doesNotMatch(thirdResult.value.rendered, /wasn't closed out/i);
+});
+
+test("end-to-end: a night Spencer answers AFTER escalation does NOT get falsely flagged on the next Morning Plan (Task 21, second post-review fix / AC3)", async () => {
+  const store = tempStore();
+
+  // --- Night N (2026-08-21): both close-out attempts spent, still unanswered
+  //     at the time night-escalate runs — recorded as unchecked.
+  putOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID, {
+    requestKind: "night-close-out",
+    promptText: buildNightCloseOutPromptText([{ taskId: "t1", taskTitle: "Draft the memo" }]),
+    detail: { date: PRIOR_NIGHT, tasks: [{ taskId: "t1", taskTitle: "Draft the memo" }] },
+    createdAt: "2026-08-21T20:00:00.000Z",
+  });
+  const escalated = await runNightEscalateRitual({
+    store,
+    sendEscalationEmail: async () => {},
+    now: () => new Date(`${PRIOR_NIGHT}T23:00:00.000Z`),
+    timeZone: "UTC",
+  });
+  assert.ok(escalated.ok && escalated.value.status === "escalated");
+  assert.ok(getUncheckedDay(store, PRIOR_NIGHT), "sanity: recorded as unchecked after the cap was reached");
+
+  // --- Spencer answers — the escalation feature's actual success path: the
+  //     SECOND attempt reaching him and working, later that same night (or
+  //     any time before the request is overwritten by a later night).
+  const applied = await applyNightCloseOutConfirmation(
+    { store, setTaskStatus: async () => ({ ok: true, value: undefined }) },
+    "t1",
+    "completed",
+    PRIOR_NIGHT,
+  );
+  assert.ok(applied.ok, `expected the answer to apply successfully, got ${JSON.stringify(applied)}`);
+  clearNightCloseOutRequestIfOpen(store); // the same call chat-cli.ts makes once every named Task is answered
+  assert.equal(getUncheckedDay(store, PRIOR_NIGHT), undefined, "sanity: the UncheckedDay record is resolved immediately on answer");
+
+  // --- The next Morning Plan (2026-08-22) must NOT falsely flag this night —
+  //     it was genuinely closed out, however late.
+  const h = harness({ store, tasks: [makeTask("t1", "Draft the memo", { estimatedDurationMinutes: 60 })] });
+  const result = await runMorningRitual(h.deps);
+  assert.ok(result.ok, `expected success, got ${JSON.stringify(result)}`);
+  assert.ok(result.value.status === "delivered");
+  assert.equal(result.value.uncheckedNight, undefined, "a properly closed-out night must never be flagged as unchecked (AC3)");
+  assert.doesNotMatch(result.value.rendered, /wasn't closed out/i);
+  assert.doesNotMatch(h.notifications[0]!.message, /wasn't closed out/i);
 });

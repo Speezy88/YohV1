@@ -35,6 +35,7 @@ import {
   putUncheckedDay,
   listUncheckedDays,
   markUncheckedDayShown,
+  clearUncheckedDay,
   type InteractionRequest,
 } from "../src/adapters/memory-store.ts";
 import type { TimeBudget } from "../src/types/domain.ts";
@@ -714,5 +715,38 @@ test("markUncheckedDayShown stamps shownAt on an existing record without disturb
 test("markUncheckedDayShown throws when no UncheckedDay record exists for that date — a caller bug or a genuine concurrent delete, either of which should surface loudly", () => {
   const store = createMemoryStore({ databasePath: tempDbPath() });
   assert.throws(() => markUncheckedDayShown(store, "2026-08-21", "2026-08-22T13:00:00.000Z"));
+  store.close();
+});
+
+test("clearUncheckedDay removes an existing UncheckedDay record — it reads back exactly as if that night was never unchecked", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  putUncheckedDay(store, {
+    date: "2026-08-21",
+    rolledForwardTasks: [{ taskId: "t1", taskTitle: "Draft the memo" }],
+    recordedAt: "2026-08-22T01:00:00.000Z",
+  });
+  assert.ok(getUncheckedDay(store, "2026-08-21"));
+
+  clearUncheckedDay(store, "2026-08-21");
+  assert.equal(getUncheckedDay(store, "2026-08-21"), undefined);
+  assert.equal(listUncheckedDays(store).length, 0);
+  store.close();
+});
+
+test("clearUncheckedDay is a harmless no-op when no record exists for that date", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  assert.doesNotThrow(() => clearUncheckedDay(store, "2026-08-21"));
+  assert.equal(getUncheckedDay(store, "2026-08-21"), undefined);
+  store.close();
+});
+
+test("clearUncheckedDay only removes the record for its OWN date — a different date's row is untouched", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  putUncheckedDay(store, { date: "2026-08-19", rolledForwardTasks: [], recordedAt: "2026-08-20T13:00:00.000Z" });
+  putUncheckedDay(store, { date: "2026-08-21", rolledForwardTasks: [], recordedAt: "2026-08-22T13:00:00.000Z" });
+
+  clearUncheckedDay(store, "2026-08-21");
+  assert.equal(getUncheckedDay(store, "2026-08-21"), undefined);
+  assert.ok(getUncheckedDay(store, "2026-08-19"), "the other date's record must survive untouched");
   store.close();
 });

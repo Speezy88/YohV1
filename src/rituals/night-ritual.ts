@@ -152,10 +152,24 @@
  * reasoning for this story's second genuine ambiguity too — WHAT
  * "mandatory Blocker(s)" means concretely in this codebase's actual data
  * model (there is no persisted `Blocker` entity anywhere).
+ *
+ * **Second round of post-review fixes.** Moving detection into
+ * `runNightEscalateRitual` introduced two regressions of its own, both now
+ * fixed and both documented at their own call sites: (1) the still-open
+ * request `night-escalate` finds is not necessarily TONIGHT's own — a
+ * planless night leaves an earlier night's request open and stale, so the
+ * write is now gated on `detail?.date === today` (see that function's own
+ * "Guarding against a STALE open request" section); (2) a genuinely
+ * answered night's `UncheckedDay` row was never being resolved, so a
+ * properly-closed-out night (even one that WAS escalated first) could still
+ * be falsely flagged later — `clearNightCloseOutRequestIfOpen` (below) now
+ * also resolves the matching `UncheckedDay` record via
+ * `memory-store.ts`'s new `clearUncheckedDay`.
  */
 import {
   clearInteractionRequest,
   clearSlip,
+  clearUncheckedDay,
   getOpenInteractionRequest,
   getPlan,
   getRitualRun,
@@ -492,11 +506,30 @@ export async function applyNightCloseOutConfirmation(
  * the loop ran, so a genuine concurrent write to it (AD-10) is still caught
  * as `ConflictError` rather than silently dropped — the same reasoning that
  * function's own doc comment gives.
+ *
+ * **Also resolves a matching `UncheckedDay` record (Task 21, second
+ * post-review fix).** If the request being cleared here was ever recorded
+ * as unchecked (`runNightEscalateRitual`'s own `putUncheckedDay` call, for
+ * the SAME date this request's own `detail.date` names — see that
+ * function's doc comment), this genuine answer means the night is no
+ * longer unchecked: Spencer answered every named Task, however late. Left
+ * unresolved, the next Morning Ritual would falsely flag "last night wasn't
+ * closed out" naming a Task Spencer just confirmed — exactly the scenario
+ * this story's own AC3 forbids ("a day that was actually closed out ... is
+ * never silently treated as equivalent to an unchecked day"). Reads the
+ * request's `detail.date` BEFORE clearing the request itself (both come
+ * from the same already-read `current` record, so this costs no extra
+ * read), then calls `clearUncheckedDay` for that date — a harmless no-op if
+ * that night was never escalated/recorded in the first place.
  */
 export function clearNightCloseOutRequestIfOpen(store: MemoryStore): void {
   const current = getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID);
-  if (current) {
-    clearInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID, current.version);
+  if (!current) return;
+
+  const detail = current.data.detail as NightCloseOutRequestDetail | undefined;
+  clearInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID, current.version);
+  if (detail?.date !== undefined) {
+    clearUncheckedDay(store, detail.date);
   }
 }
 
@@ -690,6 +723,27 @@ export type NightEscalateOutcome =
  * all) both correctly write NOTHING here — neither describes a night that
  * actually went unchecked.
  *
+ * **Guarding against a STALE open request (Task 21, first post-review
+ * fix).** `open` being truthy does NOT by itself mean the still-open
+ * request describes TONIGHT — `night-prompt` only opens a NEW request when
+ * it actually finds a Plan to confirm (`"no-plan-today"` is a deliberate
+ * no-op, see that function's own doc comment), so a planless night leaves
+ * an EARLIER night's request sitting open, unrelated to tonight. Recording
+ * it here as tonight's own `UncheckedDay` would misattribute an old,
+ * already-recorded (or already-answered) night to a night that never even
+ * had a close-out — and left unguarded, this compounds: every further
+ * planless night would record ANOTHER spurious row against the same stale
+ * request, a growing, repeating flag that is exactly the "endless nagging"
+ * this whole feature exists to prevent (UX-DR14: shown once). The guard is
+ * simple: `putUncheckedDay` is only called when `detail?.date === today` —
+ * the still-open request must genuinely describe THIS night. When it
+ * doesn't, nothing is recorded (deliberately not keyed by `detail.date`
+ * either — that would silently re-`put` whatever row already exists for
+ * that EARLIER date, clobbering a `shownAt` stamp if one was already set;
+ * simply skipping the write is the safe choice). The escalation EMAIL
+ * itself is still sent either way (unchanged, pre-existing behavior,
+ * outside this fix's scope) — only the unchecked-day RECORD is gated.
+ *
  * **What "mandatory Blocker(s)" means, concretely (Story 3.3's second
  * genuine source-text ambiguity).** There is no persisted `Blocker` entity
  * anywhere in this codebase — FR-10's Blocker handling (Task 16) is a
@@ -786,20 +840,34 @@ export async function runNightEscalateRitual(
   // This IS the "cap reached" moment: see this function's own doc comment's
   // "Recording the unchecked day" section for why this happens HERE (not
   // inferred later by morning-ritual.ts) and why it happens BEFORE the
-  // ran-today marker below.
-  try {
-    putUncheckedDay(deps.store, {
-      date: today,
-      rolledForwardTasks: tasks.map((t) => ({ taskId: t.taskId, taskTitle: t.taskTitle })),
-      recordedAt: nowIso,
+  // ran-today marker below. ONLY when the still-open request genuinely
+  // describes TONIGHT (`detail?.date === today`) — see this function's own
+  // "Guarding against a STALE open request" doc comment section (Task 21,
+  // first post-review fix): a stale request left open by a planless night
+  // must not be misattributed to tonight, which never had a close-out at
+  // all, and must not spuriously re-put whatever's already recorded for
+  // the request's own (earlier) date either.
+  if (detail?.date === today) {
+    try {
+      putUncheckedDay(deps.store, {
+        date: today,
+        rolledForwardTasks: tasks.map((t) => ({ taskId: t.taskId, taskTitle: t.taskTitle })),
+        recordedAt: nowIso,
+      });
+    } catch (err) {
+      log({ level: "error", event: "night-ritual.escalate-record-unchecked-failed", detail: describeError(err) });
+      return failure(
+        "conflict",
+        `night-ritual: the escalation email was sent but tonight could not be recorded as unchecked — ${describeError(err)}`,
+        err,
+      );
+    }
+  } else {
+    log({
+      level: "info",
+      event: "night-ritual.escalate-stale-request-not-recorded",
+      detail: { today, requestDate: detail?.date },
     });
-  } catch (err) {
-    log({ level: "error", event: "night-ritual.escalate-record-unchecked-failed", detail: describeError(err) });
-    return failure(
-      "conflict",
-      `night-ritual: the escalation email was sent but tonight could not be recorded as unchecked — ${describeError(err)}`,
-      err,
-    );
   }
 
   // --- Mark the cap spent, AFTER a confirmed send AND a confirmed record ----

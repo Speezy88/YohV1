@@ -24,6 +24,7 @@ import {
   getRitualRun,
   getSlipHistory,
   getUncheckedDay,
+  listUncheckedDays,
   putOpenInteractionRequest,
   putPlan,
   putRitualRun,
@@ -737,4 +738,133 @@ test("Spencer answering the original close-out request, after the night was alre
 
   clearNightCloseOutRequestIfOpen(store);
   assert.equal(getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID), undefined, "the request clears normally once answered");
+  assert.equal(
+    getUncheckedDay(store, TODAY),
+    undefined,
+    "the matching UncheckedDay record must ALSO be resolved once the request is genuinely cleared (Task 21, second post-review fix) — a night that's since been closed out must stop reading as unchecked",
+  );
+});
+
+// ============================================================================
+// Task 21, second post-review fix: resolving an UncheckedDay record once
+// its night is genuinely answered (AC3 — a closed-out night must never be
+// treated as equivalent to an unchecked one, even after it WAS escalated)
+// ============================================================================
+
+test("clearNightCloseOutRequestIfOpen resolves the matching UncheckedDay record for the request's OWN date — even if Spencer is answering a DIFFERENT (earlier) night than 'today'", async () => {
+  const store = tempStore();
+  const EARLIER_NIGHT = "2026-08-19";
+
+  // The night was escalated and recorded days ago.
+  putOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID, {
+    requestKind: "night-close-out",
+    promptText: buildNightCloseOutPromptText([{ taskId: "t1", taskTitle: "Draft the memo" }]),
+    detail: { date: EARLIER_NIGHT, tasks: [{ taskId: "t1", taskTitle: "Draft the memo" }] },
+    createdAt: "2026-08-19T20:00:00.000Z",
+  });
+  const escalated = await runNightEscalateRitual(
+    escalateDeps(store, { now: () => new Date(`${EARLIER_NIGHT}T23:00:00.000Z`) }),
+  );
+  assert.ok(escalated.ok && escalated.value.status === "escalated");
+  assert.ok(getUncheckedDay(store, EARLIER_NIGHT), "sanity: recorded as unchecked");
+
+  // Spencer finally answers, days later — clearNightCloseOutRequestIfOpen
+  // must resolve the EARLIER_NIGHT record, not "today"'s (there is no
+  // "today" record at all in this test).
+  await applyNightCloseOutConfirmation(
+    { store, setTaskStatus: async () => ({ ok: true, value: undefined }) },
+    "t1",
+    "completed",
+    EARLIER_NIGHT,
+  );
+  clearNightCloseOutRequestIfOpen(store);
+
+  assert.equal(getUncheckedDay(store, EARLIER_NIGHT), undefined, "the correct (earlier) night's UncheckedDay record must be resolved");
+});
+
+test("clearNightCloseOutRequestIfOpen is a harmless no-op for the UncheckedDay partition when the night was never escalated/recorded in the first place", async () => {
+  const store = tempStore();
+  // Spencer answers promptly, well before any escalation — no UncheckedDay
+  // row ever existed for TODAY.
+  openCloseOutRequest(store, [{ taskId: "t1", taskTitle: "Draft the memo" }]);
+  assert.equal(getUncheckedDay(store, TODAY), undefined, "sanity: never recorded");
+
+  await applyNightCloseOutConfirmation(
+    { store, setTaskStatus: async () => ({ ok: true, value: undefined }) },
+    "t1",
+    "completed",
+    TODAY,
+  );
+  // Must not throw, and must not fabricate a row.
+  assert.doesNotThrow(() => clearNightCloseOutRequestIfOpen(store));
+  assert.equal(getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID), undefined);
+  assert.equal(getUncheckedDay(store, TODAY), undefined);
+});
+
+// ============================================================================
+// Task 21, first post-review fix: guarding against a STALE open request —
+// a planless intervening night must not misattribute an earlier night's
+// still-open request to itself.
+// ============================================================================
+
+test("a stale request from an earlier night is NOT misattributed to a planless intervening night — no spurious duplicate UncheckedDay row", async () => {
+  const store = tempStore();
+  const NIGHT_N = "2026-08-21";
+  const PLANLESS_NIGHT = TODAY; // "2026-08-22" — never had its own close-out request at all
+
+  // Night N: both close-out attempts spent, still unanswered — recorded.
+  putOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID, {
+    requestKind: "night-close-out",
+    promptText: buildNightCloseOutPromptText([{ taskId: "t1", taskTitle: "Draft the memo" }]),
+    detail: { date: NIGHT_N, tasks: [{ taskId: "t1", taskTitle: "Draft the memo" }] },
+    createdAt: "2026-08-21T20:00:00.000Z",
+  });
+  const first = await runNightEscalateRitual(escalateDeps(store, { now: () => new Date(`${NIGHT_N}T23:00:00.000Z`) }));
+  assert.ok(first.ok && first.value.status === "escalated");
+  assert.ok(getUncheckedDay(store, NIGHT_N), "sanity: night N recorded as unchecked");
+
+  // Night N+1 (PLANLESS_NIGHT) never had a Plan, so night-prompt would have
+  // returned no-plan-today and opened no new request — night N's own
+  // request is STILL the open singleton, now stale. night-escalate for
+  // PLANLESS_NIGHT still finds `open` truthy (it's unaware of staleness by
+  // itself) and — pre-fix — would have recorded a SECOND, wrongly-dated row.
+  const { calls, send } = recordingEscalationEmail();
+  const second = await runNightEscalateRitual(
+    escalateDeps(store, { sendEscalationEmail: send, now: () => new Date(`${PLANLESS_NIGHT}T23:00:00.000Z`) }),
+  );
+  assert.ok(second.ok, `expected success, got ${JSON.stringify(second)}`);
+  assert.equal(second.value.status, "escalated", "the email is still sent — only the RECORD is gated, not the email");
+  assert.equal(calls.length, 1);
+
+  assert.equal(
+    getUncheckedDay(store, PLANLESS_NIGHT),
+    undefined,
+    "no spurious UncheckedDay row must be recorded for the planless night — the stale request doesn't describe it",
+  );
+  const allUnchecked = listUncheckedDays(store);
+  assert.equal(allUnchecked.length, 1, "still exactly one UncheckedDay row total — night N's own, untouched");
+  assert.equal(allUnchecked[0]?.data.date, NIGHT_N);
+});
+
+test("the stale-request guard does not repeat-record on EVERY further planless night either — still exactly one row after three more triggers", async () => {
+  const store = tempStore();
+  const NIGHT_N = "2026-08-21";
+
+  putOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID, {
+    requestKind: "night-close-out",
+    promptText: buildNightCloseOutPromptText([{ taskId: "t1", taskTitle: "Draft the memo" }]),
+    detail: { date: NIGHT_N, tasks: [{ taskId: "t1", taskTitle: "Draft the memo" }] },
+    createdAt: "2026-08-21T20:00:00.000Z",
+  });
+  await runNightEscalateRitual(escalateDeps(store, { now: () => new Date(`${NIGHT_N}T23:00:00.000Z`) }));
+  assert.equal(listUncheckedDays(store).length, 1);
+
+  for (const date of ["2026-08-22", "2026-08-23", "2026-08-24"]) {
+    const result = await runNightEscalateRitual(escalateDeps(store, { now: () => new Date(`${date}T23:00:00.000Z`) }));
+    assert.ok(result.ok && result.value.status === "escalated", `expected escalation on ${date}, got ${JSON.stringify(result)}`);
+  }
+
+  const all = listUncheckedDays(store);
+  assert.equal(all.length, 1, "three further planless nights must not add three more spurious rows");
+  assert.equal(all[0]?.data.date, NIGHT_N);
 });

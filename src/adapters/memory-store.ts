@@ -842,6 +842,33 @@ export function markUncheckedDayShown(store: MemoryStore, date: IsoDate, shownAt
 }
 
 /**
+ * Clears (removes) the `UncheckedDay` row for `date`, if one exists — a
+ * harmless no-op otherwise, exactly mirroring `clearSlip`'s own "read the
+ * current version internally, delete if present, no-op if not" shape (this
+ * file's established pattern for "resolve this record if it happens to
+ * exist" primitives). Added by Task 21's second post-review fix: when
+ * `rituals/night-ritual.ts`'s `clearNightCloseOutRequestIfOpen` clears a
+ * close-out request because Spencer genuinely answered every named Task
+ * (including, notably, after a night that was already recorded as
+ * unchecked — the escalation feature's actual success path), the matching
+ * `UncheckedDay` row for that same date must be resolved too. Deleting it
+ * outright (rather than, say, stamping some "resolved" field) is the
+ * simplest, cleanest choice: there is no reason to keep a durable
+ * "unchecked" record around for a night that has since been properly
+ * closed out — a re-read via `getUncheckedDay` afterward is indistinguishable
+ * from a night that was never unchecked at all, which is exactly correct
+ * per this story's AC3 ("a day that was actually closed out ... is never
+ * silently treated as equivalent to an unchecked day" — the reverse
+ * direction of that guarantee holds too: a day that's SINCE been closed out
+ * must stop reading as unchecked).
+ */
+export function clearUncheckedDay(store: MemoryStore, date: IsoDate): void {
+  const current = store.getRecord<UncheckedDay>(UNCHECKED_DAY_KIND, date);
+  if (!current) return; // Nothing to clear — this night was never recorded as unchecked.
+  store.deleteRecord(UNCHECKED_DAY_KIND, date, current.version);
+}
+
+/**
  * Lists every night ever recorded as unchecked, across every date — the
  * same "surface whatever's stored without already knowing each id" shape
  * `listSlipHistories`/`listOpenInteractionRequests` provide elsewhere in
