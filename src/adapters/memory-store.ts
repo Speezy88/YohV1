@@ -916,3 +916,230 @@ export function clearUncheckedDay(store: MemoryStore, date: IsoDate): void {
 export function listUncheckedDays(store: MemoryStore): StoredRecord<UncheckedDay>[] {
   return store.listRecordsByKind<UncheckedDay>(UNCHECKED_DAY_KIND);
 }
+
+// ============================================================================
+// Hot/cold memory boundary (Task 22 / Story 4.1, FR-15) — AD-10 assigns
+// "owns hot/cold memory" to this file; every prior task above already reads
+// and writes the way this section names. This task's job is mainly to make
+// that boundary explicit and add the one piece that genuinely didn't exist
+// yet: an on-demand cold-memory query that distills OLDER history into
+// human-readable pattern-statements.
+//
+// ----------------------------------------------------------------------------
+// What "hot" means, concretely
+// ----------------------------------------------------------------------------
+//
+// Every function above this section that a ritual calls during its ROUTINE
+// daily run — `getPlan(store, today)`, `getCurrentTimeBudget`,
+// `getRitualRun(store, ritualId)`, `getSlipHistory`/`listSlipHistories` (used
+// for today's ordering, not history), `getUncheckedDay`/`listUncheckedDays`
+// (used to find the next night to DISPLAY, not to summarize the past) — is
+// already "hot" by construction: each reads a SPECIFIC `(kind, id)` row (or,
+// for the two `list*` exceptions, scans a table whose size is bounded by
+// "how many Tasks/unchecked-nights currently need attention," not by total
+// history depth) via `getRecord`, never a date-range query over history.
+// Nothing needed to change for this to be true — see `readHotMemory` below,
+// which is this section's "small typed grouping" (per the brief) naming that
+// property for the three fields every ritual's normal flow actually reads to
+// decide what to run/show today: today's Plan, the current Time Budget, and
+// a ritual's own last-run marker(s).
+//
+// `HOT_MEMORY_WINDOW_DAYS` is intentionally NOT plumbed into any date filter
+// anywhere above — there is no hot-read code path that filters by date at
+// all (see `TIME_BUDGET_ID`'s own doc comment: the Time Budget row has no
+// expiry). It exists purely as documentation of the boundary's rough size
+// (how many days back a ritual's own routine concerns — "yesterday's slip,"
+// "this week's Time Budget" per the AC's own examples — actually span), and
+// as the natural floor `COLD_MEMORY_DEFAULT_LOOKBACK_DAYS` is defined
+// relative to below.
+//
+// ----------------------------------------------------------------------------
+// What "cold" means, concretely
+// ----------------------------------------------------------------------------
+//
+// `queryColdMemoryPatterns` below is the genuinely new piece: an explicit,
+// on-demand-only query (never called from `rituals/morning-ritual.ts`,
+// `rituals/night-ritual.ts`, or `rituals/mid-day-reflow.ts` — see the
+// structural test in `tests/memory-store.test.ts` asserting exactly that)
+// that scans `SlipHistory` and `UncheckedDay` — the two tables that already
+// accumulate genuine multi-day history, per prior tasks' own writes — over a
+// caller-chosen lookback window, and distills what it finds into plain
+// English sentences. Per AD-9 ("extend `memory-store.ts` additively,
+// following its own established generic-primitive pattern rather than
+// inventing a new storage mechanism"), this computes pattern-statements
+// in-memory from `listRecordsByKind`'s existing results on every call —
+// there is no new persisted "pattern-statement" record. A future caller
+// (e.g. a `chat-cli.ts` "how have I been doing lately" command, or Epic 5's
+// Self-Check trend) is free to call this directly; wiring an actual
+// chat-cli.ts command is explicitly out of scope for this task (see the
+// task brief — no AC requires an on-demand query SURFACE, only the query
+// path itself).
+//
+// `Plan` history is deliberately NOT distilled here despite being listed as
+// available raw material in the task brief: `PLAN_KIND` has no
+// `listPlans`/`listRecordsByKind<Plan>` reader anywhere in this codebase
+// today (every existing caller addresses a Plan by its own specific date),
+// and inventing pattern-statements over Plan history (e.g. "Plans have
+// tended to run over budget on Mondays") would be real analytics on top of
+// `PlanBlock`/`workBreakFit` internals this task has no brief-given
+// direction for — squarely the "real analytics/ML" the task brief says NOT
+// to build. `SlipHistory` and `UncheckedDay` are both named explicitly in
+// the brief's own example pattern-statements ("Task X has slipped N times…",
+// "Y nights were left unchecked…"), so those two are what this task
+// implements; extending to Plan history is a reasonable future addition, not
+// a gap in this one.
+// ============================================================================
+
+/**
+ * Documents the rough size of the hot window: how many days back a ritual's
+ * own ROUTINE concerns span (the AC's own examples — "yesterday's slip,"
+ * "this week's Time Budget"). Not used as a date-filter cutoff anywhere in
+ * this file (see this section's own docstring for why no hot read filters by
+ * date at all) — its role is purely to document the boundary, and to anchor
+ * `COLD_MEMORY_DEFAULT_LOOKBACK_DAYS` below at something clearly WIDER than
+ * it, per this story's "older history beyond the hot window" AC.
+ */
+export const HOT_MEMORY_WINDOW_DAYS = 7;
+
+/**
+ * `readHotMemory`'s bundled snapshot of the three things a ritual's routine
+ * daily operation actually reads to decide what to run/show today. Each
+ * field is `undefined` exactly when the corresponding `get*` function above
+ * would itself return `undefined` (nothing declared/generated/run yet) —
+ * this bundling adds no new "not found" semantics of its own.
+ */
+export interface HotMemorySnapshot {
+  /** Today's `Plan`, if the Morning Ritual (or a Mid-Day Re-Flow) has generated one yet. */
+  readonly plan: StoredRecord<Plan> | undefined;
+  /** The currently-declared Time Budget (per `TIME_BUDGET_ID`'s own doc comment, this is unconditionally "current" — there's no date filtering to apply here). */
+  readonly timeBudget: StoredRecord<TimeBudget> | undefined;
+  /** Each requested ritual id's last-run marker, keyed by that same id — `undefined` for a ritual id that has never completed a run. */
+  readonly ritualRuns: Readonly<Record<string, StoredRecord<RitualRun> | undefined>>;
+}
+
+/**
+ * Reads today's hot memory in one call: today's `Plan`, the current Time
+ * Budget, and the last-run marker for each ritual id in `ritualIds` (e.g.
+ * `["morning", "night-prompt", "night-escalate"]`). Every field comes from a
+ * `getRecord`-backed `get*` function above — this function itself never
+ * calls `listRecordsByKind` (see the structural test asserting exactly
+ * that), so calling it can never turn into an accidental full-history scan
+ * no matter how many days of history have accumulated elsewhere in the
+ * store.
+ *
+ * This is a convenience grouping, not a new mechanism: every ritual file
+ * today calls `getPlan`/`getCurrentTimeBudget`/`getRitualRun` directly and
+ * is not required to switch to this function — it exists to give the
+ * "hot memory" property named in this section's docstring one concrete,
+ * testable shape rather than leaving it purely descriptive.
+ */
+export function readHotMemory(store: MemoryStore, todayDate: IsoDate, ritualIds: readonly string[]): HotMemorySnapshot {
+  const ritualRuns: Record<string, StoredRecord<RitualRun> | undefined> = {};
+  for (const ritualId of ritualIds) {
+    ritualRuns[ritualId] = getRitualRun(store, ritualId);
+  }
+  return {
+    plan: getPlan(store, todayDate),
+    timeBudget: getCurrentTimeBudget(store),
+    ritualRuns,
+  };
+}
+
+/**
+ * Cold memory's default lookback depth, in days, when a caller doesn't
+ * specify its own `lookbackDays`. Deliberately much wider than
+ * `HOT_MEMORY_WINDOW_DAYS` (roughly a month vs. roughly a week) — concrete,
+ * documented starting value in this project's established style (FR-2's
+ * even-split weights, FR-11's slip curve), not derived from any formula.
+ */
+export const COLD_MEMORY_DEFAULT_LOOKBACK_DAYS = 30;
+
+/** Below this count, a Task's slip streak isn't a "pattern" worth surfacing — a single slip is normal/expected and would make every once-slipped Task noise on every cold-memory query. */
+const MIN_SLIP_COUNT_FOR_PATTERN = 2;
+
+export interface ColdMemoryQueryOptions {
+  /**
+   * The local calendar date to query "as of" — every pattern-statement's
+   * lookback window is computed relative to this date. Required rather than
+   * read from the system clock (like every other date-taking function in
+   * this codebase — e.g. `rituals/morning-ritual.ts`'s `localIsoDate`
+   * caller convention) so this stays deterministic and testable.
+   */
+  readonly asOfDate: IsoDate;
+  /** How many days of history (inclusive of `asOfDate`) to scan. Defaults to `COLD_MEMORY_DEFAULT_LOOKBACK_DAYS`. */
+  readonly lookbackDays?: number;
+}
+
+/** One distilled pattern-statement. `statement` is the human-readable sentence; `kind`/`taskId` let a caller filter or group programmatically without re-parsing the sentence. */
+export interface ColdMemoryPattern {
+  readonly kind: "slip-streak" | "unchecked-nights";
+  readonly statement: string;
+  /** Set only for `kind: "slip-streak"` — the Task the pattern is about. */
+  readonly taskId?: ExternalId;
+}
+
+/** Adds `deltaDays` (may be negative) to an `IsoDate` (`YYYY-MM-DD`), returning another `IsoDate`. Computed in UTC, matching every other `IsoDate` in this codebase, which is treated as a bare calendar date rather than a timezone-aware instant. */
+function addDaysToIsoDate(date: IsoDate, deltaDays: number): IsoDate {
+  const [year, month, day] = date.split("-").map(Number);
+  const shifted = new Date(Date.UTC(year!, month! - 1, day! + deltaDays));
+  return shifted.toISOString().slice(0, 10);
+}
+
+/**
+ * Queries OLDER history — beyond what any hot read above ever touches — and
+ * distills it into plain-English pattern-statements. On-demand only: no
+ * `rituals/*.ts` file calls this as part of its routine daily flow (see this
+ * section's own docstring and the structural test in
+ * `tests/memory-store.test.ts` asserting exactly that).
+ *
+ * Scans two tables (`SLIP_HISTORY_KIND`, `UNCHECKED_DAY_KIND`) via
+ * `listRecordsByKind` — a genuine full scan of each, unlike every hot read
+ * above — and reports:
+ *
+ * - One statement per Task whose `SlipHistory.lastSlipDate` falls within the
+ *   lookback window AND whose `consecutiveSlipCount` is at least
+ *   `MIN_SLIP_COUNT_FOR_PATTERN`: `"Task <id> has slipped <N> times in the
+ *   last <M> days."` (`N` is the stored `consecutiveSlipCount` itself — the
+ *   most defensible reading of "how many times has this Task slipped,"
+ *   consistent with how `SlipHistory` is actually shaped: it tracks a
+ *   running consecutive count, not a per-slip-date log, so this is exactly
+ *   what the data can honestly support, not an invented number.)
+ * - At most one statement summarizing every `UncheckedDay.date` within the
+ *   lookback window: `"<N> night(s) were left unchecked in the last <M>
+ *   days."` — omitted entirely when `N` is 0.
+ *
+ * Results are ordered: slip-streak patterns first (by `taskId`, ascending —
+ * `listRecordsByKind`'s own `ORDER BY id` already returns them this way),
+ * then the single unchecked-nights summary, if any. Returns `[]` when
+ * nothing in either table falls in range.
+ */
+export function queryColdMemoryPatterns(store: MemoryStore, options: ColdMemoryQueryOptions): ColdMemoryPattern[] {
+  const lookbackDays = options.lookbackDays ?? COLD_MEMORY_DEFAULT_LOOKBACK_DAYS;
+  const cutoffDate = addDaysToIsoDate(options.asOfDate, -(lookbackDays - 1));
+  const inWindow = (date: IsoDate): boolean => date >= cutoffDate && date <= options.asOfDate;
+
+  const patterns: ColdMemoryPattern[] = [];
+
+  const slipHistories = store.listRecordsByKind<SlipHistory>(SLIP_HISTORY_KIND);
+  for (const record of slipHistories) {
+    if (!inWindow(record.data.lastSlipDate)) continue;
+    if (record.data.consecutiveSlipCount < MIN_SLIP_COUNT_FOR_PATTERN) continue;
+    patterns.push({
+      kind: "slip-streak",
+      taskId: record.id,
+      statement: `Task ${record.id} has slipped ${record.data.consecutiveSlipCount} times in the last ${lookbackDays} days.`,
+    });
+  }
+
+  const uncheckedDays = store.listRecordsByKind<UncheckedDay>(UNCHECKED_DAY_KIND);
+  const uncheckedCount = uncheckedDays.filter((record) => inWindow(record.data.date)).length;
+  if (uncheckedCount > 0) {
+    const nightWord = uncheckedCount === 1 ? "night was" : "nights were";
+    patterns.push({
+      kind: "unchecked-nights",
+      statement: `${uncheckedCount} ${nightWord} left unchecked in the last ${lookbackDays} days.`,
+    });
+  }
+
+  return patterns;
+}

@@ -36,9 +36,41 @@ import {
   listUncheckedDays,
   markUncheckedDayShown,
   clearUncheckedDay,
+  putPlan,
+  putRitualRun,
+  readHotMemory,
+  queryColdMemoryPatterns,
+  HOT_MEMORY_WINDOW_DAYS,
+  COLD_MEMORY_DEFAULT_LOOKBACK_DAYS,
   type InteractionRequest,
+  type MemoryStore,
+  type Plan,
 } from "../src/adapters/memory-store.ts";
 import type { TimeBudget } from "../src/types/domain.ts";
+
+/**
+ * Wraps `store` in a `Proxy` that counts calls to `listRecordsByKind` — the
+ * "scan every record for a kind" primitive every cold/list-shaped read in
+ * this file goes through. Used to assert STRUCTURALLY (not just "the numbers
+ * came out right") that a hot-memory read path never touches it, per Task
+ * 22's TDD requirement 1. Only wraps the one method under test; every other
+ * call (including the internal `this.db...` calls each method makes
+ * directly, not through `this.listRecordsByKind`) passes through untouched.
+ */
+function spyOnListRecordsByKind(store: MemoryStore): { store: MemoryStore; callCount: () => number } {
+  let count = 0;
+  const proxy = new Proxy(store, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver);
+      if (prop === "listRecordsByKind" && typeof value === "function") {
+        count += 1;
+        return value.bind(target);
+      }
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  return { store: proxy as MemoryStore, callCount: () => count };
+}
 
 function tempDbPath(): string {
   const dir = mkdtempSync(join(tmpdir(), "yoh-memory-store-test-"));
@@ -776,4 +808,212 @@ test("clearUncheckedDay only removes the record for its OWN date — a different
   assert.equal(getUncheckedDay(store, "2026-08-21"), undefined);
   assert.ok(getUncheckedDay(store, "2026-08-19"), "the other date's record must survive untouched");
   store.close();
+});
+
+// ============================================================================
+// Hot/cold memory boundary (Task 22 / Story 4.1, FR-15, AD-10)
+//
+// "Hot" memory is what a routine daily ritual actually reads: today's Plan,
+// the current Time Budget, and a ritual's own last-run marker — all reached
+// by `getRecord` on a specific `(kind, id)`, never a full scan. "Cold"
+// memory is `queryColdMemoryPatterns`, a genuinely separate, on-demand read
+// path over OLDER history distilled into human-readable pattern-statements.
+// ============================================================================
+
+function makePlan(overrides: Partial<Plan> = {}): Plan {
+  return {
+    id: "plan-2026-08-22",
+    date: "2026-08-22",
+    blocks: [],
+    reasoning: "test plan",
+    version: 1,
+    createdAt: "2026-08-22T12:00:00.000Z",
+    updatedAt: "2026-08-22T12:00:00.000Z",
+    ...overrides,
+  };
+}
+
+test("HOT_MEMORY_WINDOW_DAYS/COLD_MEMORY_DEFAULT_LOOKBACK_DAYS are documented positive-day constants, and cold's default lookback is strictly wider than the hot window", () => {
+  assert.equal(typeof HOT_MEMORY_WINDOW_DAYS, "number");
+  assert.equal(typeof COLD_MEMORY_DEFAULT_LOOKBACK_DAYS, "number");
+  assert.ok(HOT_MEMORY_WINDOW_DAYS > 0);
+  assert.ok(COLD_MEMORY_DEFAULT_LOOKBACK_DAYS > HOT_MEMORY_WINDOW_DAYS);
+});
+
+test("readHotMemory bundles today's Plan, current Time Budget, and named ritual-run markers", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  putPlan(store, makePlan());
+  putTimeBudget(store, makeTimeBudget({ date: "2026-08-22", totalMinutes: 300 }));
+  putRitualRun(store, "morning", { date: "2026-08-22", ranAt: "2026-08-22T13:00:00.000Z" });
+
+  const hot = readHotMemory(store, "2026-08-22", ["morning", "night-prompt"]);
+
+  assert.equal(hot.plan?.data.id, "plan-2026-08-22");
+  assert.equal(hot.timeBudget?.data.totalMinutes, 300);
+  assert.equal(hot.ritualRuns.morning?.data.date, "2026-08-22");
+  assert.equal(hot.ritualRuns["night-prompt"], undefined, "a ritual that hasn't run yet reads back as undefined, not an error");
+  store.close();
+});
+
+test("readHotMemory returns undefined fields (not throws) when nothing has been declared/generated/run yet", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const hot = readHotMemory(store, "2026-08-22", ["morning"]);
+  assert.equal(hot.plan, undefined);
+  assert.equal(hot.timeBudget, undefined);
+  assert.equal(hot.ritualRuns.morning, undefined);
+  store.close();
+});
+
+test("STRUCTURAL: readHotMemory never calls listRecordsByKind — a hot read is always addressed by (kind, id), never a full-table scan", () => {
+  const dbPath = tempDbPath();
+  const real = createMemoryStore({ databasePath: dbPath });
+  putPlan(real, makePlan());
+  putTimeBudget(real, makeTimeBudget({ date: "2026-08-22" }));
+  putRitualRun(real, "morning", { date: "2026-08-22", ranAt: "2026-08-22T13:00:00.000Z" });
+  real.close();
+
+  const store = createMemoryStore({ databasePath: dbPath });
+  const { store: spiedStore, callCount } = spyOnListRecordsByKind(store);
+
+  readHotMemory(spiedStore, "2026-08-22", ["morning", "night-prompt", "night-escalate"]);
+
+  assert.equal(callCount(), 0, "readHotMemory must never touch listRecordsByKind (the cold/list scan primitive)");
+  store.close();
+});
+
+test("STRUCTURAL: queryColdMemoryPatterns DOES use listRecordsByKind — the cold path is a genuine full scan, unlike the hot path above", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const { store: spiedStore, callCount } = spyOnListRecordsByKind(store);
+
+  queryColdMemoryPatterns(spiedStore, { asOfDate: "2026-08-22" });
+
+  assert.ok(callCount() > 0, "the cold query path is expected to scan — that's what makes it 'cold', not a bug to avoid");
+  store.close();
+});
+
+// ----------------------------------------------------------------------------
+// queryColdMemoryPatterns — genuine distillation of real stored history into
+// pattern-statements, not a generic placeholder.
+// ----------------------------------------------------------------------------
+
+test("queryColdMemoryPatterns: a Task that slipped 3 times over 2 weeks produces an accurate slip-streak pattern-statement", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  recordSlip(store, "task-1", "2026-08-09");
+  recordSlip(store, "task-1", "2026-08-15");
+  recordSlip(store, "task-1", "2026-08-22");
+
+  const patterns = queryColdMemoryPatterns(store, { asOfDate: "2026-08-22" });
+
+  const slipPattern = patterns.find((p) => p.kind === "slip-streak" && p.taskId === "task-1");
+  assert.ok(slipPattern, "expected a slip-streak pattern for task-1");
+  assert.equal(
+    slipPattern.statement,
+    `Task task-1 has slipped 3 times in the last ${COLD_MEMORY_DEFAULT_LOOKBACK_DAYS} days.`,
+  );
+  store.close();
+});
+
+test("queryColdMemoryPatterns: 2 unchecked nights in the last month produce an accurate unchecked-nights pattern-statement", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  putUncheckedDay(store, { date: "2026-08-01", rolledForwardTasks: [], recordedAt: "2026-08-02T13:00:00.000Z" });
+  putUncheckedDay(store, { date: "2026-08-10", rolledForwardTasks: [], recordedAt: "2026-08-11T13:00:00.000Z" });
+
+  const patterns = queryColdMemoryPatterns(store, { asOfDate: "2026-08-22" });
+
+  const uncheckedPattern = patterns.find((p) => p.kind === "unchecked-nights");
+  assert.ok(uncheckedPattern, "expected an unchecked-nights pattern");
+  assert.equal(
+    uncheckedPattern.statement,
+    `2 nights were left unchecked in the last ${COLD_MEMORY_DEFAULT_LOOKBACK_DAYS} days.`,
+  );
+  store.close();
+});
+
+test("queryColdMemoryPatterns: singularizes 'night was' correctly when exactly one unchecked night is in range", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  putUncheckedDay(store, { date: "2026-08-10", rolledForwardTasks: [], recordedAt: "2026-08-11T13:00:00.000Z" });
+
+  const patterns = queryColdMemoryPatterns(store, { asOfDate: "2026-08-22" });
+  const uncheckedPattern = patterns.find((p) => p.kind === "unchecked-nights");
+  assert.equal(
+    uncheckedPattern?.statement,
+    `1 night was left unchecked in the last ${COLD_MEMORY_DEFAULT_LOOKBACK_DAYS} days.`,
+  );
+  store.close();
+});
+
+test("queryColdMemoryPatterns: a single (non-repeating) slip does not produce a 'pattern' — only genuine repeats (>= 2) are reported", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  recordSlip(store, "task-1", "2026-08-20");
+
+  const patterns = queryColdMemoryPatterns(store, { asOfDate: "2026-08-22" });
+  assert.equal(patterns.find((p) => p.taskId === "task-1"), undefined);
+  store.close();
+});
+
+test("queryColdMemoryPatterns: a record older than the lookback window is excluded from the distillation", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  // 60 days before asOfDate — well outside the default 30-day lookback.
+  putUncheckedDay(store, { date: "2026-06-23", rolledForwardTasks: [], recordedAt: "2026-06-24T13:00:00.000Z" });
+
+  const patterns = queryColdMemoryPatterns(store, { asOfDate: "2026-08-22" });
+  assert.equal(patterns.find((p) => p.kind === "unchecked-nights"), undefined);
+  store.close();
+});
+
+test("queryColdMemoryPatterns: respects a caller-supplied lookbackDays narrower than the default", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  putUncheckedDay(store, { date: "2026-08-10", rolledForwardTasks: [], recordedAt: "2026-08-11T13:00:00.000Z" }); // 12 days before asOfDate
+
+  const wideWindow = queryColdMemoryPatterns(store, { asOfDate: "2026-08-22", lookbackDays: 30 });
+  assert.ok(wideWindow.some((p) => p.kind === "unchecked-nights"), "sanity: visible within a 30-day window");
+
+  const narrowWindow = queryColdMemoryPatterns(store, { asOfDate: "2026-08-22", lookbackDays: 5 });
+  assert.equal(
+    narrowWindow.find((p) => p.kind === "unchecked-nights"),
+    undefined,
+    "excluded once the lookback window no longer reaches back that far",
+  );
+  store.close();
+});
+
+test("queryColdMemoryPatterns: returns an empty array when there is no historical data at all", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  assert.deepEqual(queryColdMemoryPatterns(store, { asOfDate: "2026-08-22" }), []);
+  store.close();
+});
+
+test("queryColdMemoryPatterns: multiple slipping Tasks each get their own accurate statement, ordered by taskId", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  recordSlip(store, "task-b", "2026-08-20");
+  recordSlip(store, "task-b", "2026-08-21");
+  recordSlip(store, "task-a", "2026-08-18");
+  recordSlip(store, "task-a", "2026-08-19");
+  recordSlip(store, "task-a", "2026-08-20");
+
+  const patterns = queryColdMemoryPatterns(store, { asOfDate: "2026-08-22" });
+  const slipStatements = patterns.filter((p) => p.kind === "slip-streak");
+  assert.deepEqual(
+    slipStatements.map((p) => p.taskId),
+    ["task-a", "task-b"],
+  );
+  assert.equal(slipStatements[0]?.statement, `Task task-a has slipped 3 times in the last 30 days.`);
+  assert.equal(slipStatements[1]?.statement, `Task task-b has slipped 2 times in the last 30 days.`);
+  store.close();
+});
+
+// ----------------------------------------------------------------------------
+// No ritual's routine daily operation queries cold memory (AC3).
+// ----------------------------------------------------------------------------
+
+test("STRUCTURAL (AC3): morning-ritual.ts, night-ritual.ts, and mid-day-reflow.ts never call queryColdMemoryPatterns — cold memory is on-demand only, not part of routine daily operation", () => {
+  const ritualFiles = ["morning-ritual.ts", "night-ritual.ts", "mid-day-reflow.ts"];
+  for (const file of ritualFiles) {
+    const path = join(import.meta.dirname, "..", "src", "rituals", file);
+    const contents = readFileSync(path, "utf8");
+    assert.ok(
+      !contents.includes("queryColdMemoryPatterns"),
+      `${file} must not call queryColdMemoryPatterns as part of its routine ritual flow`,
+    );
+  }
 });
