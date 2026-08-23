@@ -41,7 +41,7 @@ development_status:
   1-3-read-notion-tasks-and-projects: done
   1-4-read-google-calendar-events-as-fixed-plan-anchors: done
   1-5-data-completeness-gate-prompt-for-missing-task-fields: done
-  1-6-time-budget-declaration-and-persistence: backlog
+  1-6-time-budget-declaration-and-persistence: done
   1-7-derived-priority-ordering: backlog
   1-8-work-break-block-fitting-within-time-budget: backlog
   1-9-plan-reasoning-line: backlog
