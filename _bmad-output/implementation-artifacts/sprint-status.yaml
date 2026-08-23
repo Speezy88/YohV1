@@ -43,7 +43,7 @@ development_status:
   1-5-data-completeness-gate-prompt-for-missing-task-fields: done
   1-6-time-budget-declaration-and-persistence: done
   1-7-derived-priority-ordering: done
-  1-8-work-break-block-fitting-within-time-budget: backlog
+  1-8-work-break-block-fitting-within-time-budget: done
   1-9-plan-reasoning-line: backlog
   1-10-generate-and-deliver-the-morning-plan: backlog
   1-11-on-demand-plan-view-via-chat: backlog
