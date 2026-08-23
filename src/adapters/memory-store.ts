@@ -568,3 +568,92 @@ export function putRitualRun(store: MemoryStore, ritualId: string, run: RitualRu
   const current = store.getRecord<RitualRun>(RITUAL_RUN_KIND, ritualId);
   return store.readModifyWrite<RitualRun>(RITUAL_RUN_KIND, ritualId, current?.version, () => run);
 }
+
+// ============================================================================
+// Slip history (Task 17 / Story 2.5, FR-11, AD-6) — typed surface on `records`
+// ============================================================================
+
+/**
+ * The fixed `records.kind` partition each Task's consecutive-slip tracking
+ * is stored under, keyed by the Task's own `id`. Feeds `strainCount` into
+ * `core/slip-bump.ts`'s `computeSlipBumpLevel`/`computeSlipBumpLevels`
+ * (AD-6) — this file owns only the raw count's persistence, never the
+ * escalation-curve math itself (that stays in `core/`, per AD-2).
+ */
+const SLIP_HISTORY_KIND = "slip-history";
+
+/**
+ * One Task's slip tracking: how many CONSECUTIVE days it has slipped in a
+ * row (reset — in practice, cleared entirely, see `clearSlip` below — the
+ * moment it completes, per this story's AC: "its Slip-Bump is cleared, not
+ * carried indefinitely"), and the date of its most recent slip, kept for
+ * lineage-view display (`shell/chat-cli.ts`'s "why is X prioritized"
+ * command, UX-DR19).
+ */
+export interface SlipHistory {
+  readonly consecutiveSlipCount: number;
+  readonly lastSlipDate: IsoDate;
+}
+
+/** Reads the currently-stored `SlipHistory` for `taskId`, or `undefined` if that Task has never slipped (or its history has since been cleared on completion). */
+export function getSlipHistory(store: MemoryStore, taskId: string): StoredRecord<SlipHistory> | undefined {
+  return store.getRecord<SlipHistory>(SLIP_HISTORY_KIND, taskId);
+}
+
+/**
+ * Records one more consecutive slip for `taskId` on `slipDate` —
+ * increments the existing `consecutiveSlipCount` by one (starting at 1 if
+ * this is the Task's first recorded slip), like `mergeTaskFieldOverride`'s
+ * own read-current-then-`readModifyWrite` pattern above: the caller doesn't
+ * track a version, but a genuine concurrent writer racing on the same
+ * `taskId` still surfaces `ConflictError` per AD-10.
+ *
+ * Per the epics text ("Night Ritual close-out is Slip-Bump's guaranteed,
+ * authoritative trigger; Mid-Day Re-Flow is the earlier, optional one"),
+ * this function is the storage primitive that trigger is expected to call
+ * once it exists (Task 19) — nothing in THIS task's own scope calls it from
+ * a real ritual or chat trigger yet; see `core/slip-bump.ts`'s own "Scope
+ * note" docstring section for why.
+ */
+export function recordSlip(store: MemoryStore, taskId: string, slipDate: IsoDate): StoredRecord<SlipHistory> {
+  const current = store.getRecord<SlipHistory>(SLIP_HISTORY_KIND, taskId);
+  return store.readModifyWrite<SlipHistory>(SLIP_HISTORY_KIND, taskId, current?.version, (existing) => ({
+    consecutiveSlipCount: (existing?.data.consecutiveSlipCount ?? 0) + 1,
+    lastSlipDate: slipDate,
+  }));
+}
+
+/**
+ * Clears `taskId`'s Slip-Bump entirely — this story's AC: "a Task slipped
+ * once and then completes ... its Slip-Bump is cleared, not carried
+ * indefinitely." Deletes the row outright (rather than resetting
+ * `consecutiveSlipCount` to `0` in place) so a cleared Task reads back
+ * IDENTICALLY to a Task that has never slipped at all (both `undefined` from
+ * `getSlipHistory`, both absent from `listSlipHistories`) — see
+ * `core/slip-bump.ts`'s own docstring for why that equivalence matters to
+ * its `computeSlipBumpLevels` batch function.
+ *
+ * A harmless no-op if `taskId` has no slip history to clear (e.g. a Task
+ * that completes without ever having slipped) — reads the current version
+ * internally first, like `recordSlip` above, rather than requiring the
+ * caller to already know it.
+ */
+export function clearSlip(store: MemoryStore, taskId: string): void {
+  const current = store.getRecord<SlipHistory>(SLIP_HISTORY_KIND, taskId);
+  if (!current) return; // Nothing to clear.
+  store.deleteRecord(SLIP_HISTORY_KIND, taskId, current.version);
+}
+
+/**
+ * Lists every Task's currently-stored `SlipHistory`, across every `taskId`
+ * — the same "surface whatever's stored without already knowing each id"
+ * shape `listOpenInteractionRequests` provides for interaction requests.
+ * This is what a future caller (Task 19's Night Ritual, or
+ * `rituals/morning-ritual.ts` itself) builds a `taskId -> consecutiveSlipCount`
+ * map from before calling `core/slip-bump.ts`'s `computeSlipBumpLevels` to
+ * get the `bumpLevels` shape `core/derived-priority.ts`'s
+ * `orderByDerivedPriority` already accepts.
+ */
+export function listSlipHistories(store: MemoryStore): StoredRecord<SlipHistory>[] {
+  return store.listRecordsByKind<SlipHistory>(SLIP_HISTORY_KIND);
+}

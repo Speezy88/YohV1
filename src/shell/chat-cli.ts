@@ -95,6 +95,18 @@
  * override-merge step lives outside `data-completeness-gate.ts` per AD-2 —
  * the gate stays pure and must not read `memory-store.ts` itself.
  *
+ * Task 17 update (Story 2.5, FR-11, UX-DR19): a FIFTH deterministic check,
+ * `parseWhyPrioritizedCommand`, is added right after `isBlockerReportCommand`
+ * (still before the general-qa catch-all). It recognizes Spencer asking "why
+ * is X prioritized [today]" and answers with that Task's Slip-Bump lineage
+ * (`whyPrioritizedCommand`) — its consecutive-slip count and current bump
+ * level, read from `memory-store.ts`'s `getSlipHistory` and computed via
+ * `core/slip-bump.ts`'s `computeSlipBumpLevel` (AD-6). This is a read-only
+ * view: unlike the Mid-Day Re-Flow/Blocker triggers above, it never
+ * persists anything. It deliberately does NOT add a "report a slip"
+ * trigger — recording a slip is Night Ritual close-out's job (Task 19, not
+ * yet built); see `core/slip-bump.ts`'s own "Scope note" docstring section.
+ *
  * Task 10 update: the merge/gate/sync trio moved to
  * `rituals/data-completeness.ts` — the `rituals/*.ts` home the note above
  * always pointed at, given its own file because it is its own capability
@@ -111,6 +123,7 @@ import {
   createMemoryStore,
   getOpenInteractionRequest,
   getPlan,
+  getSlipHistory,
   listOpenInteractionRequests,
   mergeTaskFieldOverride,
   putTimeBudget,
@@ -125,6 +138,7 @@ import {
 } from "../adapters/llm-adapter.ts";
 import { readNotionTasks } from "../adapters/notion-adapter.ts";
 import type { MissingFieldReport } from "../core/data-completeness-gate.ts";
+import { computeSlipBumpLevel } from "../core/slip-bump.ts";
 import { shapeDeclaredTimeBudget } from "../core/time-budget.ts";
 import { resolveToneSystemPrompt } from "../core/tone.ts";
 import { DATA_COMPLETENESS_REQUEST_ID, PLANNING_FIELD_LABELS } from "../rituals/data-completeness.ts";
@@ -666,6 +680,75 @@ async function blockerReportCommand(
   }
 }
 
+// ============================================================================
+// Slip-Bump lineage view (Task 17 / Story 2.5, UX-DR19)
+// ============================================================================
+
+/**
+ * Recognizes Spencer asking "why is X prioritized [today]" typed at the
+ * `yoh>` prompt — the same kind of deliberately simple, clearly-documented
+ * pattern matching `parseTimeBudgetCommand`/`isPlanViewCommand`/
+ * `isMidDayReflowCommand` use above, NOT real free-text NLU. Recognized
+ * phrasing (case-insensitive, extra whitespace tolerated, optional trailing
+ * "today" and/or "?"), per the brief's own example:
+ *
+ *   - "why is <Task name> prioritized"
+ *   - "why is <Task name> prioritized today"
+ *
+ * Returns the captured Task name (verbatim, original casing preserved for
+ * echoing back in an error message) on a match, or `undefined` for any line
+ * that doesn't match this shape at all — so `runChatCli` can fall through to
+ * the general-qa catch-all exactly as it already does for an unrecognized
+ * line. The captured name is matched against real Task titles
+ * case-insensitively by `whyPrioritizedCommand` below, so the exact casing
+ * Spencer types doesn't need to match Notion's stored title.
+ */
+const WHY_PRIORITIZED_COMMAND_RE = /^why\s+is\s+(.+?)\s+prioritized(?:\s+today)?\??$/i;
+
+export function parseWhyPrioritizedCommand(line: string): string | undefined {
+  const match = WHY_PRIORITIZED_COMMAND_RE.exec(line.trim());
+  return match?.[1];
+}
+
+/**
+ * Answers a Slip-Bump lineage-view request (UX-DR19): finds the named Task
+ * (case-insensitive exact match on title — a documented starting heuristic,
+ * same spirit as `isBlockerReportCommand`'s own "not real NLU" note; a
+ * fuzzier/substring match is a natural future improvement, not required
+ * here) among `tasks`, then shows its current Slip-Bump lineage — its
+ * consecutive-slip count, most recent slip date, and the resulting bump
+ * level/cap status from `core/slip-bump.ts`'s `computeSlipBumpLevel`
+ * (AD-6).
+ *
+ * A Task with no stored `SlipHistory` (never slipped, or its history was
+ * cleared on completion — `memory-store.ts`'s `clearSlip`, this story's own
+ * AC) is reported as having no Slip-Bump applied, rather than a bump level
+ * of a bare `0` with no explanation. A name that matches no Task in `tasks`
+ * says so plainly rather than silently doing nothing.
+ */
+function whyPrioritizedCommand(store: MemoryStore, io: ChatCliIo, tasks: readonly Task[], taskName: string): void {
+  const normalized = taskName.trim().toLowerCase();
+  const task = tasks.find((t) => t.title.trim().toLowerCase() === normalized);
+  if (!task) {
+    io.writeLine(`I couldn't find a Task named "${taskName}".`);
+    return;
+  }
+
+  const history = getSlipHistory(store, task.id);
+  if (!history || history.data.consecutiveSlipCount <= 0) {
+    io.writeLine(`"${task.title}" hasn't slipped recently — no Slip-Bump applied.`);
+    return;
+  }
+
+  const { consecutiveSlipCount, lastSlipDate } = history.data;
+  const level = computeSlipBumpLevel(consecutiveSlipCount);
+  const dayWord = consecutiveSlipCount === 1 ? "day" : "days";
+  const capNote = level.atCap ? " — at its Slip-Bump cap" : "";
+  io.writeLine(
+    `"${task.title}" has slipped ${consecutiveSlipCount} consecutive ${dayWord} (last slipped ${lastSlipDate}) — current Slip-Bump level ${level.value}${capNote}.`,
+  );
+}
+
 /**
  * The REPL loop (Task 5, extended by Task 6, Task 11, Task 13, Task 14): on
  * start, and before processing every subsequent line of input, surfaces any
@@ -697,7 +780,9 @@ async function blockerReportCommand(
  * `readTasks` (Task 15) is what `midDayReflowCommand` hands to
  * `rituals/mid-day-reflow.ts`'s `runMidDayReflow` — the same
  * `adapters/notion-adapter.ts` seam `ritual-cli.ts`'s Morning Ritual wiring
- * already uses. It's OPTIONAL (unlike `store`/`io`/`timeZone`/`llmClient`)
+ * already uses. Task 17's `whyPrioritizedCommand` reuses this exact same
+ * seam to resolve the named Task by title before looking up its Slip-Bump
+ * lineage. It's OPTIONAL (unlike `store`/`io`/`timeZone`/`llmClient`)
  * so every pre-Task-15 test call site above keeps compiling unchanged; its
  * default throws only if a test that never exercises the Mid-Day Re-Flow
  * command somehow reaches it anyway, which would itself be a bug worth
@@ -750,6 +835,13 @@ export async function runChatCli(
 
     if (isBlockerReportCommand(line)) {
       await blockerReportCommand(store, io, timeZone, readTasks, now);
+      continue;
+    }
+
+    const whyPrioritizedTaskName = parseWhyPrioritizedCommand(line);
+    if (whyPrioritizedTaskName !== undefined) {
+      const tasks = await readTasks();
+      whyPrioritizedCommand(store, io, tasks, whyPrioritizedTaskName);
       continue;
     }
 

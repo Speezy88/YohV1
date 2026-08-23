@@ -20,6 +20,7 @@ import {
   getPlan,
   putPlan,
   putTimeBudget,
+  recordSlip,
 } from "../src/adapters/memory-store.ts";
 import type { MemoryStore } from "../src/adapters/memory-store.ts";
 import {
@@ -31,6 +32,7 @@ import {
   isMidDayReflowCommand,
   isPlanViewCommand,
   isBlockerReportCommand,
+  parseWhyPrioritizedCommand,
   type ChatCliIo,
 } from "../src/shell/chat-cli.ts";
 import { localIsoDate, renderPlan } from "../src/rituals/morning-ritual.ts";
@@ -1130,5 +1132,92 @@ test("runChatCli: Blocker report trigger says so plainly when no Plan exists yet
   await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => LATE_EVENING_UTC, async () => []);
 
   assert.ok(io.written.some((line) => /no plan/i.test(line)));
+  store.close();
+});
+
+// ============================================================================
+// parseWhyPrioritizedCommand / runChatCli — Slip-Bump lineage view
+// (Task 17 / Story 2.5, UX-DR19)
+// ============================================================================
+
+test("parseWhyPrioritizedCommand recognizes 'why is X prioritized [today]' phrasings, case-insensitively, and extracts the Task name", () => {
+  assert.equal(parseWhyPrioritizedCommand("why is Draft the memo prioritized"), "Draft the memo");
+  assert.equal(parseWhyPrioritizedCommand("why is Draft the memo prioritized today"), "Draft the memo");
+  assert.equal(parseWhyPrioritizedCommand("Why Is Draft The Memo Prioritized Today?"), "Draft The Memo");
+  assert.equal(parseWhyPrioritizedCommand("  why is Draft the memo prioritized today  "), "Draft the memo");
+});
+
+test("parseWhyPrioritizedCommand returns undefined for unrelated input, including other recognized commands", () => {
+  for (const line of ["hello", "time budget 6h", "show plan", "reflow", "meeting ran over", "why is the sky blue", ""]) {
+    assert.equal(
+      parseWhyPrioritizedCommand(line),
+      undefined,
+      `expected "${line}" NOT to be recognized as a why-prioritized request`,
+    );
+  }
+});
+
+test("runChatCli: 'why is X prioritized' shows a Task's Slip-Bump lineage — consecutive-slip count and current bump level (UX-DR19)", async () => {
+  const store = tempStore();
+  // Two consecutive slips recorded for this Task before the question is asked.
+  recordSlip(store, "t1", "2026-08-20");
+  recordSlip(store, "t1", "2026-08-21");
+
+  const tasks: Task[] = [makeTask("t1", "Draft the memo")];
+  const io = makeScriptedIo(["why is Draft the memo prioritized today"]);
+  const llmClient = makeFakeLlmClient();
+
+  await runChatCli(store, io, TEST_TIME_ZONE, llmClient, () => new Date(NOW), async () => tasks);
+
+  assert.equal(llmClient.calls.length, 0, "a recognized lineage-view request must never fall through to the LLM catch-all");
+  const response = io.written.join("\n");
+  assert.match(response, /Draft the memo/);
+  assert.match(response, /2/, "expected the consecutive-slip count (2) to be shown");
+  assert.match(response, /2026-08-21/, "expected the last-slip date to be shown");
+  // Slip-Bump curve { cap: 3, step: 1 }: 2 consecutive slips -> bump level 2, not yet at the cap.
+  assert.doesNotMatch(response, /\bcap\b/i);
+  store.close();
+});
+
+test("runChatCli: 'why is X prioritized' reports a Task at the Slip-Bump cap distinctly", async () => {
+  const store = tempStore();
+  recordSlip(store, "t1", "2026-08-19");
+  recordSlip(store, "t1", "2026-08-20");
+  recordSlip(store, "t1", "2026-08-21");
+  recordSlip(store, "t1", "2026-08-22"); // 4th consecutive slip -- still pinned at the cap of 3.
+
+  const tasks: Task[] = [makeTask("t1", "Draft the memo")];
+  const io = makeScriptedIo(["why is Draft the memo prioritized"]);
+
+  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => new Date(NOW), async () => tasks);
+
+  const response = io.written.join("\n");
+  assert.match(response, /\bcap\b/i, "expected the response to note the Task is at its Slip-Bump cap");
+  store.close();
+});
+
+test("runChatCli: 'why is X prioritized' for a Task with no slip history says plainly that no Slip-Bump applies", async () => {
+  const store = tempStore();
+  const tasks: Task[] = [makeTask("t1", "Draft the memo")];
+  const io = makeScriptedIo(["why is Draft the memo prioritized"]);
+  const llmClient = makeFakeLlmClient();
+
+  await runChatCli(store, io, TEST_TIME_ZONE, llmClient, () => new Date(NOW), async () => tasks);
+
+  assert.equal(llmClient.calls.length, 0);
+  const response = io.written.join("\n");
+  assert.match(response, /Draft the memo/);
+  assert.match(response, /hasn'?t slipped|no slip-bump|never slipped/i);
+  store.close();
+});
+
+test("runChatCli: 'why is X prioritized' for an unknown Task name says it couldn't find that Task", async () => {
+  const store = tempStore();
+  const tasks: Task[] = [makeTask("t1", "Draft the memo")];
+  const io = makeScriptedIo(["why is Some Other Task prioritized"]);
+
+  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => new Date(NOW), async () => tasks);
+
+  assert.ok(io.written.some((line) => /couldn'?t find/i.test(line)));
   store.close();
 });

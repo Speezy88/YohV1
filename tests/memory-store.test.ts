@@ -27,6 +27,10 @@ import {
   mergeTaskFieldOverride,
   getCurrentTimeBudget,
   putTimeBudget,
+  getSlipHistory,
+  recordSlip,
+  clearSlip,
+  listSlipHistories,
   type InteractionRequest,
 } from "../src/adapters/memory-store.ts";
 import type { TimeBudget } from "../src/types/domain.ts";
@@ -488,4 +492,110 @@ test("documents: the AC's Friday-declared/Monday-read weekend-boundary guarantee
   assert.equal(readAgain?.data.date, "2026-08-21");
   assert.equal(readAgain?.version, 1);
   store.close();
+});
+
+// ============================================================================
+// Slip history (Task 17 / Story 2.5, FR-11) — typed surface on `records`
+// ============================================================================
+
+test("recordSlip: a Task's first reported slip creates a SlipHistory row with consecutiveSlipCount 1", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  assert.equal(getSlipHistory(store, "task-1"), undefined, "sanity: no slip history before any slip is recorded");
+
+  const record = recordSlip(store, "task-1", "2026-08-20");
+  assert.equal(record.data.consecutiveSlipCount, 1);
+  assert.equal(record.data.lastSlipDate, "2026-08-20");
+  assert.equal(record.version, 1);
+
+  const read = getSlipHistory(store, "task-1");
+  assert.equal(read?.data.consecutiveSlipCount, 1);
+  store.close();
+});
+
+test("recordSlip: called again for the same Task increments consecutiveSlipCount (consecutive slips accumulate)", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  recordSlip(store, "task-1", "2026-08-20");
+  recordSlip(store, "task-1", "2026-08-21");
+  const third = recordSlip(store, "task-1", "2026-08-22");
+
+  assert.equal(third.data.consecutiveSlipCount, 3);
+  assert.equal(third.data.lastSlipDate, "2026-08-22");
+  assert.equal(third.version, 3);
+  store.close();
+});
+
+test("recordSlip: two different Tasks accumulate independent consecutive-slip counts", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  recordSlip(store, "task-a", "2026-08-20");
+  recordSlip(store, "task-a", "2026-08-21");
+  recordSlip(store, "task-b", "2026-08-21");
+
+  assert.equal(getSlipHistory(store, "task-a")?.data.consecutiveSlipCount, 2);
+  assert.equal(getSlipHistory(store, "task-b")?.data.consecutiveSlipCount, 1);
+  store.close();
+});
+
+test("clearSlip: a Task's Slip-Bump is cleared on completion, not carried indefinitely (AC)", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  recordSlip(store, "task-1", "2026-08-20");
+  assert.equal(getSlipHistory(store, "task-1")?.data.consecutiveSlipCount, 1);
+
+  clearSlip(store, "task-1");
+  assert.equal(getSlipHistory(store, "task-1"), undefined, "slip history should be gone entirely once cleared");
+  store.close();
+});
+
+test("clearSlip: a subsequent NEW slip after a clear starts back at 1, not carried forward from before the clear", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  recordSlip(store, "task-1", "2026-08-20");
+  recordSlip(store, "task-1", "2026-08-21");
+  clearSlip(store, "task-1"); // Task completed.
+
+  const afterClearSlip = recordSlip(store, "task-1", "2026-09-01"); // Task slips again, later.
+  assert.equal(afterClearSlip.data.consecutiveSlipCount, 1, "must not resume from the pre-clear count of 2");
+  store.close();
+});
+
+test("clearSlip: clearing a Task with no slip history at all is a harmless no-op", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  assert.doesNotThrow(() => clearSlip(store, "task-never-slipped"));
+  assert.equal(getSlipHistory(store, "task-never-slipped"), undefined);
+  store.close();
+});
+
+test("listSlipHistories: lists every Task's current slip history, across every taskId", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  recordSlip(store, "task-a", "2026-08-20");
+  recordSlip(store, "task-b", "2026-08-20");
+  recordSlip(store, "task-b", "2026-08-21");
+
+  const all = listSlipHistories(store);
+  assert.equal(all.length, 2);
+  const byId = Object.fromEntries(all.map((r) => [r.id, r.data.consecutiveSlipCount]));
+  assert.deepEqual(byId, { "task-a": 1, "task-b": 2 });
+  store.close();
+});
+
+test("listSlipHistories: a cleared Task's history no longer appears in the list", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  recordSlip(store, "task-a", "2026-08-20");
+  recordSlip(store, "task-b", "2026-08-20");
+  clearSlip(store, "task-a");
+
+  const all = listSlipHistories(store);
+  assert.equal(all.length, 1);
+  assert.equal(all[0]?.id, "task-b");
+  store.close();
+});
+
+test("recordSlip: persists across a second connection to the same on-disk file (schema/storage genuinely durable, not just in-process)", () => {
+  const dbPath = tempDbPath();
+  const store1 = createMemoryStore({ databasePath: dbPath });
+  recordSlip(store1, "task-1", "2026-08-20");
+  store1.close();
+
+  const store2 = createMemoryStore({ databasePath: dbPath });
+  const read = getSlipHistory(store2, "task-1");
+  assert.equal(read?.data.consecutiveSlipCount, 1);
+  store2.close();
 });
