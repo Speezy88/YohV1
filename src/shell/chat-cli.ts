@@ -387,10 +387,19 @@ async function answerNightCloseOutRequest(
   io: ChatCliIo,
   record: StoredRecord<InteractionRequest>,
   setTaskStatus: SetTaskStatusFn,
-  today: IsoDate,
+  fallbackDate: IsoDate,
 ): Promise<boolean> {
   const detail = record.data.detail as NightCloseOutRequestDetail | undefined;
   const tasks = detail?.tasks ?? [];
+  // The date these confirmations are ABOUT is the Plan's own date
+  // (`detail.date`, stamped by `runNightPromptRitual` when it built this
+  // request) — NOT necessarily the date Spencer happens to be answering on.
+  // Spencer may open chat the next morning to answer last night's prompt;
+  // `recordSlip`/`clearSlip` must record the slip against the day the Task
+  // was actually scheduled, not the day it was confirmed. `fallbackDate`
+  // (the caller's current local date) is used only if `detail.date` is
+  // somehow absent (a malformed/legacy record).
+  const closeOutDate = detail?.date ?? fallbackDate;
 
   io.writeLine(`${ACCENT}${record.data.promptText}${RESET}`);
 
@@ -406,7 +415,7 @@ async function answerNightCloseOutRequest(
         continue; // re-ask the SAME question — an unparseable answer is not an answer.
       }
 
-      const applied = await applyNightCloseOutConfirmation({ store, setTaskStatus }, t.taskId, parsed, today);
+      const applied = await applyNightCloseOutConfirmation({ store, setTaskStatus }, t.taskId, parsed, closeOutDate);
       if (!applied.ok) {
         io.writeLine(`I couldn't record that in Notion: ${applied.error.message} — let's try again.`);
         continue; // re-ask — the Notion write must actually succeed before moving on.
@@ -442,16 +451,21 @@ async function answerNightCloseOutRequest(
  * answer-application step the same way this file now does for both of the
  * above.
  *
- * `setTaskStatus`/`today` are needed ONLY by the `"night-close-out"` branch;
- * both default to values that are safe for every OTHER caller (including
- * every pre-Task-19 test call site above, which never exercises that
- * branch) — `setTaskStatus` defaults to a stub that throws only if actually
- * invoked (mirrors `runChatCli`'s own `readTasks` default), and `today`
- * defaults to `"UTC"`'s local date, which is provably never read unless a
- * `"night-close-out"` request is actually open and answered. `runChatCli`
- * itself always supplies its own real `timeZone`-derived `today` — see that
- * function's own doc comment on why `timeZone` is never silently defaulted
- * to UTC there.
+ * `setTaskStatus`/`fallbackDate` are needed ONLY by the `"night-close-out"`
+ * branch; both default to values that are safe for every OTHER caller
+ * (including every pre-Task-19 test call site above, which never exercises
+ * that branch) — `setTaskStatus` defaults to a stub that throws only if
+ * actually invoked (mirrors `runChatCli`'s own `readTasks` default), and
+ * `fallbackDate` defaults to `"UTC"`'s local date. `fallbackDate` is
+ * deliberately NOT the date used to record a close-out confirmation's
+ * Slip-Bump — `answerNightCloseOutRequest` prefers the Plan's own date
+ * (`InteractionRequest.detail.date`, stamped when `runNightPromptRitual`
+ * built the request), since Spencer may not answer until the next morning;
+ * this parameter is only the last-resort fallback for a malformed/legacy
+ * record with no `detail.date` at all, so it is provably never read in the
+ * ordinary case. `runChatCli` itself always supplies its own real
+ * `timeZone`-derived date — see that function's own doc comment on why
+ * `timeZone` is never silently defaulted to UTC there.
  *
  * Returns once no interaction request remains open, or once `io.readLine`
  * reports EOF (stdin closed) — whichever comes first.
@@ -462,7 +476,7 @@ export async function surfaceOpenInteractionRequests(
   setTaskStatus: SetTaskStatusFn = async () => {
     throw new Error("chat-cli: no setTaskStatus dependency configured — cannot record Night Ritual close-out");
   },
-  today: IsoDate = localIsoDate(new Date(), "UTC"),
+  fallbackDate: IsoDate = localIsoDate(new Date(), "UTC"),
 ): Promise<void> {
   for (;;) {
     const open = listOpenInteractionRequests(store);
@@ -476,7 +490,7 @@ export async function surfaceOpenInteractionRequests(
     }
 
     if (next.id === NIGHT_CLOSE_OUT_REQUEST_ID && next.data.requestKind === "night-close-out") {
-      const resolved = await answerNightCloseOutRequest(store, io, next, setTaskStatus, today);
+      const resolved = await answerNightCloseOutRequest(store, io, next, setTaskStatus, fallbackDate);
       if (!resolved) return; // EOF mid-answer.
       continue;
     }

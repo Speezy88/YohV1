@@ -1358,3 +1358,23 @@ test("runChatCli: a Notion write failure re-prompts the same Task rather than si
   assert.equal(getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID), undefined, "eventually resolved once the retry succeeds");
   store.close();
 });
+
+test("runChatCli: a close-out answered the NEXT MORNING records the Slip-Bump against the Plan's own date, not the day it was answered", async () => {
+  const store = tempStore();
+  const planDate = localIsoDate(NIGHT_NOW, TEST_TIME_ZONE);
+  putPlan(store, closeOutPlan(planDate));
+  await runNightPromptRitual({ store, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE });
+
+  // Spencer doesn't open chat until the NEXT day.
+  const NEXT_MORNING = new Date(NIGHT_NOW.getTime() + 12 * 60 * 60_000);
+  const nextMorningLocalDate = localIsoDate(NEXT_MORNING, TEST_TIME_ZONE);
+  assert.notEqual(nextMorningLocalDate, planDate, "test setup sanity: the answer genuinely lands on a different local day");
+
+  const io = makeScriptedIo(["slipped", "completed"]);
+  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => NEXT_MORNING, async () => [], makeFakeSetTaskStatus());
+
+  const history = getSlipHistory(store, "t1");
+  assert.ok(history);
+  assert.equal(history!.data.lastSlipDate, planDate, "the slip must be recorded against the Plan's own date, not the answer date");
+  store.close();
+});
