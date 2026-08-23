@@ -141,10 +141,13 @@ interface StoredGoogleToken {
  * The sole constructor and holder of the Google `OAuth2Client` (AD-10).
  * Rewrites the refresh token to disk immediately after every refresh by
  * listening for the `OAuth2Client`'s own `'tokens'` event, which
- * `google-auth-library` emits synchronously whenever it obtains a new
- * refresh and/or access token (from `setCredentials` or an internal
- * `refreshAccessToken` call) — this is the actual mechanism, not a
- * best-effort polling or manual re-save step.
+ * `google-auth-library` emits synchronously whenever it obtains tokens via
+ * an actual code exchange or refresh call (`getTokenAsync`,
+ * `refreshTokenNoCache` — confirmed by reading
+ * `node_modules/google-auth-library/build/src/auth/oauth2client.js`; note
+ * `setCredentials` itself does *not* emit `'tokens'` — it's
+ * `AuthClient.setCredentials`, a plain field assignment) — this is the
+ * actual mechanism, not a best-effort polling or manual re-save step.
  */
 export class TokenStore {
   private readonly client: OAuth2Client;

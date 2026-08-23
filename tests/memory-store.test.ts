@@ -23,6 +23,20 @@ function tempDbPath(): string {
   return join(dir, "yoh-memory.db");
 }
 
+test("creates the database file's parent directory when it doesn't exist yet (fresh checkout, .env.example's ./data/ default)", () => {
+  // Deliberately does NOT pre-create the parent directory (unlike
+  // tempDbPath()'s mkdtempSync, which always pre-creates one) — this models
+  // a fresh checkout using .env.example's documented default
+  // (MEMORY_DB_PATH=./data/yoh-memory.db) where ./data/ doesn't exist yet.
+  const parentDir = mkdtempSync(join(tmpdir(), "yoh-memory-store-test-"));
+  const dbPath = join(parentDir, "nested", "not-yet-created", "yoh-memory.db");
+
+  const store = createMemoryStore({ databasePath: dbPath });
+  const created = store.readModifyWrite<{ ok: boolean }>("smoke", "1", undefined, () => ({ ok: true }));
+  assert.equal(created.version, 1);
+  store.close();
+});
+
 test("initializes its SQLite schema on first run", () => {
   const dbPath = tempDbPath();
   const store = createMemoryStore({ databasePath: dbPath });

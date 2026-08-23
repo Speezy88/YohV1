@@ -32,6 +32,8 @@
  */
 
 import Database from "better-sqlite3";
+import { existsSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import type { YohError } from "../types/domain.ts";
 
 // ============================================================================
@@ -95,8 +97,32 @@ export class MemoryStore {
   private readonly db: Database.Database;
 
   constructor(config: MemoryStoreConfig) {
+    // `better-sqlite3` (like raw SQLite) refuses to create a database file
+    // inside a directory that doesn't exist yet — it throws
+    // "unable to open database file" rather than creating one. On a fresh
+    // checkout using .env.example's documented default
+    // (MEMORY_DB_PATH=./data/yoh-memory.db), `./data/` doesn't exist, so
+    // this step is required for "initializes its SQLite schema on first
+    // run" to actually hold. Mirrors the same pattern `token-store.ts`
+    // already uses before writing its own token file.
+    if (config.databasePath !== ":memory:") {
+      const dir = dirname(config.databasePath);
+      if (dir && dir !== "." && !existsSync(dir)) {
+        mkdirSync(dir, { recursive: true });
+      }
+    }
+
     this.db = new Database(config.databasePath);
     this.db.pragma("journal_mode = WAL");
+    // A conflicting writer's SELECT-then-write can otherwise surface SQLite's
+    // own SQLITE_BUSY/SQLITE_BUSY_SNAPSHOT error under real cross-process
+    // contention instead of letting the application-level version check in
+    // `readModifyWrite` run and throw `ConflictError` — see that method's
+    // `.immediate()` usage below for the other half of this fix. A short
+    // busy_timeout gives a genuinely transient lock (as opposed to a real
+    // stale-version conflict) a chance to clear before either error path is
+    // reached.
+    this.db.pragma("busy_timeout = 5000");
     this.initSchema();
   }
 
@@ -140,6 +166,22 @@ export class MemoryStore {
    * new data to store. If `modify` throws, the whole transaction rolls
    * back and the stored record is left unchanged (better-sqlite3's
    * `db.transaction()` wraps this in BEGIN/COMMIT/ROLLBACK).
+   *
+   * Runs as an `.immediate()` transaction (`BEGIN IMMEDIATE`, not a plain
+   * deferred `BEGIN`): this acquires SQLite's write lock up front, before
+   * the SELECT that reads `expectedVersion` against, rather than only at
+   * the first write. Under real cross-process concurrency (AD-10:
+   * `ritual-cli.ts` and `chat-cli.ts` running concurrently against the
+   * same file), a deferred transaction can have its SELECT establish a
+   * snapshot that a second connection's commit then invalidates, causing
+   * SQLite itself to throw `SQLITE_BUSY`/`SQLITE_BUSY_SNAPSHOT` at the
+   * write step — bypassing the `expectedVersion !== actualVersion` check
+   * below entirely and surfacing a raw `SqliteError` instead of
+   * `ConflictError`/`YohError.kind: 'conflict'`. `.immediate()` plus the
+   * `busy_timeout` pragma set in the constructor makes a second writer
+   * either wait briefly for the lock or fail with `SQLITE_BUSY` up front
+   * (before this function's own read), rather than mid-transaction after
+   * already having read and evaluated a version.
    */
   readModifyWrite<T>(
     kind: string,
@@ -176,7 +218,7 @@ export class MemoryStore {
       return { kind, id, data: nextData, version: nextVersion, updatedAt };
     });
 
-    return runTransaction();
+    return runTransaction.immediate();
   }
 
   close(): void {
