@@ -45,15 +45,22 @@
  * "Before You Begin"; these are reasonable-default readings of the real
  * `@googleapis/calendar` v16 TypeScript types in
  * `node_modules/@googleapis/calendar`, checked live, not guessed blindly):
- *  - `Params$Resource$Events$List.timeMin`/`timeMax` are RFC3339 strings, so
- *    "today" is computed as the UTC calendar day containing `now` (an
- *    injectable clock, defaulting to `() => new Date()`), midnight to
- *    midnight — matching `domain.ts`'s Consistency Conventions that dates
- *    are ISO-8601 UTC internally everywhere in `core/` and storage. This is
- *    a reasonable-default reading, not a confirmed requirement that "today"
- *    must track Spencer's local calendar day rather than the UTC one; a
- *    later task can pass an explicit local-day-aware `now` without any
- *    change to this file's shape.
+ *  - `Params$Resource$Events$List.timeMin`/`timeMax` are RFC3339 strings.
+ *    "Today" must be Spencer's own local calendar day, not the UTC one —
+ *    "returns every one of today's events" (Story 1.4's acceptance
+ *    criteria) would otherwise silently drop a late-evening event or
+ *    include a next-day early-morning one for any timezone offset from UTC
+ *    (essentially everywhere Spencer might actually be). `timeZone` is
+ *    therefore a REQUIRED IANA zone name on `CalendarAdapterConfig` — never
+ *    defaulted to `"UTC"` here, since a silent default would just
+ *    reproduce the same bug for any caller that forgets to set it; the
+ *    real production value is Spencer's own timezone, sourced by whichever
+ *    later task wires this up (`rituals/*.ts` or `shell/*.ts`). The local
+ *    calendar day's start/end are computed as UTC instants via
+ *    `Intl.DateTimeFormat`'s `timeZone` option, deriving the zone's actual
+ *    UTC offset *at the relevant instant* (`zoneOffsetMinutesAt`, below)
+ *    rather than assuming a fixed offset, so this is correct across DST
+ *    transitions.
  *  - `singleEvents: true, orderBy: "startTime"` is passed so a recurring
  *    event is expanded into today's actual instance(s) rather than
  *    returning the (unexpanded) recurring series definition once.
@@ -101,8 +108,16 @@ export interface CalendarReadClient {
 // Config
 // ============================================================================
 
-/** Config `readCalendarEvents` accepts. Everything here is optional; sensible defaults cover the real production case. */
+/** Config `readCalendarEvents` accepts. */
 export interface CalendarAdapterConfig {
+  /**
+   * Spencer's IANA timezone (e.g. `"America/New_York"`), used to compute
+   * "today"'s local calendar-day boundaries (see module docstring).
+   * REQUIRED and deliberately not defaulted to `"UTC"` — a silent UTC
+   * default would reproduce the exact bug this field exists to prevent for
+   * any caller that forgets to set it.
+   */
+  readonly timeZone: string;
   /** Which calendar to read from — defaults to `"primary"`, Spencer's primary Google Calendar (never the "Yoh Plan" secondary calendar a later task writes to). */
   readonly calendarId?: string;
   /** Injectable clock defining "now", defaults to `() => new Date()`. Lets tests fix "today" without depending on real wall-clock time. */
@@ -127,11 +142,12 @@ export interface CalendarAdapterConfig {
  */
 export async function readCalendarEvents(
   client: CalendarReadClient,
-  config: CalendarAdapterConfig = {},
+  config: CalendarAdapterConfig,
 ): Promise<CalendarEvent[]> {
   const now = (config.now ?? (() => new Date()))();
-  const timeMin = startOfUtcDay(now).toISOString();
-  const timeMax = endOfUtcDay(now).toISOString();
+  const { start, end } = localDayWindowUtc(now, config.timeZone);
+  const timeMin = start.toISOString();
+  const timeMax = end.toISOString();
 
   const response = await client.events.list({
     calendarId: config.calendarId ?? "primary",
@@ -166,17 +182,95 @@ export function createCalendarReadClient(
 }
 
 // ============================================================================
-// Day-window helpers
+// Timezone-aware day-window helpers
+//
+// "Today" must be Spencer's local calendar day (see module docstring), not
+// the UTC one — these helpers compute that local day's start/end as UTC
+// instants, deriving the IANA zone's actual offset at the relevant instant
+// via `Intl.DateTimeFormat` (correct across DST transitions) rather than
+// assuming a fixed offset.
 // ============================================================================
 
-/** Midnight UTC of the calendar day containing `date`. */
-function startOfUtcDay(date: Date): Date {
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 0, 0, 0, 0));
+/** The Y/M/D of `date` as seen in `timeZone`'s local wall-clock time. */
+function localDatePartsInZone(
+  date: Date,
+  timeZone: string,
+): { readonly year: number; readonly month: number; readonly day: number } {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const parts = formatter.formatToParts(date);
+  const get = (type: string): number => Number(parts.find((p) => p.type === type)?.value);
+  return { year: get("year"), month: get("month"), day: get("day") };
 }
 
-/** Midnight UTC of the calendar day immediately after the one containing `date` (an exclusive upper bound). */
-function endOfUtcDay(date: Date): Date {
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + 1, 0, 0, 0, 0));
+/**
+ * `timeZone`'s offset from UTC (in minutes, positive east of UTC) at the
+ * instant `utcMillis`, derived by comparing `utcMillis`'s local wall-clock
+ * time in `timeZone` against the same instant read as UTC — computed at the
+ * specific instant asked about (not a fixed constant), so this is correct
+ * across a DST transition.
+ */
+function zoneOffsetMinutesAt(utcMillis: number, timeZone: string): number {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  const parts = formatter.formatToParts(new Date(utcMillis));
+  const get = (type: string): number => Number(parts.find((p) => p.type === type)?.value);
+  // Reading `utcMillis`'s local wall-clock time in `timeZone`, then
+  // re-interpreting those same numbers as if they were UTC, yields
+  // `utcMillis + offset` — so subtracting `utcMillis` back out gives the
+  // zone's offset (in ms) at that instant.
+  const localWallClockAsUtcMillis = Date.UTC(
+    get("year"),
+    get("month") - 1,
+    get("day"),
+    get("hour"),
+    get("minute"),
+    get("second"),
+  );
+  return (localWallClockAsUtcMillis - utcMillis) / 60_000;
+}
+
+/** The UTC instant of local midnight (start of day) for the given `timeZone` local Y/M/D. */
+function startOfLocalDayUtc(year: number, month: number, day: number, timeZone: string): Date {
+  // First guess: local midnight's wall-clock numbers, read as if they were
+  // already UTC — then correct by the zone's actual offset at that instant.
+  const candidateUtcMillis = Date.UTC(year, month - 1, day, 0, 0, 0, 0);
+  const offsetMinutes = zoneOffsetMinutesAt(candidateUtcMillis, timeZone);
+  return new Date(candidateUtcMillis - offsetMinutes * 60_000);
+}
+
+/** `timeZone`'s local calendar day containing `date`, as a `[start, end)` pair of UTC instants (`end` exclusive, the following local midnight). */
+function localDayWindowUtc(date: Date, timeZone: string): { readonly start: Date; readonly end: Date } {
+  const { year, month, day } = localDatePartsInZone(date, timeZone);
+  const start = startOfLocalDayUtc(year, month, day, timeZone);
+
+  // `Date.UTC` itself correctly rolls `day + 1` over into the next
+  // month/year; reading that rolled-over instant's own UTC Y/M/D back out
+  // (not its local-zone Y/M/D — this is pure calendar-date arithmetic, no
+  // zone conversion involved) gives the next calendar day's Y/M/D to feed
+  // back into `startOfLocalDayUtc`, so a DST-transition day (23 or 25
+  // wall-clock hours) is handled correctly rather than assumed to be 24h.
+  const nextDayAsUtc = new Date(Date.UTC(year, month - 1, day + 1, 0, 0, 0, 0));
+  const end = startOfLocalDayUtc(
+    nextDayAsUtc.getUTCFullYear(),
+    nextDayAsUtc.getUTCMonth() + 1,
+    nextDayAsUtc.getUTCDate(),
+    timeZone,
+  );
+
+  return { start, end };
 }
 
 // ============================================================================

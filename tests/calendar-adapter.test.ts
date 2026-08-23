@@ -15,6 +15,15 @@
  * insert/update/delete) — the same read-only enforcement
  * `CalendarReadClient` itself provides in the adapter file, so a call to any
  * write method is impossible even by mistake, not just untested.
+ *
+ * `CalendarAdapterConfig.timeZone` is required (never defaulted to `"UTC"`
+ * in production code — see the adapter's module docstring), so every test
+ * below passes one explicitly. Most tests use `"UTC"` for simplicity since
+ * their assertions are about other behavior; the dedicated
+ * "local calendar day" tests further down use a real non-UTC IANA zone
+ * (`America/New_York`, UTC-4 in August under DST) to confirm an event just
+ * before/after UTC midnight is bucketed into Spencer's local "today"
+ * rather than UTC's.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -99,7 +108,7 @@ test("readCalendarEvents returns every one of today's events with start/end time
     },
   ]);
 
-  const events = await readCalendarEvents(client, { now: FIXED_NOW });
+  const events = await readCalendarEvents(client, { now: FIXED_NOW, timeZone: "UTC" });
 
   assert.equal(events.length, 2);
   assert.deepEqual(
@@ -127,7 +136,7 @@ test("readCalendarEvents converts an all-day event's date-only start/end into Is
     },
   ]);
 
-  const events = await readCalendarEvents(client, { now: FIXED_NOW });
+  const events = await readCalendarEvents(client, { now: FIXED_NOW, timeZone: "UTC" });
   assert.equal(events.length, 1);
   assert.equal(events[0]?.start, "2026-08-22T00:00:00.000Z");
   assert.equal(events[0]?.end, "2026-08-23T00:00:00.000Z");
@@ -136,7 +145,7 @@ test("readCalendarEvents converts an all-day event's date-only start/end into Is
 test("readCalendarEvents only calls the read-scoped client's events.list — no insert/update/delete call anywhere", async () => {
   const client = new FakeCalendarReadClient([{ items: [] }]);
 
-  await readCalendarEvents(client, { now: FIXED_NOW });
+  await readCalendarEvents(client, { now: FIXED_NOW, timeZone: "UTC" });
 
   assert.equal(client.calls.length, 1);
   const call = client.calls[0];
@@ -164,14 +173,14 @@ test("readCalendarEvents reflects an event added since the last read, with no ca
     },
   ]);
 
-  const first = await readCalendarEvents(client, { now: FIXED_NOW });
+  const first = await readCalendarEvents(client, { now: FIXED_NOW, timeZone: "UTC" });
   assert.equal(first.length, 1);
   assert.deepEqual(first.map((e) => e.id), ["event-1"]);
 
   // Simulates an event added to the primary calendar between two runs. No
   // caching layer exists in calendar-adapter.ts, so a second call must
   // re-query and include the new event with no manual re-sync step.
-  const second = await readCalendarEvents(client, { now: FIXED_NOW });
+  const second = await readCalendarEvents(client, { now: FIXED_NOW, timeZone: "UTC" });
   assert.equal(second.length, 2);
   assert.deepEqual(
     second.map((e) => e.id).sort(),
@@ -180,14 +189,98 @@ test("readCalendarEvents reflects an event added since the last read, with no ca
   assert.equal(client.calls.length, 2);
 });
 
-test("readCalendarEvents defaults 'today' from the system clock and derives a UTC day window from an injected clock", async () => {
+test("readCalendarEvents derives a UTC day window from an injected clock when timeZone is 'UTC'", async () => {
   const client = new FakeCalendarReadClient([{ items: [] }]);
-  await readCalendarEvents(client, { now: () => new Date("2026-08-22T23:59:00.000Z") });
+  await readCalendarEvents(client, { now: () => new Date("2026-08-22T23:59:00.000Z"), timeZone: "UTC" });
 
   const call = client.calls[0];
   assert.ok(call);
   assert.equal(call.timeMin, "2026-08-22T00:00:00.000Z");
   assert.equal(call.timeMax, "2026-08-23T00:00:00.000Z");
+});
+
+// ============================================================================
+// Non-UTC timezone: Spencer's local calendar day, not UTC's (fix for the
+// Task 4 code-review finding — see calendar-adapter.ts's module docstring)
+// ============================================================================
+
+test("readCalendarEvents computes 'today' as Spencer's local calendar day (America/New_York, UTC-4 in August under DST), not the UTC one", async () => {
+  // 2026-08-22T23:30:00-04:00 is already 2026-08-23 in UTC
+  // (2026-08-23T03:30:00.000Z), so a UTC-day computation would put "today"
+  // one day ahead of Spencer's actual New York evening.
+  const nowInNewYorkLateEvening = () => new Date("2026-08-22T23:30:00-04:00");
+  const client = new FakeCalendarReadClient([{ items: [] }]);
+
+  await readCalendarEvents(client, { now: nowInNewYorkLateEvening, timeZone: "America/New_York" });
+
+  const call = client.calls[0];
+  assert.ok(call);
+  // Spencer's local day (2026-08-22, America/New_York) runs from
+  // 2026-08-22T04:00:00.000Z (00:00 EDT) up to 2026-08-23T04:00:00.000Z
+  // (the following 00:00 EDT) — NOT 2026-08-22T00:00:00.000Z /
+  // 2026-08-23T00:00:00.000Z, which is what a (buggy) UTC-day computation
+  // would have produced for this same instant.
+  assert.equal(call.timeMin, "2026-08-22T04:00:00.000Z");
+  assert.equal(call.timeMax, "2026-08-23T04:00:00.000Z");
+});
+
+test("readCalendarEvents includes an event just before UTC midnight that is still 'today' in Spencer's local timezone", async () => {
+  // 2026-08-22T23:45:00.000Z is 2026-08-22T19:45:00-04:00 in New York —
+  // still Spencer's August 22nd evening, well within his local "today".
+  const eventJustBeforeUtcMidnight = makeEvent({
+    id: "late-event",
+    summary: "Late call",
+    startDateTime: "2026-08-22T23:45:00.000Z",
+    endDateTime: "2026-08-23T00:15:00.000Z",
+  });
+  const client = new FakeCalendarReadClient([{ items: [eventJustBeforeUtcMidnight] }]);
+
+  const events = await readCalendarEvents(client, {
+    now: () => new Date("2026-08-22T23:50:00.000Z"),
+    timeZone: "America/New_York",
+  });
+
+  assert.deepEqual(
+    events.map((e) => e.id),
+    ["late-event"],
+  );
+  const call = client.calls[0];
+  assert.ok(call);
+  // The event's start (23:45 UTC) falls inside the requested
+  // [timeMin, timeMax) window computed for Spencer's New York "today".
+  assert.ok(call.timeMin !== undefined && call.timeMin < "2026-08-22T23:45:00.000Z");
+  assert.ok(call.timeMax !== undefined && call.timeMax > "2026-08-22T23:45:00.000Z");
+});
+
+test("readCalendarEvents excludes an event that is UTC-'today' but already tomorrow in Spencer's local timezone", async () => {
+  // 2026-08-23T02:00:00.000Z ("today" by UTC-day reckoning) is
+  // 2026-08-22T22:00:00-04:00 in New York — still the 22nd locally — so
+  // this test instead picks an instant that genuinely crosses into
+  // Spencer's next local day: 2026-08-23T05:00:00.000Z is
+  // 2026-08-23T01:00:00-04:00, already August 23rd in New York, even
+  // though `now` below is fixed to New York's August 22nd.
+  const eventTomorrowLocally = makeEvent({
+    id: "past-local-midnight",
+    summary: "Very early meeting",
+    startDateTime: "2026-08-23T05:00:00.000Z",
+    endDateTime: "2026-08-23T05:30:00.000Z",
+  });
+  const client = new FakeCalendarReadClient([{ items: [eventTomorrowLocally] }]);
+
+  await readCalendarEvents(client, {
+    now: () => new Date("2026-08-22T15:00:00-04:00"),
+    timeZone: "America/New_York",
+  });
+
+  const call = client.calls[0];
+  assert.ok(call);
+  // The requested window's exclusive upper bound (Spencer's local
+  // midnight, August 23rd New York time) is 2026-08-23T04:00:00.000Z —
+  // strictly before this event's 05:00 UTC start, so a correctly
+  // timezone-aware request would not include this event's start time
+  // inside [timeMin, timeMax).
+  assert.equal(call.timeMax, "2026-08-23T04:00:00.000Z");
+  assert.ok(call.timeMax !== undefined && call.timeMax < "2026-08-23T05:00:00.000Z");
 });
 
 test("createCalendarReadClient builds a CalendarReadClient from an injected already-authenticated auth client, with no network call", () => {
