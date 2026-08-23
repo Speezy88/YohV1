@@ -51,7 +51,7 @@ development_status:
   epic-1-retrospective: optional
 
   epic-2: in-progress
-  2-1-persistent-chat-session-natural-language-routing: backlog
+  2-1-persistent-chat-session-natural-language-routing: done
   2-2-default-and-contextual-tone: backlog
   2-3-user-initiated-mid-day-re-flow: backlog
   2-4-logistics-only-blocker-handling: backlog
