@@ -994,18 +994,37 @@ export function listUncheckedDays(store: MemoryStore): StoredRecord<UncheckedDay
 // would misrepresent the data.)
 //
 // ----------------------------------------------------------------------------
-// The two `get*`-addressed kinds NOT covered above: also hot, same reasoning
+// The two remaining record kinds NOT covered above: also hot, own reasoning each
 // ----------------------------------------------------------------------------
 //
-// `InteractionRequest` (`getOpenInteractionRequest`/`listOpenInteractionRequests`)
-// and `TaskFieldOverride` (`getTaskFieldOverride`) are the two remaining
-// record kinds in this file and are BOTH hot, for the exact same reason as
-// `Plan`/`TimeBudget`/`RitualRun` above: every read is addressed by a
-// specific `(kind, id)` via `getRecord` (never a date-range scan), and what
-// they hold is inherently current-state, not history — an interaction
-// request is either open right now or it isn't (per its own
-// persist/surface/clear cycle), and a field override is whatever Spencer's
-// most recent answer for that field currently is. Neither is folded into
+// `InteractionRequest` and `TaskFieldOverride` are the two remaining record
+// kinds in this file and are BOTH hot — but not for identical reasons, and
+// NOT (post-review correction) because every read of both is a
+// `getRecord`-by-`(kind, id)` read the way `Plan`/`TimeBudget`/`RitualRun`
+// are:
+//
+// - `getTaskFieldOverride` genuinely is exactly that: a plain `getRecord`
+//   on a specific `taskId`, same shape as `getPlan`/`getCurrentTimeBudget`.
+// - `getOpenInteractionRequest` is too, but `listOpenInteractionRequests`
+//   is NOT — it's `listRecordsByKind<InteractionRequest>`, the same
+//   full-kind-scan primitive `queryColdMemoryPatterns` uses to make its own
+//   reads genuinely "cold." What makes `InteractionRequest` hot anyway
+//   isn't the shape of that call, it's what's being scanned: unlike
+//   `SlipHistory`/`UncheckedDay` (which `queryColdMemoryPatterns` scans
+//   specifically because they accumulate real multi-day/multi-week
+//   history), open interaction requests are cleared the moment Spencer
+//   answers them (`clearInteractionRequest`) — the kind never grows into a
+//   history at all, it just holds whatever's open right now. A
+//   `listRecordsByKind` call over a kind that stays small and current
+//   because of its own clear-on-answer lifecycle is a different thing from
+//   a `listRecordsByKind` call used as a historical distillation over
+//   accumulated time — the former is still a hot, current-state read; only
+//   the latter is what this file means by "cold."
+//
+// What they hold is, either way, inherently current-state rather than
+// history — an interaction request is either open right now or it isn't,
+// and a field override is whatever Spencer's most recent answer for that
+// field currently is. Neither is folded into
 // `readHotMemory`'s `HotMemorySnapshot` alongside Plan/TimeBudget/RitualRun:
 // that struct is deliberately scoped to the three fields a ritual's own
 // "what do I run/show today" decision reads (this task's TDD requirement 1
