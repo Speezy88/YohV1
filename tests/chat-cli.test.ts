@@ -14,6 +14,7 @@ import {
   createMemoryStore,
   getOpenInteractionRequest,
   getSlipHistory,
+  getUncheckedDay,
   putOpenInteractionRequest,
   getTaskFieldOverride,
   mergeTaskFieldOverride,
@@ -23,7 +24,7 @@ import {
   putTimeBudget,
   recordSlip,
 } from "../src/adapters/memory-store.ts";
-import { NIGHT_CLOSE_OUT_REQUEST_ID, runNightPromptRitual } from "../src/rituals/night-ritual.ts";
+import { NIGHT_CLOSE_OUT_REQUEST_ID, runNightEscalateRitual, runNightPromptRitual } from "../src/rituals/night-ritual.ts";
 import type { MemoryStore } from "../src/adapters/memory-store.ts";
 import {
   surfaceOpenInteractionRequests,
@@ -1392,6 +1393,101 @@ test("runChatCli: a PERMANENTLY-failing Notion write can be skipped, unblocking 
     "the rest of the close-out (t2) still completes normally after t1 is skipped",
   );
   store.close();
+});
+
+// ============================================================================
+// Task 21, third post-review fix: a skip during close-out must NOT resolve
+// (clear) a matching UncheckedDay record — Spencer hasn't genuinely
+// confirmed what happened to a skipped Task, so the flag must survive to
+// surface on a future Morning Plan rather than silently vanishing.
+// ============================================================================
+
+test("runChatCli: a night that was escalated and then answered with AT LEAST ONE SKIP does NOT clear its UncheckedDay record — the flag survives", async () => {
+  const store = tempStore();
+  const today = localIsoDate(NIGHT_NOW, TEST_TIME_ZONE);
+  putPlan(store, closeOutPlan(today));
+  const promptRun = await runNightPromptRitual({ store, sendNotification: async () => {}, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE });
+  assert.ok(promptRun.ok && promptRun.value.status === "prompted");
+
+  // Both close-out attempts spent, still unanswered — recorded as unchecked
+  // (rituals/night-ritual.ts's runNightEscalateRitual, the real production
+  // code path, not a hand-seeded fixture).
+  const escalated = await runNightEscalateRitual({
+    store,
+    sendEscalationEmail: async () => {},
+    now: () => NIGHT_NOW,
+    timeZone: TEST_TIME_ZONE,
+  });
+  assert.ok(escalated.ok && escalated.value.status === "escalated", `expected escalation, got ${JSON.stringify(escalated)}`);
+  assert.ok(getUncheckedDay(store, today), "sanity: recorded as unchecked before Spencer answers");
+
+  // Spencer finally opens chat — but SKIPS one of the two named Tasks
+  // (t1 is answered genuinely; t2 is skipped).
+  const io = makeScriptedIo(["completed", "skip"]);
+  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => NIGHT_NOW, async () => [], makeFakeSetTaskStatus());
+
+  assert.equal(
+    getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID),
+    undefined,
+    "the request itself still clears once every Task is answered-or-skipped",
+  );
+  assert.ok(
+    getUncheckedDay(store, today),
+    "the UncheckedDay record must SURVIVE a skip — Spencer never genuinely confirmed what happened to t2, so the flag must still surface on a future Morning Plan",
+  );
+});
+
+test("runChatCli: a night that was escalated and then answered with EVERY Task skipped (a full skip-all, not just partial) also does NOT clear its UncheckedDay record", async () => {
+  const store = tempStore();
+  const today = localIsoDate(NIGHT_NOW, TEST_TIME_ZONE);
+  putPlan(store, closeOutPlan(today));
+  await runNightPromptRitual({ store, sendNotification: async () => {}, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE });
+
+  const escalated = await runNightEscalateRitual({
+    store,
+    sendEscalationEmail: async () => {},
+    now: () => NIGHT_NOW,
+    timeZone: TEST_TIME_ZONE,
+  });
+  assert.ok(escalated.ok && escalated.value.status === "escalated");
+  assert.ok(getUncheckedDay(store, today), "sanity: recorded as unchecked before Spencer answers");
+
+  // Both named Tasks are skipped — nothing genuinely confirmed at all.
+  const io = makeScriptedIo(["skip", "skip"]);
+  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => NIGHT_NOW, async () => [], makeFakeSetTaskStatus());
+
+  assert.equal(getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID), undefined, "the request still clears — skip unblocks the session");
+  assert.ok(
+    getUncheckedDay(store, today),
+    "a full skip-all must ALSO leave the UncheckedDay record intact — this is the exact reviewer-reproduced regression scenario",
+  );
+});
+
+test("runChatCli: a night that was escalated and then answered with EVERY Task genuinely confirmed (no skips) DOES clear its UncheckedDay record", async () => {
+  const store = tempStore();
+  const today = localIsoDate(NIGHT_NOW, TEST_TIME_ZONE);
+  putPlan(store, closeOutPlan(today));
+  await runNightPromptRitual({ store, sendNotification: async () => {}, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE });
+
+  const escalated = await runNightEscalateRitual({
+    store,
+    sendEscalationEmail: async () => {},
+    now: () => NIGHT_NOW,
+    timeZone: TEST_TIME_ZONE,
+  });
+  assert.ok(escalated.ok && escalated.value.status === "escalated");
+  assert.ok(getUncheckedDay(store, today), "sanity: recorded as unchecked before Spencer answers");
+
+  // Spencer answers EVERY named Task genuinely — no skip at all.
+  const io = makeScriptedIo(["completed", "slipped"]);
+  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => NIGHT_NOW, async () => [], makeFakeSetTaskStatus());
+
+  assert.equal(getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID), undefined);
+  assert.equal(
+    getUncheckedDay(store, today),
+    undefined,
+    "a fully, genuinely answered night (no skips) must resolve the UncheckedDay record — confirms Task 21's second post-review fix still works after the third",
+  );
 });
 
 test("runChatCli: a close-out answered the NEXT MORNING records the Slip-Bump against the Plan's own date, not the day it was answered", async () => {

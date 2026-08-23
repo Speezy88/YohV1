@@ -487,7 +487,13 @@ async function answerNightCloseOutRequest(
     }
   }
 
-  clearNightCloseOutRequestIfOpen(store);
+  // Task 21 (third post-review fix): only resolve a matching UncheckedDay
+  // record when EVERY named Task was genuinely answered — a skip means
+  // Spencer still hasn't confirmed what happened to at least one Task, so
+  // the flag (if this night was ever escalated/recorded) must survive to
+  // surface on a future Morning Plan rather than silently vanishing. See
+  // clearNightCloseOutRequestIfOpen's own doc comment for the full story.
+  clearNightCloseOutRequestIfOpen(store, { resolveUncheckedDay: skippedTitles.length === 0 });
   io.writeLine(
     skippedTitles.length === 0
       ? "Got it — thanks. I've updated Notion and factored this into tomorrow's plan."

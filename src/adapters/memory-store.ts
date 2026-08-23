@@ -817,28 +817,60 @@ export function putUncheckedDay(store: MemoryStore, day: UncheckedDay): StoredRe
  * Stamps `shownAt` on the already-recorded `UncheckedDay` row for `date` —
  * "merge a bit more" semantics, like `mergeTaskFieldOverride`: reads the
  * row's current version internally (so a genuine concurrent writer still
- * surfaces `ConflictError` per AD-10) and patches only `shownAt`, leaving
- * `rolledForwardTasks`/`recordedAt` untouched. Called by
- * `rituals/morning-ritual.ts`, once, right after it has actually delivered
- * a Plan carrying this night's notice (see `UncheckedDay.shownAt`'s own doc
- * comment for why this is a separate step from `putUncheckedDay`).
+ * surfaces `ConflictError` per AD-10 for a REAL conflicting write — see
+ * below for the one case that is deliberately NOT treated as one) and
+ * patches only `shownAt`, leaving `rolledForwardTasks`/`recordedAt`
+ * untouched. Called by `rituals/morning-ritual.ts`, once, right after it
+ * has actually delivered a Plan carrying this night's notice (see
+ * `UncheckedDay.shownAt`'s own doc comment for why this is a separate step
+ * from `putUncheckedDay`).
  *
- * Throws if no row exists for `date` yet — a caller should only ever call
- * this for a date it just read via `getUncheckedDay`/`listUncheckedDays`,
- * so a missing row here means a genuine concurrent delete (nothing in this
- * codebase currently deletes an `UncheckedDay` row) or a caller bug, either
- * of which should surface loudly rather than silently create a
- * `shownAt`-only row with no `rolledForwardTasks` to have ever displayed.
+ * **Returns `undefined` — a clean no-op, NOT a throw — when no row exists
+ * for `date` (Task 21, Minor post-review fix).** `rituals/night-ritual.ts`'s
+ * `clearUncheckedDay` (added by Task 21's second post-review fix) DOES now
+ * delete an `UncheckedDay` row, once Spencer genuinely answers a close-out
+ * — this file's own doc comment previously claimed "nothing in this
+ * codebase deletes an `UncheckedDay` row," which that fix made false. That
+ * matters here specifically because `rituals/morning-ritual.ts`'s
+ * `runMorningRitual` reads the row at its own "step 1.5" and doesn't stamp
+ * `shownAt` until its own "step 12d" — with Notion/Calendar reads and a
+ * Pushover send awaited in between, a real window during which a SEPARATE
+ * `chat-cli.ts` process (same SQLite file, AD-10) can legitimately answer
+ * the close-out and delete this exact row via `clearUncheckedDay` before
+ * `runMorningRitual` ever reaches its own write. That is not a bug and not
+ * a genuine conflict — the night is no longer unchecked either way, and
+ * there is nothing left to stamp — so this returns `undefined` cleanly
+ * rather than throwing, and a `ConflictError` whose own detail shows the
+ * row is now gone (`actualVersion === undefined`, i.e. genuinely deleted,
+ * not merely a different version) is treated the same way even if it
+ * surfaces from the write itself (the even-narrower window between this
+ * function's own read above and its own write, effectively a race with
+ * itself). A caller that only ever calls this for a date it just read via
+ * `getUncheckedDay`/`listUncheckedDays` — the sole real caller's own
+ * contract — should treat `undefined` as "already resolved, nothing to do"
+ * rather than an error.
  */
-export function markUncheckedDayShown(store: MemoryStore, date: IsoDate, shownAt: IsoDateTime): StoredRecord<UncheckedDay> {
+export function markUncheckedDayShown(
+  store: MemoryStore,
+  date: IsoDate,
+  shownAt: IsoDateTime,
+): StoredRecord<UncheckedDay> | undefined {
   const current = store.getRecord<UncheckedDay>(UNCHECKED_DAY_KIND, date);
   if (!current) {
-    throw new Error(`memory-store: cannot mark ${date} as shown — no UncheckedDay record exists for it`);
+    return undefined; // Already resolved (e.g. clearUncheckedDay ran concurrently) — nothing to stamp.
   }
-  return store.readModifyWrite<UncheckedDay>(UNCHECKED_DAY_KIND, date, current.version, (existing) => ({
-    ...(existing?.data as UncheckedDay),
-    shownAt,
-  }));
+  try {
+    return store.readModifyWrite<UncheckedDay>(UNCHECKED_DAY_KIND, date, current.version, (existing) => ({
+      ...(existing?.data as UncheckedDay),
+      shownAt,
+    }));
+  } catch (err) {
+    const detail = err instanceof ConflictError ? (err.yohError.detail as { actualVersion?: number } | undefined) : undefined;
+    if (err instanceof ConflictError && detail !== undefined && detail.actualVersion === undefined) {
+      return undefined; // Deleted between our read above and this write — same "already resolved" case.
+    }
+    throw err;
+  }
 }
 
 /**

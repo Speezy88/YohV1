@@ -860,7 +860,10 @@ test("end-to-end: a night Spencer answers AFTER escalation does NOT get falsely 
     PRIOR_NIGHT,
   );
   assert.ok(applied.ok, `expected the answer to apply successfully, got ${JSON.stringify(applied)}`);
-  clearNightCloseOutRequestIfOpen(store); // the same call chat-cli.ts makes once every named Task is answered
+  // The same call chat-cli.ts makes once every named Task is answered — no
+  // skips here, so resolveUncheckedDay: true (see chat-cli.ts's own call
+  // site: it passes `skippedTitles.length === 0`).
+  clearNightCloseOutRequestIfOpen(store, { resolveUncheckedDay: true });
   assert.equal(getUncheckedDay(store, PRIOR_NIGHT), undefined, "sanity: the UncheckedDay record is resolved immediately on answer");
 
   // --- The next Morning Plan (2026-08-22) must NOT falsely flag this night —

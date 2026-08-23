@@ -702,6 +702,7 @@ test("markUncheckedDayShown stamps shownAt on an existing record without disturb
   assert.equal(getUncheckedDay(store, "2026-08-21")?.data.shownAt, undefined, "sanity: not yet shown");
 
   const stamped = markUncheckedDayShown(store, "2026-08-21", "2026-08-22T13:00:00.000Z");
+  assert.ok(stamped, "expected a real stamped record, not the 'already resolved' undefined case");
   assert.equal(stamped.version, 2, "the version increments — a real readModifyWrite, not a no-op");
   assert.equal(stamped.data.shownAt, "2026-08-22T13:00:00.000Z");
   assert.deepEqual(stamped.data.rolledForwardTasks, [{ taskId: "t1", taskTitle: "Draft the memo" }], "untouched by the stamp");
@@ -712,9 +713,35 @@ test("markUncheckedDayShown stamps shownAt on an existing record without disturb
   store.close();
 });
 
-test("markUncheckedDayShown throws when no UncheckedDay record exists for that date — a caller bug or a genuine concurrent delete, either of which should surface loudly", () => {
+test("markUncheckedDayShown returns undefined (a clean no-op, NOT a throw) when no UncheckedDay record exists for that date — Task 21 Minor post-review fix: a concurrent clearUncheckedDay is a real, reachable case, not a bug", () => {
   const store = createMemoryStore({ databasePath: tempDbPath() });
-  assert.throws(() => markUncheckedDayShown(store, "2026-08-21", "2026-08-22T13:00:00.000Z"));
+  assert.doesNotThrow(() => markUncheckedDayShown(store, "2026-08-21", "2026-08-22T13:00:00.000Z"));
+  const result = markUncheckedDayShown(store, "2026-08-21", "2026-08-22T13:00:00.000Z");
+  assert.equal(result, undefined);
+  store.close();
+});
+
+test("markUncheckedDayShown resolves cleanly (no throw) even when the row is deleted BETWEEN its own internal read and write — the cross-process race the Minor fix targets", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  putUncheckedDay(store, {
+    date: "2026-08-21",
+    rolledForwardTasks: [{ taskId: "t1", taskTitle: "Draft the memo" }],
+    recordedAt: "2026-08-21T23:00:00.000Z",
+  });
+
+  // Simulate a genuinely concurrent chat-cli.ts process (same SQLite file,
+  // AD-10) answering the close-out and clearing this exact row via
+  // clearUncheckedDay — timed to land between morning-ritual.ts's own
+  // step-1.5 read (which produced the `date` this call is keyed on) and
+  // this call's own write. Reproduced directly by simply clearing the row
+  // first and then calling markUncheckedDayShown, which is the observable
+  // effect regardless of which of the two internal race windows it lands in
+  // (this function's own doc comment covers both).
+  clearUncheckedDay(store, "2026-08-21");
+
+  assert.doesNotThrow(() => markUncheckedDayShown(store, "2026-08-21", "2026-08-22T13:00:00.000Z"));
+  assert.equal(markUncheckedDayShown(store, "2026-08-21", "2026-08-22T13:00:00.000Z"), undefined);
+  assert.equal(getUncheckedDay(store, "2026-08-21"), undefined, "still resolved — no row was resurrected by the attempted stamp");
   store.close();
 });
 

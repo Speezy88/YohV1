@@ -736,7 +736,7 @@ test("Spencer answering the original close-out request, after the night was alre
   );
   assert.ok(applied.ok, `expected the late answer to still apply successfully, got ${JSON.stringify(applied)}`);
 
-  clearNightCloseOutRequestIfOpen(store);
+  clearNightCloseOutRequestIfOpen(store, { resolveUncheckedDay: true });
   assert.equal(getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID), undefined, "the request clears normally once answered");
   assert.equal(
     getUncheckedDay(store, TODAY),
@@ -777,7 +777,7 @@ test("clearNightCloseOutRequestIfOpen resolves the matching UncheckedDay record 
     "completed",
     EARLIER_NIGHT,
   );
-  clearNightCloseOutRequestIfOpen(store);
+  clearNightCloseOutRequestIfOpen(store, { resolveUncheckedDay: true });
 
   assert.equal(getUncheckedDay(store, EARLIER_NIGHT), undefined, "the correct (earlier) night's UncheckedDay record must be resolved");
 });
@@ -796,7 +796,7 @@ test("clearNightCloseOutRequestIfOpen is a harmless no-op for the UncheckedDay p
     TODAY,
   );
   // Must not throw, and must not fabricate a row.
-  assert.doesNotThrow(() => clearNightCloseOutRequestIfOpen(store));
+  assert.doesNotThrow(() => clearNightCloseOutRequestIfOpen(store, { resolveUncheckedDay: true }));
   assert.equal(getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID), undefined);
   assert.equal(getUncheckedDay(store, TODAY), undefined);
 });

@@ -937,10 +937,21 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
   // finds this same record with `shownAt` unset and gets a fresh chance to
   // show it. The RECORD itself was already written earlier — by
   // `rituals/night-ritual.ts`'s `runNightEscalateRitual`, at cap-spend time
-  // — this step only ever patches `shownAt` onto it (`markUncheckedDayShown`,
-  // which throws if the record is somehow already gone — genuinely
-  // unexpected, since nothing in this codebase deletes an `UncheckedDay`
-  // row).
+  // — this step only ever patches `shownAt` onto it.
+  //
+  // `markUncheckedDayShown` returns `undefined` (a clean no-op, NOT a throw
+  // — Task 21, Minor post-review fix) if the record is already gone by the
+  // time this line runs. That is a REAL, reachable case: `rituals/
+  // night-ritual.ts`'s `clearUncheckedDay` (Task 21's second post-review
+  // fix) now deletes this exact row once Spencer genuinely answers a
+  // close-out, and this whole function's own Notion/Calendar reads and
+  // Pushover send (steps 2–12b, all awaited above) leave a real window
+  // during which a SEPARATE `chat-cli.ts` process (same SQLite file,
+  // AD-10) can answer and clear it before this line ever runs. That is not
+  // an error — the night is no longer unchecked either way — so an
+  // `undefined` return is simply ignored here (nothing to catch, since
+  // `markUncheckedDayShown` doesn't throw for this case); only a genuine
+  // thrown error is converted to a `Result` failure below.
   if (uncheckedNight) {
     try {
       markUncheckedDayShown(deps.store, uncheckedNight.date, nowIso);

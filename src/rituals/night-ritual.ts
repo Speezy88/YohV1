@@ -500,35 +500,59 @@ export async function applyNightCloseOutConfirmation(
 /**
  * Clears the combined close-out interaction request, IF it is still open —
  * `shell/chat-cli.ts`'s per-Task confirmation loop calls this once every
- * named Task has been answered, mirroring `answerDataCompletenessRequest`'s
- * own re-read-current-version-then-clear step in that file. Re-reads the
+ * named Task has been either answered OR explicitly skipped (Task 19's
+ * "skip" escape hatch — see `chat-cli.ts`'s own `answerNightCloseOutRequest`
+ * doc comment), mirroring `answerDataCompletenessRequest`'s own
+ * re-read-current-version-then-clear step in that file. Re-reads the
  * request's current version rather than trusting a version captured before
  * the loop ran, so a genuine concurrent write to it (AD-10) is still caught
  * as `ConflictError` rather than silently dropped — the same reasoning that
  * function's own doc comment gives.
  *
- * **Also resolves a matching `UncheckedDay` record (Task 21, second
- * post-review fix).** If the request being cleared here was ever recorded
- * as unchecked (`runNightEscalateRitual`'s own `putUncheckedDay` call, for
- * the SAME date this request's own `detail.date` names — see that
- * function's doc comment), this genuine answer means the night is no
- * longer unchecked: Spencer answered every named Task, however late. Left
- * unresolved, the next Morning Ritual would falsely flag "last night wasn't
- * closed out" naming a Task Spencer just confirmed — exactly the scenario
- * this story's own AC3 forbids ("a day that was actually closed out ... is
- * never silently treated as equivalent to an unchecked day"). Reads the
- * request's `detail.date` BEFORE clearing the request itself (both come
- * from the same already-read `current` record, so this costs no extra
- * read), then calls `clearUncheckedDay` for that date — a harmless no-op if
- * that night was never escalated/recorded in the first place.
+ * **Also resolves a matching `UncheckedDay` record — but ONLY when nothing
+ * was skipped (Task 21, third post-review fix).** If the request being
+ * cleared here was ever recorded as unchecked (`runNightEscalateRitual`'s
+ * own `putUncheckedDay` call, for the SAME date this request's own
+ * `detail.date` names), a genuine full answer means the night is no longer
+ * unchecked, and leaving the record unresolved would falsely flag "last
+ * night wasn't closed out" on a future Morning Plan naming a Task Spencer
+ * just confirmed — exactly the scenario this story's own AC3 forbids ("a
+ * day that was actually closed out ... is never silently treated as
+ * equivalent to an unchecked day").
+ *
+ * BUT the second post-review fix that added this originally cleared the
+ * record UNCONDITIONALLY on every call — including a skip-all or partial
+ * skip, where `chat-cli.ts` deliberately does NOT call `setTaskStatus`/
+ * `recordSlip`/`clearSlip` for the skipped Task(s) ("since Spencer
+ * explicitly did not confirm what actually happened," per that function's
+ * own doc comment) yet still clears the request to unblock the chat
+ * session. A skip is NOT a genuine answer — Spencer still hasn't confirmed
+ * what happened to at least one Task that night — so clearing the
+ * `UncheckedDay` record on a skip would silently vanish the escalated
+ * night's flag and rolled-forward Task names forever, precisely the
+ * "silently vanishes" failure mode FR-14/UX-DR14 exist to prevent, and
+ * precisely the scenario the skip hatch was built for.
+ *
+ * `resolveUncheckedDay` is therefore a REQUIRED parameter — `chat-cli.ts`
+ * passes `skippedTitles.length === 0` (true only when every named Task was
+ * genuinely answered, none skipped). Making it required rather than
+ * defaulted forces every call site to make this choice explicitly rather
+ * than silently inheriting a default that could be wrong for a future
+ * caller. Reads the request's `detail.date` BEFORE clearing the request
+ * itself (both come from the same already-read `current` record, so this
+ * costs no extra read); `clearUncheckedDay` is a harmless no-op if that
+ * night was never escalated/recorded in the first place either way.
  */
-export function clearNightCloseOutRequestIfOpen(store: MemoryStore): void {
+export function clearNightCloseOutRequestIfOpen(
+  store: MemoryStore,
+  options: { readonly resolveUncheckedDay: boolean },
+): void {
   const current = getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID);
   if (!current) return;
 
   const detail = current.data.detail as NightCloseOutRequestDetail | undefined;
   clearInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID, current.version);
-  if (detail?.date !== undefined) {
+  if (options.resolveUncheckedDay && detail?.date !== undefined) {
     clearUncheckedDay(store, detail.date);
   }
 }
