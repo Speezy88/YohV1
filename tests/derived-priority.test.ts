@@ -115,23 +115,27 @@ test("AC2 (sanity): with equal duration, naive due-date-only ordering would have
 //   Task A: due in 2 days, duration 100 min -> 2*480 + 100 = 1060
 //   Task B: due in 1 day,  duration 580 min -> 1*480 + 580 = 1060  (tied!)
 //
-//   Secondary factors all favor B: area "Alpha" < "Zeta" alphabetically,
-//   energy "high" ranks above "low", and B's longer duration ranks as more
-//   "difficult" -- so B breaks the tie and is ordered first.
+//   The difficulty sub-score is directionally consistent with the primary
+//   axis (longer duration is a cost, never a bonus -- see
+//   derived-priority.ts's docstring), so all three secondary factors favor
+//   A here: area "Alpha" < "Zeta" alphabetically, energy "high" ranks above
+//   "low", and A's shorter duration ranks as less "difficult" (a lower,
+//   earlier-sorting cost) -- so A breaks the tie and is ordered first,
+//   despite B being due one day sooner.
 // ============================================================================
 
 test("AC3: two CompleteTasks tied on the primary axis are ordered by the secondary (Area/Energy/difficulty) tie-break", () => {
   const taskA = makeCompleteTask("tie-a", {
     dueDate: "2026-08-24", // 2 days out
     estimatedDurationMinutes: 100,
-    area: "Zeta",
-    energy: "low",
+    area: "Alpha",
+    energy: "high",
   });
   const taskB = makeCompleteTask("tie-b", {
     dueDate: "2026-08-23", // 1 day out
     estimatedDurationMinutes: 580,
-    area: "Alpha",
-    energy: "high",
+    area: "Zeta",
+    energy: "low",
   });
 
   const result = orderByDerivedPriority([taskA, taskB], TODAY);
@@ -140,7 +144,7 @@ test("AC3: two CompleteTasks tied on the primary axis are ordered by the seconda
   if (!result.ok) return;
   assert.deepEqual(
     result.value.map((t) => t.id),
-    ["tie-b", "tie-a"],
+    ["tie-a", "tie-b"],
   );
 });
 

@@ -92,13 +92,27 @@
  *     Notion property feeds one — the PRD explicitly lists "Chunk Size" and
  *     "Priority" as Notion Task fields Yoh's planning deliberately does NOT
  *     read. Sub-score: proxied from `estimatedDurationMinutes` itself
- *     (normalized to [0, 1] across the candidate set, longer = more
- *     "difficult"), the closest real signal already on `CompleteTask` for
- *     "how big/hard this Task is." This intentionally reuses a primary-axis
- *     input as a secondary-axis proxy; it's disclosed here rather than
- *     hidden, and it only ever matters once two Tasks are *already* tied on
- *     the primary axis (which does not require identical durations — many
- *     due-date/duration combinations can produce the same primary score).
+ *     (normalized to [0, 1] across the candidate set), the closest real
+ *     signal already on `CompleteTask` for "how big/hard this Task is."
+ *     This intentionally reuses a primary-axis input as a secondary-axis
+ *     proxy; it's disclosed here rather than hidden, and it only ever
+ *     matters once two Tasks are *already* tied on the primary axis (which
+ *     does not require identical durations — many due-date/duration
+ *     combinations can produce the same primary score).
+ *
+ *     **Directionality, reconciled with the primary axis:** the primary
+ *     axis above is deliberate that a longer `estimatedDurationMinutes` is
+ *     a *cost* against urgency, never a bonus ("a big last-minute task
+ *     doesn't automatically dominate a tiny task due only slightly later").
+ *     The difficulty proxy stays consistent with that same philosophy one
+ *     layer down: `difficultySub = normalizedDuration` (NOT
+ *     `1 - normalizedDuration`) — a longer/costlier Task gets a HIGHER
+ *     (later) sub-score, same direction as the primary axis, never
+ *     rewarded for being bigger. An earlier revision of this file had this
+ *     inverted (`1 - normalizedDuration`, ranking the longer Task as more
+ *     urgent in the tie-break — the mirror image of the primary axis's own
+ *     stated philosophy, with nothing here reconciling the tension); this
+ *     is the corrected, internally-coherent version.
  *
  * ============================================================================
  * Slip-Bump seam (Task 17 / Story 2.5)
@@ -231,7 +245,11 @@ function computeSecondaryScores(tasks: readonly CompleteTask[]): readonly number
     const areaSub = areaRank.get(task.area) ?? 0;
     const energySub = ENERGY_RANK[task.energy];
     const normalizedDuration = durationRange > 0 ? (task.estimatedDurationMinutes - minDuration) / durationRange : 0;
-    const difficultySub = 1 - normalizedDuration; // longer duration -> "more difficult" -> lower (earlier) sub-score
+    // Directionality matches the primary axis (see the file docstring's
+    // "Difficulty" reconciliation paragraph): longer duration is a *cost*
+    // there, not a bonus, so it stays a cost here too -- a longer/"harder"
+    // Task gets a HIGHER (later) sub-score, never a lower one.
+    const difficultySub = normalizedDuration;
     return SECONDARY_FACTOR_WEIGHT * areaSub + SECONDARY_FACTOR_WEIGHT * energySub + SECONDARY_FACTOR_WEIGHT * difficultySub;
   });
 }
