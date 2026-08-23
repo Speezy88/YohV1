@@ -1,0 +1,29 @@
+{
+  "name": "yoh",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Yoh — a personal daily-planning assistant (Notion + Google Calendar + Claude).",
+  "type": "module",
+  "engines": {
+    "node": ">=24.12.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test",
+    "check": "npm run typecheck && npm run test"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.120.0",
+    "@googleapis/calendar": "^16.0.0",
+    "@notionhq/client": "^5.22.0",
+    "better-sqlite3": "^13.0.3",
+    "google-auth-library": "^11.0.2",
+    "nodemailer": "^9.0.5"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^26.2.0",
+    "@types/nodemailer": "^8.0.1",
+    "typescript": "7.0.2"
+  }
+}
