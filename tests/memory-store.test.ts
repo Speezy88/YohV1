@@ -16,7 +16,15 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
-import { createMemoryStore, ConflictError } from "../src/adapters/memory-store.ts";
+import {
+  createMemoryStore,
+  ConflictError,
+  putOpenInteractionRequest,
+  getOpenInteractionRequest,
+  listOpenInteractionRequests,
+  clearInteractionRequest,
+  type InteractionRequest,
+} from "../src/adapters/memory-store.ts";
 
 function tempDbPath(): string {
   const dir = mkdtempSync(join(tmpdir(), "yoh-memory-store-test-"));
@@ -178,4 +186,155 @@ test("AD-10: memory-store.ts does not import google-auth-library (token-store.ts
   const memoryStoreSourcePath = join(import.meta.dirname, "..", "src", "adapters", "memory-store.ts");
   const contents = readFileSync(memoryStoreSourcePath, "utf8");
   assert.ok(!contents.includes("google-auth-library"));
+});
+
+// ============================================================================
+// listRecordsByKind / deleteRecord — the generic extension Task 5 adds on
+// top of Task 2's records table, in support of "open interaction request"
+// storage (see below) without forking a new table (AD-10's module
+// docstring anticipates exactly this extension point).
+// ============================================================================
+
+test("listRecordsByKind returns an empty array for a kind with no records", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  assert.deepEqual(store.listRecordsByKind("interaction-request"), []);
+  store.close();
+});
+
+test("listRecordsByKind returns every record for a kind, ordered by id, excluding other kinds", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  store.readModifyWrite<{ n: number }>("widget", "b", undefined, () => ({ n: 2 }));
+  store.readModifyWrite<{ n: number }>("widget", "a", undefined, () => ({ n: 1 }));
+  store.readModifyWrite<{ n: number }>("gadget", "z", undefined, () => ({ n: 99 }));
+
+  const widgets = store.listRecordsByKind<{ n: number }>("widget");
+  assert.deepEqual(
+    widgets.map((r) => r.id),
+    ["a", "b"],
+  );
+  assert.deepEqual(
+    widgets.map((r) => r.data.n),
+    [1, 2],
+  );
+  store.close();
+});
+
+test("deleteRecord removes a record when expectedVersion matches", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const created = store.readModifyWrite<{ n: number }>("widget", "a", undefined, () => ({ n: 1 }));
+
+  store.deleteRecord("widget", "a", created.version);
+
+  assert.equal(store.getRecord("widget", "a"), undefined);
+  store.close();
+});
+
+test("deleteRecord throws ConflictError (YohError.kind: 'conflict') when expectedVersion is stale", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  store.readModifyWrite<{ n: number }>("widget", "a", undefined, () => ({ n: 1 }));
+
+  assert.throws(
+    () => store.deleteRecord("widget", "a", 999),
+    (err: unknown) => {
+      assert.ok(err instanceof ConflictError);
+      assert.equal(err.yohError.kind, "conflict");
+      return true;
+    },
+  );
+  // The record survives the rejected delete.
+  assert.ok(store.getRecord("widget", "a") !== undefined);
+  store.close();
+});
+
+test("deleteRecord throws ConflictError when deleting a record that doesn't exist", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  assert.throws(
+    () => store.deleteRecord("widget", "does-not-exist", 1),
+    (err: unknown) => err instanceof ConflictError,
+  );
+  store.close();
+});
+
+// ============================================================================
+// Open interaction requests (AD-3, AD-5) — Task 5's typed surface on top of
+// the generic records table. Introduced for the Data-Completeness Gate
+// (Story 1.5) but deliberately generic (`InteractionRequest.requestKind` is
+// free-form) so later prompt kinds (Night close-out, Self-Check,
+// Propose-Don't-Impose) reuse this same persist/surface/clear cycle.
+// ============================================================================
+
+function makeRequest(overrides: Partial<InteractionRequest> = {}): InteractionRequest {
+  return {
+    requestKind: "data-completeness",
+    promptText: "I need a bit more before I can plan around this Task.",
+    createdAt: "2026-08-22T12:00:00.000Z",
+    ...overrides,
+  };
+}
+
+test("putOpenInteractionRequest persists a new request retrievable via getOpenInteractionRequest", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  putOpenInteractionRequest(store, "data-completeness", makeRequest());
+
+  const record = getOpenInteractionRequest(store, "data-completeness");
+  assert.equal(record?.data.requestKind, "data-completeness");
+  assert.equal(record?.data.promptText, "I need a bit more before I can plan around this Task.");
+  assert.equal(record?.version, 1);
+  store.close();
+});
+
+test("getOpenInteractionRequest returns undefined when none is open for that id", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  assert.equal(getOpenInteractionRequest(store, "data-completeness"), undefined);
+  store.close();
+});
+
+test("putOpenInteractionRequest called twice for the same id replaces the request's content (upsert, no caller-tracked version needed)", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  putOpenInteractionRequest(store, "data-completeness", makeRequest({ promptText: "first" }));
+  putOpenInteractionRequest(store, "data-completeness", makeRequest({ promptText: "second, more Tasks now incomplete" }));
+
+  const record = getOpenInteractionRequest(store, "data-completeness");
+  assert.equal(record?.data.promptText, "second, more Tasks now incomplete");
+  assert.equal(record?.version, 2);
+  store.close();
+});
+
+test("listOpenInteractionRequests surfaces every open request across different ids/kinds", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  putOpenInteractionRequest(store, "data-completeness", makeRequest({ requestKind: "data-completeness" }));
+  putOpenInteractionRequest(
+    store,
+    "night-close-out",
+    makeRequest({ requestKind: "night-close-out", promptText: "Did you finish today's Tasks?" }),
+  );
+
+  const open = listOpenInteractionRequests(store);
+  assert.deepEqual(
+    open.map((r) => r.data.requestKind).sort(),
+    ["data-completeness", "night-close-out"],
+  );
+  store.close();
+});
+
+test("clearInteractionRequest removes the request; it no longer appears via get or list", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const stored = putOpenInteractionRequest(store, "data-completeness", makeRequest());
+
+  clearInteractionRequest(store, "data-completeness", stored.version);
+
+  assert.equal(getOpenInteractionRequest(store, "data-completeness"), undefined);
+  assert.deepEqual(listOpenInteractionRequests(store), []);
+  store.close();
+});
+
+test("full persist -> surface -> clear cycle: after clearing, a fresh put starts a new request at version 1 again", () => {
+  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const first = putOpenInteractionRequest(store, "data-completeness", makeRequest());
+  clearInteractionRequest(store, "data-completeness", first.version);
+
+  const second = putOpenInteractionRequest(store, "data-completeness", makeRequest({ promptText: "new round" }));
+  assert.equal(second.version, 1);
+  assert.equal(getOpenInteractionRequest(store, "data-completeness")?.data.promptText, "new round");
+  store.close();
 });

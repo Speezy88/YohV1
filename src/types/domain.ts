@@ -109,8 +109,16 @@ export type Area = string;
  */
 export type TaskStatus = "not-started" | "in-progress" | "completed" | "slipped";
 
-/** The set of Task fields FR-4's Data-Completeness Gate requires before a Task can enter Plan assembly. */
-type PlanningFieldNames = "estimatedDurationMinutes" | "area" | "dueDate" | "status" | "energy";
+/**
+ * The set of Task fields FR-4's Data-Completeness Gate requires before a
+ * Task can enter Plan assembly. Exported (Task 5) so
+ * `core/data-completeness-gate.ts` — the sole producer of `CompleteTask`
+ * (AD-11) — and its `shell/chat-cli.ts` caller can reference the exact field
+ * name set (e.g. to iterate it, or to label a missing field in a prompt)
+ * without redeclaring a parallel list that could drift out of sync with
+ * `CompleteTask`'s own derivation below.
+ */
+export type PlanningFieldNames = "estimatedDurationMinutes" | "area" | "dueDate" | "status" | "energy";
 
 /**
  * Task — the raw shape read from Notion (`notion-adapter.ts`). The five
@@ -290,6 +298,41 @@ export interface Proposal<T> {
   readonly suggested: T;
   /** Human-readable reason shown to Spencer when the proposal is surfaced. */
   readonly reason: string;
+  readonly createdAt: IsoDateTime;
+}
+
+// ============================================================================
+// InteractionRequest<T> (AD-5 — durable, indefinitely-waiting prompts)
+// ============================================================================
+
+/**
+ * InteractionRequest — the generic "Yoh needs an answer from Spencer before
+ * it can proceed" envelope AD-5 requires `memory-store.ts` to persist as an
+ * open interaction request, and `chat-cli.ts` to surface before accepting
+ * any unrelated input (UX-DR5). Introduced by Task 5 (the Data-Completeness
+ * Gate, FR-4) as the first of several prompt kinds sharing this pattern —
+ * later tasks (Night close-out FR-12–FR-14, Self-Check FR-17,
+ * Propose-Don't-Impose AD-3) persist their own prompts through the same
+ * shape rather than each inventing a parallel one. A `Proposal<T>` (above)
+ * is itself surfaced this way: AD-3 says "`memory-store.ts` persists every
+ * open `Proposal` as an open interaction request", i.e. a proposal is
+ * wrapped as this type's `detail` payload with `requestKind: "proposal"`.
+ *
+ * `memory-store.ts` stores each `InteractionRequest` as a `records` row
+ * keyed by `(kind: "interaction-request", id)`; `id` is chosen by the
+ * requester (e.g. a fixed singleton id like `"data-completeness"` so
+ * multiple incomplete Tasks collapse into the one open request UX-DR10
+ * requires, rather than one row per Task) and doubles as the handle
+ * `chat-cli.ts` clears once Spencer answers (UX-DR20: no timeout ever
+ * expires an open request — it waits indefinitely for that clear).
+ */
+export interface InteractionRequest<TDetail = unknown> {
+  /** What this request is about, e.g. "data-completeness", "night-close-out", "self-check", "proposal". Free-form per requester, not a fixed enum — mirrors `Proposal.kind`'s own free-form design so a later task can add a new request kind without touching this shape. */
+  readonly requestKind: string;
+  /** The accent-labeled prompt line(s) `chat-cli.ts` renders verbatim before accepting other input (UX-DR5, UX-DR10). */
+  readonly promptText: string;
+  /** Structured payload specific to `requestKind`, for a caller that wants to act on the answer programmatically (e.g. which Task fields are missing on which Tasks) — like `YohError.detail`, callers should not depend on its shape beyond what they themselves wrote. */
+  readonly detail?: TDetail;
   readonly createdAt: IsoDateTime;
 }
 

@@ -23,6 +23,21 @@
  * `Proposal` as a `records` row with `kind: "interaction-request"`) — the
  * generic table and the transaction helper stay useful either way.
  *
+ * Task 5 (Story 1.5, the Data-Completeness Gate) is that later task: it adds
+ * `listRecordsByKind`/`deleteRecord` to `MemoryStore` (generic — list every
+ * record for a kind without knowing each id ahead of time; delete one under
+ * the same optimistic-concurrency rule `readModifyWrite` already enforces),
+ * plus a small typed surface below (`InteractionRequest`,
+ * `putOpenInteractionRequest`, `getOpenInteractionRequest`,
+ * `listOpenInteractionRequests`, `clearInteractionRequest`) built entirely on
+ * top of those — every open interaction request/`Proposal` lives as one
+ * `records` row with `kind: INTERACTION_REQUEST_KIND` ("interaction-request")
+ * and `id` chosen by the requester (e.g. the fixed singleton id
+ * `"data-completeness"`, so multiple incomplete Tasks collapse into the one
+ * open request UX-DR10 requires rather than one row per Task). No new SQL or
+ * table was added for this — see `types/domain.ts`'s `InteractionRequest`
+ * doc comment for the full design rationale.
+ *
  * Per AD-8, `adapters/*.ts` files may throw on I/O failure rather than
  * returning `Result` themselves; `rituals/*.ts` is the only layer allowed to
  * catch and convert a throw into a `Result` failure. `ConflictError` below
@@ -34,7 +49,7 @@
 import Database from "better-sqlite3";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { YohError } from "../types/domain.ts";
+import type { InteractionRequest, YohError } from "../types/domain.ts";
 
 // ============================================================================
 // Config
@@ -221,6 +236,53 @@ export class MemoryStore {
     return runTransaction.immediate();
   }
 
+  /**
+   * Lists every currently-stored record for `kind`, ordered by `id`. Added
+   * (Task 5) so a caller can surface "every open interaction request"
+   * without knowing each request's `id` ahead of time — `readModifyWrite`
+   * and `getRecord` alone require already knowing the `id` to address a
+   * single row, which doesn't fit "surface whatever's open" (AD-5).
+   */
+  listRecordsByKind<T>(kind: string): StoredRecord<T>[] {
+    const rows = this.db
+      .prepare<{ kind: string }, RecordRow>(
+        "SELECT kind, id, data, version, updated_at FROM records WHERE kind = @kind ORDER BY id",
+      )
+      .all({ kind });
+    return rows.map((row) => this.rowToRecord<T>(row));
+  }
+
+  /**
+   * Deletes the record at `(kind, id)`, enforcing the same
+   * optimistic-concurrency check `readModifyWrite` does (AD-10): if the
+   * row's current version doesn't match `expectedVersion` (including "no
+   * row at all" when a caller expects one to exist), this throws
+   * `ConflictError` instead of silently deleting a row a concurrent writer
+   * has since changed, or silently no-op'ing on a row that's already gone.
+   * Added (Task 5) as the "clear" half of the open-interaction-request
+   * persist/surface/clear cycle (AD-5) — `readModifyWrite` alone can only
+   * create/replace a row, never remove one.
+   */
+  deleteRecord(kind: string, id: string, expectedVersion: number): void {
+    const runTransaction = this.db.transaction((): void => {
+      const row = this.selectRow(kind, id);
+      const actualVersion = row?.version;
+
+      if (expectedVersion !== actualVersion) {
+        throw new ConflictError(
+          `memory-store: conflicting delete of ${kind}/${id} — expected version ${expectedVersion}, found ${
+            actualVersion ?? "none"
+          }`,
+          { kind, id, expectedVersion, actualVersion },
+        );
+      }
+
+      this.db.prepare("DELETE FROM records WHERE kind = @kind AND id = @id").run({ kind, id });
+    });
+
+    runTransaction.immediate();
+  }
+
   close(): void {
     this.db.close();
   }
@@ -247,4 +309,62 @@ export class MemoryStore {
 /** Constructs a `MemoryStore`, initializing its schema if this is the first run against `databasePath`. */
 export function createMemoryStore(config: MemoryStoreConfig): MemoryStore {
   return new MemoryStore(config);
+}
+
+// ============================================================================
+// Open interaction requests (AD-3, AD-5) — typed surface on `records`
+// ============================================================================
+
+/**
+ * The fixed `records.kind` partition every open interaction request /
+ * `Proposal` (AD-3, AD-5) is stored under, regardless of its own
+ * `InteractionRequest.requestKind` (e.g. `"data-completeness"`,
+ * `"night-close-out"`) — that field distinguishes *what the request is
+ * about*; this constant is only the storage-table partition key.
+ */
+const INTERACTION_REQUEST_KIND = "interaction-request";
+
+export type { InteractionRequest };
+
+/**
+ * Opens (creates, or replaces if one is already open) the interaction
+ * request at `id` — "put" semantics: the caller doesn't need to track a
+ * version to call this, unlike `readModifyWrite`. Internally reads the
+ * current record (if any) and passes its version to `readModifyWrite`, so a
+ * genuine concurrent writer racing on the exact same `id` still surfaces
+ * `ConflictError` per AD-10 — this only removes the *caller's* burden of
+ * threading a version through, not the concurrency guarantee itself.
+ */
+export function putOpenInteractionRequest(
+  store: MemoryStore,
+  id: string,
+  request: InteractionRequest,
+): StoredRecord<InteractionRequest> {
+  const current = store.getRecord<InteractionRequest>(INTERACTION_REQUEST_KIND, id);
+  return store.readModifyWrite<InteractionRequest>(INTERACTION_REQUEST_KIND, id, current?.version, () => request);
+}
+
+/** Reads the currently open interaction request at `id`, or `undefined` if none is open. */
+export function getOpenInteractionRequest(store: MemoryStore, id: string): StoredRecord<InteractionRequest> | undefined {
+  return store.getRecord<InteractionRequest>(INTERACTION_REQUEST_KIND, id);
+}
+
+/**
+ * Lists every currently open interaction request, across every `id` —
+ * what `chat-cli.ts` calls on start and before accepting any unrelated
+ * command (AD-5) to surface whatever's open, without needing to already
+ * know each open request's `id`.
+ */
+export function listOpenInteractionRequests(store: MemoryStore): StoredRecord<InteractionRequest>[] {
+  return store.listRecordsByKind<InteractionRequest>(INTERACTION_REQUEST_KIND);
+}
+
+/**
+ * Clears (removes) the interaction request at `id` once Spencer has
+ * answered it, enforcing the same optimistic-concurrency check every write
+ * in this file does (AD-10): `expectedVersion` should be the version last
+ * read via `getOpenInteractionRequest`/`listOpenInteractionRequests`.
+ */
+export function clearInteractionRequest(store: MemoryStore, id: string, expectedVersion: number): void {
+  store.deleteRecord(INTERACTION_REQUEST_KIND, id, expectedVersion);
 }
