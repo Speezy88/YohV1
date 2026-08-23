@@ -58,9 +58,14 @@
  *    later task wires this up (`rituals/*.ts` or `shell/*.ts`). The local
  *    calendar day's start/end are computed as UTC instants via
  *    `Intl.DateTimeFormat`'s `timeZone` option, deriving the zone's actual
- *    UTC offset *at the relevant instant* (`zoneOffsetMinutesAt`, below)
- *    rather than assuming a fixed offset, so this is correct across DST
- *    transitions.
+ *    UTC offset *at the relevant instant* (`zoneOffsetMinutesAt`, below) and
+ *    iterating that lookup to a fixed point (`startOfLocalDayUtc`, below) —
+ *    a single un-verified offset guess is wrong for a zone whose DST
+ *    transition falls exactly at local midnight (confirmed against
+ *    `America/Santiago`'s fall-back, tested below), so the offset used to
+ *    produce each candidate instant is re-checked against the offset
+ *    actually observed there, correct regardless of what local time-of-day
+ *    a zone's transition occurs at.
  *  - `singleEvents: true, orderBy: "startTime"` is passed so a recurring
  *    event is expanded into today's actual instance(s) rather than
  *    returning the (unexpanded) recurring series definition once.
@@ -186,9 +191,13 @@ export function createCalendarReadClient(
 //
 // "Today" must be Spencer's local calendar day (see module docstring), not
 // the UTC one — these helpers compute that local day's start/end as UTC
-// instants, deriving the IANA zone's actual offset at the relevant instant
-// via `Intl.DateTimeFormat` (correct across DST transitions) rather than
-// assuming a fixed offset.
+// instants, deriving the IANA zone's actual offset via `Intl.DateTimeFormat`
+// and iterating that lookup to a fixed point (`startOfLocalDayUtc`) rather
+// than trusting a single un-verified offset guess, so this is correct
+// regardless of what local time-of-day a zone's DST transition falls at
+// (including a transition exactly at local midnight, e.g.
+// `America/Santiago`'s fall-back — see `startOfLocalDayUtc`'s own docstring
+// and the covering test in `tests/calendar-adapter.test.ts`).
 // ============================================================================
 
 /** The Y/M/D of `date` as seen in `timeZone`'s local wall-clock time. */
@@ -242,13 +251,57 @@ function zoneOffsetMinutesAt(utcMillis: number, timeZone: string): number {
   return (localWallClockAsUtcMillis - utcMillis) / 60_000;
 }
 
-/** The UTC instant of local midnight (start of day) for the given `timeZone` local Y/M/D. */
+/** Safety bound on `startOfLocalDayUtc`'s fixed-point iteration (see below) — real-world DST shifts converge in 1-2 iterations; this only guards against pathological/malformed zone data. */
+const MAX_OFFSET_ITERATIONS = 5;
+
+/**
+ * The UTC instant of local midnight (start of day) for the given `timeZone`
+ * local Y/M/D.
+ *
+ * A single-guess approach — read the offset once at the naive
+ * "Y/M/D 00:00:00 treated as a UTC literal" candidate, and apply that same
+ * offset as the final answer — is WRONG for a zone whose DST transition
+ * falls exactly at local midnight (e.g. `America/Santiago`'s fall-back):
+ * the offset at the naive candidate can differ from the offset at the
+ * actual local-midnight instant, since the naive candidate and the true
+ * answer straddle the transition. Confirmed directly against
+ * `Intl.DateTimeFormat` for `America/Santiago` on 2026-04-05 (its
+ * fall-back date, transitioning at local 00:00 from GMT-03:00 to
+ * GMT-04:00): the naive single-guess approach computed
+ * `2026-04-05T03:00:00.000Z`, which `Intl.DateTimeFormat` reports as
+ * `2026-04-04T23:00:00 GMT-04:00` — a full hour before actual local
+ * midnight, not local midnight itself.
+ *
+ * This instead iterates to a fixed point: recompute the offset AT each new
+ * candidate instant, and keep refining the candidate until the offset used
+ * to produce it matches the offset actually observed there. This is
+ * correct regardless of what local time-of-day a zone's transition falls
+ * at, because the offset is always verified against the candidate it
+ * produced rather than assumed to still hold.
+ */
 function startOfLocalDayUtc(year: number, month: number, day: number, timeZone: string): Date {
-  // First guess: local midnight's wall-clock numbers, read as if they were
-  // already UTC — then correct by the zone's actual offset at that instant.
-  const candidateUtcMillis = Date.UTC(year, month - 1, day, 0, 0, 0, 0);
-  const offsetMinutes = zoneOffsetMinutesAt(candidateUtcMillis, timeZone);
-  return new Date(candidateUtcMillis - offsetMinutes * 60_000);
+  // The Y/M/D we want at local midnight, expressed as a UTC-literal number
+  // (not yet a real instant) — the fixed point to solve for is a candidate
+  // instant whose *local* wall-clock reading in `timeZone` equals this.
+  const targetLocalWallClockAsUtcMillis = Date.UTC(year, month - 1, day, 0, 0, 0, 0);
+
+  // Initial guess, exactly the old (single-shot) approach's offset lookup.
+  let offsetMinutes = zoneOffsetMinutesAt(targetLocalWallClockAsUtcMillis, timeZone);
+
+  for (let iteration = 0; iteration < MAX_OFFSET_ITERATIONS; iteration++) {
+    const candidateMillis = targetLocalWallClockAsUtcMillis - offsetMinutes * 60_000;
+    const offsetAtCandidate = zoneOffsetMinutesAt(candidateMillis, timeZone);
+    if (offsetAtCandidate === offsetMinutes) {
+      // The offset used to produce this candidate matches the offset
+      // actually observed there — fixed point reached.
+      return new Date(candidateMillis);
+    }
+    offsetMinutes = offsetAtCandidate;
+  }
+
+  throw new Error(
+    `calendar-adapter: offset for timezone "${timeZone}" did not converge within ${MAX_OFFSET_ITERATIONS} iterations`,
+  );
 }
 
 /** `timeZone`'s local calendar day containing `date`, as a `[start, end)` pair of UTC instants (`end` exclusive, the following local midnight). */

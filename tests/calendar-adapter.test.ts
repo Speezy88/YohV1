@@ -283,6 +283,60 @@ test("readCalendarEvents excludes an event that is UTC-'today' but already tomor
   assert.ok(call.timeMax !== undefined && call.timeMax < "2026-08-23T05:00:00.000Z");
 });
 
+// ============================================================================
+// Midnight-DST-transition timezone (fix for a bug the round-1 fix itself
+// introduced — see calendar-adapter.ts's `startOfLocalDayUtc` docstring)
+// ============================================================================
+
+test("readCalendarEvents computes the correct local-midnight boundary for a timezone whose DST transition falls exactly at local midnight (America/Santiago's 2026-04-05 fall-back)", async () => {
+  // Ground truth verified directly against `Intl.DateTimeFormat` (not
+  // hand-computed from first principles): America/Santiago's DST fall-back
+  // on 2026-04-05 switches from GMT-03:00 to GMT-04:00 exactly at local
+  // 00:00 — `new Intl.DateTimeFormat("en-US", { timeZone:
+  // "America/Santiago", ..., timeZoneName: "longOffset" }).format(...)`
+  // confirms:
+  //   2026-04-05T00:00:00.000Z -> "04/04/2026, 21:00:00 GMT-03:00"
+  //   2026-04-05T03:00:00.000Z -> "04/04/2026, 23:00:00 GMT-04:00" (still
+  //     April 4th, NOT local midnight — this is the single-guess approach's
+  //     wrong answer)
+  //   2026-04-05T04:00:00.000Z -> "04/05/2026, 00:00:00 GMT-04:00" (the
+  //     correct local midnight instant for April 5th)
+  // So the correctly-computed local day window for Spencer's April 5th in
+  // Santiago is [2026-04-05T04:00:00.000Z, 2026-04-06T04:00:00.000Z) — not
+  // [2026-04-05T03:00:00.000Z, ...), which is what the round-1 fix's
+  // single-guess `startOfLocalDayUtc` produced.
+  const client = new FakeCalendarReadClient([{ items: [] }]);
+
+  await readCalendarEvents(client, {
+    now: () => new Date("2026-04-05T12:00:00.000Z"), // midday April 5th, Santiago-local, well clear of the transition itself
+    timeZone: "America/Santiago",
+  });
+
+  const call = client.calls[0];
+  assert.ok(call);
+  assert.equal(call.timeMin, "2026-04-05T04:00:00.000Z");
+  assert.equal(call.timeMax, "2026-04-06T04:00:00.000Z");
+});
+
+test("readCalendarEvents computes the correct (unaffected) local-midnight boundary for the day before America/Santiago's DST transition", async () => {
+  // Control case: 2026-04-04 has no transition, so the single-guess and
+  // fixed-point approaches agree here — this test guards against a fix
+  // that "corrects" every day's boundary rather than only the affected one.
+  // Ground truth again from `Intl.DateTimeFormat`:
+  //   2026-04-04T03:00:00.000Z -> "04/04/2026, 00:00:00 GMT-03:00"
+  const client = new FakeCalendarReadClient([{ items: [] }]);
+
+  await readCalendarEvents(client, {
+    now: () => new Date("2026-04-04T12:00:00.000Z"),
+    timeZone: "America/Santiago",
+  });
+
+  const call = client.calls[0];
+  assert.ok(call);
+  assert.equal(call.timeMin, "2026-04-04T03:00:00.000Z");
+  assert.equal(call.timeMax, "2026-04-05T04:00:00.000Z");
+});
+
 test("createCalendarReadClient builds a CalendarReadClient from an injected already-authenticated auth client, with no network call", () => {
   // A minimal stand-in for the already-authenticated client `token-store.ts`
   // hands out — `createCalendarReadClient` just wraps it via
