@@ -42,6 +42,8 @@ import {
   DATA_COMPLETENESS_REQUEST_ID,
 } from "../src/rituals/data-completeness.ts";
 import { checkDataCompleteness, type MissingFieldReport } from "../src/core/data-completeness-gate.ts";
+import type { AnthropicMessagesClient } from "../src/adapters/llm-adapter.ts";
+import type Anthropic from "@anthropic-ai/sdk";
 import type { IsoDate, Plan, Task } from "../src/types/domain.ts";
 
 function tempStore(): MemoryStore {
@@ -97,6 +99,47 @@ function makeScriptedIo(lines: readonly string[]): ChatCliIo & { readonly writte
     },
     writeLine: (line: string) => {
       written.push(line);
+    },
+  };
+}
+
+/**
+ * Fake `AnthropicMessagesClient` (Task 13) — no live Claude API key is
+ * available in this environment, so every `runChatCli` test below injects
+ * this instead of a real client. Returns a fixed canned response by default
+ * so Time Budget/Plan-view tests (which should never reach the free-text
+ * catch-all at all) fail loudly if they unexpectedly do. Records every call
+ * so a test can assert the injected client was (or wasn't) invoked.
+ */
+function makeFakeLlmClient(
+  responseText: string = "I don't have a specific answer for that.",
+): AnthropicMessagesClient & { readonly calls: Anthropic.MessageCreateParamsNonStreaming[] } {
+  const calls: Anthropic.MessageCreateParamsNonStreaming[] = [];
+  return {
+    calls,
+    messages: {
+      create: async (params) => {
+        calls.push(params);
+        return {
+          id: "msg_test",
+          container: null,
+          content: [{ type: "text", text: responseText, citations: null }],
+          model: params.model,
+          role: "assistant",
+          stop_details: null,
+          stop_reason: "end_turn",
+          stop_sequence: null,
+          type: "message",
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_creation_input_tokens: null,
+            cache_read_input_tokens: null,
+            server_tool_use: null,
+            service_tier: null,
+          } as Anthropic.Usage,
+        };
+      },
     },
   };
 }
@@ -249,7 +292,7 @@ test("runChatCli surfaces an open interaction request before accepting any other
   // "unrelated command" if it were processed before the prompt.
   const io = makeScriptedIo(["Work", "show me today's plan"]);
 
-  await runChatCli(store, io, TEST_TIME_ZONE);
+  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient());
 
   const promptIndex = io.written.findIndex((line) => line.includes("Call dentist"));
   assert.ok(promptIndex !== -1, "expected the interaction request to be surfaced");
@@ -264,9 +307,33 @@ test("runChatCli proceeds straight to the ordinary loop when no interaction requ
   const store = tempStore();
   const io = makeScriptedIo(["hello"]);
 
-  await runChatCli(store, io, TEST_TIME_ZONE);
+  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient());
 
   assert.ok(!io.written.some((line) => line.includes("I need a bit more")));
+  store.close();
+});
+
+test("runChatCli produces no ambient output while waiting for input — silence between Spencer-initiated interactions is the default (UX-DR17)", async () => {
+  const store = tempStore();
+  const llmClient = makeFakeLlmClient();
+  // A readLine that never resolves models "time passing with no input from
+  // Spencer" — per the Task 13 brief, this REPL only ever reacts to input
+  // events (no timer/polling mechanism exists to write anything while
+  // nothing has been typed), so simply never providing a line and asserting
+  // nothing was written is sufficient evidence; no fake clock is needed.
+  const written: string[] = [];
+  const io: ChatCliIo = {
+    readLine: () => new Promise<string | null>(() => {}), // never resolves
+    writeLine: (line) => written.push(line),
+  };
+
+  const done = runChatCli(store, io, TEST_TIME_ZONE, llmClient);
+  // Give any pending microtasks a chance to run before checking — if
+  // anything were going to write ambiently, it would have by now.
+  await Promise.race([done, new Promise((resolve) => setTimeout(resolve, 10))]);
+
+  assert.deepEqual(written, [], "expected no output written while awaiting input");
+  assert.equal(llmClient.calls.length, 0);
   store.close();
 });
 
@@ -565,11 +632,12 @@ test("declareTimeBudget called again for a later date replaces the prior value (
 // runChatCli — the declare/change command path end-to-end
 // ============================================================================
 
-test("runChatCli: typing a Time Budget command persists it and confirms back to Spencer", async () => {
+test("runChatCli: typing a Time Budget command persists it and confirms back to Spencer, never calling the LLM client (Task 13: observable behavior unchanged, no API call spent on a command already recognized for free)", async () => {
   const store = tempStore();
+  const llmClient = makeFakeLlmClient();
   const io = makeScriptedIo(["time budget 6h"]);
 
-  await runChatCli(store, io, TEST_TIME_ZONE);
+  await runChatCli(store, io, TEST_TIME_ZONE, llmClient);
 
   const stored = getCurrentTimeBudget(store);
   assert.equal(stored?.data.totalMinutes, 360);
@@ -577,6 +645,7 @@ test("runChatCli: typing a Time Budget command persists it and confirms back to 
     io.written.some((line) => /360|6h|6 hours?/i.test(line)),
     "expected a confirmation line mentioning the new Time Budget",
   );
+  assert.equal(llmClient.calls.length, 0, "a recognized Time Budget command must never call the LLM client");
   store.close();
 });
 
@@ -584,7 +653,7 @@ test("runChatCli: an invalid Time Budget amount is reported as an error, not sil
   const store = tempStore();
   const io = makeScriptedIo(["time budget 30 hours"]); // 1800 minutes > 24h cap
 
-  await runChatCli(store, io, TEST_TIME_ZONE);
+  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient());
 
   assert.equal(getCurrentTimeBudget(store), undefined);
   assert.ok(io.written.some((line) => /couldn't|invalid|cannot/i.test(line)));
@@ -597,13 +666,13 @@ test("runChatCli: routing unrelated input through the ordinary loop never calls 
   // "2026-08-21" date is flavor text only; nothing below reads or advances
   // any clock, so this cannot distinguish "declared yesterday" from
   // "declared a moment ago." What it actually proves: lines that don't
-  // match `parseTimeBudgetCommand` fall through to the free-text placeholder
-  // without ever calling `putTimeBudget` again.
+  // match `parseTimeBudgetCommand` fall through to the free-text/general-qa
+  // catch-all (Task 13) without ever calling `putTimeBudget` again.
   declareTimeBudget(store, 360, "2026-08-21");
   const before = getCurrentTimeBudget(store);
 
   const io = makeScriptedIo(["hello", "show me today's plan"]);
-  await runChatCli(store, io, TEST_TIME_ZONE);
+  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient());
 
   const after = getCurrentTimeBudget(store);
   assert.deepEqual(after?.data, before?.data);
@@ -611,13 +680,52 @@ test("runChatCli: routing unrelated input through the ordinary loop never calls 
   store.close();
 });
 
-test("runChatCli: falls through to the free-text placeholder for input that isn't a Time Budget command", async () => {
+// ============================================================================
+// runChatCli — the free-text/general-qa catch-all routes through
+// llm-adapter.ts's routeChatMessage (Task 13), never the old placeholder
+// string. `answerGeneralQuestion`/`classifyChatIntent`'s own unit tests live
+// in tests/llm-adapter.test.ts — these exercise the wiring from
+// `runChatCli`'s loop into that adapter.
+// ============================================================================
+
+test("runChatCli: input that isn't a Time Budget or Plan-view command routes through llm-adapter.ts and prints Claude's real response, not a placeholder", async () => {
   const store = tempStore();
+  const llmClient = makeFakeLlmClient("It's sunny where you are, probably.");
   const io = makeScriptedIo(["what's the weather"]);
 
-  await runChatCli(store, io, TEST_TIME_ZONE);
+  await runChatCli(store, io, TEST_TIME_ZONE, llmClient);
 
-  assert.ok(io.written.some((line) => line.includes("free-text routing arrives in a later task")));
+  assert.ok(!io.written.some((line) => line.includes("free-text routing arrives in a later task")));
+  assert.ok(io.written.includes("It's sunny where you are, probably."));
+  assert.equal(llmClient.calls.length, 1, "expected exactly one Claude call for the unmatched input");
+  store.close();
+});
+
+test("runChatCli: a general/factual question with no matching specific intent still gets a real response, never an error/refusal", async () => {
+  const store = tempStore();
+  const llmClient = makeFakeLlmClient("The capital of France is Paris.");
+  const io = makeScriptedIo(["what's the capital of France"]);
+
+  await runChatCli(store, io, TEST_TIME_ZONE, llmClient);
+
+  assert.ok(io.written.includes("The capital of France is Paris."));
+  store.close();
+});
+
+test("runChatCli: catches a thrown error from the Claude call and surfaces it as a plain line instead of crashing the session", async () => {
+  const store = tempStore();
+  const llmClient: AnthropicMessagesClient = {
+    messages: {
+      create: async () => {
+        throw new Error("simulated API failure");
+      },
+    },
+  };
+  const io = makeScriptedIo(["what's the weather"]);
+
+  await runChatCli(store, io, TEST_TIME_ZONE, llmClient);
+
+  assert.ok(io.written.some((line) => /simulated API failure/.test(line)));
   store.close();
 });
 
@@ -699,14 +807,16 @@ test("runChatCli: Given a Plan already exists for today, When Spencer asks \"wha
   const plan = samplePlanForDate(LOCAL_TODAY_FOR_LATE_EVENING);
   putPlan(store, plan);
 
+  const llmClient = makeFakeLlmClient();
   const io = makeScriptedIo(["what's my plan"]);
-  await runChatCli(store, io, TEST_TIME_ZONE, () => LATE_EVENING_UTC);
+  await runChatCli(store, io, TEST_TIME_ZONE, llmClient, () => LATE_EVENING_UTC);
 
   const expected = renderPlan(plan);
   assert.ok(
     io.written.includes(expected),
     `expected chat-cli to find and print today's LOCAL-dated Plan even though the UTC date has already rolled over; got: ${JSON.stringify(io.written)}`,
   );
+  assert.equal(llmClient.calls.length, 0, "a recognized Plan-view command must never call the LLM client (Task 13)");
   store.close();
 });
 
@@ -716,7 +826,7 @@ test("runChatCli: on-demand Plan view also responds to other recognized phrasing
   putPlan(store, plan);
 
   const io = makeScriptedIo(["show plan"]);
-  await runChatCli(store, io, TEST_TIME_ZONE, () => LATE_EVENING_UTC);
+  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => LATE_EVENING_UTC);
 
   assert.ok(io.written.includes(renderPlan(plan)));
   store.close();
@@ -726,7 +836,7 @@ test("runChatCli: Given no Plan has been generated yet for today, When Spencer a
   const store = tempStore();
   const io = makeScriptedIo(["show plan"]);
 
-  await runChatCli(store, io, TEST_TIME_ZONE, () => LATE_EVENING_UTC);
+  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => LATE_EVENING_UTC);
 
   assert.ok(
     io.written.some((line) => /no plan/i.test(line)),
@@ -754,7 +864,7 @@ test("runChatCli: does NOT silently display a stale prior-day Plan when today's 
   putPlan(store, samplePlanForDate(utcDateOnly));
 
   const io = makeScriptedIo(["show plan"]);
-  await runChatCli(store, io, timeZone, () => earlyMorningUtc);
+  await runChatCli(store, io, timeZone, makeFakeLlmClient(), () => earlyMorningUtc);
 
   assert.ok(
     io.written.some((line) => /no plan/i.test(line)),

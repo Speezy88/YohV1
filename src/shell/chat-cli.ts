@@ -13,9 +13,18 @@
  * `showPlanCommand`) — reusing `rituals/morning-ritual.ts`'s `renderPlan`
  * directly rather than reimplementing its DESIGN.md-compliant layout, so
  * what this shows can never drift from what the Morning Ritual notification
- * showed. Later tasks (19, 22, 23) still extend this file with Mid-Day
- * Re-Flow triggers, Blocker reports, and free-text routing via
- * `llm-adapter.ts` (Task 13) — none of that exists yet.
+ * showed. Later tasks (15, 16) still extend this file with Mid-Day Re-Flow
+ * triggers and Blocker reports.
+ *
+ * Task 13 update: the free-text placeholder that used to sit after the Time
+ * Budget/Plan-view checks is gone. `parseTimeBudgetCommand` and
+ * `isPlanViewCommand` still run first, unchanged (cheap, deterministic, no
+ * API call — see their own doc comments) — anything that falls through both
+ * now routes to `adapters/llm-adapter.ts`'s `routeChatMessage`, which
+ * classifies the input and calls Claude for a real answer instead of a
+ * canned string. See `llm-adapter.ts`'s own module docstring for the full
+ * intent-routing design and why this file's two existing checks were left
+ * untouched rather than folded into that classifier.
  *
  * Per AD-1, this shell file contains no core/ritual logic itself: the pure
  * gate logic lives in `core/data-completeness-gate.ts`, and the thin
@@ -62,6 +71,12 @@ import {
   type MemoryStore,
   type StoredRecord,
 } from "../adapters/memory-store.ts";
+import {
+  createAnthropicMessagesClient,
+  loadLlmAdapterConfigFromEnv,
+  routeChatMessage,
+  type AnthropicMessagesClient,
+} from "../adapters/llm-adapter.ts";
 import type { MissingFieldReport } from "../core/data-completeness-gate.ts";
 import { shapeDeclaredTimeBudget } from "../core/time-budget.ts";
 import { DATA_COMPLETENESS_REQUEST_ID, PLANNING_FIELD_LABELS } from "../rituals/data-completeness.ts";
@@ -295,10 +310,11 @@ export async function surfaceOpenInteractionRequests(store: MemoryStore, io: Cha
 /**
  * Recognizes a Time Budget declare/change command typed at the `yoh>`
  * prompt. This is deliberately simple, clearly-documented pattern matching —
- * NOT real free-text NLU. Task 13 replaces this with real LLM-based routing
- * without changing this task's observable behavior: declaring "6 hours"
- * persists a 360-minute budget for today regardless of how the command
- * arrives at that parsed value.
+ * NOT real free-text NLU. Task 13 review note: this function stays exactly
+ * as it is — `runChatCli` still checks it first, unchanged, before ever
+ * consulting `llm-adapter.ts`'s real LLM-based routing, so declaring
+ * "6 hours" persists a 360-minute budget for today exactly as it always has,
+ * with no API call spent recognizing it.
  *
  * Recognized phrasing (case-insensitive, extra whitespace tolerated):
  *   - "time budget <N>[h|hr|hrs|hour|hours]"
@@ -387,8 +403,9 @@ function formatMinutesForDisplay(totalMinutes: number): string {
  * Recognizes an on-demand Plan-view request typed at the `yoh>` prompt — the
  * same kind of deliberately simple, clearly-documented pattern matching
  * `parseTimeBudgetCommand` uses above, NOT real free-text NLU. Task 13
- * replaces this with real LLM-based intent routing without changing this
- * task's observable behavior.
+ * review note: this function stays exactly as it is, same as
+ * `parseTimeBudgetCommand` above — see that function's own updated doc
+ * comment.
  *
  * Recognized phrasing (case-insensitive, extra whitespace tolerated), per
  * the Task 11 brief's own examples:
@@ -431,20 +448,28 @@ function showPlanCommand(store: MemoryStore, io: ChatCliIo, today: IsoDate): voi
 }
 
 /**
- * The minimal REPL loop (Task 5, extended by Task 6, Task 11): on start, and
- * before processing every subsequent line of input, surfaces any open
+ * The REPL loop (Task 5, extended by Task 6, Task 11, Task 13): on start,
+ * and before processing every subsequent line of input, surfaces any open
  * interaction request(s) first (AD-5). Then checks whether the line is a
  * Time Budget declare/change command (`parseTimeBudgetCommand`) and, if so,
  * validates and persists it (`declareTimeBudget`); then whether it's an
- * on-demand Plan-view request (`isPlanViewCommand`); otherwise falls through
- * to the free-text placeholder. Real free-text NLU/LLM routing for
- * everything else (what an "unrelated command" actually does) is Task 13.
+ * on-demand Plan-view request (`isPlanViewCommand`) — both checks are
+ * unchanged from before Task 13 (see their own doc comments). Anything that
+ * falls through both now routes through `llm-adapter.ts`'s
+ * `routeChatMessage`, which classifies the input and calls Claude for a real
+ * response — never the old placeholder string. A thrown error from that
+ * call (AD-8: `adapters/*.ts` may throw on I/O failure) is caught here and
+ * surfaced as a plain error line rather than crashing the whole persistent
+ * session — ordinary shell-layer error handling, not the Result-conversion
+ * AD-8 reserves for `rituals/*.ts`.
  *
  * `timeZone` is REQUIRED — deliberately never defaulted to UTC, matching
  * `calendar-adapter.ts`/`ritual-cli.ts`'s own convention: "today" must be
  * Spencer's own local calendar day for `showPlanCommand`'s Plan lookup to
  * find the exact same date `runMorningRitual` stored it under (Task 11
- * review fix — see `currentIsoDate`'s doc comment). `now` is injectable
+ * review fix — see `currentIsoDate`'s doc comment). `llmClient` is REQUIRED
+ * too (no default) — same injectable-dependency convention as `store`/`io`,
+ * so no test accidentally reaches the real Claude API. `now` is injectable
  * purely so tests can pin a specific instant instead of the real system
  * clock; it defaults to the real clock for the real entrypoint.
  */
@@ -452,6 +477,7 @@ export async function runChatCli(
   store: MemoryStore,
   io: ChatCliIo,
   timeZone: string,
+  llmClient: AnthropicMessagesClient,
   now: () => Date = () => new Date(),
 ): Promise<void> {
   await surfaceOpenInteractionRequests(store, io);
@@ -483,7 +509,12 @@ export async function runChatCli(
       continue;
     }
 
-    io.writeLine("(free-text routing arrives in a later task — nothing to do with that yet)");
+    try {
+      const result = await routeChatMessage(llmClient, line);
+      io.writeLine(result.response);
+    } catch (err) {
+      io.writeLine(`I hit a problem trying to answer that: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 }
 
@@ -517,10 +548,11 @@ function createNodeIo(): ChatCliIo {
 /**
  * Real entrypoint: wires a real `MemoryStore` (per `MEMORY_DB_PATH`,
  * defaulting to `./data/yoh-memory.db` — same default `.env.example`
- * documents) to real stdin/stdout, and runs the REPL loop. Accepts an
- * injectable `env` map (mirroring `token-store.ts`'s
- * `loadGoogleOAuthConfigFromEnv`) so tests never need to mutate real
- * `process.env`.
+ * documents), a real `AnthropicMessagesClient` (per `CLAUDE_API_KEY` —
+ * `llm-adapter.ts`'s `loadLlmAdapterConfigFromEnv`), and real stdin/stdout,
+ * and runs the REPL loop. Accepts an injectable `env` map (mirroring
+ * `token-store.ts`'s `loadGoogleOAuthConfigFromEnv`) so tests never need to
+ * mutate real `process.env`.
  *
  * `YOH_TIMEZONE` is read here the same way `ritual-cli.ts`'s
  * `createMorningRitualDeps` reads it — required, throwing rather than
@@ -535,9 +567,10 @@ export async function main(env: Readonly<Record<string, string | undefined>> = p
     throw new Error("chat-cli: missing required environment variable YOH_TIMEZONE (e.g. America/New_York)");
   }
   const store = createMemoryStore({ databasePath });
+  const llmClient = createAnthropicMessagesClient(loadLlmAdapterConfigFromEnv(env));
   const io = createNodeIo();
   try {
-    await runChatCli(store, io, timeZone);
+    await runChatCli(store, io, timeZone, llmClient);
   } finally {
     store.close();
   }
