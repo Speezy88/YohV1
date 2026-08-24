@@ -13,7 +13,7 @@ import { createMemoryStore } from "../src/adapters/memory-store.ts";
 import { recordSlip } from "../src/adapters/memory-store.ts";
 import { computeSlipBumpLevels } from "../src/core/slip-bump.ts";
 import { createMorningRitualDeps, createSelfCheckRitualDeps, runRitualCli, type RitualCliDeps } from "../src/shell/ritual-cli.ts";
-import type { MorningRitualOutcome } from "../src/rituals/morning-ritual.ts";
+import type { MorningRitualOutcome, PlanNotification } from "../src/rituals/morning-ritual.ts";
 import type { NightEscalateOutcome, NightPromptOutcome } from "../src/rituals/night-ritual.ts";
 import type { SelfCheckOutcome } from "../src/rituals/self-check.ts";
 import type { Plan, Result, YohError } from "../src/types/domain.ts";
@@ -35,6 +35,8 @@ const PLAN: Plan = {
 interface Sink {
   readonly out: string[];
   readonly err: string[];
+  /** Failure alerts sent via `RitualCliDeps.sendFailureAlert` (Task 25 / Story 5.1). */
+  readonly alerts: PlanNotification[];
 }
 
 function deps(
@@ -59,6 +61,9 @@ function deps(
     },
     runSelfCheck: async () => {
       throw new Error("runSelfCheck should not be called by a `morning` dispatch test");
+    },
+    sendFailureAlert: async (notification) => {
+      sink.alerts.push(notification);
     },
   };
 }
@@ -86,6 +91,9 @@ function nightPromptDeps(
     runSelfCheck: async () => {
       throw new Error("runSelfCheck should not be called by a `night-prompt` dispatch test");
     },
+    sendFailureAlert: async (notification) => {
+      sink.alerts.push(notification);
+    },
   };
 }
 
@@ -111,6 +119,9 @@ function nightEscalateDeps(
     },
     runSelfCheck: async () => {
       throw new Error("runSelfCheck should not be called by a `night-escalate` dispatch test");
+    },
+    sendFailureAlert: async (notification) => {
+      sink.alerts.push(notification);
     },
   };
 }
@@ -138,11 +149,14 @@ function selfCheckDeps(
       onRun?.();
       return outcome;
     },
+    sendFailureAlert: async (notification) => {
+      sink.alerts.push(notification);
+    },
   };
 }
 
 function sink(): Sink {
-  return { out: [], err: [] };
+  return { out: [], err: [], alerts: [] };
 }
 
 test("`morning` runs the Morning Ritual and prints the rendered Plan, exit code 0", async () => {
@@ -433,6 +447,211 @@ test("self-check no longer appears in the 'not yet built' set — it's a real, b
   const code = await runRitualCli(["self-check"], selfCheckDeps({ ok: true, value: { status: "not-due", date: TODAY, nextDueDate: TODAY } }, s));
   assert.equal(code, 0);
   assert.doesNotMatch(s.err.join("\n"), /not implemented yet/i);
+});
+
+// ============================================================================
+// Failure-alert wrapper (Task 25 / Story 5.1, AD-7/AD-9): a single shared
+// `withFailureAlert` mechanism applied identically to all four subcommands.
+// Covers both failure modes AD-7 names — a `Result` failure AND a thrown
+// error escaping the subcommand invocation entirely — plus the "no alert on
+// success" and "distinct wording" requirements.
+// ============================================================================
+
+const NORMAL_NOTIFICATION_TITLES = ["Today's Plan", "Close out today?", "Quick Self-Check"];
+
+/** Builds a `RitualCliDeps` where every run* function throws (not a Result failure) except the one under test, which throws the given error. Mirrors the "should not be called" convention the other helpers above use. */
+function throwingDeps(which: "runMorning" | "runNightPrompt" | "runNightEscalate" | "runSelfCheck", err: Error, s: Sink): RitualCliDeps {
+  const unexpected = (label: string) => async () => {
+    throw new Error(`${label} should not be called by this dispatch test`);
+  };
+  const base: RitualCliDeps = {
+    io: {
+      writeLine: (l) => s.out.push(l),
+      writeError: (l) => s.err.push(l),
+    },
+    runMorning: unexpected("runMorning"),
+    runNightPrompt: unexpected("runNightPrompt"),
+    runNightEscalate: unexpected("runNightEscalate"),
+    runSelfCheck: unexpected("runSelfCheck"),
+    sendFailureAlert: async (notification) => {
+      s.alerts.push(notification);
+    },
+  };
+  return { ...base, [which]: async () => { throw err; } };
+}
+
+// ---- morning ----
+
+test("`morning` sends exactly one distinctly-worded failure alert when the ritual returns a Result failure, before exit code 1", async () => {
+  const s = sink();
+  const code = await runRitualCli(
+    ["morning"],
+    deps({ ok: false, error: { kind: "unreachable", message: "morning-ritual: could not read Notion Tasks" } }, s),
+  );
+
+  assert.equal(code, 1);
+  assert.equal(s.alerts.length, 1);
+  const alert = s.alerts[0]!;
+  assert.match(alert.title, /morning/i);
+  assert.match(alert.title, /fail/i);
+  assert.ok(!NORMAL_NOTIFICATION_TITLES.includes(alert.title), "failure alert title must be distinct from a normal Plan/close-out/Self-Check notification title");
+  assert.match(alert.message, /could not read Notion Tasks/);
+});
+
+test("`morning` sends the failure alert and exits non-zero when runMorning THROWS instead of returning a Result failure", async () => {
+  const s = sink();
+  const code = await runRitualCli(["morning"], throwingDeps("runMorning", new Error("morning-ritual: unexpected crash"), s));
+
+  assert.equal(code, 1);
+  assert.equal(s.alerts.length, 1);
+  assert.match(s.alerts[0]!.title, /morning/i);
+  assert.match(s.alerts[0]!.title, /fail/i);
+  assert.match(s.alerts[0]!.message, /unexpected crash/);
+});
+
+test("`morning` sends NO failure alert on a successful run", async () => {
+  const s = sink();
+  const code = await runRitualCli(
+    ["morning"],
+    deps({ ok: true, value: { status: "already-ran", date: TODAY, planId: `plan-${TODAY}` } }, s),
+  );
+  assert.equal(code, 0);
+  assert.deepEqual(s.alerts, []);
+});
+
+// ---- night-prompt ----
+
+test("`night-prompt` sends exactly one distinctly-worded failure alert when the ritual returns a Result failure, before exit code 1", async () => {
+  const s = sink();
+  const code = await runRitualCli(
+    ["night-prompt"],
+    nightPromptDeps({ ok: false, error: { kind: "conflict", message: "night-ritual: could not persist the close-out prompt" } }, s),
+  );
+
+  assert.equal(code, 1);
+  assert.equal(s.alerts.length, 1);
+  const alert = s.alerts[0]!;
+  assert.match(alert.title, /night-prompt/i);
+  assert.match(alert.title, /fail/i);
+  assert.ok(!NORMAL_NOTIFICATION_TITLES.includes(alert.title), "failure alert title must be distinct from a normal Plan/close-out/Self-Check notification title");
+  assert.match(alert.message, /could not persist the close-out prompt/);
+});
+
+test("`night-prompt` sends the failure alert and exits non-zero when runNightPrompt THROWS instead of returning a Result failure", async () => {
+  const s = sink();
+  const code = await runRitualCli(["night-prompt"], throwingDeps("runNightPrompt", new Error("night-ritual: unexpected crash"), s));
+
+  assert.equal(code, 1);
+  assert.equal(s.alerts.length, 1);
+  assert.match(s.alerts[0]!.title, /night-prompt/i);
+  assert.match(s.alerts[0]!.title, /fail/i);
+  assert.match(s.alerts[0]!.message, /unexpected crash/);
+});
+
+test("`night-prompt` sends NO failure alert on a successful run", async () => {
+  const s = sink();
+  const code = await runRitualCli(["night-prompt"], nightPromptDeps({ ok: true, value: { status: "already-ran", date: TODAY } }, s));
+  assert.equal(code, 0);
+  assert.deepEqual(s.alerts, []);
+});
+
+// ---- night-escalate ----
+
+test("`night-escalate` sends exactly one distinctly-worded failure alert when the ritual returns a Result failure, before exit code 1", async () => {
+  const s = sink();
+  const code = await runRitualCli(
+    ["night-escalate"],
+    nightEscalateDeps({ ok: false, error: { kind: "unreachable", message: "night-ritual: could not send the escalation email" } }, s),
+  );
+
+  assert.equal(code, 1);
+  assert.equal(s.alerts.length, 1);
+  const alert = s.alerts[0]!;
+  assert.match(alert.title, /night-escalate/i);
+  assert.match(alert.title, /fail/i);
+  assert.ok(!NORMAL_NOTIFICATION_TITLES.includes(alert.title), "failure alert title must be distinct from a normal Plan/close-out/Self-Check notification title");
+  assert.match(alert.message, /could not send the escalation email/);
+});
+
+test("`night-escalate` sends the failure alert and exits non-zero when runNightEscalate THROWS instead of returning a Result failure", async () => {
+  const s = sink();
+  const code = await runRitualCli(["night-escalate"], throwingDeps("runNightEscalate", new Error("night-ritual: unexpected crash"), s));
+
+  assert.equal(code, 1);
+  assert.equal(s.alerts.length, 1);
+  assert.match(s.alerts[0]!.title, /night-escalate/i);
+  assert.match(s.alerts[0]!.title, /fail/i);
+  assert.match(s.alerts[0]!.message, /unexpected crash/);
+});
+
+test("`night-escalate` sends NO failure alert on a successful run", async () => {
+  const s = sink();
+  const code = await runRitualCli(
+    ["night-escalate"],
+    nightEscalateDeps({ ok: true, value: { status: "escalated", date: TODAY, tasks: [{ taskId: "t1", taskTitle: "Draft the memo" }] } }, s),
+  );
+  assert.equal(code, 0);
+  assert.deepEqual(s.alerts, []);
+});
+
+// ---- self-check ----
+
+test("`self-check` sends exactly one distinctly-worded failure alert when the ritual returns a Result failure, before exit code 1", async () => {
+  const s = sink();
+  const code = await runRitualCli(
+    ["self-check"],
+    selfCheckDeps({ ok: false, error: { kind: "conflict", message: "self-check: could not persist the Self-Check prompt" } }, s),
+  );
+
+  assert.equal(code, 1);
+  assert.equal(s.alerts.length, 1);
+  const alert = s.alerts[0]!;
+  assert.match(alert.title, /self-check/i);
+  assert.match(alert.title, /fail/i);
+  assert.ok(!NORMAL_NOTIFICATION_TITLES.includes(alert.title), "failure alert title must be distinct from a normal Plan/close-out/Self-Check notification title");
+  assert.match(alert.message, /could not persist the Self-Check prompt/);
+});
+
+test("`self-check` sends the failure alert and exits non-zero when runSelfCheck THROWS instead of returning a Result failure", async () => {
+  const s = sink();
+  const code = await runRitualCli(["self-check"], throwingDeps("runSelfCheck", new Error("self-check: unexpected crash"), s));
+
+  assert.equal(code, 1);
+  assert.equal(s.alerts.length, 1);
+  assert.match(s.alerts[0]!.title, /self-check/i);
+  assert.match(s.alerts[0]!.title, /fail/i);
+  assert.match(s.alerts[0]!.message, /unexpected crash/);
+});
+
+test("`self-check` sends NO failure alert on a successful run", async () => {
+  const s = sink();
+  const code = await runRitualCli(["self-check"], selfCheckDeps({ ok: true, value: { status: "prompted", date: TODAY } }, s));
+  assert.equal(code, 0);
+  assert.deepEqual(s.alerts, []);
+});
+
+// ---- cross-cutting: the four alert titles are mutually distinguishable, not just distinct from normal notifications ----
+
+test("the four subcommands' failure alerts each name their OWN subcommand, not a generic shared title", async () => {
+  const titles = new Set<string>();
+
+  const sMorning = sink();
+  await runRitualCli(["morning"], deps({ ok: false, error: { kind: "unreachable", message: "x" } }, sMorning));
+  titles.add(sMorning.alerts[0]!.title);
+
+  const sNightPrompt = sink();
+  await runRitualCli(["night-prompt"], nightPromptDeps({ ok: false, error: { kind: "unreachable", message: "x" } }, sNightPrompt));
+  titles.add(sNightPrompt.alerts[0]!.title);
+
+  const sNightEscalate = sink();
+  await runRitualCli(["night-escalate"], nightEscalateDeps({ ok: false, error: { kind: "unreachable", message: "x" } }, sNightEscalate));
+  titles.add(sNightEscalate.alerts[0]!.title);
+
+  const sSelfCheck = sink();
+  await runRitualCli(["self-check"], selfCheckDeps({ ok: false, error: { kind: "unreachable", message: "x" } }, sSelfCheck));
+  titles.add(sSelfCheck.alerts[0]!.title);
+
+  assert.equal(titles.size, 4, "each subcommand's failure alert title must be distinguishable from the other three");
 });
 
 test("createSelfCheckRitualDeps requires YOH_TIMEZONE and Pushover credentials (review fix), but no Notion/Calendar/SMTP", () => {
