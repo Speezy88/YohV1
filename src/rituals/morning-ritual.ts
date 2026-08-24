@@ -186,6 +186,7 @@ import {
   type MemoryStore,
   type UncheckedDay,
 } from "../adapters/memory-store.ts";
+import type { LogEntry } from "../adapters/logger.ts";
 import { PUSHOVER_MESSAGE_LIMIT, PUSHOVER_TITLE_LIMIT } from "../adapters/notification-adapter.ts";
 import type { DataCompletenessGateResult } from "../core/data-completeness-gate.ts";
 import { orderByDerivedPriority } from "../core/derived-priority.ts";
@@ -500,6 +501,38 @@ export function renderUncheckedNightNotice(
 /** The ritual id the "already ran today" marker is stored under in `memory-store.ts`. */
 export const MORNING_RITUAL_ID = "morning";
 
+/**
+ * Degraded-performance threshold for Plan generation, in milliseconds (Task
+ * 27 / Story 5.3, AD-7): the Data-Completeness Gate through Work/Break
+ * fitting (see `MorningRitualOutcome`'s own `planGenerationMs` doc comment
+ * for the exact span timed) genuinely taking longer than this does NOT fail
+ * the run — the Plan is still generated and delivered normally — but
+ * `shell/ritual-cli.ts` treats it as DEGRADED-NOT-FAILED and raises it
+ * through the SAME alert path Story 5.1/5.2 built
+ * (`RitualCliDeps.sendFailureAlert`, see that file's own
+ * `checkMorningPlanGenerationDegraded`), rather than silently accepting a
+ * technically-successful-but-unusually-slow run as normal.
+ *
+ * A documented, concrete starting value — the Architecture Spine's own
+ * Deferred section explicitly leaves the exact number to build time, per
+ * this project's established pattern for exactly this situation (FR-2's
+ * even-split weights, FR-11's slip curve, Self-Check's own interval/
+ * low-score threshold, Task 23's deferral-streak threshold, Task 26's own
+ * missed-run grace windows, etc. — see each constant's own doc comment for
+ * the same "tunable, not load-bearing" framing). `5000` (5 seconds, a
+ * "low-seconds value" per this task's own implementer note) is chosen as
+ * comfortably above what this span's own local computation
+ * (`data-completeness-gate.ts`, `derived-priority.ts`, `work-break-fit.ts`
+ * — no genuinely slow network call sits inside this specific span; only
+ * `readCalendarEvents` does, and that's one bounded HTTP round trip, not an
+ * unbounded loop) should ever normally take, even against a large Notion
+ * Task list, while still tight enough to catch a genuine regression (a
+ * pathological `O(n^2)`-or-worse slice introduced later, an unexpectedly
+ * huge candidate set, a slow Calendar API response) well before it would be
+ * noticeable to Spencer as "my Plan is late."
+ */
+export const PLAN_GENERATION_DEGRADED_THRESHOLD_MS = 5_000;
+
 // ============================================================================
 // Time-Budget-change Proposal (Task 23 / Story 4.2, AD-3) — see step 8.5
 // inside `runMorningRitual` below for where this is actually generated and
@@ -599,13 +632,6 @@ export function buildNotificationBody(
   return `${plan.reasoning.slice(0, Math.max(0, limit - 1))}…`.slice(0, limit);
 }
 
-/** One structured log line. AD-7's real failure alerting is Epic 5; this is the seam it will read from. */
-export interface MorningRitualLogEntry {
-  readonly level: "info" | "warn" | "error";
-  readonly event: string;
-  readonly detail?: unknown;
-}
-
 /**
  * Every input and I/O edge the Morning Ritual needs, injected rather than
  * constructed here: `shell/ritual-cli.ts` binds the real Notion, Calendar,
@@ -627,7 +653,7 @@ export interface MorningRitualDeps {
   readonly timeZone: string;
   /** Slip-Bump levels (Task 17 / FR-11). Threaded through to BOTH the ordering and the reasoning line so they can never disagree. */
   readonly bumpLevels?: Readonly<Record<ExternalId, number>>;
-  readonly log?: (entry: MorningRitualLogEntry) => void;
+  readonly log?: (entry: LogEntry) => void;
   /** Forces color on/off for the returned `rendered` text; defaults to `shouldUseColor()`. The notification body is always plain. */
   readonly color?: boolean;
 }
@@ -660,6 +686,8 @@ export type MorningRitualOutcome =
       readonly date: IsoDate;
       readonly deferredTaskIds: readonly ExternalId[];
       readonly incompleteTaskIds: readonly ExternalId[];
+      /** See the `"delivered"` variant's own `planGenerationMs` doc comment — this outcome still reaches Work/Break fitting, so it is timed exactly the same way. */
+      readonly planGenerationMs?: number;
     }
   | {
       readonly status: "delivered";
@@ -694,6 +722,22 @@ export type MorningRitualOutcome =
        * parsing rendered text.
        */
       readonly uncheckedNight?: UncheckedDay;
+      /**
+       * Task 27 / Story 5.3: how long the Data-Completeness Gate through
+       * Work/Break fitting genuinely took, in milliseconds — measured via
+       * `performance.now()` around exactly that span (see `runMorningRitual`
+       * below, where the timer starts and stops), never hardcoded or
+       * estimated. Optional (rather than required) purely so a `Result`
+       * failure inside the SAME span, or a caller/test that doesn't care
+       * about timing, need not fabricate a value — every real "delivered"
+       * run always sets it. Compared against `PLAN_GENERATION_DEGRADED_THRESHOLD_MS`
+       * by `shell/ritual-cli.ts`'s `checkMorningPlanGenerationDegraded`,
+       * which raises a DEGRADED-not-failed alert through the same channel
+       * Story 5.1/5.2 built when it's exceeded — this field is what makes
+       * that check possible without `ritual-cli.ts` re-deriving its own
+       * measurement.
+       */
+      readonly planGenerationMs?: number;
     };
 
 function failure(kind: YohError["kind"], message: string, detail?: unknown): Result<never, YohError> {
@@ -771,6 +815,17 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
   }
 
   // --- 3. Merge overrides, gate, sync the interaction request ---------------
+  // Task 27 / Story 5.3: the Plan-generation timer starts here — right
+  // before the Data-Completeness Gate — and stops immediately after
+  // Work/Break fitting succeeds below (see `planGenerationMs`, just after
+  // the fitting-rejected check), per this story's own AC wording:
+  // "Data-Completeness Gate through Work/Break fitting, excluding
+  // notification delivery." Measured with `performance.now()` — genuine
+  // elapsed wall time, never hardcoded. A run that exits before reaching
+  // fitting (the early "nothing-to-plan" branch just below, or any `Result`
+  // failure inside this span) never computes a `planGenerationMs` at all —
+  // there is no completed Plan-generation run yet to time.
+  const planGenerationStartMs = performance.now();
   let gate: Result<DataCompletenessGateResult, YohError>;
   try {
     gate = runDataCompletenessGate(deps.store, rawTasks);
@@ -836,6 +891,13 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
     log({ level: "error", event: "morning-ritual.fitting-rejected", detail: fitted.error });
     return fitted;
   }
+
+  // Task 27 / Story 5.3: the timed span ends here, immediately after
+  // Work/Break fitting succeeds — see `planGenerationStartMs`'s own comment
+  // above for the exact boundary this measures. Rounded to whole
+  // milliseconds since sub-millisecond precision adds nothing a 5-second
+  // threshold ever needs to distinguish.
+  const planGenerationMs = Math.round(performance.now() - planGenerationStartMs);
 
   // --- 8.5. Time-Budget-deferral streak + Proposal (Task 23 / Story 4.2,
   // AD-3) --------------------------------------------------------------------
@@ -931,7 +993,7 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
     log({
       level: "info",
       event: "morning-ritual.nothing-fits",
-      detail: { date: today, deferred: fitted.value.deferredTaskIds.length, budget: resolvedBudget.budget.totalMinutes },
+      detail: { date: today, deferred: fitted.value.deferredTaskIds.length, budget: resolvedBudget.budget.totalMinutes, planGenerationMs },
     });
     return {
       ok: true,
@@ -940,6 +1002,7 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
         date: today,
         deferredTaskIds: fitted.value.deferredTaskIds,
         incompleteTaskIds,
+        planGenerationMs,
       },
     };
   }
@@ -1069,13 +1132,28 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
   // Pushover send (steps 2–12b, all awaited above) leave a real window
   // during which a SEPARATE `chat-cli.ts` process (same SQLite file,
   // AD-10) can answer and clear it before this line ever runs. That is not
-  // an error — the night is no longer unchecked either way — so an
-  // `undefined` return is simply ignored here (nothing to catch, since
-  // `markUncheckedDayShown` doesn't throw for this case); only a genuine
-  // thrown error is converted to a `Result` failure below.
+  // an error — the night is no longer unchecked either way — so this run
+  // does not fail for it (nothing to catch, since `markUncheckedDayShown`
+  // doesn't throw for this case); only a genuine thrown error is converted
+  // to a `Result` failure below.
+  //
+  // Task 27 / Story 5.3 audit fix: this branch used to be entirely SILENT —
+  // it executed and changed nothing, with no log line at all, which is
+  // exactly the "technically running but effectively broken" gap this
+  // story's own AC exists to catch. The `undefined` return is now logged
+  // (info, not error — it is a benign, expected race, not a failure) so a
+  // run in which this happened is reconstructable afterward rather than
+  // looking identical to a run where the stamp genuinely succeeded.
   if (uncheckedNight) {
     try {
-      markUncheckedDayShown(deps.store, uncheckedNight.date, nowIso);
+      const stamped = markUncheckedDayShown(deps.store, uncheckedNight.date, nowIso);
+      if (!stamped) {
+        log({
+          level: "info",
+          event: "morning-ritual.unchecked-day-already-resolved",
+          detail: { date: uncheckedNight.date },
+        });
+      }
     } catch (err) {
       log({ level: "error", event: "morning-ritual.unchecked-day-mark-shown-failed", detail: describeError(err) });
       return failure(
@@ -1095,6 +1173,7 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
       blocks: plan.blocks.length,
       deferred: fitted.value.deferredTaskIds.length,
       uncheckedNightDate: uncheckedNight?.date,
+      planGenerationMs,
     },
   });
 
@@ -1107,6 +1186,7 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
       rendered,
       deferredTaskIds: fitted.value.deferredTaskIds,
       incompleteTaskIds,
+      planGenerationMs,
       ...(uncheckedNight ? { uncheckedNight } : {}),
     },
   };

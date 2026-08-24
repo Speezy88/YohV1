@@ -167,6 +167,24 @@
  * `readModifyWrite` primitive every other kind in `memory-store.ts` uses —
  * not a parallel storage mechanism.
  *
+ * Task 27 update (Story 5.3, AD-7/AD-9, the plan's final task — it hardens
+ * ALL FOUR subcommands' structured logging at once, and adds a THIRD AD-7
+ * signal for `morning` specifically): (1) the four `create*RitualDeps`
+ * functions below now each call `adapters/logger.ts`'s `writeStructuredLog`
+ * instead of independently repeating the same `process.stderr.write`
+ * closure — see that new file's own doc comment for the full duplication
+ * this consolidates (AD-9), across this file and all four `rituals/*.ts`
+ * files at once. (2) `withFailureAlert` now ALSO accepts an optional
+ * `checkDegraded` (only `morning` passes one,
+ * `checkMorningPlanGenerationDegraded` below): when Plan generation
+ * (the Data-Completeness Gate through Work/Break fitting,
+ * `morning-ritual.ts`'s `PLAN_GENERATION_DEGRADED_THRESHOLD_MS`) takes
+ * longer than that threshold, the run is treated as DEGRADED-not-failed and
+ * raised through the SAME `sendFailureAlert` channel Story 5.1/5.2 built,
+ * worded distinctly from both the "failed" and "missed a run" alerts — the
+ * Plan itself is still generated and delivered normally either way; this is
+ * purely an additional observability signal, never a `Result` failure.
+ *
  * Per AD-1 this shell file contains no ritual logic of its own. It does two
  * things: bind the real adapters/stores to `rituals/morning-ritual.ts`'s
  * injected seams (`createMorningRitualDeps`, below), and translate the
@@ -185,11 +203,18 @@
 import { createMemoryStore, getRitualInvocation, listSlipHistories, putRitualInvocation, type MemoryStore } from "../adapters/memory-store.ts";
 import { createCalendarReadClient, readCalendarEvents } from "../adapters/calendar-adapter.ts";
 import { loadEmailConfigFromEnv, sendEmail } from "../adapters/email-adapter.ts";
+import { writeStructuredLog } from "../adapters/logger.ts";
 import { loadPushoverConfigFromEnv, sendPushoverNotification } from "../adapters/notification-adapter.ts";
 import { readNotionTasks } from "../adapters/notion-adapter.ts";
 import { createTokenStore, loadGoogleOAuthConfigFromEnv } from "../adapters/token-store.ts";
 import { computeSlipBumpLevels } from "../core/slip-bump.ts";
-import { runMorningRitual, type MorningRitualDeps, type MorningRitualOutcome, type PlanNotification } from "../rituals/morning-ritual.ts";
+import {
+  PLAN_GENERATION_DEGRADED_THRESHOLD_MS,
+  runMorningRitual,
+  type MorningRitualDeps,
+  type MorningRitualOutcome,
+  type PlanNotification,
+} from "../rituals/morning-ritual.ts";
 import {
   renderNightEscalateNotice,
   runNightEscalateRitual,
@@ -221,6 +246,22 @@ export interface RitualCliIo {
  */
 export interface MissedRunCheckResult {
   readonly missed: boolean;
+  readonly detail?: string;
+}
+
+/**
+ * The result of Task 27 / Story 5.3's degraded-performance check
+ * (`checkMorningPlanGenerationDegraded`, below): `degraded: true` means the
+ * subcommand's own OUTCOME — genuinely `Result`-ok, not a failure — reports
+ * running unusually slow. Distinct from `MissedRunCheckResult` (an EXTERNAL
+ * "was this subcommand invoked recently enough" check, run BEFORE the
+ * subcommand) and from a `Result` failure (the run genuinely succeeded and
+ * delivered normally): this is a THIRD, independent signal, read from a
+ * successful outcome's own data. `detail` is a short human-readable
+ * explanation for the alert body, ignored when `degraded` is `false`.
+ */
+export interface DegradedCheckResult {
+  readonly degraded: boolean;
   readonly detail?: string;
 }
 
@@ -307,7 +348,20 @@ export async function runRitualCli(argv: readonly string[], deps: RitualCliDeps)
   }
 
   if (subcommand === "morning") {
-    return withFailureAlert("morning", deps.runMorning, handleMorningResult, deps.io, deps.sendFailureAlert, deps.checkMissedRun, deps.recordInvocation);
+    // Task 27 / Story 5.3: `morning` is the ONLY subcommand that passes a
+    // `checkDegraded` function — see `checkMorningPlanGenerationDegraded`'s
+    // own doc comment for why this check is specific to Plan generation and
+    // not something the other three subcommands have an equivalent of.
+    return withFailureAlert(
+      "morning",
+      deps.runMorning,
+      handleMorningResult,
+      deps.io,
+      deps.sendFailureAlert,
+      deps.checkMissedRun,
+      deps.recordInvocation,
+      checkMorningPlanGenerationDegraded,
+    );
   }
 
   if (subcommand === "night-prompt") {
@@ -382,6 +436,23 @@ export async function runRitualCli(argv: readonly string[], deps: RitualCliDeps)
  * `checkSelfCheckMissedRun` read on the NEXT invocation. See both
  * functions' own doc comments and the file docstring's "Task 26 review-fix
  * update" section for the full reasoning.
+ *
+ * Task 27 update (Story 5.3, AD-7/AD-9): now ALSO accepts an optional
+ * `checkDegraded`, run ONLY when `runSubcommand` returns an OK `Result` —
+ * this is the third AD-7 signal (alongside Task 25's "did this invocation
+ * fail" and Task 26's "was a PRIOR occurrence missed"), and the only one of
+ * the three that reads the subcommand's own successful OUTCOME rather than
+ * its absence or its failure. `morning` is currently the only caller that
+ * passes one (`checkMorningPlanGenerationDegraded`, below) — every other
+ * subcommand omits it, so `checkDegraded` stays `undefined` and this branch
+ * never runs for them. When it reports `degraded: true`, exactly one further
+ * Pushover alert is sent (`sendDegradedAlertSafely`, worded distinctly from
+ * BOTH the "failed" and "missed a run" alerts) — but, like the missed-run
+ * check, this is PURELY ADDITIVE: it never changes `result` or the exit code
+ * `handleResult` computes from it. The Plan (or whatever the subcommand
+ * produced) was already generated and delivered by the time this check
+ * runs; this can only ever add an extra, distinctly-worded signal alongside
+ * that success, never turn it into a failure.
  */
 async function withFailureAlert<T>(
   subcommand: string,
@@ -391,6 +462,7 @@ async function withFailureAlert<T>(
   sendFailureAlert: (notification: PlanNotification) => Promise<void>,
   checkMissedRun: () => MissedRunCheckResult,
   recordInvocation: () => void,
+  checkDegraded?: (value: T) => DegradedCheckResult,
 ): Promise<number> {
   const missedRunCheck = safeCheckMissedRun(checkMissedRun, subcommand, io);
   if (missedRunCheck.missed) {
@@ -419,6 +491,11 @@ async function withFailureAlert<T>(
 
   if (!result.ok) {
     await sendAlertSafely(subcommand, `${result.error.kind} — ${result.error.message}`, io, sendFailureAlert);
+  } else if (checkDegraded) {
+    const degradedCheck = checkDegraded(result.value);
+    if (degradedCheck.degraded) {
+      await sendDegradedAlertSafely(subcommand, degradedCheck.detail ?? "no further detail available", io, sendFailureAlert);
+    }
   }
 
   return handleResult(result, io);
@@ -567,6 +644,34 @@ async function sendMissedRunAlertSafely(
   );
 }
 
+/**
+ * Builds the "Plan generation is running degraded" alert's title/body (Task
+ * 27 / Story 5.3, AD-7) and sends it via the same `sendPushoverAlertSafely`
+ * primitive (AD-9: one alert-sending mechanism reused for all THREE AD-7
+ * signals now — a failed run, a missed prior run, and a degraded-but-
+ * successful one — never a parallel one). Worded distinctly from BOTH
+ * `sendAlertSafely`'s "failed" wording and `sendMissedRunAlertSafely`'s
+ * "missed a run" wording: this run neither failed nor was skipped — it
+ * completed and its own Plan/notification was delivered normally, it just
+ * took unusually long. `detail` (built by `checkMorningPlanGenerationDegraded`)
+ * names roughly how long it took and against what threshold.
+ */
+async function sendDegradedAlertSafely(
+  subcommand: string,
+  detail: string,
+  io: RitualCliIo,
+  sendFailureAlert: (notification: PlanNotification) => Promise<void>,
+): Promise<void> {
+  return sendPushoverAlertSafely(
+    "ritual-cli.degraded-alert-send-failed",
+    `Yoh: ${subcommand} running slow`,
+    `The "${subcommand}" ritual completed and delivered normally, but is running degraded: ${detail}. This is a performance signal only, not a failure — nothing needs recovering.`,
+    subcommand,
+    io,
+    sendFailureAlert,
+  );
+}
+
 // ============================================================================
 // Dead-man's-switch — missed-run detection (Task 26 / Story 5.2, AD-7/AD-9)
 // ============================================================================
@@ -672,6 +777,47 @@ export function checkDailyRitualMissedRun(store: MemoryStore, subcommand: string
  */
 export function checkSelfCheckMissedRun(store: MemoryStore, now: () => Date): MissedRunCheckResult {
   return checkInvocationStaleness(store, "self-check", now, SELF_CHECK_MISSED_RUN_GRACE_DAYS * 24);
+}
+
+// ============================================================================
+// Plan-generation performance threshold (Task 27 / Story 5.3, AD-7)
+// ============================================================================
+
+/**
+ * `morning`'s degraded-performance check (Task 27 / Story 5.3): did Plan
+ * generation (the Data-Completeness Gate through Work/Break fitting — see
+ * `morning-ritual.ts`'s `PLAN_GENERATION_DEGRADED_THRESHOLD_MS` doc comment
+ * for the exact span and the threshold's own reasoning) take longer than
+ * that threshold? Exported (like `checkDailyRitualMissedRun`/
+ * `checkSelfCheckMissedRun` above) so it is independently unit-testable
+ * against a plain `MorningRitualOutcome` value, separately from the
+ * `withFailureAlert`/`runRitualCli` wiring that actually calls it.
+ *
+ * Only the two outcomes that genuinely complete that span —
+ * `"delivered"`/`"nothing-fits"`, both of which carry an optional
+ * `planGenerationMs` — have anything to check at all; every other outcome
+ * (`"already-ran"`/`"nothing-to-plan"`, an early no-op that never reaches
+ * Work/Break fitting) is never degraded by definition, since no
+ * Plan-generation span ran to completion for it. Passing `undefined` here
+ * has the SAME effect as passing a value at/under the threshold — both
+ * resolve to `{ degraded: false }` — since a run with nothing measured is
+ * exactly as un-degraded as a run that measured comfortably fast.
+ *
+ * This never turns a successful `Result` into a failure — the Plan was
+ * already generated and delivered by the time this runs; it only decides
+ * whether `withFailureAlert` raises an ADDITIONAL, distinctly-worded alert
+ * alongside the normal exit-code-0 success path `handleMorningResult`
+ * already produces.
+ */
+export function checkMorningPlanGenerationDegraded(outcome: MorningRitualOutcome): DegradedCheckResult {
+  const ms = outcome.status === "delivered" || outcome.status === "nothing-fits" ? outcome.planGenerationMs : undefined;
+  if (ms === undefined || ms <= PLAN_GENERATION_DEGRADED_THRESHOLD_MS) {
+    return { degraded: false };
+  }
+  return {
+    degraded: true,
+    detail: `Plan generation (Data-Completeness Gate through Work/Break fitting) took ${(ms / 1000).toFixed(1)}s, over the ${(PLAN_GENERATION_DEGRADED_THRESHOLD_MS / 1000).toFixed(1)}s threshold`,
+  };
 }
 
 function handleMorningResult(result: Result<MorningRitualOutcome, YohError>, io: RitualCliIo): number {
@@ -897,9 +1043,11 @@ export function createMorningRitualDeps(
     now: () => new Date(),
     timeZone,
     bumpLevels,
-    log: (entry) => {
-      process.stderr.write(`${JSON.stringify(entry)}\n`);
-    },
+    // Task 27 / Story 5.3 (AD-9): delegates to the ONE shared writer in
+    // `adapters/logger.ts` instead of repeating this closure per subcommand
+    // (all four `create*RitualDeps` functions used to have their own
+    // byte-identical copy of it).
+    log: (entry) => writeStructuredLog(entry),
   };
 }
 
@@ -930,9 +1078,11 @@ export function createNightPromptRitualDeps(
     sendNotification: (notification) => sendPushoverNotification(pushoverConfig, notification),
     now: () => new Date(),
     timeZone,
-    log: (entry) => {
-      process.stderr.write(`${JSON.stringify(entry)}\n`);
-    },
+    // Task 27 / Story 5.3 (AD-9): delegates to the ONE shared writer in
+    // `adapters/logger.ts` instead of repeating this closure per subcommand
+    // (all four `create*RitualDeps` functions used to have their own
+    // byte-identical copy of it).
+    log: (entry) => writeStructuredLog(entry),
   };
 }
 
@@ -968,9 +1118,11 @@ export function createNightEscalateRitualDeps(
     sendEscalationEmail: (message) => sendEmail(emailConfig, message),
     now: () => new Date(),
     timeZone,
-    log: (entry) => {
-      process.stderr.write(`${JSON.stringify(entry)}\n`);
-    },
+    // Task 27 / Story 5.3 (AD-9): delegates to the ONE shared writer in
+    // `adapters/logger.ts` instead of repeating this closure per subcommand
+    // (all four `create*RitualDeps` functions used to have their own
+    // byte-identical copy of it).
+    log: (entry) => writeStructuredLog(entry),
   };
 }
 
@@ -1002,9 +1154,11 @@ export function createSelfCheckRitualDeps(
     timeZone,
     random: Math.random,
     sendNotification: (notification) => sendPushoverNotification(pushoverConfig, notification),
-    log: (entry) => {
-      process.stderr.write(`${JSON.stringify(entry)}\n`);
-    },
+    // Task 27 / Story 5.3 (AD-9): delegates to the ONE shared writer in
+    // `adapters/logger.ts` instead of repeating this closure per subcommand
+    // (all four `create*RitualDeps` functions used to have their own
+    // byte-identical copy of it).
+    log: (entry) => writeStructuredLog(entry),
   };
 }
 

@@ -71,8 +71,8 @@ development_status:
   4-3-periodic-self-check: done
   epic-4-retrospective: optional
 
-  epic-5: in-progress
+  epic-5: done
   5-1-ritual-failure-alerting: done
   5-2-dead-man-s-switch-missed-run-detection: done
-  5-3-structured-logging-plan-generation-performance-threshold: backlog
+  5-3-structured-logging-plan-generation-performance-threshold: done
   epic-5-retrospective: optional

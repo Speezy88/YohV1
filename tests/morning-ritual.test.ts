@@ -12,6 +12,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  clearUncheckedDay,
   createMemoryStore,
   getOpenInteractionRequest,
   getPlan,
@@ -28,6 +29,7 @@ import {
   ATTENTION,
   MORNING_RITUAL_ID,
   MUTED,
+  PLAN_GENERATION_DEGRADED_THRESHOLD_MS,
   RESET,
   renderPlan,
   runMorningRitual,
@@ -36,6 +38,7 @@ import {
   type MorningRitualDeps,
   type PlanNotification,
 } from "../src/rituals/morning-ritual.ts";
+import type { LogEntry } from "../src/adapters/logger.ts";
 import { DATA_COMPLETENESS_REQUEST_ID } from "../src/rituals/data-completeness.ts";
 import {
   applyNightCloseOutConfirmation,
@@ -1000,4 +1003,130 @@ test("Review fix (Important #3): when the deferral streak resets to zero, an alr
     undefined,
     "the Proposal must be invalidated (cleared) — it is never left open with a justification this same run just disproved",
   );
+});
+
+// ============================================================================
+// Task 27 / Story 5.3 — shared LogEntry type, Plan-generation timing, and the
+// unchecked-day-already-resolved logging gap
+// ============================================================================
+
+test("morning-ritual.ts's own log seam accepts the SHARED adapters/logger.ts LogEntry type, not a private local one", async () => {
+  const h = harness({ tasks: [makeTask("t1", "Draft the memo", { estimatedDurationMinutes: 60 })] });
+  const logged: LogEntry[] = [];
+  // If this compiles, MorningRitualDeps.log is genuinely typed against the
+  // shared `LogEntry` — a structural/type-level proof, not just a runtime one.
+  const deps: MorningRitualDeps = { ...h.deps, log: (entry: LogEntry) => logged.push(entry) };
+
+  const result = await runMorningRitual(deps);
+  assert.ok(result.ok && result.value.status === "delivered");
+  assert.ok(logged.length > 0, "at least one structured log line was emitted");
+  assert.ok(logged.every((e) => e.level === "info" || e.level === "warn" || e.level === "error"));
+});
+
+test("a delivered Plan's outcome carries planGenerationMs, and the SAME value appears in the final structured log line's detail", async () => {
+  const h = harness({ tasks: [makeTask("t1", "Draft the memo", { estimatedDurationMinutes: 60 })] });
+  const logged: LogEntry[] = [];
+  const result = await runMorningRitual({ ...h.deps, log: (e) => logged.push(e) });
+
+  assert.ok(result.ok && result.value.status === "delivered");
+  assert.equal(typeof result.value.planGenerationMs, "number");
+  assert.ok(result.value.planGenerationMs! >= 0);
+
+  const delivered = logged.find((e) => e.event === "morning-ritual.delivered");
+  assert.ok(delivered, "expected a morning-ritual.delivered log line");
+  const detail = delivered!.detail as { planGenerationMs?: number };
+  assert.equal(detail.planGenerationMs, result.value.planGenerationMs, "the log line's timing must match the outcome's own field, not a second independent measurement");
+});
+
+test("planGenerationMs is genuinely measured, not hardcoded — a slower Data-Completeness-Gate-through-fitting span produces a measurably larger duration", async () => {
+  const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+  const fast = harness({ tasks: [makeTask("t1", "Draft the memo", { estimatedDurationMinutes: 60 })] });
+  const fastResult = await runMorningRitual(fast.deps);
+  assert.ok(fastResult.ok && fastResult.value.status === "delivered");
+
+  const slow = harness({
+    tasks: [makeTask("t1", "Draft the memo", { estimatedDurationMinutes: 60 })],
+    readCalendarEvents: async () => {
+      // readCalendarEvents (step 5) sits INSIDE the timed
+      // "Data-Completeness Gate through Work/Break fitting" span — an
+      // artificial delay here proves the timer measures real elapsed wall
+      // time through that span, rather than reporting a constant.
+      await sleep(60);
+      return [];
+    },
+  });
+  const slowResult = await runMorningRitual(slow.deps);
+  assert.ok(slowResult.ok && slowResult.value.status === "delivered");
+
+  assert.ok(
+    slowResult.value.planGenerationMs! - fastResult.value.planGenerationMs! >= 40,
+    `expected the artificially-slowed run's planGenerationMs (${slowResult.value.planGenerationMs}) to exceed the fast run's (${fastResult.value.planGenerationMs}) by roughly the injected 60ms delay`,
+  );
+});
+
+test("a nothing-fits outcome (the run still reaches Work/Break fitting) also carries planGenerationMs", async () => {
+  const store = tempStore();
+  putTimeBudget(store, { date: TODAY, totalMinutes: 60, workMinutes: 70, breakMinutes: 15 });
+  const h = harness({
+    store,
+    declareBudgetMinutes: 0,
+    tasks: [makeTask("t1", "Rebuild the deck", { estimatedDurationMinutes: 600 })],
+  });
+
+  const result = await runMorningRitual(h.deps);
+  assert.ok(result.ok && result.value.status === "nothing-fits", `expected nothing-fits, got ${JSON.stringify(result)}`);
+  assert.equal(typeof result.value.planGenerationMs, "number");
+  assert.ok(result.value.planGenerationMs! >= 0);
+});
+
+test("a nothing-to-plan outcome carries NO planGenerationMs — that run never reaches Work/Break fitting at all", async () => {
+  const h = harness({ tasks: [] }); // no Tasks at all -> nothing-to-plan, per the existing "nothing-to-plan" test's own convention above
+
+  const result = await runMorningRitual(h.deps);
+  assert.ok(result.ok && result.value.status === "nothing-to-plan", `expected nothing-to-plan, got ${JSON.stringify(result)}`);
+  assert.equal((result.value as { planGenerationMs?: number }).planGenerationMs, undefined);
+});
+
+test("PLAN_GENERATION_DEGRADED_THRESHOLD_MS is a concrete, documented low-seconds starting value", () => {
+  assert.equal(typeof PLAN_GENERATION_DEGRADED_THRESHOLD_MS, "number");
+  assert.ok(PLAN_GENERATION_DEGRADED_THRESHOLD_MS > 0);
+  // "low-seconds" per the task brief's own implementer note.
+  assert.ok(PLAN_GENERATION_DEGRADED_THRESHOLD_MS <= 10_000);
+  assert.ok(PLAN_GENERATION_DEGRADED_THRESHOLD_MS >= 1_000);
+});
+
+// ---- the logging-gap fix: markUncheckedDayShown finding the record already gone ----
+
+test("logging-gap fix: a race where a concurrent process clears the UncheckedDay record before this run stamps it shown is logged, not silently ignored — and the run still delivers normally", async () => {
+  const store = tempStore();
+  putUncheckedDay(store, {
+    date: PRIOR_NIGHT,
+    rolledForwardTasks: [{ taskId: "t1", taskTitle: "Draft the memo" }],
+    recordedAt: "2026-08-22T01:00:00.000Z",
+  });
+  const logged: LogEntry[] = [];
+
+  const h = harness({
+    store,
+    tasks: [makeTask("t1", "Draft the memo", { estimatedDurationMinutes: 60 })],
+    // Simulates a SEPARATE chat-cli.ts process answering and clearing the
+    // close-out (which clears the matching UncheckedDay record too, per
+    // night-ritual.ts's clearNightCloseOutRequestIfOpen) in the window
+    // between step 1.5's read and this run's own step 12d write — the exact
+    // real, reachable race markUncheckedDayShown's own doc comment names.
+    sendNotification: async () => {
+      clearUncheckedDay(store, PRIOR_NIGHT);
+    },
+  });
+
+  const result = await runMorningRitual({ ...h.deps, log: (e) => logged.push(e) });
+
+  assert.ok(result.ok && result.value.status === "delivered", "the race must not fail the run — the Plan still delivers normally");
+  assert.equal(getUncheckedDay(store, PRIOR_NIGHT), undefined, "sanity: genuinely gone by the time step 12d runs");
+
+  const gapEvent = logged.find((e) => e.event === "morning-ritual.unchecked-day-already-resolved");
+  assert.ok(gapEvent, "expected a log line for the previously-silent 'already resolved, nothing to stamp' branch");
+  assert.equal(gapEvent!.level, "info");
+  assert.deepEqual(gapEvent!.detail, { date: PRIOR_NIGHT });
 });

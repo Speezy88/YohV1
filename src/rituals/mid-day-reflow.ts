@@ -232,6 +232,7 @@
  * proactive trigger path" structural check for how that's verified.
  */
 import { getCurrentTimeBudget, getPlan, putPlan, type MemoryStore } from "../adapters/memory-store.ts";
+import type { LogEntry } from "../adapters/logger.ts";
 import type { DataCompletenessGateResult } from "../core/data-completeness-gate.ts";
 import { orderByDerivedPriority } from "../core/derived-priority.ts";
 import { fitWorkBreakBlocks } from "../core/work-break-fit.ts";
@@ -255,13 +256,6 @@ const MINUTES_TO_MS = 60_000;
 // Deps / outcome shapes
 // ============================================================================
 
-/** One structured log line, same shape as `morning-ritual.ts`'s (AD-7's real failure alerting is Epic 5; this is the seam it will read from). */
-export interface MidDayReflowLogEntry {
-  readonly level: "info" | "warn" | "error";
-  readonly event: string;
-  readonly detail?: unknown;
-}
-
 /**
  * Every input and I/O edge Mid-Day Re-Flow needs, injected — mirrors
  * `MorningRitualDeps`'s shape/conventions (`morning-ritual.ts`) minus the
@@ -279,7 +273,7 @@ export interface MidDayReflowDeps {
   readonly timeZone: string;
   /** Slip-Bump levels (Task 17 / FR-11), threaded through to the ordering exactly as `morning-ritual.ts` does. Omitted -> "no bump" for every Task. */
   readonly bumpLevels?: Readonly<Record<ExternalId, number>>;
-  readonly log?: (entry: MidDayReflowLogEntry) => void;
+  readonly log?: (entry: LogEntry) => void;
   /** Forces color on/off for `rendered`; defaults to `renderPlan`'s own `shouldUseColor()`. */
   readonly color?: boolean;
   /**

@@ -195,6 +195,7 @@ import {
   type SelfCheckState,
   type StoredRecord,
 } from "../adapters/memory-store.ts";
+import type { LogEntry } from "../adapters/logger.ts";
 import { computeEscalation } from "../core/escalate-under-strain.ts";
 import { localIsoDate } from "./morning-ritual.ts";
 import type { PlanNotification } from "./morning-ritual.ts";
@@ -359,13 +360,6 @@ function localMinuteOfDay(instant: Date, timeZone: string): number {
 // runSelfCheckRitual — the persist-and-exit half (AD-5)
 // ============================================================================
 
-/** One structured log line, mirroring `rituals/night-ritual.ts`'s `NightPromptLogEntry` shape. */
-export interface SelfCheckLogEntry {
-  readonly level: "info" | "warn" | "error";
-  readonly event: string;
-  readonly detail?: unknown;
-}
-
 /**
  * Every input/I-O edge `runSelfCheckRitual` needs, injected — deliberately
  * has NO `io`/`readLine` seam at all, mirroring `NightPromptRitualDeps`:
@@ -389,7 +383,7 @@ export interface SelfCheckRitualDeps {
    * night-prompt). Throws on I/O failure (AD-8).
    */
   readonly sendNotification: (notification: PlanNotification) => Promise<void>;
-  readonly log?: (entry: SelfCheckLogEntry) => void;
+  readonly log?: (entry: LogEntry) => void;
 }
 
 /** `InteractionRequest<SelfCheckRequestDetail>`'s `detail` payload — the structured half `chat-cli.ts` reads to know which local date this check-in is about. */

@@ -14,8 +14,11 @@ import { recordSlip } from "../src/adapters/memory-store.ts";
 import { computeSlipBumpLevels } from "../src/core/slip-bump.ts";
 import {
   checkDailyRitualMissedRun,
+  checkMorningPlanGenerationDegraded,
   checkSelfCheckMissedRun,
   createMorningRitualDeps,
+  createNightEscalateRitualDeps,
+  createNightPromptRitualDeps,
   createSelfCheckRitualDeps,
   runRitualCli,
   DAILY_RITUAL_MISSED_RUN_GRACE_HOURS,
@@ -23,6 +26,7 @@ import {
   type MissedRunCheckResult,
   type RitualCliDeps,
 } from "../src/shell/ritual-cli.ts";
+import { PLAN_GENERATION_DEGRADED_THRESHOLD_MS } from "../src/rituals/morning-ritual.ts";
 import type { MorningRitualOutcome, PlanNotification } from "../src/rituals/morning-ritual.ts";
 import type { NightEscalateOutcome, NightPromptOutcome } from "../src/rituals/night-ritual.ts";
 import type { SelfCheckOutcome } from "../src/rituals/self-check.ts";
@@ -1224,4 +1228,220 @@ test("SELF-HEALING: after a missed-run alert fires for `morning`, the ritual sti
   assert.deepEqual(followUpCheck, { missed: false });
 
   store.close();
+});
+
+// ============================================================================
+// Task 27 / Story 5.3 — the four create*RitualDeps functions delegate their
+// log seam to the SHARED adapters/logger.ts writer, instead of each
+// repeating its own process.stderr.write closure.
+// ============================================================================
+
+function captureStderr(): { restore: () => void; chunks: string[] } {
+  const original = process.stderr.write;
+  const chunks: string[] = [];
+  process.stderr.write = ((chunk: string) => {
+    chunks.push(chunk);
+    return true;
+  }) as typeof process.stderr.write;
+  return { chunks, restore: () => { process.stderr.write = original; } };
+}
+
+test("createMorningRitualDeps.log delegates to the shared structured-log writer (one JSON line to stderr)", () => {
+  const store = createMemoryStore({ databasePath: ":memory:" });
+  const deps = createMorningRitualDeps(store, BASE_ENV);
+  const capture = captureStderr();
+  try {
+    deps.log?.({ level: "info", event: "morning-ritual.delivered", detail: { date: TODAY } });
+  } finally {
+    capture.restore();
+  }
+  assert.equal(capture.chunks.length, 1);
+  assert.deepEqual(JSON.parse(capture.chunks[0]!), { level: "info", event: "morning-ritual.delivered", detail: { date: TODAY } });
+  store.close();
+});
+
+test("createNightPromptRitualDeps.log delegates to the shared structured-log writer", () => {
+  const store = createMemoryStore({ databasePath: ":memory:" });
+  const deps = createNightPromptRitualDeps(store, { YOH_TIMEZONE: "America/New_York", PUSHOVER_APP_TOKEN: "x", PUSHOVER_USER_KEY: "y" });
+  const capture = captureStderr();
+  try {
+    deps.log?.({ level: "warn", event: "night-ritual.no-time-budget" });
+  } finally {
+    capture.restore();
+  }
+  assert.equal(capture.chunks.length, 1);
+  assert.deepEqual(JSON.parse(capture.chunks[0]!), { level: "warn", event: "night-ritual.no-time-budget" });
+  store.close();
+});
+
+test("createNightEscalateRitualDeps.log delegates to the shared structured-log writer", () => {
+  const store = createMemoryStore({ databasePath: ":memory:" });
+  const deps = createNightEscalateRitualDeps(store, {
+    YOH_TIMEZONE: "America/New_York",
+    SMTP_HOST: "smtp.example.com",
+    SMTP_PORT: "587",
+    SMTP_USER: "user",
+    SMTP_PASSWORD: "pass",
+    SMTP_FROM: "yoh@example.com",
+  });
+  const capture = captureStderr();
+  try {
+    deps.log?.({ level: "error", event: "night-ritual.escalate-send-failed", detail: "boom" });
+  } finally {
+    capture.restore();
+  }
+  assert.equal(capture.chunks.length, 1);
+  assert.deepEqual(JSON.parse(capture.chunks[0]!), { level: "error", event: "night-ritual.escalate-send-failed", detail: "boom" });
+  store.close();
+});
+
+test("createSelfCheckRitualDeps.log delegates to the shared structured-log writer", () => {
+  const store = createMemoryStore({ databasePath: ":memory:" });
+  const deps = createSelfCheckRitualDeps(store, { YOH_TIMEZONE: "America/New_York", PUSHOVER_APP_TOKEN: "x", PUSHOVER_USER_KEY: "y" });
+  const capture = captureStderr();
+  try {
+    deps.log?.({ level: "info", event: "self-check.prompted" });
+  } finally {
+    capture.restore();
+  }
+  assert.equal(capture.chunks.length, 1);
+  assert.deepEqual(JSON.parse(capture.chunks[0]!), { level: "info", event: "self-check.prompted" });
+  store.close();
+});
+
+// ============================================================================
+// Task 27 / Story 5.3 — Plan-generation performance threshold: `morning`
+// treats an exceeded threshold as DEGRADED-NOT-FAILED, raised through the
+// SAME alert path Story 5.1/5.2 built, while the Plan still delivers
+// normally (never a Result failure).
+// ============================================================================
+
+function deliveredOutcome(planGenerationMs: number): Result<MorningRitualOutcome, YohError> {
+  return {
+    ok: true,
+    value: {
+      status: "delivered",
+      date: TODAY,
+      plan: PLAN,
+      rendered: "Today's Plan for Saturday, August 22",
+      deferredTaskIds: [],
+      incompleteTaskIds: [],
+      planGenerationMs,
+    },
+  };
+}
+
+test("checkMorningPlanGenerationDegraded: under the threshold is not degraded", () => {
+  const result = checkMorningPlanGenerationDegraded({
+    status: "delivered",
+    date: TODAY,
+    plan: PLAN,
+    rendered: "x",
+    deferredTaskIds: [],
+    incompleteTaskIds: [],
+    planGenerationMs: PLAN_GENERATION_DEGRADED_THRESHOLD_MS - 1,
+  });
+  assert.deepEqual(result, { degraded: false });
+});
+
+test("checkMorningPlanGenerationDegraded: over the threshold is degraded, with a detail naming the duration", () => {
+  const result = checkMorningPlanGenerationDegraded({
+    status: "delivered",
+    date: TODAY,
+    plan: PLAN,
+    rendered: "x",
+    deferredTaskIds: [],
+    incompleteTaskIds: [],
+    planGenerationMs: PLAN_GENERATION_DEGRADED_THRESHOLD_MS + 1234,
+  });
+  assert.equal(result.degraded, true);
+  assert.match(result.detail ?? "", /Data-Completeness Gate/);
+  assert.match(result.detail ?? "", /Work\/Break fitting/);
+});
+
+test("checkMorningPlanGenerationDegraded: outcomes with no planGenerationMs (already-ran, nothing-to-plan) are never degraded", () => {
+  assert.deepEqual(checkMorningPlanGenerationDegraded({ status: "already-ran", date: TODAY, planId: undefined }), { degraded: false });
+  assert.deepEqual(checkMorningPlanGenerationDegraded({ status: "nothing-to-plan", date: TODAY, incompleteTaskIds: [] }), { degraded: false });
+});
+
+test("`morning` exceeding the Plan-generation threshold sends a distinctly-worded DEGRADED alert, the Plan still delivers normally (exit 0, not a Result failure), and no failure/missed-run alert is conflated with it", async () => {
+  const s = sink();
+  const code = await runRitualCli(["morning"], deps(deliveredOutcome(PLAN_GENERATION_DEGRADED_THRESHOLD_MS + 3000), s));
+
+  assert.equal(code, 0, "a degraded run is still a SUCCESSFUL run — never a Result failure / non-zero exit");
+  assert.ok(s.out.join("\n").includes("Today's Plan for Saturday, August 22"), "the Plan is still delivered/printed normally");
+  assert.deepEqual(s.err, [], "no error line — this is not a failure");
+
+  assert.equal(s.alerts.length, 1, "exactly one degraded-performance alert");
+  const alert = s.alerts[0]!;
+  assert.match(alert.title, /morning/i);
+  assert.match(alert.title, /slow|degrad/i);
+  assert.doesNotMatch(alert.title, /failed/i, "must be worded distinctly from the 'subcommand failed' alert (Task 25)");
+  assert.doesNotMatch(alert.title, /missed/i, "must be worded distinctly from the missed-run alert (Task 26)");
+  assert.ok(!NORMAL_NOTIFICATION_TITLES.includes(alert.title));
+  assert.match(alert.message, /8\.0s|8s/, "names roughly the actual duration");
+});
+
+test("`morning` staying under the Plan-generation threshold sends NO degraded-performance alert", async () => {
+  const s = sink();
+  const code = await runRitualCli(["morning"], deps(deliveredOutcome(PLAN_GENERATION_DEGRADED_THRESHOLD_MS - 500), s));
+
+  assert.equal(code, 0);
+  assert.deepEqual(s.alerts, []);
+});
+
+test("a nothing-fits outcome exceeding the threshold also raises the degraded alert (it too completes Work/Break fitting)", async () => {
+  const s = sink();
+  const code = await runRitualCli(
+    ["morning"],
+    deps(
+      {
+        ok: true,
+        value: {
+          status: "nothing-fits",
+          date: TODAY,
+          deferredTaskIds: ["t1"],
+          incompleteTaskIds: [],
+          planGenerationMs: PLAN_GENERATION_DEGRADED_THRESHOLD_MS + 1,
+        },
+      },
+      s,
+    ),
+  );
+  assert.equal(code, 0);
+  assert.equal(s.alerts.length, 1);
+  assert.match(s.alerts[0]!.title, /slow|degrad/i);
+});
+
+test("an already-ran outcome (no planGenerationMs at all) never triggers the degraded check, even though it's the same subcommand", async () => {
+  const s = sink();
+  const code = await runRitualCli(["morning"], deps({ ok: true, value: { status: "already-ran", date: TODAY, planId: `plan-${TODAY}` } }, s));
+  assert.equal(code, 0);
+  assert.deepEqual(s.alerts, []);
+});
+
+test("a degraded Plan-generation run and a missed-run alert both fire independently — three distinct alert categories never collapse into one another", async () => {
+  const s = sink();
+  const code = await runRitualCli(
+    ["morning"],
+    deps(deliveredOutcome(PLAN_GENERATION_DEGRADED_THRESHOLD_MS + 2000), s, undefined, () => ({ missed: true, detail: "3 days" })),
+  );
+  assert.equal(code, 0);
+  assert.equal(s.alerts.length, 2, "one missed-run alert AND one degraded-performance alert");
+  assert.match(s.alerts[0]!.title, /missed/i, "the missed-run check runs first");
+  assert.match(s.alerts[1]!.title, /slow|degrad/i);
+});
+
+test("the degraded-performance check is `morning`-only — night-prompt/night-escalate/self-check never raise it even on a successful run", async () => {
+  const sNightPrompt = sink();
+  await runRitualCli(["night-prompt"], nightPromptDeps({ ok: true, value: { status: "prompted", date: TODAY, tasks: [] } }, sNightPrompt));
+  assert.deepEqual(sNightPrompt.alerts, []);
+
+  const sNightEscalate = sink();
+  await runRitualCli(["night-escalate"], nightEscalateDeps({ ok: true, value: { status: "no-open-request", date: TODAY } }, sNightEscalate));
+  assert.deepEqual(sNightEscalate.alerts, []);
+
+  const sSelfCheck = sink();
+  await runRitualCli(["self-check"], selfCheckDeps({ ok: true, value: { status: "prompted", date: TODAY } }, sSelfCheck));
+  assert.deepEqual(sSelfCheck.alerts, []);
 });

@@ -180,6 +180,7 @@ import {
   recordSlip,
   type MemoryStore,
 } from "../adapters/memory-store.ts";
+import type { LogEntry } from "../adapters/logger.ts";
 import { ATTENTION, localIsoDate, RESET, shouldUseColor } from "./morning-ritual.ts";
 import type { PlanNotification } from "./morning-ritual.ts";
 import type { EmailMessage } from "../adapters/email-adapter.ts";
@@ -245,13 +246,6 @@ export function buildNightCloseOutPromptText(tasks: readonly NightCloseOutTaskDe
 // runNightPromptRitual — the persist-and-exit half (AD-5)
 // ============================================================================
 
-/** One structured log line, same shape as `morning-ritual.ts`'s/`mid-day-reflow.ts`'s (AD-7's real failure alerting is Epic 5; this is the seam it will read from). */
-export interface NightPromptLogEntry {
-  readonly level: "info" | "warn" | "error";
-  readonly event: string;
-  readonly detail?: unknown;
-}
-
 /**
  * Every input/I-O edge `runNightPromptRitual` needs, injected — deliberately
  * has NO `io`/`readLine` seam at all (unlike `ChatCliIo`): AD-5 requires
@@ -275,7 +269,7 @@ export interface NightPromptRitualDeps {
   readonly now: () => Date;
   /** Spencer's IANA timezone, defining "today" — the same Plan-date key `morning-ritual.ts`/`mid-day-reflow.ts` use. */
   readonly timeZone: string;
-  readonly log?: (entry: NightPromptLogEntry) => void;
+  readonly log?: (entry: LogEntry) => void;
 }
 
 /** What one `night-prompt` run did. Discriminated on `status`, mirroring `MorningRitualOutcome`'s/`MidDayReflowOutcome`'s shape. */
@@ -629,9 +623,6 @@ export function renderNightEscalateNotice(
   return color ? `${ATTENTION}${text}${RESET}` : text;
 }
 
-/** One structured log line, mirroring `NightPromptLogEntry`'s shape. */
-export type NightEscalateLogEntry = NightPromptLogEntry;
-
 /**
  * Every input/I-O edge `runNightEscalateRitual` needs, injected. Like
  * `NightPromptRitualDeps`, this has NO `io`/`readLine` seam — AD-5 requires
@@ -646,7 +637,7 @@ export interface NightEscalateRitualDeps {
   readonly now: () => Date;
   /** Spencer's IANA timezone, defining "tonight" — the same Plan-date key `runNightPromptRitual` uses. */
   readonly timeZone: string;
-  readonly log?: (entry: NightEscalateLogEntry) => void;
+  readonly log?: (entry: LogEntry) => void;
 }
 
 /** What one `night-escalate` run did. Discriminated on `status`, mirroring `NightPromptOutcome`'s shape. */
