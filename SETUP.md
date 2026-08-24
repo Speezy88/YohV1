@@ -173,6 +173,27 @@ cp .env.example .env
 Then fill in every value gathered above. `.env` is gitignored — never
 commit it.
 
+## 12. Dead-man's-switch scope note (Task 26 / Story 5.2)
+
+`ritual-cli.ts` checks, on every subcommand run, whether that SAME
+subcommand's own previous scheduled occurrence recorded a successful run —
+if not, it sends a Pushover alert through the same channel Story 5.1's
+failure alerts use, worded distinctly ("missed a run," not "failed"), then
+proceeds with that run's own normal work regardless (self-healing: a single
+missed occurrence never blocks the current one, so it can never cascade
+into permanent failure).
+
+**This check is self-referential only.** It runs from INSIDE a live
+`ritual-cli.ts` invocation, so it can only ever detect a miss from a LATER
+invocation that itself still gets to run. A total host/scheduler outage
+spanning every FUTURE invocation — cron itself dies, the host is off,
+permanently — has no detection from inside Yoh at all, since there is no
+later invocation left to run the check. This is a documented, accepted gap
+for this story, not something claimed as solved. Closing it would require
+an external, off-host monitor (e.g. a third-party heartbeat/dead-man's-
+switch service Yoh pings on every successful run, watched from OUTSIDE this
+process) — out of scope here.
+
 ---
 
 ## Research Findings (Task 2 AC — confirmed live, 2026-08-22)
