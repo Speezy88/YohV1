@@ -65,13 +65,13 @@ development_status:
   3-3-unchecked-day-handling-rollover: done
   epic-3-retrospective: optional
 
-  epic-4: in-progress
+  epic-4: done
   4-1-hot-cold-memory-model: done
   4-2-propose-don-t-impose-confirmation-gate: done
-  4-3-periodic-self-check: backlog
+  4-3-periodic-self-check: done
   epic-4-retrospective: optional
 
-  epic-5: backlog
+  epic-5: in-progress
   5-1-ritual-failure-alerting: backlog
   5-2-dead-man-s-switch-missed-run-detection: backlog
   5-3-structured-logging-plan-generation-performance-threshold: backlog
