@@ -435,15 +435,25 @@ test("self-check no longer appears in the 'not yet built' set — it's a real, b
   assert.doesNotMatch(s.err.join("\n"), /not implemented yet/i);
 });
 
-test("createSelfCheckRitualDeps requires YOH_TIMEZONE and needs no Notion/Calendar/Pushover/SMTP credentials at all", () => {
+test("createSelfCheckRitualDeps requires YOH_TIMEZONE and Pushover credentials (review fix), but no Notion/Calendar/SMTP", () => {
   const store = createMemoryStore({ databasePath: ":memory:" });
 
   assert.throws(() => createSelfCheckRitualDeps(store, {}), /YOH_TIMEZONE/);
+  assert.throws(
+    () => createSelfCheckRitualDeps(store, { YOH_TIMEZONE: "America/New_York" }),
+    /PUSHOVER/,
+    "review fix: self-check now needs Pushover credentials too — see rituals/self-check.ts's own docstring for why",
+  );
 
-  const deps = createSelfCheckRitualDeps(store, { YOH_TIMEZONE: "America/New_York" });
+  const deps = createSelfCheckRitualDeps(store, {
+    YOH_TIMEZONE: "America/New_York",
+    PUSHOVER_APP_TOKEN: "fake-app-token",
+    PUSHOVER_USER_KEY: "fake-user-key",
+  });
   assert.equal(deps.timeZone, "America/New_York");
   assert.equal(typeof deps.now, "function");
   assert.equal(typeof deps.random, "function");
+  assert.equal(typeof deps.sendNotification, "function");
 
   store.close();
 });

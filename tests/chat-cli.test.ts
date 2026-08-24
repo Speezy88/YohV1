@@ -1531,7 +1531,13 @@ const SELF_CHECK_NOW = new Date("2026-08-22T15:00:00.000Z");
 async function openSelfCheckRequest(store: MemoryStore): Promise<IsoDate> {
   const today = localIsoDate(SELF_CHECK_NOW, TEST_TIME_ZONE);
   putSelfCheckState(store, { nextDueDate: today, nextDueMinuteOfDay: 0 }); // due any time today
-  const result = await runSelfCheckRitual({ store, now: () => SELF_CHECK_NOW, timeZone: TEST_TIME_ZONE, random: () => 0 });
+  const result = await runSelfCheckRitual({
+    store,
+    now: () => SELF_CHECK_NOW,
+    timeZone: TEST_TIME_ZONE,
+    random: () => 0,
+    sendNotification: async () => {},
+  });
   assert.ok(result.ok && result.value.status === "prompted", `test setup sanity: expected a prompted Self-Check, got ${JSON.stringify(result)}`);
   return today;
 }

@@ -24,10 +24,12 @@ import {
   SELF_CHECK_CURVE,
   SELF_CHECK_DEFAULT_INTERVAL_DAYS,
   SELF_CHECK_LOW_SCORE_THRESHOLD,
+  SELF_CHECK_NOTIFICATION_TITLE,
   SELF_CHECK_REQUEST_ID,
   type SelfCheckRitualDeps,
 } from "../src/rituals/self-check.ts";
 import type { SelfCheckRequestDetail } from "../src/rituals/self-check.ts";
+import type { PlanNotification } from "../src/rituals/morning-ritual.ts";
 
 const NOW_ISO = "2026-08-22T15:00:00.000Z"; // 15:00 UTC
 const TODAY = "2026-08-22";
@@ -40,12 +42,24 @@ function fixedRandom(value: number): () => number {
   return () => value;
 }
 
+/** Records every `sendNotification` call — mirrors `tests/night-ritual.test.ts`'s own fake-notification convention. */
+function makeFakeSendNotification(): ((notification: PlanNotification) => Promise<void>) & {
+  readonly calls: PlanNotification[];
+} {
+  const calls: PlanNotification[] = [];
+  const fn = async (notification: PlanNotification): Promise<void> => {
+    calls.push(notification);
+  };
+  return Object.assign(fn, { calls });
+}
+
 function deps(store: MemoryStore, overrides: Partial<SelfCheckRitualDeps> = {}): SelfCheckRitualDeps {
   return {
     store,
     now: () => new Date(NOW_ISO),
     timeZone: "UTC",
     random: fixedRandom(0.5),
+    sendNotification: async () => {},
     ...overrides,
   };
 }
@@ -143,6 +157,79 @@ test("AD-5: self-check.ts never waits for input — it reads no stdin at all", (
   const source = readFileSync(join(import.meta.dirname, "..", "src", "rituals", "self-check.ts"), "utf8");
   assert.doesNotMatch(source, /node:readline/, "a one-shot cron entry point must not open a readline interface");
   assert.doesNotMatch(source, /process\.stdin/, "a one-shot cron entry point must not read stdin");
+});
+
+// ============================================================================
+// Review fix (Task 24): a push notification is sent whenever a Self-Check
+// prompt is actually opened — mirrors rituals/night-ritual.ts's
+// runNightPromptRitual precedent exactly (persist first, then notify; a
+// failed send is surfaced as a Result failure but never loses the already-
+// persisted request).
+// ============================================================================
+
+test("today is due: sends a Pushover notification naming the Self-Check prompt, AFTER the request is persisted", async () => {
+  const store = tempStore();
+  putSelfCheckState(store, { nextDueDate: TODAY, nextDueMinuteOfDay: 0 });
+  const sendNotification = makeFakeSendNotification();
+
+  const result = await runSelfCheckRitual(deps(store, { sendNotification }));
+  assert.ok(result.ok);
+  assert.equal(result.value.status, "prompted");
+
+  assert.equal(sendNotification.calls.length, 1, "expected exactly one notification to be sent");
+  assert.equal(sendNotification.calls[0]!.title, SELF_CHECK_NOTIFICATION_TITLE);
+  assert.match(sendNotification.calls[0]!.message, /number/i);
+  assert.match(sendNotification.calls[0]!.message, /reason/i);
+
+  // The request itself must already be persisted BEFORE the send is even
+  // attempted — asserted implicitly by the outcome/status above, and
+  // explicitly by the still-open request below.
+  assert.ok(getOpenInteractionRequest(store, SELF_CHECK_REQUEST_ID));
+});
+
+test("cold start / not-due / already-open never send a notification — only a genuine new prompt does", async () => {
+  // Cold start.
+  const coldStore = tempStore();
+  const coldSend = makeFakeSendNotification();
+  await runSelfCheckRitual(deps(coldStore, { sendNotification: coldSend }));
+  assert.equal(coldSend.calls.length, 0, "cold-start initialization must not send a notification");
+
+  // Not due.
+  const notDueStore = tempStore();
+  putSelfCheckState(notDueStore, { nextDueDate: "2026-08-26", nextDueMinuteOfDay: 0 });
+  const notDueSend = makeFakeSendNotification();
+  await runSelfCheckRitual(deps(notDueStore, { sendNotification: notDueSend }));
+  assert.equal(notDueSend.calls.length, 0, "a genuine no-op must not send a notification");
+
+  // Already open.
+  const openStore = tempStore();
+  putSelfCheckState(openStore, { nextDueDate: TODAY, nextDueMinuteOfDay: 0 });
+  await runSelfCheckRitual(deps(openStore)); // first trigger: opens the request, sends once.
+  const alreadyOpenSend = makeFakeSendNotification();
+  await runSelfCheckRitual(deps(openStore, { sendNotification: alreadyOpenSend })); // second trigger: already-open.
+  assert.equal(alreadyOpenSend.calls.length, 0, "a second trigger while still open must not re-notify");
+});
+
+test("a failed notification send is reported as a Result failure, but the already-persisted request is NOT lost", async () => {
+  const store = tempStore();
+  putSelfCheckState(store, { nextDueDate: TODAY, nextDueMinuteOfDay: 0 });
+  const failingSend = async (): Promise<void> => {
+    throw new Error("pushover: 500");
+  };
+
+  const result = await runSelfCheckRitual(deps(store, { sendNotification: failingSend }));
+  assert.equal(result.ok, false, "a delivery failure must be surfaced as a Result failure, not silently swallowed");
+  if (!result.ok) {
+    assert.equal(result.error.kind, "unreachable");
+    assert.match(result.error.message, /notification/i);
+  }
+
+  // The request itself must still exist — Spencer can still find it in chat
+  // even though the push failed to send (same guarantee runNightPromptRitual
+  // gives for the identical scenario).
+  const request = getOpenInteractionRequest(store, SELF_CHECK_REQUEST_ID);
+  assert.ok(request, "a failed notification send must not lose the already-persisted request");
+  assert.equal(request.data.requestKind, "self-check");
 });
 
 // ============================================================================

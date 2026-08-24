@@ -145,6 +145,46 @@
  * returns `"already-open"` without touching `memory-store.ts` at all — the
  * existing request (its own `createdAt`, its own version) is left completely
  * untouched, never replaced or re-persisted.
+ *
+ * ============================================================================
+ * The push notification (review fix — present from the start, not a later
+ * retrofit)
+ * ============================================================================
+ *
+ * `runSelfCheckRitual`'s FIRST version persisted only the open interaction
+ * request, with no active nudge — discoverable exclusively by opening
+ * `chat-cli.ts`. That is the exact gap `rituals/night-ritual.ts`'s own
+ * `runNightPromptRitual` had until Task 20's review fix added a Pushover
+ * push for the identical reason (see that file's own "The first attempt's
+ * own push notification" docstring section) — and the gap is genuinely
+ * WORSE here, for two concrete reasons:
+ *
+ *  1. AD-7 itself presupposes a "normal Self-Check notification" already
+ *     exists — its alert-wording rule requires a failure alert to be
+ *     "worded distinctly from a normal Plan/close-out/Self-Check
+ *     notification," naming Self-Check as one of exactly three ordinary
+ *     notification categories. Without this fix, that category produced
+ *     zero notifications, ever.
+ *  2. Unlike a missed night-close-out prompt (which Story 3.2's
+ *     `night-escalate` retries, once, via a second channel), an unanswered
+ *     Self-Check request has NO escalation/retry channel at all — every
+ *     subsequent cron tick just returns `"already-open"` and writes
+ *     nothing. And unlike the nightly close-out, which fires at a
+ *     predictable, habitual moment (every night), Self-Check fires at a
+ *     RANDOMIZED time on a ~4-day cadence — there is no analogous daily
+ *     habit that would make Spencer likely to open `chat-cli.ts` and
+ *     stumble onto an open prompt on his own. A silently-persisted request
+ *     here can realistically sit unnoticed indefinitely, permanently
+ *     freezing the whole feature (every later trigger keeps returning
+ *     `"already-open"`, never re-prompting, never escalating).
+ *
+ * `SelfCheckRitualDeps.sendNotification` therefore mirrors
+ * `NightPromptRitualDeps.sendNotification` exactly (same shape, same
+ * "persist first, then notify" ordering, same AD-8 wrapping): the
+ * interaction request is already persisted by the time the send is
+ * attempted, so a delivery failure here surfaces as a `Result` failure
+ * (`kind: "unreachable"`) but never loses the already-persisted request —
+ * Spencer can still find it by opening `chat-cli.ts` even without the push.
  */
 import {
   getOpenInteractionRequest,
@@ -157,6 +197,7 @@ import {
 } from "../adapters/memory-store.ts";
 import { computeEscalation } from "../core/escalate-under-strain.ts";
 import { localIsoDate } from "./morning-ritual.ts";
+import type { PlanNotification } from "./morning-ritual.ts";
 import type { EscalationCurve, InteractionRequest, IsoDate, Result, YohError } from "../types/domain.ts";
 
 // ============================================================================
@@ -195,6 +236,15 @@ export const SELF_CHECK_CURVE: EscalationCurve = { cap: 2, step: 2 };
 /** The Self-Check prompt's fixed text — UX-DR15: both a numeric score AND a short written reason are required. Mentions both explicitly so a re-prompt after an incomplete answer (`chat-cli.ts`) reads as a restatement of the same requirement, not a new/different question. */
 export const SELF_CHECK_PROMPT_TEXT =
   "Quick Self-Check: on a scale of 1-10, how well is this working for you right now? Give me a number and a short written reason.";
+
+/**
+ * The `self-check` push notification's title (review fix — see the file
+ * docstring's "The push notification" section). Plain text, like
+ * `rituals/night-ritual.ts`'s own `NIGHT_PROMPT_NOTIFICATION_TITLE`: Pushover
+ * titles carry no styling at all, so the cue is the wording itself, not
+ * color (UX-DR20).
+ */
+export const SELF_CHECK_NOTIFICATION_TITLE = "Quick Self-Check";
 
 // ============================================================================
 // Pure helpers
@@ -330,6 +380,15 @@ export interface SelfCheckRitualDeps {
   readonly timeZone: string;
   /** Injectable `[0, 1)` RNG — `Math.random` in production, pinned in tests. See `scheduleNextSelfCheck`. */
   readonly random: () => number;
+  /**
+   * `adapters/notification-adapter.ts`'s `sendPushoverNotification`,
+   * pre-bound to its config — the SAME shape (and the same seam name) as
+   * `NightPromptRitualDeps.sendNotification`/`MorningRitualDeps.sendNotification`.
+   * Required (review fix — see the file docstring's "The push notification"
+   * section for why this matters even more here than it did for
+   * night-prompt). Throws on I/O failure (AD-8).
+   */
+  readonly sendNotification: (notification: PlanNotification) => Promise<void>;
   readonly log?: (entry: SelfCheckLogEntry) => void;
 }
 
@@ -373,12 +432,14 @@ function describeError(err: unknown): string {
 
 /**
  * The `self-check` half (AD-5): decides whether today is due for a
- * Self-Check and, if so, persists an open interaction request and returns
- * immediately. See the file docstring for the full design.
+ * Self-Check and, if so, persists an open interaction request, sends a
+ * Pushover notification, and returns immediately. See the file docstring
+ * for the full design.
  *
  * Per AD-8, this is one of the layers allowed to catch an adapter's throw:
  * every `memory-store.ts` write below (which can throw `ConflictError` under
- * AD-10 concurrency with `chat-cli.ts`) is wrapped and converted into a
+ * AD-10 concurrency with `chat-cli.ts`), and `deps.sendNotification` itself
+ * (which can throw on I/O failure), are each wrapped and converted into a
  * `Result` failure plus a structured log line.
  */
 export async function runSelfCheckRitual(deps: SelfCheckRitualDeps): Promise<Result<SelfCheckOutcome, YohError>> {
@@ -429,6 +490,20 @@ export async function runSelfCheckRitual(deps: SelfCheckRitualDeps): Promise<Res
   } catch (err) {
     log({ level: "error", event: "self-check.persist-failed", detail: describeError(err) });
     return failure("conflict", `self-check: could not persist the Self-Check prompt — ${describeError(err)}`, err);
+  }
+
+  // --- Notify Spencer the Self-Check prompt is waiting (AD-8 boundary) -----
+  // The interaction request is already persisted above, so a delivery
+  // failure here never loses it — Spencer can still find it by opening
+  // chat-cli.ts even without the push. Mirrors `runNightPromptRitual`'s own
+  // persist-then-send ordering (rituals/night-ritual.ts) — see the file
+  // docstring's "The push notification" section for why this is required
+  // from the start here rather than an optional/later addition.
+  try {
+    await deps.sendNotification({ title: SELF_CHECK_NOTIFICATION_TITLE, message: request.promptText });
+  } catch (err) {
+    log({ level: "error", event: "self-check.notify-failed", detail: describeError(err) });
+    return failure("unreachable", `self-check: could not send the Self-Check notification — ${describeError(err)}`, err);
   }
 
   log({ level: "info", event: "self-check.prompted", detail: { date: today } });

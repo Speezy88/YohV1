@@ -14,10 +14,10 @@
  *
  * Task 10 introduces this file with ONE subcommand, `morning`. AD-5 names
  * three more — `night-prompt` (Task 19), `night-escalate` (Task 20), and
- * `self-check` (Task 24). `night-prompt` and `night-escalate` are now built
- * too; `self-check` is recognized here by name and reported as not yet
- * built, rather than falling through to "unknown subcommand": a cron entry
- * someone adds early should say what's actually going on.
+ * `self-check` (Task 24). All four are now built (see the per-task update
+ * paragraphs below) — `SUBCOMMANDS` reflects that, rather than any
+ * subcommand falling through to "unknown subcommand" or a "not implemented
+ * yet" placeholder.
  *
  * Task 19 update (Story 3.1): adds the `night-prompt` subcommand
  * (`handleNightPromptResult`, `createNightPromptRitualDeps`) with the exact
@@ -51,12 +51,23 @@
  * subcommand, `self-check` (`handleSelfCheckResult`,
  * `createSelfCheckRitualDeps`) — the last of AD-5's four named subcommands
  * is now built; `SUBCOMMANDS` no longer names anything as "planned but not
- * yet built." Lighter still than every other subcommand's deps: `self-check`
- * needs only `YOH_TIMEZONE` (defining "today" and the local time-of-day its
- * randomized due time compares against) — no Notion, Calendar, Pushover, or
- * SMTP credentials at all.
+ * yet built." No Notion, Calendar, or SMTP credentials are needed for THIS
+ * subcommand, but — per the Task 24 review fix below — Pushover IS: it
+ * needs `YOH_TIMEZONE` (defining "today" and the local time-of-day its
+ * randomized due time compares against) plus `PUSHOVER_APP_TOKEN`/
+ * `PUSHOVER_USER_KEY`, the same credentials `morning`/`night-prompt`
+ * already require.
  *
-
+ * Task 24 review-fix update: `createSelfCheckRitualDeps` now ALSO wires
+ * `adapters/notification-adapter.ts`'s `sendPushoverNotification` — mirroring
+ * `createNightPromptRitualDeps`'s own Task 20 review-fix precedent exactly
+ * (see that function's own doc comment, and `rituals/self-check.ts`'s own
+ * "The push notification" docstring section for why this matters even MORE
+ * for Self-Check than it did for night-prompt: a randomized ~4-day cadence
+ * gives Spencer no habitual daily moment to stumble onto an open prompt, and
+ * unlike night-close-out there is no second, escalating retry channel if a
+ * silently-persisted request goes unnoticed).
+ *
  * Per AD-1 this shell file contains no ritual logic of its own. It does two
  * things: bind the real adapters/stores to `rituals/morning-ritual.ts`'s
  * injected seams (`createMorningRitualDeps`, below), and translate the
@@ -458,11 +469,16 @@ export function createNightEscalateRitualDeps(
 }
 
 /**
- * Binds the real `MemoryStore` to `runSelfCheckRitual`'s injected seams
- * (Task 24 / Story 4.3). The lightest of the four — no Notion, Calendar,
- * Pushover, or SMTP credentials are needed; `random` binds to the real
+ * Binds the real `MemoryStore` and Pushover adapter to
+ * `runSelfCheckRitual`'s injected seams (Task 24 / Story 4.3; Pushover added
+ * by this task's own review fix — see `rituals/self-check.ts`'s "The push
+ * notification" docstring section for why this is required from the start,
+ * unlike `night-prompt`'s Task 20 review-fix retrofit). Still lighter than
+ * `createMorningRitualDeps`: no Notion, Calendar, or SMTP credentials are
+ * needed — only `YOH_TIMEZONE` plus Pushover's own
+ * `PUSHOVER_APP_TOKEN`/`PUSHOVER_USER_KEY`. `random` binds to the real
  * `Math.random`, injected the same way every other non-deterministic seam in
- * this codebase is (see `rituals/self-check.ts`'s own docstring).
+ * this codebase is.
  */
 export function createSelfCheckRitualDeps(
   store: MemoryStore,
@@ -472,12 +488,14 @@ export function createSelfCheckRitualDeps(
   if (!timeZone) {
     throw new Error("ritual-cli: missing required environment variable YOH_TIMEZONE (e.g. America/New_York)");
   }
+  const pushoverConfig = loadPushoverConfigFromEnv(env);
 
   return {
     store,
     now: () => new Date(),
     timeZone,
     random: Math.random,
+    sendNotification: (notification) => sendPushoverNotification(pushoverConfig, notification),
     log: (entry) => {
       process.stderr.write(`${JSON.stringify(entry)}\n`);
     },
