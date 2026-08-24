@@ -48,7 +48,8 @@ import {
   type ChatCliIo,
   type ProposalEntityAccessor,
 } from "../src/shell/chat-cli.ts";
-import { localIsoDate, renderPlan, runMorningRitual, TIME_BUDGET_PROPOSAL_REQUEST_ID, type MorningRitualDeps } from "../src/rituals/morning-ritual.ts";
+import { runMorningRitual, TIME_BUDGET_PROPOSAL_REQUEST_ID, type MorningRitualDeps } from "../src/rituals/morning-ritual.ts";
+import { localIsoDate, renderPlan } from "../src/rituals/ritual-shared.ts";
 // The Data-Completeness merge/gate/sync trio is its own capability and lives
 // in its own file (Task 10 review fix); `chat-cli.ts` imports it rather than
 // owning or re-exporting it. Import paths only — the behavior these tests

@@ -27,7 +27,8 @@ import {
   type RitualCliDeps,
 } from "../src/shell/ritual-cli.ts";
 import { PLAN_GENERATION_DEGRADED_THRESHOLD_MS } from "../src/rituals/morning-ritual.ts";
-import type { MorningRitualOutcome, PlanNotification } from "../src/rituals/morning-ritual.ts";
+import type { MorningRitualOutcome } from "../src/rituals/morning-ritual.ts";
+import type { PlanNotification } from "../src/rituals/ritual-shared.ts";
 import type { NightEscalateOutcome, NightPromptOutcome } from "../src/rituals/night-ritual.ts";
 import type { SelfCheckOutcome } from "../src/rituals/self-check.ts";
 import type { Plan, Result, YohError } from "../src/types/domain.ts";
@@ -759,6 +760,15 @@ test("createMorningRitualDeps.bumpLevels is an empty map when no Task has ever s
   const store = createMemoryStore({ databasePath: ":memory:" });
   const deps = createMorningRitualDeps(store, BASE_ENV);
   assert.deepEqual(deps.bumpLevels, {});
+  store.close();
+});
+
+test("createMorningRitualDeps wires a real writeCalendarPlan function (final whole-branch review, Finding 1 — the 'Yoh Plan' Calendar-write capability must not silently go unwired again)", () => {
+  const store = createMemoryStore({ databasePath: ":memory:" });
+  const deps = createMorningRitualDeps(store, BASE_ENV);
+
+  assert.equal(typeof deps.writeCalendarPlan, "function", "a structural check, not just a type-level one — this must not silently regress to unwired");
+
   store.close();
 });
 

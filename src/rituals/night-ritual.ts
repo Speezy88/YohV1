@@ -181,8 +181,8 @@ import {
   type MemoryStore,
 } from "../adapters/memory-store.ts";
 import type { LogEntry } from "../adapters/logger.ts";
-import { ATTENTION, localIsoDate, RESET, shouldUseColor } from "./morning-ritual.ts";
-import type { PlanNotification } from "./morning-ritual.ts";
+import { ATTENTION, localIsoDate, RESET, shouldUseColor } from "./ritual-shared.ts";
+import type { PlanNotification } from "./ritual-shared.ts";
 import type { EmailMessage } from "../adapters/email-adapter.ts";
 import type {
   ExternalId,

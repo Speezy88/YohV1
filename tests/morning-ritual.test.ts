@@ -25,19 +25,14 @@ import {
   type MemoryStore,
 } from "../src/adapters/memory-store.ts";
 import {
-  ACCENT,
-  ATTENTION,
   MORNING_RITUAL_ID,
-  MUTED,
   PLAN_GENERATION_DEGRADED_THRESHOLD_MS,
-  RESET,
-  renderPlan,
   runMorningRitual,
   TIME_BUDGET_PROPOSAL_REQUEST_ID,
   UNCHECKED_NIGHT_TEXT_MARKER,
   type MorningRitualDeps,
-  type PlanNotification,
 } from "../src/rituals/morning-ritual.ts";
+import { ACCENT, ATTENTION, MUTED, RESET, renderPlan, type PlanNotification } from "../src/rituals/ritual-shared.ts";
 import type { LogEntry } from "../src/adapters/logger.ts";
 import { DATA_COMPLETENESS_REQUEST_ID } from "../src/rituals/data-completeness.ts";
 import {
@@ -1162,4 +1157,69 @@ test("logging-gap fix: a race where a concurrent process clears the UncheckedDay
   assert.ok(gapEvent, "expected a log line for the previously-silent 'already resolved, nothing to stamp' branch");
   assert.equal(gapEvent!.level, "info");
   assert.deepEqual(gapEvent!.detail, { date: PRIOR_NIGHT });
+});
+
+// ============================================================================
+// writeCalendarPlan — the "Yoh Plan" Calendar sync (final whole-branch
+// review, Finding 1 / Task 12, AD-4). Wiring, not calendar-adapter.ts's own
+// I/O behavior — that is already covered by tests/calendar-adapter.test.ts.
+// ============================================================================
+
+test("a delivered run with writeCalendarPlan stubbed calls it exactly once, with only non-calendar-anchor blocks", async () => {
+  const calls: (readonly PlanBlock[])[] = [];
+  const h = harness({
+    tasks: [makeTask("t1", "Draft the memo", { estimatedDurationMinutes: 60 })],
+    events: [{ id: "e1", title: "Standup", start: "2026-08-22T15:00:00.000Z", end: "2026-08-22T15:30:00.000Z" }],
+  });
+
+  const result = await runMorningRitual({
+    ...h.deps,
+    writeCalendarPlan: async (blocks) => {
+      calls.push(blocks);
+    },
+  });
+
+  assert.ok(result.ok && result.value.status === "delivered");
+  assert.equal(calls.length, 1, "writeCalendarPlan is called exactly once");
+  assert.ok(calls[0]!.length > 0, "sanity: the delivered Plan actually has blocks");
+  assert.ok(
+    calls[0]!.every((b) => b.kind !== "calendar-anchor"),
+    "calendar-anchor blocks are excluded — they already exist as real events on the PRIMARY calendar",
+  );
+  assert.deepEqual(
+    calls[0]!.map((b) => b.id),
+    result.value.plan.blocks.filter((b) => b.kind !== "calendar-anchor").map((b) => b.id),
+    "exactly the non-calendar-anchor blocks from the delivered Plan, nothing added or dropped",
+  );
+});
+
+test("a delivered run with writeCalendarPlan throwing still returns ok:true/status:delivered (non-fatal) and logs a warn", async () => {
+  const h = harness({ tasks: [makeTask("t1", "Draft the memo", { estimatedDurationMinutes: 60 })] });
+  const logged: LogEntry[] = [];
+
+  const result = await runMorningRitual({
+    ...h.deps,
+    log: (e) => logged.push(e),
+    writeCalendarPlan: async () => {
+      throw new Error("Calendar API is down");
+    },
+  });
+
+  assert.ok(result.ok, `a Calendar-write failure must never fail the run, got ${JSON.stringify(result)}`);
+  assert.equal(result.value.status, "delivered");
+  assert.equal(h.notifications.length, 1, "the Plan notification still sends");
+
+  const warnEvent = logged.find((e) => e.event === "morning-ritual.calendar-sync-failed");
+  assert.ok(warnEvent, "expected a warn log line for the failed Calendar sync");
+  assert.equal(warnEvent!.level, "warn");
+});
+
+test("a delivered run with writeCalendarPlan undefined behaves exactly as before — no crash, no call", async () => {
+  const h = harness({ tasks: [makeTask("t1", "Draft the memo", { estimatedDurationMinutes: 60 })] });
+  assert.equal(h.deps.writeCalendarPlan, undefined, "sanity: the harness's default deps do not stub writeCalendarPlan");
+
+  const result = await runMorningRitual(h.deps);
+
+  assert.ok(result.ok && result.value.status === "delivered");
+  assert.equal(h.notifications.length, 1);
 });

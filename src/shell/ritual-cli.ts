@@ -201,7 +201,12 @@
  * configuration).
  */
 import { createMemoryStore, getRitualInvocation, listSlipHistories, putRitualInvocation, type MemoryStore } from "../adapters/memory-store.ts";
-import { createCalendarReadClient, readCalendarEvents } from "../adapters/calendar-adapter.ts";
+import {
+  createCalendarReadClient,
+  createCalendarWriteClient,
+  readCalendarEvents,
+  writeTodaysPlanToCalendar,
+} from "../adapters/calendar-adapter.ts";
 import { loadEmailConfigFromEnv, sendEmail } from "../adapters/email-adapter.ts";
 import { writeStructuredLog } from "../adapters/logger.ts";
 import { loadPushoverConfigFromEnv, sendPushoverNotification } from "../adapters/notification-adapter.ts";
@@ -213,8 +218,8 @@ import {
   runMorningRitual,
   type MorningRitualDeps,
   type MorningRitualOutcome,
-  type PlanNotification,
 } from "../rituals/morning-ritual.ts";
+import type { PlanNotification } from "../rituals/ritual-shared.ts";
 import {
   renderNightEscalateNotice,
   runNightEscalateRitual,
@@ -329,7 +334,11 @@ const SUBCOMMANDS = {
   "self-check": "built",
 } as const;
 
-const USAGE = "usage: yoh ritual <morning|night-prompt|night-escalate|self-check>";
+// Final whole-branch review, Finding 2: there is no `yoh` binary and no
+// `ritual` subcommand — the real invocation is positional, running this file
+// directly via `node`. See SETUP.md's "Running Yoh" section for the full
+// invocation, including the interactive chat CLI and a sample crontab.
+const USAGE = "usage: node src/shell/ritual-cli.ts <morning|night-prompt|night-escalate|self-check>";
 
 // ============================================================================
 // runRitualCli
@@ -1023,6 +1032,17 @@ export function createMorningRitualDeps(
   const calendarClient = createCalendarReadClient(
     tokenStore.getOAuth2Client() as unknown as Parameters<typeof createCalendarReadClient>[0],
   );
+  // Final whole-branch review, Finding 1: the "Yoh Plan" Calendar-write
+  // surface (Task 12 / Story 1.12, AD-4) was built, tested, and reviewed but
+  // never wired to a caller. Same `authClient` source and the same
+  // documented cast as the read client just above (see that call's own
+  // comment for the two-copies-of-the-auth-library reasoning). `tokenStore`
+  // already structurally satisfies `CalendarIdStore`
+  // (`getCalendarId`/`setCalendarId`, `token-store.ts` lines ~190-195), so it
+  // is passed directly — no adapter import of `token-store.ts` (AD-1).
+  const calendarWriteClient = createCalendarWriteClient(
+    tokenStore.getOAuth2Client() as unknown as Parameters<typeof createCalendarWriteClient>[0],
+  );
   const pushoverConfig = loadPushoverConfigFromEnv(env);
 
   // The bumpLevels bridge (see the doc comment above): every currently-
@@ -1039,6 +1059,11 @@ export function createMorningRitualDeps(
     store,
     readTasks: async () => (await readNotionTasks(notionClient, { tasksDataSourceId, projectsDataSourceId })).tasks,
     readCalendarEvents: () => readCalendarEvents(calendarClient, { timeZone }),
+    // Final whole-branch review, Finding 1: mirrors `readCalendarEvents`
+    // above — bound to the same `tokenStore`, which structurally satisfies
+    // `CalendarIdStore`. `blocks` is already `"calendar-anchor"`-filtered by
+    // the caller (`runMorningRitual`'s step 12a.5) before this is invoked.
+    writeCalendarPlan: (blocks) => writeTodaysPlanToCalendar(calendarWriteClient, tokenStore, blocks, { timeZone }),
     sendNotification: (notification) => sendPushoverNotification(pushoverConfig, notification),
     now: () => new Date(),
     timeZone,

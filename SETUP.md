@@ -196,6 +196,87 @@ process) — out of scope here.
 
 ---
 
+## Running Yoh
+
+Yoh has no `yoh` binary and no `ritual` subcommand — every invocation below
+is a plain `node` command run against this repo's own files, from a working
+directory where `.env` is loadable (either `cwd` when you run it, or
+wherever your process manager sets it — see the crontab example below).
+
+### The four ritual-cli subcommands (AD-5)
+
+`src/shell/ritual-cli.ts` takes exactly one positional subcommand:
+
+```
+node src/shell/ritual-cli.ts morning
+node src/shell/ritual-cli.ts night-prompt
+node src/shell/ritual-cli.ts night-escalate
+node src/shell/ritual-cli.ts self-check
+```
+
+- `morning` — generates and delivers today's Plan (Story 1.10).
+- `night-prompt` — the first, un-escalated close-out prompt (Story 3.1).
+- `night-escalate` — the second, escalated close-out attempt if the first
+  went unanswered (Story 3.2).
+- `self-check` — asks (roughly every `SELF_CHECK_DEFAULT_INTERVAL_DAYS`
+  days — see below) how well Yoh is doing (Story 4.3).
+
+Each is a **one-shot process that runs and exits** — see "Not a daemon"
+below.
+
+### The interactive chat CLI
+
+```
+node src/shell/chat-cli.ts
+```
+
+This is the interactive surface: ask "what's my plan", answer an open
+interaction request (a Data-Completeness prompt, a close-out confirmation, a
+Self-Check score, a Time-Budget-change Proposal), declare a Time Budget, and
+so on. Run it whenever you want to talk to Yoh — it is not cron-triggered.
+
+### A sample crontab
+
+`self-check`'s own due-date check happens *inside* the ritual, not by
+picking the right cron cadence for it (see `src/rituals/self-check.ts`'s own
+"Randomization mechanism" doc comment): the ritual decides for itself
+whether today is close enough to its own randomized target time, and is a
+cheap no-op every other trigger. Its default interval is
+`SELF_CHECK_DEFAULT_INTERVAL_DAYS = 4` days (shortening to as few as
+`SELF_CHECK_MIN_INTERVAL_DAYS = 1` day after a low score), so it needs to be
+triggered more often than that interval — e.g. hourly — for its own
+randomized time-of-day to land promptly.
+
+```cron
+# Morning Plan, once daily in the morning.
+0 7 * * * cd /path/to/yoh && node src/shell/ritual-cli.ts morning >> /var/log/yoh/morning.log 2>&1
+
+# Night close-out prompt, once daily in the evening.
+0 21 * * * cd /path/to/yoh && node src/shell/ritual-cli.ts night-prompt >> /var/log/yoh/night-prompt.log 2>&1
+
+# Night escalation, a couple hours after the prompt, in case it went unanswered.
+0 23 * * * cd /path/to/yoh && node src/shell/ritual-cli.ts night-escalate >> /var/log/yoh/night-escalate.log 2>&1
+
+# Self-Check: triggered hourly; the ritual itself is a no-op except on its
+# own ~4-day (or shorter, after a low score) randomized due date/time.
+0 * * * * cd /path/to/yoh && node src/shell/ritual-cli.ts self-check >> /var/log/yoh/self-check.log 2>&1
+```
+
+Use real absolute paths in place of `/path/to/yoh`. `.env` must be loadable
+from that same working directory — `cd /path/to/yoh &&` before each command
+is what makes that true under cron, whose own working directory is
+otherwise unspecified.
+
+### Not a daemon (AD-5)
+
+All four `ritual-cli.ts` subcommands are independent, one-shot processes:
+each cron firing starts a fresh process that does its work and exits — there
+is no long-running Yoh daemon to keep alive, restart, or monitor as a
+service. `chat-cli.ts` is the one long-lived-per-session process, and only
+for as long as you're actively talking to it.
+
+---
+
 ## Research Findings (Task 2 AC — confirmed live, 2026-08-22)
 
 Per the Task 2 brief's Ruling, the items below were confirmed against

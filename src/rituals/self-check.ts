@@ -197,8 +197,8 @@ import {
 } from "../adapters/memory-store.ts";
 import type { LogEntry } from "../adapters/logger.ts";
 import { computeEscalation } from "../core/escalate-under-strain.ts";
-import { localIsoDate } from "./morning-ritual.ts";
-import type { PlanNotification } from "./morning-ritual.ts";
+import { localIsoDate } from "./ritual-shared.ts";
+import type { PlanNotification } from "./ritual-shared.ts";
 import type { EscalationCurve, InteractionRequest, IsoDate, Result, YohError } from "../types/domain.ts";
 
 // ============================================================================

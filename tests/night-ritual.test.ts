@@ -47,7 +47,7 @@ import {
   type NightEscalateRitualDeps,
   type NightPromptRitualDeps,
 } from "../src/rituals/night-ritual.ts";
-import { ATTENTION } from "../src/rituals/morning-ritual.ts";
+import { ATTENTION } from "../src/rituals/ritual-shared.ts";
 import type { Plan, PlanBlock, Result, TaskStatus, YohError } from "../src/types/domain.ts";
 
 const NOW_ISO = "2026-08-22T22:00:00.000Z"; // "tonight"

@@ -54,7 +54,7 @@
  * 10. **Assemble the `Plan`** per `types/domain.ts` (no new/parallel type;
  *     AD-9), stamping `version` as one past whatever Plan is already stored
  *     for the date (ordinarily none, given step 1).
- * 11. **Render it** (`renderPlan`, below — DESIGN.md's layout/color rules).
+ * 11. **Render it** (`renderPlan`, from `ritual-shared.ts` — DESIGN.md's layout/color rules).
  *     If step 1.5 (below) found a pending unchecked night to display, its
  *     notice is prepended as a leading unit ahead of the Plan (Task 21).
  * 12. **Persist the Plan**, then **send exactly one Pushover notification**
@@ -153,21 +153,30 @@
  * import directly. See that file's docstring for the full history.
  *
  * ----------------------------------------------------------------------------
- * Rendering lives here, not in `core/` or `shell/`
+ * Rendering, color tokens, and `localIsoDate` live in `ritual-shared.ts`
  * ----------------------------------------------------------------------------
  *
  * `renderPlan` is presentation, not business logic, so it must not go in
  * `core/` (AD-2). It also must not be private to `shell/ritual-cli.ts`:
- * Task 11 gives `chat-cli.ts` an on-demand "what's my plan" view that has to
- * render the identical thing. It is therefore a pure
- * `(plan, options) => string` exported from this `rituals/` file, which both
- * shells import (AD-1: `shell -> rituals`). The DESIGN.md color tokens
- * (`ACCENT`, `MUTED`, `RESET`) are exported from here for the same reason —
- * Task 5 had no shared home for them and kept a private copy in
- * `chat-cli.ts`; that copy is now gone. They stay with the renderer that is
- * their heaviest user rather than moving to a file of their own: Task 11
- * imports `renderPlan` from here regardless, so this costs `chat-cli.ts` no
- * coupling it doesn't already have.
+ * `chat-cli.ts` has its own on-demand "what's my plan" view that has to
+ * render the identical thing, and `mid-day-reflow.ts` renders a
+ * remainder-of-day view with it too. It is therefore a pure
+ * `(plan, options) => string` — along with the DESIGN.md color tokens
+ * (`ACCENT`, `MUTED`, `ATTENTION`, `RESET`, `shouldUseColor`) and the
+ * `localIsoDate` local-calendar-date helper — exported from
+ * `rituals/ritual-shared.ts` (final whole-branch review, Finding 3), which
+ * this file and every other `rituals/*.ts` file import from (AD-1:
+ * `shell -> rituals`, and within `rituals/*.ts` itself, every sibling ritual
+ * -> `ritual-shared.ts`, never the reverse). These pieces used to live
+ * directly in this file — `night-ritual.ts`/`self-check.ts`/
+ * `mid-day-reflow.ts` importing them from a file literally named for the
+ * Morning Ritual was exactly the "shared utils file becomes a bottleneck"
+ * anti-pattern AD-9 itself warns against, so they were extracted into their
+ * own neutral home. This file still imports them back where it needs them
+ * (`renderPlan`/`localIsoDate` in `runMorningRitual`,
+ * `renderBlockLine`/`paint`/`formatPlanDate`/`ATTENTION`/`shouldUseColor` in
+ * `buildNotificationBody`/`renderUncheckedNightNotice` below) — see
+ * `ritual-shared.ts`'s own module docstring for the full rationale.
  */
 import {
   clearInteractionRequest,
@@ -194,11 +203,20 @@ import { generatePlanReasoning } from "../core/plan-reasoning.ts";
 import { buildTimeBudgetChangeProposal, nextTimeBudgetDeferralStreak, resolveTodayTimeBudget } from "../core/time-budget.ts";
 import { fitWorkBreakBlocks } from "../core/work-break-fit.ts";
 import { runDataCompletenessGate } from "./data-completeness.ts";
+import {
+  ATTENTION,
+  formatPlanDate,
+  localIsoDate,
+  paint,
+  renderBlockLine,
+  renderPlan,
+  shouldUseColor,
+  type PlanNotification,
+} from "./ritual-shared.ts";
 import type {
   CalendarEvent,
   ExternalId,
   IsoDate,
-  IsoDateTime,
   Plan,
   PlanBlock,
   Proposal,
@@ -207,246 +225,6 @@ import type {
   TimeBudget,
   YohError,
 } from "../types/domain.ts";
-
-// ============================================================================
-// DESIGN.md color tokens (UX-DR1) — defined once, for every caller
-// ============================================================================
-
-/**
- * 24-bit ANSI truecolor escape for DESIGN.md's `colors.accent` (#5FAFFF).
- * Used ONLY for a section label — the Plan's header here, a prompt's label
- * in `chat-cli.ts` — never for emphasis inside body text.
- */
-export const ACCENT = "\x1b[38;2;95;175;255m";
-
-/**
- * 24-bit ANSI truecolor escape for DESIGN.md's `colors.muted` (#6B6B6B).
- * Used ONLY for the one-line Plan reasoning (UX-DR4), so the "why" reads as
- * a quiet aside rather than a competing headline.
- */
-export const MUTED = "\x1b[38;2;107;107;107m";
-
-/**
- * 24-bit ANSI truecolor escape for DESIGN.md's `colors.attention` (#D08A3E)
- * — a warm amber, deliberately not red (DESIGN.md: "Yoh escalates under
- * strain, it doesn't alarm"). Reserved for exactly the two moments
- * DESIGN.md names ("Do reserve `{colors.attention}` for genuine escalation
- * moments — using it more broadly would blunt the one signal it's meant to
- * carry"): Night Ritual's second, escalated close-out attempt
- * (`rituals/night-ritual.ts`'s `night-escalate` half, Task 20) and the
- * unchecked-day flag (Task 21). First used by Task 20 — added here, not a
- * private copy in that file, for the same reason `ACCENT`/`MUTED` live here
- * rather than in `chat-cli.ts`: this is the established shared color-token
- * home every other file already imports from.
- */
-export const ATTENTION = "\x1b[38;2;208;138;62m";
-
-/** Ends any of the above spans, returning to the terminal's own default body color (`colors.text-default`). */
-export const RESET = "\x1b[0m";
-
-/**
- * Whether to emit color at all. DESIGN.md is explicit that truecolor support
- * must not be assumed and that everything must degrade gracefully to plain
- * text — and UX-DR20 requires every color cue to be paired with plain-text
- * wording carrying the same meaning, which is what makes turning color off
- * entirely a lossless degradation rather than a loss of information.
- *
- * Honors the `NO_COLOR` convention and `TERM=dumb`, and otherwise defers to
- * whether the destination is an interactive terminal (a piped or redirected
- * stream — including the text that goes into a push notification — gets
- * plain text).
- */
-export function shouldUseColor(
-  env: Readonly<Record<string, string | undefined>> = process.env,
-  isTty: boolean = process.stdout.isTTY === true,
-): boolean {
-  if (env["NO_COLOR"] !== undefined) return false;
-  if (env["TERM"] === "dumb") return false;
-  return isTty;
-}
-
-// ============================================================================
-// renderPlan — DESIGN.md's Plan block list (UX-DR1..DR4, DR7, DR8, DR20)
-// ============================================================================
-
-/** DESIGN.md's `spacing.wrap-width` (`80ch`) — body wraps at roughly 80 characters so output stays readable without resizing the terminal. */
-export const WRAP_WIDTH = 80;
-
-/** The plain-text marker a `calendar-anchor` block carries so a fixed Calendar event reads as immovable WITHOUT relying on color or on the reader knowing about `PlanBlockKind` (UX-DR20). */
-const ANCHOR_MARKER = "(fixed)";
-
-export interface RenderPlanOptions {
-  /** IANA zone the block times are rendered in. Per the Consistency Conventions, Plans are stored in UTC and converted to Spencer's local time only at this presentation edge. Defaults to the host's own zone. */
-  readonly timeZone?: string;
-  /** Emit ANSI color. Defaults to `shouldUseColor()` — i.e. off for a pipe, a redirect, `NO_COLOR`, or a notification body. */
-  readonly color?: boolean;
-  /** Column to wrap body text at, defaulting to `WRAP_WIDTH`. */
-  readonly width?: number;
-  /** Include the accent-labeled "Today's Plan for ..." header. `false` is what the push-notification body uses, since the notification's own title carries the label. */
-  readonly includeHeader?: boolean;
-}
-
-/**
- * Renders `plan` as the plain monospace text DESIGN.md specifies, and
- * nothing else — no image content, no box-drawing characters, no rules or
- * ASCII dividers, no emoji, no celebratory flourish (UX-DR7, UX-DR8,
- * UX-DR20).
- *
- * Layout (UX-DR2: exactly one blank line between structural units):
- *
- *     Today's Plan for Saturday, August 22      <- {colors.accent} label
- *                                               <- one blank line
- *     09:00-10:10  Draft the quarterly memo     <- {colors.text-default}
- *     10:10-10:25  Break
- *     10:30-11:00  Standup (fixed)
- *                                               <- one blank line
- *     "Draft the quarterly memo" leads today... <- {colors.muted}
- *
- * One line per block, in `plan.blocks` order (which IS Plan order — this
- * function never re-sorts, so what it shows is what was assembled): a time
- * range, then the item, nothing else. A `calendar-anchor` block is suffixed
- * `(fixed)` so a fixed Calendar event reads as an immovable anchor rather
- * than something Yoh could reschedule; work and break blocks carry no such
- * marker.
- *
- * Pure and free of I/O beyond reading `Intl` — deliberately so, because
- * Task 11 (`chat-cli.ts`'s on-demand "what's my plan" view) calls this exact
- * function with the exact same signature.
- */
-export function renderPlan(plan: Plan, options: RenderPlanOptions = {}): string {
-  const timeZone = options.timeZone ?? hostTimeZone();
-  const color = options.color ?? shouldUseColor();
-  const width = options.width ?? WRAP_WIDTH;
-  const includeHeader = options.includeHeader ?? true;
-
-  const units: string[][] = [];
-
-  if (includeHeader) {
-    const header = `Today's Plan for ${formatPlanDate(plan.date)}`;
-    units.push(wrapText(header, width).map((line) => paint(line, ACCENT, color)));
-  }
-
-  units.push(
-    plan.blocks.length === 0
-      ? ["Nothing is scheduled in this Plan."]
-      : plan.blocks.flatMap((block) => renderBlockLine(block, timeZone, width)),
-  );
-
-  if (plan.reasoning.length > 0) {
-    units.push(wrapText(plan.reasoning, width).map((line) => paint(line, MUTED, color)));
-  }
-
-  // One blank line between each structural unit, and no trailing blank —
-  // "enough to scan, not so much that a short Plan feels sparse."
-  return units.map((unit) => unit.join("\n")).join("\n\n");
-}
-
-/** One block's line(s): `HH:MM-HH:MM  Item`, wrapped with a hanging indent under the item column. */
-function renderBlockLine(block: PlanBlock, timeZone: string, width: number): string[] {
-  const range = `${formatLocalTime(block.start, timeZone)}-${formatLocalTime(block.end, timeZone)}`;
-  const item = block.kind === "calendar-anchor" ? `${block.label} ${ANCHOR_MARKER}` : block.label;
-  return wrapWithHangingIndent(`${range}  `, item, width);
-}
-
-function paint(text: string, colorCode: string, enabled: boolean): string {
-  return enabled ? `${colorCode}${text}${RESET}` : text;
-}
-
-/**
- * Greedy word wrap at `width` columns. A single token longer than the
- * available width is left intact on its own line rather than broken
- * mid-word — a truncated or hyphen-split Task title reads as a different
- * Task, which is a worse failure than one over-long line.
- */
-function wrapText(text: string, width: number): string[] {
-  return wrapWithHangingIndent("", text, width);
-}
-
-/**
- * Wraps `text` at `width`, prefixing the first line with `prefix` and every
- * continuation line with a run of spaces the same length — so a wrapped
- * block line hangs under the item column instead of colliding with the time
- * range.
- */
-function wrapWithHangingIndent(prefix: string, text: string, width: number): string[] {
-  const indent = " ".repeat(prefix.length);
-  const available = Math.max(1, width - prefix.length);
-  const lines: string[] = [];
-  let current = "";
-
-  for (const word of text.split(/\s+/).filter((w) => w.length > 0)) {
-    if (current.length === 0) {
-      current = word;
-      continue;
-    }
-    if (current.length + 1 + word.length <= available) {
-      current = `${current} ${word}`;
-      continue;
-    }
-    lines.push(current);
-    current = word;
-  }
-  lines.push(current);
-
-  // `.replace` strips trailing spaces, which only ever appear when `text` is
-  // empty (a Notion Task whose title property is blank reaches
-  // `notion-adapter.ts`'s `getTitle` as `""`) — emitting a line of invisible
-  // padding would be sloppy terminal output for no benefit.
-  return lines.map((line, index) =>
-    (index === 0 ? `${prefix}${line}` : `${indent}${line}`).replace(/[ \t]+$/, ""),
-  );
-}
-
-// ============================================================================
-// Date/time formatting (the local-time presentation edge)
-// ============================================================================
-
-function hostTimeZone(): string {
-  return Intl.DateTimeFormat().resolvedOptions().timeZone;
-}
-
-/** `"2026-08-22"` -> `"Saturday, August 22"`. Formatted in UTC against the date's own midnight so no zone offset can shift the printed day off `plan.date`. */
-function formatPlanDate(date: IsoDate): string {
-  const [year, month, day] = date.split("-").map(Number);
-  const instant = new Date(Date.UTC(year ?? 1970, (month ?? 1) - 1, day ?? 1));
-  return new Intl.DateTimeFormat("en-US", {
-    timeZone: "UTC",
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-  }).format(instant);
-}
-
-/** A stored UTC `IsoDateTime` as `HH:MM` wall-clock time in `timeZone`. */
-function formatLocalTime(instant: IsoDateTime, timeZone: string): string {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hourCycle: "h23",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).formatToParts(new Date(instant));
-  const get = (type: string): string => parts.find((p) => p.type === type)?.value ?? "00";
-  return `${get("hour")}:${get("minute")}`;
-}
-
-/**
- * The LOCAL calendar date of `instant` in `timeZone`. "Today" must be
- * Spencer's own calendar day, never the UTC one — the same reasoning
- * `calendar-adapter.ts` documents at length for its own day window. Computed
- * from `Intl` rather than imported from that adapter, whose helpers are
- * private to it (mirroring the small, deliberate duplications already
- * present between `core/time-budget.ts` and `core/derived-priority.ts`).
- */
-export function localIsoDate(instant: Date, timeZone: string): IsoDate {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(instant);
-  const get = (type: string): string => parts.find((p) => p.type === type)?.value ?? "";
-  return `${get("year")}-${get("month")}-${get("day")}`;
-}
 
 // ============================================================================
 // The unchecked-day flag (Task 21 / Story 3.3, FR-14, UX-DR14)
@@ -462,7 +240,7 @@ export function localIsoDate(instant: Date, timeZone: string): IsoDate {
  * than imported — the two files' own literal constants stay independent so
  * neither file needs a value-level import of the other. Mirrors the
  * "small, deliberate duplications" precedent this codebase already uses
- * (`localIsoDate`'s own doc comment, above).
+ * (`ritual-shared.ts`'s `localIsoDate` doc comment).
  */
 export const UNCHECKED_NIGHT_TEXT_MARKER = "ATTENTION:";
 
@@ -580,12 +358,6 @@ export function buildTimeBudgetProposalPromptText(proposal: Proposal<Partial<Tim
  */
 export const NOTIFICATION_TITLE = "Today's Plan";
 
-/** What `MorningRitualDeps.sendNotification` receives — the `adapters/notification-adapter.ts` message shape, minus its credentials. */
-export interface PlanNotification {
-  readonly title: string;
-  readonly message: string;
-}
-
 /**
  * Builds the push-notification body: the Plan's block list plus its
  * reasoning line, plain text, guaranteed to fit `limit` characters.
@@ -657,6 +429,21 @@ export interface MorningRitualDeps {
   readonly timeZone: string;
   /** Slip-Bump levels (Task 17 / FR-11). Threaded through to BOTH the ordering and the reasoning line so they can never disagree. */
   readonly bumpLevels?: Readonly<Record<ExternalId, number>>;
+  /**
+   * `adapters/calendar-adapter.ts`'s `writeTodaysPlanToCalendar`, pre-bound
+   * to its write client/calendarIdStore/config. Throws on I/O failure — this
+   * ritual treats a failure here as non-fatal (see the call site in
+   * `runMorningRitual`, step 12a.5). Optional so a test that doesn't care
+   * about Calendar-write behavior need not stub it.
+   *
+   * Final whole-branch review, Finding 1: this was the wired-in fix for a
+   * Critical finding — `writeTodaysPlanToCalendar` (Task 12) existed and was
+   * tested but nothing ever called it, so a real run never touched Google
+   * Calendar. The caller is responsible for excluding `"calendar-anchor"`
+   * blocks before calling this (see the call site) — see
+   * `writeTodaysPlanToCalendar`'s own doc comment for why.
+   */
+  readonly writeCalendarPlan?: (blocks: readonly PlanBlock[]) => Promise<void>;
   readonly log?: (entry: LogEntry) => void;
   /** Forces color on/off for the returned `rendered` text; defaults to `shouldUseColor()`. The notification body is always plain. */
   readonly color?: boolean;
@@ -743,9 +530,10 @@ export type MorningRitualOutcome =
        * "gate through fitting": per the AC's own "excluding notification
        * delivery" wording, it also covers step 8.5's
        * Time-Budget-deferral-streak/Proposal sync, `generatePlanReasoning`,
-       * Plan assembly, `renderPlan`, and — notably — `putPlan`'s own
-       * persistence I/O, since none of those are "notification delivery"
-       * either. Optional (rather than required) purely so a `Result`
+       * Plan assembly, `renderPlan`, `putPlan`'s own persistence I/O, and
+       * (final whole-branch review, Finding 1) the "Yoh Plan" Calendar sync
+       * (`deps.writeCalendarPlan`, when bound), since none of those are
+       * "notification delivery" either. Optional (rather than required) purely so a `Result`
        * failure inside the SAME span, or a caller/test that doesn't care
        * about timing, need not fabricate a value — every real "delivered"
        * run always sets it. Compared against `PLAN_GENERATION_DEGRADED_THRESHOLD_MS`
@@ -842,10 +630,11 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
   // ends well before the notification step). So the span timed is
   // everything from here through whatever this run's own work is, up to
   // (never including) `deps.sendNotification` — for a `"delivered"` run that
-  // means steps 3 through 12a (gate, calendar read, budget resolution,
+  // means steps 3 through 12a.5 (gate, calendar read, budget resolution,
   // order, fit, the Time-Budget-deferral-streak/Proposal sync, reasoning
-  // generation, Plan assembly/render, and `putPlan`'s own persistence I/O
-  // are ALL measured); for a `"nothing-fits"` run — which never reaches a
+  // generation, Plan assembly/render, `putPlan`'s own persistence I/O, and
+  // (final whole-branch review, Finding 1) the "Yoh Plan" Calendar sync are
+  // ALL measured); for a `"nothing-fits"` run — which never reaches a
   // notification step at all — it's everything through that run's own
   // completion (steps 3 through 8.5). See `planGenerationMs`'s two
   // computation sites below (post-review-fix) for exactly where each stops.
@@ -1086,15 +875,51 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
     return failure("conflict", `morning-ritual: could not persist today's Plan — ${describeError(err)}`, err);
   }
 
+  // --- 12a.5. Sync today's Plan to the "Yoh Plan" Calendar (final
+  // whole-branch review, Finding 1 / Task 12, AD-4) --------------------------
+  // `writeTodaysPlanToCalendar` (adapters/calendar-adapter.ts) was built,
+  // tested, and independently reviewed under Task 12 but never wired to any
+  // caller — a real run reported success and never touched Google Calendar
+  // at all. Wired here, right after the Plan is persisted, so Calendar-sync
+  // latency is included in the SAME timed `planGenerationMs` span
+  // `putPlan`'s own persistence I/O already is (both are "generation," not
+  // "notification delivery," under Story 5.3's AC wording — see
+  // `planGenerationStartMs`'s own comment above).
+  //
+  // Which blocks: `"calendar-anchor"` blocks are excluded (Finding 1's own
+  // resolution of the open design question Task 12's review left
+  // unanswered) — those already exist as real events on Spencer's PRIMARY
+  // calendar (that's where they were read FROM, step 5 above); writing them
+  // again into the separate "Yoh Plan" calendar would create confusing
+  // duplicate-looking events for something that was never Yoh's own
+  // scheduling decision. See `writeTodaysPlanToCalendar`'s own doc comment
+  // for the same note from the adapter side.
+  //
+  // Wrapped exactly like step 8.5's Time-Budget-deferral-streak sync above:
+  // non-fatal, logged as a warn, never turned into a failure `Result` — a
+  // Calendar-write failure must never block delivering today's Plan
+  // notification, matching this file's established pattern for secondary,
+  // non-critical-path effects. Only called when `deps.writeCalendarPlan` is
+  // defined, so every existing test that doesn't stub it keeps passing
+  // unchanged.
+  if (deps.writeCalendarPlan) {
+    try {
+      await deps.writeCalendarPlan(plan.blocks.filter((block) => block.kind !== "calendar-anchor"));
+    } catch (err) {
+      log({ level: "warn", event: "morning-ritual.calendar-sync-failed", detail: describeError(err) });
+    }
+  }
+
   // Task 27 / Story 5.3 (post-review fix): the timed span for a `"delivered"`
   // run ends HERE — immediately before `deps.sendNotification` below, per
   // this story's AC's own "excluding notification delivery" carve-out (see
   // `planGenerationStartMs`'s own comment for the full reasoning this
   // widened boundary follows). Everything from the Data-Completeness Gate
   // through this line — including step 8.5's Time-Budget-deferral-streak/
-  // Proposal sync, `generatePlanReasoning`, Plan assembly, `renderPlan`, and
-  // `putPlan`'s own persistence I/O just above — is genuinely measured, not
-  // just gate-through-fit.
+  // Proposal sync, `generatePlanReasoning`, Plan assembly, `renderPlan`,
+  // `putPlan`'s own persistence I/O, and the "Yoh Plan" Calendar sync
+  // (step 12a.5, final whole-branch review Finding 1) just above — is
+  // genuinely measured, not just gate-through-fit.
   const planGenerationMs = Math.round(performance.now() - planGenerationStartMs);
 
   // --- 12b. Send exactly one notification -----------------------------------

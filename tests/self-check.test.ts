@@ -29,7 +29,7 @@ import {
   type SelfCheckRitualDeps,
 } from "../src/rituals/self-check.ts";
 import type { SelfCheckRequestDetail } from "../src/rituals/self-check.ts";
-import type { PlanNotification } from "../src/rituals/morning-ritual.ts";
+import type { PlanNotification } from "../src/rituals/ritual-shared.ts";
 
 const NOW_ISO = "2026-08-22T15:00:00.000Z"; // 15:00 UTC
 const TODAY = "2026-08-22";

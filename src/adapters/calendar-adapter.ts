@@ -406,6 +406,16 @@ export async function ensureYohPlanCalendar(
  * failure partway through leaves whatever inserts/updates/deletes already
  * completed in place; the caller (`rituals/*.ts`, a later task) decides how
  * to handle a thrown error from an in-progress sync.
+ *
+ * **Which `PlanBlock`s to pass — resolved by the final whole-branch review
+ * (Finding 1), Task 12's own review had left this open.** Callers MUST
+ * exclude `"calendar-anchor"` blocks from `blocks` before calling this
+ * function. A `calendar-anchor` block already exists as a real event on
+ * Spencer's PRIMARY calendar (`readCalendarEvents` is where it was read
+ * from) — writing it again into this separate "Yoh Plan" calendar would
+ * create a confusing duplicate-looking event for something that was never
+ * Yoh's own scheduling decision in the first place. `rituals/morning-ritual.ts`
+ * is the one caller today and does this filtering at its call site.
  */
 export async function writeTodaysPlanToCalendar(
   client: CalendarWriteClient,

@@ -237,7 +237,7 @@ import type { DataCompletenessGateResult } from "../core/data-completeness-gate.
 import { orderByDerivedPriority } from "../core/derived-priority.ts";
 import { fitWorkBreakBlocks } from "../core/work-break-fit.ts";
 import { runDataCompletenessGate } from "./data-completeness.ts";
-import { localIsoDate, renderPlan } from "./morning-ritual.ts";
+import { localIsoDate, renderPlan } from "./ritual-shared.ts";
 import type {
   CalendarEvent,
   CompleteTask,

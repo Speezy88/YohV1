@@ -185,7 +185,7 @@ import { shapeDeclaredTimeBudget } from "../core/time-budget.ts";
 import { resolveToneSystemPrompt } from "../core/tone.ts";
 import { DATA_COMPLETENESS_REQUEST_ID, PLANNING_FIELD_LABELS } from "../rituals/data-completeness.ts";
 import { buildBlockerConfirmationLine, runMidDayReflow } from "../rituals/mid-day-reflow.ts";
-import { ACCENT, localIsoDate, renderPlan, RESET } from "../rituals/morning-ritual.ts";
+import { ACCENT, localIsoDate, renderPlan, RESET } from "../rituals/ritual-shared.ts";
 import {
   applyNightCloseOutConfirmation,
   clearNightCloseOutRequestIfOpen,
