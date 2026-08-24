@@ -661,6 +661,72 @@ export function putRitualRun(store: MemoryStore, ritualId: string, run: RitualRu
 }
 
 // ============================================================================
+// Ritual invocation marker (Task 26 / Story 5.2 review fix, AD-7/AD-9) —
+// typed surface on `records`
+// ============================================================================
+
+/**
+ * The fixed `records.kind` partition each CLI subcommand's "was I actually
+ * INVOKED and did I run to completion" marker is stored under, keyed by the
+ * subcommand's own name (`"morning"`, `"night-prompt"`, `"night-escalate"`,
+ * `"self-check"`).
+ *
+ * Deliberately a SEPARATE partition from `RITUAL_RUN_KIND` above, answering
+ * a genuinely different question. `RitualRun` records a ritual's own
+ * DELIVERY — it only advances on `morning`'s `delivered` outcome /
+ * `night-prompt`'s `prompted` outcome / `night-escalate`'s `escalated`
+ * outcome; an ordinary, CORRECT no-op outcome (`nothing-to-plan`,
+ * `no-plan-today`, `not-prompted-yet`, etc.) writes nothing at all.
+ * `SelfCheckState.nextDueDate` similarly only advances on cold-start init
+ * or a genuine answer — an unanswered-but-normal `already-open` prompt
+ * leaves it untouched, potentially for days. `shell/ritual-cli.ts`'s
+ * dead-man's-switch (Task 26 / Story 5.2) originally read those two
+ * markers directly and, in review, was found to produce false alarms from
+ * them: a quiet-but-successful no-op day (or several in a row, since the
+ * three daily rituals interlock — no Tasks to plan cascades into no Plan to
+ * prompt on cascades into no prompt to escalate) or a normal unanswered
+ * Self-Check prompt both looked identical, through `RitualRun`/
+ * `SelfCheckState` alone, to "the scheduler has stopped invoking me
+ * entirely" — inverting the alert's whole meaning. `RitualInvocation`
+ * exists to answer the narrower, correct question instead: "did the
+ * scheduler actually invoke this subcommand's process and let it run to
+ * completion recently" — true on every single invocation regardless of
+ * what that invocation's own ritual-domain logic decided to do.
+ *
+ * `shell/ritual-cli.ts`'s `withFailureAlert` is the sole writer, via
+ * `RitualCliDeps.recordInvocation` — see that file's own docstring.
+ */
+const RITUAL_INVOCATION_KIND = "ritual-invocation";
+
+/**
+ * The marker `withFailureAlert` writes after every subcommand invocation
+ * runs to completion — crash (a caught throw) or ordinary return, `Result`
+ * failure or success alike. Used ONLY to answer "was this subcommand
+ * invoked at all recently" (the dead-man's-switch's own question); never
+ * "did it succeed" — that remains `RitualRun`/`SelfCheckState`'s (for
+ * ritual-domain outcomes) and Task 25's failure-alert path's (for this-run
+ * failures) job respectively.
+ */
+export interface RitualInvocation {
+  readonly at: IsoDateTime;
+}
+
+/** Reads `subcommand`'s last-invocation marker, or `undefined` if it has never been invoked at all yet (cold start). */
+export function getRitualInvocation(store: MemoryStore, subcommand: string): StoredRecord<RitualInvocation> | undefined {
+  return store.getRecord<RitualInvocation>(RITUAL_INVOCATION_KIND, subcommand);
+}
+
+/**
+ * Records that `subcommand` was invoked and ran to completion — "put"
+ * semantics with the same internal version read (and so the same AD-10
+ * conflict detection) every other typed writer in this file uses.
+ */
+export function putRitualInvocation(store: MemoryStore, subcommand: string, invocation: RitualInvocation): StoredRecord<RitualInvocation> {
+  const current = store.getRecord<RitualInvocation>(RITUAL_INVOCATION_KIND, subcommand);
+  return store.readModifyWrite<RitualInvocation>(RITUAL_INVOCATION_KIND, subcommand, current?.version, () => invocation);
+}
+
+// ============================================================================
 // Slip history (Task 17 / Story 2.5, FR-11, AD-6) — typed surface on `records`
 // ============================================================================
 

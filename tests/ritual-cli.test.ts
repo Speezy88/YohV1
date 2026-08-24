@@ -9,7 +9,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { createMemoryStore, getRitualRun, getSelfCheckState, putRitualRun, putSelfCheckState } from "../src/adapters/memory-store.ts";
+import { createMemoryStore, getRitualInvocation, putRitualInvocation, putSelfCheckState } from "../src/adapters/memory-store.ts";
 import { recordSlip } from "../src/adapters/memory-store.ts";
 import { computeSlipBumpLevels } from "../src/core/slip-bump.ts";
 import {
@@ -23,8 +23,6 @@ import {
   type MissedRunCheckResult,
   type RitualCliDeps,
 } from "../src/shell/ritual-cli.ts";
-import { MORNING_RITUAL_ID } from "../src/rituals/morning-ritual.ts";
-import { NIGHT_ESCALATE_RITUAL_ID, NIGHT_PROMPT_RITUAL_ID } from "../src/rituals/night-ritual.ts";
 import type { MorningRitualOutcome, PlanNotification } from "../src/rituals/morning-ritual.ts";
 import type { NightEscalateOutcome, NightPromptOutcome } from "../src/rituals/night-ritual.ts";
 import type { SelfCheckOutcome } from "../src/rituals/self-check.ts";
@@ -32,6 +30,8 @@ import type { Plan, Result, YohError } from "../src/types/domain.ts";
 
 /** Default "never missed" check — most existing dispatch tests don't care about the Task 26 / Story 5.2 dead-man's-switch at all. */
 const NOT_MISSED: () => MissedRunCheckResult = () => ({ missed: false });
+/** Default no-op invocation recorder — most existing dispatch tests use a fake `MemoryStore`-less `RitualCliDeps` and don't care about the Task 26 review-fix `RitualInvocation` marker at all. */
+const NOOP_RECORD_INVOCATION: () => void = () => {};
 
 const TODAY = "2026-08-22";
 
@@ -59,6 +59,7 @@ function deps(
   sink: Sink,
   onRun?: () => void,
   checkMissedRun: () => MissedRunCheckResult = NOT_MISSED,
+  recordInvocation: () => void = NOOP_RECORD_INVOCATION,
 ): RitualCliDeps {
   return {
     io: {
@@ -82,6 +83,7 @@ function deps(
       sink.alerts.push(notification);
     },
     checkMissedRun,
+    recordInvocation,
   };
 }
 
@@ -90,6 +92,7 @@ function nightPromptDeps(
   sink: Sink,
   onRun?: () => void,
   checkMissedRun: () => MissedRunCheckResult = NOT_MISSED,
+  recordInvocation: () => void = NOOP_RECORD_INVOCATION,
 ): RitualCliDeps {
   return {
     io: {
@@ -113,6 +116,7 @@ function nightPromptDeps(
       sink.alerts.push(notification);
     },
     checkMissedRun,
+    recordInvocation,
   };
 }
 
@@ -121,6 +125,7 @@ function nightEscalateDeps(
   sink: Sink,
   onRun?: () => void,
   checkMissedRun: () => MissedRunCheckResult = NOT_MISSED,
+  recordInvocation: () => void = NOOP_RECORD_INVOCATION,
 ): RitualCliDeps {
   return {
     io: {
@@ -144,6 +149,7 @@ function nightEscalateDeps(
       sink.alerts.push(notification);
     },
     checkMissedRun,
+    recordInvocation,
   };
 }
 
@@ -152,6 +158,7 @@ function selfCheckDeps(
   sink: Sink,
   onRun?: () => void,
   checkMissedRun: () => MissedRunCheckResult = NOT_MISSED,
+  recordInvocation: () => void = NOOP_RECORD_INVOCATION,
 ): RitualCliDeps {
   return {
     io: {
@@ -175,6 +182,7 @@ function selfCheckDeps(
       sink.alerts.push(notification);
     },
     checkMissedRun,
+    recordInvocation,
   };
 }
 
@@ -500,6 +508,7 @@ function throwingDeps(which: "runMorning" | "runNightPrompt" | "runNightEscalate
       s.alerts.push(notification);
     },
     checkMissedRun: NOT_MISSED,
+    recordInvocation: NOOP_RECORD_INVOCATION,
   };
   return { ...base, [which]: async () => { throw err; } };
 }
@@ -759,81 +768,298 @@ test("AD-5: ritual-cli.ts never waits for input — it reads no stdin at all", (
 // Dead-man's-switch — missed-run detection (Task 26 / Story 5.2, AD-7/AD-9)
 // ============================================================================
 //
-// Two layers: (1) unit tests for the two pure query functions,
+// Layers: (1) unit tests for the two pure query functions,
 // `checkDailyRitualMissedRun`/`checkSelfCheckMissedRun`, directly against a
-// real `MemoryStore`; (2) integration tests through `runRitualCli` proving
-// the wiring — `withFailureAlert` sends a distinctly-worded alert on a miss
-// — and, most importantly, that the check is purely ADDITIVE: it never
-// gates or skips the subcommand's own work (self-healing, not cascading).
+// real `MemoryStore`, reading the `RitualInvocation` marker (Task 26 review
+// fix); (2) integration tests through `runRitualCli` proving the wiring —
+// `withFailureAlert` sends a distinctly-worded alert on a miss — and, most
+// importantly, that the check is purely ADDITIVE: it never gates or skips
+// the subcommand's own work (self-healing, not cascading); (3) the two
+// review-fix regressions: a throwing `checkMissedRun()` must not skip
+// `runSubcommand` or suppress Task 25's own alert (Critical), and an
+// ordinary no-op success / an unanswered-but-normal Self-Check prompt must
+// not produce a false alarm (Important x2).
 
 const CHECK_NOW = new Date("2026-08-22T12:00:00.000Z");
 const hoursAgo = (h: number) => new Date(CHECK_NOW.getTime() - h * 60 * 60 * 1000).toISOString();
 
 // ---- checkDailyRitualMissedRun (morning / night-prompt / night-escalate) ----
 
-for (const ritualId of [MORNING_RITUAL_ID, NIGHT_PROMPT_RITUAL_ID, NIGHT_ESCALATE_RITUAL_ID]) {
-  test(`checkDailyRitualMissedRun("${ritualId}"): a RitualRun older than the ${DAILY_RITUAL_MISSED_RUN_GRACE_HOURS}h grace threshold is a missed run`, () => {
+for (const subcommand of ["morning", "night-prompt", "night-escalate"]) {
+  test(`checkDailyRitualMissedRun("${subcommand}"): a RitualInvocation older than the ${DAILY_RITUAL_MISSED_RUN_GRACE_HOURS}h grace threshold is a missed run`, () => {
     const store = createMemoryStore({ databasePath: ":memory:" });
-    putRitualRun(store, ritualId, { date: "2026-08-20", ranAt: hoursAgo(DAILY_RITUAL_MISSED_RUN_GRACE_HOURS + 12) });
+    putRitualInvocation(store, subcommand, { at: hoursAgo(DAILY_RITUAL_MISSED_RUN_GRACE_HOURS + 12) });
 
-    const result = checkDailyRitualMissedRun(store, ritualId, () => CHECK_NOW);
+    const result = checkDailyRitualMissedRun(store, subcommand, () => CHECK_NOW);
 
     assert.equal(result.missed, true);
-    assert.match(result.detail ?? "", new RegExp(ritualId));
+    assert.match(result.detail ?? "", new RegExp(subcommand));
     store.close();
   });
 }
 
-test(`checkDailyRitualMissedRun: a RitualRun within the ${DAILY_RITUAL_MISSED_RUN_GRACE_HOURS}h grace threshold does NOT trigger a missed run`, () => {
+test(`checkDailyRitualMissedRun: a RitualInvocation within the ${DAILY_RITUAL_MISSED_RUN_GRACE_HOURS}h grace threshold does NOT trigger a missed run`, () => {
   const store = createMemoryStore({ databasePath: ":memory:" });
-  putRitualRun(store, MORNING_RITUAL_ID, { date: "2026-08-21", ranAt: hoursAgo(20) });
+  putRitualInvocation(store, "morning", { at: hoursAgo(20) });
 
-  const result = checkDailyRitualMissedRun(store, MORNING_RITUAL_ID, () => CHECK_NOW);
+  const result = checkDailyRitualMissedRun(store, "morning", () => CHECK_NOW);
 
   assert.deepEqual(result, { missed: false });
   store.close();
 });
 
-test("checkDailyRitualMissedRun: true first-ever cold start (no RitualRun at all) does NOT trigger a missed run", () => {
+test("checkDailyRitualMissedRun: true first-ever cold start (no RitualInvocation at all) does NOT trigger a missed run", () => {
   const store = createMemoryStore({ databasePath: ":memory:" });
 
-  assert.equal(getRitualRun(store, MORNING_RITUAL_ID), undefined, "sanity: nothing stored yet");
-  const result = checkDailyRitualMissedRun(store, MORNING_RITUAL_ID, () => CHECK_NOW);
+  assert.equal(getRitualInvocation(store, "morning"), undefined, "sanity: nothing stored yet");
+  const result = checkDailyRitualMissedRun(store, "morning", () => CHECK_NOW);
 
   assert.deepEqual(result, { missed: false });
   store.close();
 });
 
 // ---- checkSelfCheckMissedRun ----
+//
+// Task 26 review fix: this now reads the SAME `RitualInvocation` marker
+// (keyed `"self-check"`), NOT `SelfCheckState.nextDueDate` — see the
+// "unanswered prompt" regression tests further below for why that mattered.
 
-test(`checkSelfCheckMissedRun: a SelfCheckState whose nextDueDate is more than ${SELF_CHECK_MISSED_RUN_GRACE_DAYS} days in the past is a missed run`, () => {
+test(`checkSelfCheckMissedRun: a RitualInvocation older than the ${SELF_CHECK_MISSED_RUN_GRACE_DAYS}-day grace threshold is a missed run`, () => {
   const store = createMemoryStore({ databasePath: ":memory:" });
-  putSelfCheckState(store, { nextDueDate: "2026-08-10", nextDueMinuteOfDay: 600 }); // 12 days before 2026-08-22
+  putRitualInvocation(store, "self-check", { at: hoursAgo(SELF_CHECK_MISSED_RUN_GRACE_DAYS * 24 + 12) });
 
-  const result = checkSelfCheckMissedRun(store, () => CHECK_NOW, "UTC");
+  const result = checkSelfCheckMissedRun(store, () => CHECK_NOW);
 
   assert.equal(result.missed, true);
   assert.match(result.detail ?? "", /self-check/i);
   store.close();
 });
 
-test(`checkSelfCheckMissedRun: a SelfCheckState within the ${SELF_CHECK_MISSED_RUN_GRACE_DAYS}-day grace of its nextDueDate does NOT trigger a missed run`, () => {
+test(`checkSelfCheckMissedRun: a RitualInvocation within the ${SELF_CHECK_MISSED_RUN_GRACE_DAYS}-day grace threshold does NOT trigger a missed run`, () => {
   const store = createMemoryStore({ databasePath: ":memory:" });
-  putSelfCheckState(store, { nextDueDate: "2026-08-19", nextDueMinuteOfDay: 600 }); // 3 days before 2026-08-22 — normal randomized-cadence slack
+  putRitualInvocation(store, "self-check", { at: hoursAgo(24 * 3) }); // 3 days ago — well within grace
 
-  const result = checkSelfCheckMissedRun(store, () => CHECK_NOW, "UTC");
+  const result = checkSelfCheckMissedRun(store, () => CHECK_NOW);
 
   assert.deepEqual(result, { missed: false });
   store.close();
 });
 
-test("checkSelfCheckMissedRun: true first-ever cold start (no SelfCheckState at all) does NOT trigger a missed run", () => {
+test("checkSelfCheckMissedRun: true first-ever cold start (no RitualInvocation at all) does NOT trigger a missed run", () => {
   const store = createMemoryStore({ databasePath: ":memory:" });
 
-  assert.equal(getSelfCheckState(store), undefined, "sanity: nothing stored yet");
-  const result = checkSelfCheckMissedRun(store, () => CHECK_NOW, "UTC");
+  assert.equal(getRitualInvocation(store, "self-check"), undefined, "sanity: nothing stored yet");
+  const result = checkSelfCheckMissedRun(store, () => CHECK_NOW);
 
   assert.deepEqual(result, { missed: false });
+  store.close();
+});
+
+// ---- CRITICAL review-fix: checkMissedRun() throwing must not skip runSubcommand or suppress Task 25's own alert ----
+
+test("REVIEW FIX (Critical): checkMissedRun() throwing does not skip runSubcommand — the ritual's own work still runs, and the throw is logged, not silently swallowed", async () => {
+  const s = sink();
+  let ran = 0;
+  const code = await runRitualCli(
+    ["morning"],
+    deps(
+      { ok: true, value: { status: "already-ran", date: TODAY, planId: `plan-${TODAY}` } },
+      s,
+      () => {
+        ran += 1;
+      },
+      () => {
+        throw new Error("SQLITE_BUSY: database is locked");
+      },
+    ),
+  );
+
+  assert.equal(code, 0, "the subcommand's own outcome still governs the exit code");
+  assert.equal(ran, 1, "runSubcommand must still run even though checkMissedRun() threw");
+  assert.deepEqual(s.alerts, [], "a throwing check cannot determine a miss, so no missed-run alert is sent — but the throw must not suppress runSubcommand either");
+
+  const logged = s.err.map((l) => JSON.parse(l) as { event?: string; message?: string });
+  const checkFailedLine = logged.find((l) => l.event === "ritual-cli.missed-run-check-failed");
+  assert.ok(checkFailedLine, "the throw must be logged (a structured stderr line), not silently swallowed");
+  assert.match(checkFailedLine!.message ?? "", /SQLITE_BUSY/);
+});
+
+test("REVIEW FIX (Critical): checkMissedRun() throwing does not suppress Task 25's own failure alert when the ritual itself subsequently fails", async () => {
+  const s = sink();
+  const code = await runRitualCli(
+    ["morning"],
+    deps(
+      { ok: false, error: { kind: "unreachable", message: "morning-ritual: could not read Notion Tasks" } },
+      s,
+      undefined,
+      () => {
+        throw new Error("disk I/O error reading the missed-run marker");
+      },
+    ),
+  );
+
+  assert.equal(code, 1);
+  assert.equal(s.alerts.length, 1, "Task 25's own failure alert must still fire even though the missed-run check itself threw — this is the exact regression: before the fix, the throw escaped BEFORE Task 25's try/catch and suppressed this alert entirely");
+  assert.match(s.alerts[0]!.title, /failed/i);
+  assert.doesNotMatch(s.alerts[0]!.title, /missed/i);
+});
+
+// ---- IMPORTANT review-fix: a quiet-but-successful no-op day must not false-alarm ----
+//
+// `RitualRun` only advances on morning's `delivered` / night-prompt's
+// `prompted` / night-escalate's `escalated` outcomes — an ordinary no-op
+// success writes nothing to it. Before the review fix, the dead-man's-switch
+// read `RitualRun` directly, so a quiet-but-correct day looked identical to
+// "the scheduler never invoked me." These tests prove the fix: the
+// `RitualInvocation` marker (written by `withFailureAlert` itself,
+// unconditionally, regardless of the ritual's own outcome) means a no-op
+// success is still recognized as a genuine invocation.
+
+test("REVIEW FIX (Important): `morning`'s 'nothing-to-plan' no-op (writes no RitualRun) still records an invocation — a LATER check does not false-alarm", async () => {
+  const store = createMemoryStore({ databasePath: ":memory:" });
+  const s = sink();
+  const code = await runRitualCli(
+    ["morning"],
+    deps(
+      { ok: true, value: { status: "nothing-to-plan", date: TODAY, incompleteTaskIds: ["t1"] } },
+      s,
+      undefined,
+      () => checkDailyRitualMissedRun(store, "morning", () => CHECK_NOW),
+      () => putRitualInvocation(store, "morning", { at: CHECK_NOW.toISOString() }),
+    ),
+  );
+
+  assert.equal(code, 0);
+  assert.deepEqual(s.alerts, [], "a quiet no-op success must not itself trigger any alert");
+
+  const laterCheck = checkDailyRitualMissedRun(store, "morning", () => new Date(CHECK_NOW.getTime() + 20 * 60 * 60 * 1000));
+  assert.deepEqual(laterCheck, { missed: false }, "a quiet-but-successful no-op day must not cause a false missed-run alarm on the NEXT invocation");
+  store.close();
+});
+
+test("REVIEW FIX (Important): `night-prompt`'s 'no-plan-today' no-op (writes no RitualRun) still records an invocation — a LATER check does not false-alarm", async () => {
+  const store = createMemoryStore({ databasePath: ":memory:" });
+  const s = sink();
+  const code = await runRitualCli(
+    ["night-prompt"],
+    nightPromptDeps(
+      { ok: true, value: { status: "no-plan-today", date: TODAY } },
+      s,
+      undefined,
+      () => checkDailyRitualMissedRun(store, "night-prompt", () => CHECK_NOW),
+      () => putRitualInvocation(store, "night-prompt", { at: CHECK_NOW.toISOString() }),
+    ),
+  );
+
+  assert.equal(code, 0);
+  assert.deepEqual(s.alerts, []);
+
+  const laterCheck = checkDailyRitualMissedRun(store, "night-prompt", () => new Date(CHECK_NOW.getTime() + 20 * 60 * 60 * 1000));
+  assert.deepEqual(laterCheck, { missed: false });
+  store.close();
+});
+
+test("REVIEW FIX (Important): `night-escalate`'s 'not-prompted-yet' no-op (writes no RitualRun) still records an invocation — a LATER check does not false-alarm, even across the interlocking no-op chain (morning -> night-prompt -> night-escalate all quiet)", async () => {
+  const store = createMemoryStore({ databasePath: ":memory:" });
+  const s = sink();
+
+  // The exact interlocking scenario from the review: a day with nothing
+  // plannable makes morning no-op, which makes night-prompt no-op, which
+  // makes night-escalate no-op too. All three still ran, and all three
+  // must still record an invocation.
+  const outcomes: Array<{ subcommand: "morning" | "night-prompt" | "night-escalate"; run: () => Promise<number> }> = [
+    {
+      subcommand: "morning",
+      run: () =>
+        runRitualCli(
+          ["morning"],
+          deps(
+            { ok: true, value: { status: "nothing-to-plan", date: TODAY, incompleteTaskIds: ["t1"] } },
+            s,
+            undefined,
+            () => checkDailyRitualMissedRun(store, "morning", () => CHECK_NOW),
+            () => putRitualInvocation(store, "morning", { at: CHECK_NOW.toISOString() }),
+          ),
+        ),
+    },
+    {
+      subcommand: "night-prompt",
+      run: () =>
+        runRitualCli(
+          ["night-prompt"],
+          nightPromptDeps(
+            { ok: true, value: { status: "no-plan-today", date: TODAY } },
+            s,
+            undefined,
+            () => checkDailyRitualMissedRun(store, "night-prompt", () => CHECK_NOW),
+            () => putRitualInvocation(store, "night-prompt", { at: CHECK_NOW.toISOString() }),
+          ),
+        ),
+    },
+    {
+      subcommand: "night-escalate",
+      run: () =>
+        runRitualCli(
+          ["night-escalate"],
+          nightEscalateDeps(
+            { ok: true, value: { status: "not-prompted-yet", date: TODAY } },
+            s,
+            undefined,
+            () => checkDailyRitualMissedRun(store, "night-escalate", () => CHECK_NOW),
+            () => putRitualInvocation(store, "night-escalate", { at: CHECK_NOW.toISOString() }),
+          ),
+        ),
+    },
+  ];
+
+  for (const { run } of outcomes) {
+    const code = await run();
+    assert.equal(code, 0);
+  }
+
+  assert.deepEqual(s.alerts, [], "an entirely quiet, interlocking no-op day across all three daily rituals must not itself trigger any alert");
+
+  for (const subcommand of ["morning", "night-prompt", "night-escalate"]) {
+    const laterCheck = checkDailyRitualMissedRun(store, subcommand, () => new Date(CHECK_NOW.getTime() + 20 * 60 * 60 * 1000));
+    assert.deepEqual(laterCheck, { missed: false }, `${subcommand}: a quiet interlocking no-op day must not cause a false missed-run alarm on the NEXT invocation`);
+  }
+  store.close();
+});
+
+test("REVIEW FIX (Important): self-check's unanswered-but-normal 'already-open' prompt (SelfCheckState.nextDueDate stuck far in the past) does NOT cause a false missed-run alarm across several daily invocations — checkSelfCheckMissedRun no longer reads SelfCheckState at all", async () => {
+  const store = createMemoryStore({ databasePath: ":memory:" });
+  // The exact regression scenario: an open Self-Check prompt Spencer hasn't
+  // answered yet — SelfCheckState.nextDueDate never advances past this (a
+  // genuinely normal, designed-for state; see self-check.ts's own
+  // `already-open` no-op outcome). Seeded here only to demonstrate it no
+  // longer matters to this check at all.
+  putSelfCheckState(store, { nextDueDate: "2026-08-01", nextDueMinuteOfDay: 600 }); // 21 days before 2026-08-22
+
+  const s = sink();
+  let invocations = 0;
+  const now = () => CHECK_NOW;
+
+  for (let i = 0; i < 3; i++) {
+    const code = await runRitualCli(
+      ["self-check"],
+      selfCheckDeps(
+        { ok: true, value: { status: "already-open", date: TODAY } },
+        s,
+        () => {
+          invocations += 1;
+        },
+        () => checkSelfCheckMissedRun(store, now),
+        () => putRitualInvocation(store, "self-check", { at: now().toISOString() }),
+      ),
+    );
+    assert.equal(code, 0);
+  }
+
+  assert.equal(invocations, 3);
+  assert.deepEqual(s.alerts, [], "an unanswered-but-normal Self-Check prompt must never itself trigger a missed-run alarm");
+
+  const laterCheck = checkSelfCheckMissedRun(store, () => new Date(CHECK_NOW.getTime() + 24 * 60 * 60 * 1000));
+  assert.deepEqual(laterCheck, { missed: false }, "even though SelfCheckState.nextDueDate is 21+ days stale, a recent invocation means no false alarm");
   store.close();
 });
 
@@ -925,18 +1151,21 @@ test("a missed-run alert AND a same-run Result failure both fire — two distinc
 // ---- the critical property: self-healing, not cascading ----
 //
 // After a missed-run alert fires, the ritual must STILL complete its own
-// normal work and write its OWN fresh RitualRun marker on success — the
-// check is purely additive, never a gate. Uses a REAL MemoryStore (not a
-// fake one) so the stale-then-fresh RitualRun state is genuinely observed,
-// not merely asserted about a mock.
+// normal work, and `withFailureAlert` must STILL write a fresh
+// `RitualInvocation` marker on this invocation's behalf (Task 26 review
+// fix: this is now `recordInvocation`'s job, unconditionally, not something
+// the ritual's own success path writes itself) — the check is purely
+// additive, never a gate. Uses a REAL MemoryStore (not a fake one) so the
+// stale-then-fresh invocation state is genuinely observed, not merely
+// asserted about a mock.
 
-test("SELF-HEALING: after a missed-run alert fires for `morning`, the ritual still runs its own work and writes a FRESH RitualRun marker (a single missed day never cascades)", async () => {
+test("SELF-HEALING: after a missed-run alert fires for `morning`, the ritual still runs its own work and a FRESH RitualInvocation marker is recorded (a single missed day never cascades)", async () => {
   const store = createMemoryStore({ databasePath: ":memory:" });
-  const STALE_RAN_AT = hoursAgo(DAILY_RITUAL_MISSED_RUN_GRACE_HOURS + 48); // well past the grace threshold
-  putRitualRun(store, MORNING_RITUAL_ID, { date: "2026-08-18", ranAt: STALE_RAN_AT });
+  const STALE_AT = hoursAgo(DAILY_RITUAL_MISSED_RUN_GRACE_HOURS + 48); // well past the grace threshold
+  putRitualInvocation(store, "morning", { at: STALE_AT });
 
   const s = sink();
-  const FRESH_RAN_AT = CHECK_NOW.toISOString();
+  const FRESH_AT = CHECK_NOW.toISOString();
   let ownWorkRan = false;
 
   const testDeps: RitualCliDeps = {
@@ -944,15 +1173,17 @@ test("SELF-HEALING: after a missed-run alert fires for `morning`, the ritual sti
       writeLine: (l) => s.out.push(l),
       writeError: (l) => s.err.push(l),
     },
-    // The real query function, wired exactly as `main()` wires it — proves
-    // the missed-run detection itself (not a stubbed boolean).
-    checkMissedRun: () => checkDailyRitualMissedRun(store, MORNING_RITUAL_ID, () => CHECK_NOW),
-    // Simulates the ritual's own normal success path: it does its own work
-    // AND writes its own fresh RitualRun marker, exactly like the real
-    // `runMorningRitual` does on a `"delivered"` outcome.
+    // The real query functions, wired exactly as `main()` wires them —
+    // proves the missed-run detection AND the invocation-recording
+    // themselves (not stubbed booleans/no-ops).
+    checkMissedRun: () => checkDailyRitualMissedRun(store, "morning", () => CHECK_NOW),
+    recordInvocation: () => putRitualInvocation(store, "morning", { at: FRESH_AT }),
+    // Simulates the ritual's own normal success path — it does its own
+    // work, but (per the review fix) does NOT write any invocation marker
+    // itself; `withFailureAlert` does that, unconditionally, after this
+    // resolves.
     runMorning: async () => {
       ownWorkRan = true;
-      putRitualRun(store, MORNING_RITUAL_ID, { date: TODAY, ranAt: FRESH_RAN_AT });
       return { ok: true, value: { status: "already-ran", date: TODAY, planId: `plan-${TODAY}` } };
     },
     runNightPrompt: async () => {
@@ -979,17 +1210,17 @@ test("SELF-HEALING: after a missed-run alert fires for `morning`, the ritual sti
   // ...but self-healing held: the ritual's own work still ran...
   assert.equal(ownWorkRan, true, "the missed-run alert must not gate or skip the subcommand's own work");
 
-  // ...and produced a FRESH marker — a later run will see THIS marker, not
-  // the stale one, so a single missed day self-corrects rather than
-  // cascading into permanent failure.
-  const latest = getRitualRun(store, MORNING_RITUAL_ID);
+  // ...and `withFailureAlert` itself recorded a FRESH invocation marker — a
+  // later run will see THIS marker, not the stale one, so a single missed
+  // day self-corrects rather than cascading into permanent failure.
+  const latest = getRitualInvocation(store, "morning");
   assert.ok(latest);
-  assert.equal(latest!.data.ranAt, FRESH_RAN_AT);
-  assert.notEqual(latest!.data.ranAt, STALE_RAN_AT);
+  assert.equal(latest!.data.at, FRESH_AT);
+  assert.notEqual(latest!.data.at, STALE_AT);
 
   // And a follow-up check against the now-fresh marker reports no miss —
   // proof the system healed itself for the NEXT invocation.
-  const followUpCheck = checkDailyRitualMissedRun(store, MORNING_RITUAL_ID, () => CHECK_NOW);
+  const followUpCheck = checkDailyRitualMissedRun(store, "morning", () => CHECK_NOW);
   assert.deepEqual(followUpCheck, { missed: false });
 
   store.close();
