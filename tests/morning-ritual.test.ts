@@ -1038,7 +1038,7 @@ test("a delivered Plan's outcome carries planGenerationMs, and the SAME value ap
   assert.equal(detail.planGenerationMs, result.value.planGenerationMs, "the log line's timing must match the outcome's own field, not a second independent measurement");
 });
 
-test("planGenerationMs is genuinely measured, not hardcoded — a slower Data-Completeness-Gate-through-fitting span produces a measurably larger duration", async () => {
+test("planGenerationMs is genuinely measured, not hardcoded — a slower Data-Completeness-Gate-through-fitting portion of the span produces a measurably larger duration", async () => {
   const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
   const fast = harness({ tasks: [makeTask("t1", "Draft the memo", { estimatedDurationMinutes: 60 })] });
@@ -1048,8 +1048,10 @@ test("planGenerationMs is genuinely measured, not hardcoded — a slower Data-Co
   const slow = harness({
     tasks: [makeTask("t1", "Draft the memo", { estimatedDurationMinutes: 60 })],
     readCalendarEvents: async () => {
-      // readCalendarEvents (step 5) sits INSIDE the timed
-      // "Data-Completeness Gate through Work/Break fitting" span — an
+      // readCalendarEvents (step 5) sits INSIDE the timed span (which now
+      // runs from the Data-Completeness Gate through right before
+      // deps.sendNotification, post-review-fix widening — see
+      // PLAN_GENERATION_DEGRADED_THRESHOLD_MS's own doc comment) — an
       // artificial delay here proves the timer measures real elapsed wall
       // time through that span, rather than reporting a constant.
       await sleep(60);
@@ -1062,6 +1064,37 @@ test("planGenerationMs is genuinely measured, not hardcoded — a slower Data-Co
   assert.ok(
     slowResult.value.planGenerationMs! - fastResult.value.planGenerationMs! >= 40,
     `expected the artificially-slowed run's planGenerationMs (${slowResult.value.planGenerationMs}) to exceed the fast run's (${fastResult.value.planGenerationMs}) by roughly the injected 60ms delay`,
+  );
+});
+
+test("planGenerationMs's WIDENED span (post-review fix) also measures work AFTER Work/Break fitting — a slow putPlan persistence write now correctly counts toward the duration", async () => {
+  const store = tempStore();
+  const originalReadModifyWrite = store.readModifyWrite.bind(store);
+  let sawPlanWrite = false;
+  // A synchronous busy-wait (not setTimeout) since `putPlan` -> `readModifyWrite`
+  // is itself a synchronous MemoryStore call, never awaited by runMorningRitual.
+  const busyWaitMs = (ms: number): void => {
+    const end = performance.now() + ms;
+    while (performance.now() < end) {
+      /* deliberately busy — simulates a slow synchronous SQLite write */
+    }
+  };
+  store.readModifyWrite = ((...args: Parameters<typeof originalReadModifyWrite>) => {
+    if (args[0] === "plan") {
+      sawPlanWrite = true;
+      busyWaitMs(40);
+    }
+    return originalReadModifyWrite(...args);
+  }) as typeof store.readModifyWrite;
+
+  const h = harness({ store, tasks: [makeTask("t1", "Draft the memo", { estimatedDurationMinutes: 60 })] });
+  const result = await runMorningRitual(h.deps);
+
+  assert.ok(result.ok && result.value.status === "delivered", `expected delivered, got ${JSON.stringify(result)}`);
+  assert.ok(sawPlanWrite, "sanity: the patched readModifyWrite call for putPlan's own 'plan' kind was actually reached");
+  assert.ok(
+    result.value.planGenerationMs! >= 35,
+    `expected planGenerationMs (${result.value.planGenerationMs}) to reflect the injected ~40ms putPlan delay now that the span extends past Work/Break fitting through persistence — a value confined to the OLD gate-through-fit boundary could never see this delay at all`,
   );
 });
 

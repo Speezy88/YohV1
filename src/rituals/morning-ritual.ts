@@ -503,9 +503,10 @@ export const MORNING_RITUAL_ID = "morning";
 
 /**
  * Degraded-performance threshold for Plan generation, in milliseconds (Task
- * 27 / Story 5.3, AD-7): the Data-Completeness Gate through Work/Break
- * fitting (see `MorningRitualOutcome`'s own `planGenerationMs` doc comment
- * for the exact span timed) genuinely taking longer than this does NOT fail
+ * 27 / Story 5.3, AD-7): the timed span (see `MorningRitualOutcome`'s own
+ * `planGenerationMs` doc comment for exactly what it covers — the
+ * Data-Completeness Gate through everything up to, but excluding,
+ * `deps.sendNotification`) genuinely taking longer than this does NOT fail
  * the run — the Plan is still generated and delivered normally — but
  * `shell/ritual-cli.ts` treats it as DEGRADED-NOT-FAILED and raises it
  * through the SAME alert path Story 5.1/5.2 built
@@ -521,15 +522,18 @@ export const MORNING_RITUAL_ID = "morning";
  * missed-run grace windows, etc. — see each constant's own doc comment for
  * the same "tunable, not load-bearing" framing). `5000` (5 seconds, a
  * "low-seconds value" per this task's own implementer note) is chosen as
- * comfortably above what this span's own local computation
- * (`data-completeness-gate.ts`, `derived-priority.ts`, `work-break-fit.ts`
- * — no genuinely slow network call sits inside this specific span; only
- * `readCalendarEvents` does, and that's one bounded HTTP round trip, not an
- * unbounded loop) should ever normally take, even against a large Notion
+ * comfortably above what this whole span's own work — local computation
+ * (`data-completeness-gate.ts`, `derived-priority.ts`, `work-break-fit.ts`,
+ * `plan-reasoning.ts`), one bounded Calendar HTTP round trip
+ * (`readCalendarEvents`), and a handful of local SQLite reads/writes
+ * (the Time-Budget-deferral-streak/Proposal sync, `putPlan`'s own
+ * persistence) — should ever normally take, even against a large Notion
  * Task list, while still tight enough to catch a genuine regression (a
  * pathological `O(n^2)`-or-worse slice introduced later, an unexpectedly
- * huge candidate set, a slow Calendar API response) well before it would be
- * noticeable to Spencer as "my Plan is late."
+ * huge candidate set, a slow Calendar API response, or a SQLite write stuck
+ * behind real lock contention — AD-10's cross-process concurrency with
+ * `chat-cli.ts`) well before it would be noticeable to Spencer as "my Plan
+ * is late."
  */
 export const PLAN_GENERATION_DEGRADED_THRESHOLD_MS = 5_000;
 
@@ -686,7 +690,14 @@ export type MorningRitualOutcome =
       readonly date: IsoDate;
       readonly deferredTaskIds: readonly ExternalId[];
       readonly incompleteTaskIds: readonly ExternalId[];
-      /** See the `"delivered"` variant's own `planGenerationMs` doc comment — this outcome still reaches Work/Break fitting, so it is timed exactly the same way. */
+      /**
+       * See the `"delivered"` variant's own `planGenerationMs` doc comment
+       * for the general design. This outcome never reaches a notification
+       * step, so ITS OWN span simply runs through everything this run did —
+       * the Data-Completeness Gate through the Time-Budget-deferral-streak/
+       * Proposal sync (step 8.5), the last step a `"nothing-fits"` run
+       * reaches before returning.
+       */
       readonly planGenerationMs?: number;
     }
   | {
@@ -723,11 +734,18 @@ export type MorningRitualOutcome =
        */
       readonly uncheckedNight?: UncheckedDay;
       /**
-       * Task 27 / Story 5.3: how long the Data-Completeness Gate through
-       * Work/Break fitting genuinely took, in milliseconds — measured via
-       * `performance.now()` around exactly that span (see `runMorningRitual`
-       * below, where the timer starts and stops), never hardcoded or
-       * estimated. Optional (rather than required) purely so a `Result`
+       * Task 27 / Story 5.3 (post-review-fix, widened): how long Plan
+       * generation genuinely took, in milliseconds — measured via
+       * `performance.now()` from right before the Data-Completeness Gate
+       * through right before `deps.sendNotification` (see
+       * `runMorningRitual` below, where the timer starts and stops), never
+       * hardcoded or estimated. That span is deliberately WIDER than just
+       * "gate through fitting": per the AC's own "excluding notification
+       * delivery" wording, it also covers step 8.5's
+       * Time-Budget-deferral-streak/Proposal sync, `generatePlanReasoning`,
+       * Plan assembly, `renderPlan`, and — notably — `putPlan`'s own
+       * persistence I/O, since none of those are "notification delivery"
+       * either. Optional (rather than required) purely so a `Result`
        * failure inside the SAME span, or a caller/test that doesn't care
        * about timing, need not fabricate a value — every real "delivered"
        * run always sets it. Compared against `PLAN_GENERATION_DEGRADED_THRESHOLD_MS`
@@ -816,15 +834,26 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
 
   // --- 3. Merge overrides, gate, sync the interaction request ---------------
   // Task 27 / Story 5.3: the Plan-generation timer starts here — right
-  // before the Data-Completeness Gate — and stops immediately after
-  // Work/Break fitting succeeds below (see `planGenerationMs`, just after
-  // the fitting-rejected check), per this story's own AC wording:
+  // before the Data-Completeness Gate. Per this story's own AC wording,
   // "Data-Completeness Gate through Work/Break fitting, excluding
-  // notification delivery." Measured with `performance.now()` — genuine
-  // elapsed wall time, never hardcoded. A run that exits before reaching
-  // fitting (the early "nothing-to-plan" branch just below, or any `Result`
-  // failure inside this span) never computes a `planGenerationMs` at all —
-  // there is no completed Plan-generation run yet to time.
+  // notification delivery": "excluding notification delivery" is the AC's
+  // one deliberate, operative carve-out (if fitting itself were meant as the
+  // literal stop point, that clause would be redundant — fitting already
+  // ends well before the notification step). So the span timed is
+  // everything from here through whatever this run's own work is, up to
+  // (never including) `deps.sendNotification` — for a `"delivered"` run that
+  // means steps 3 through 12a (gate, calendar read, budget resolution,
+  // order, fit, the Time-Budget-deferral-streak/Proposal sync, reasoning
+  // generation, Plan assembly/render, and `putPlan`'s own persistence I/O
+  // are ALL measured); for a `"nothing-fits"` run — which never reaches a
+  // notification step at all — it's everything through that run's own
+  // completion (steps 3 through 8.5). See `planGenerationMs`'s two
+  // computation sites below (post-review-fix) for exactly where each stops.
+  // Measured with `performance.now()` — genuine elapsed wall time, never
+  // hardcoded. A run that exits before reaching fitting (the early
+  // "nothing-to-plan" branch just below, or any `Result` failure inside this
+  // span) never computes a `planGenerationMs` at all — there is no
+  // completed Plan-generation run yet to time.
   const planGenerationStartMs = performance.now();
   let gate: Result<DataCompletenessGateResult, YohError>;
   try {
@@ -891,13 +920,6 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
     log({ level: "error", event: "morning-ritual.fitting-rejected", detail: fitted.error });
     return fitted;
   }
-
-  // Task 27 / Story 5.3: the timed span ends here, immediately after
-  // Work/Break fitting succeeds — see `planGenerationStartMs`'s own comment
-  // above for the exact boundary this measures. Rounded to whole
-  // milliseconds since sub-millisecond precision adds nothing a 5-second
-  // threshold ever needs to distinguish.
-  const planGenerationMs = Math.round(performance.now() - planGenerationStartMs);
 
   // --- 8.5. Time-Budget-deferral streak + Proposal (Task 23 / Story 4.2,
   // AD-3) --------------------------------------------------------------------
@@ -990,6 +1012,12 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
 
   // Every plannable Task was deferred — see `"nothing-fits"`'s doc comment.
   if (plannedTaskIds.size === 0) {
+    // Task 27 / Story 5.3 (post-review fix): a `"nothing-fits"` run never
+    // reaches a notification step at all, so its own widened span simply
+    // ends where ITS OWN work ends — right here, which now also includes
+    // step 8.5's Time-Budget-deferral-streak/Proposal sync (a real
+    // MemoryStore read/write) above, not just gate-through-fit.
+    const planGenerationMs = Math.round(performance.now() - planGenerationStartMs);
     log({
       level: "info",
       event: "morning-ritual.nothing-fits",
@@ -1057,6 +1085,17 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
     log({ level: "error", event: "morning-ritual.persist-failed", detail: describeError(err) });
     return failure("conflict", `morning-ritual: could not persist today's Plan — ${describeError(err)}`, err);
   }
+
+  // Task 27 / Story 5.3 (post-review fix): the timed span for a `"delivered"`
+  // run ends HERE — immediately before `deps.sendNotification` below, per
+  // this story's AC's own "excluding notification delivery" carve-out (see
+  // `planGenerationStartMs`'s own comment for the full reasoning this
+  // widened boundary follows). Everything from the Data-Completeness Gate
+  // through this line — including step 8.5's Time-Budget-deferral-streak/
+  // Proposal sync, `generatePlanReasoning`, Plan assembly, `renderPlan`, and
+  // `putPlan`'s own persistence I/O just above — is genuinely measured, not
+  // just gate-through-fit.
+  const planGenerationMs = Math.round(performance.now() - planGenerationStartMs);
 
   // --- 12b. Send exactly one notification -----------------------------------
   // The unchecked-night notice (Task 21), when present, is prepended to the
