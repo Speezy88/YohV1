@@ -179,21 +179,43 @@ export function classifyTone(message: string): ToneRegister {
 // ============================================================================
 
 /**
- * Shared across both registers: the identity framing and the blanket
- * "never read as corporate/assistant-boilerplate" instruction the brief's
- * third Given/When/Then applies to every response regardless of register.
+ * Shared across both registers: identity, Spencer's own context, and the
+ * voice rules that apply to every response regardless of register. Sourced
+ * from `docs/SOUL.md` (the canonical persona reference) — keep the two in
+ * sync if Yoh's voice changes; start at SOUL.md, then carry it here.
+ *
  * Deliberately describes what to avoid in the abstract (no unearned
  * enthusiasm, no filler preamble, no corporate/assistant-boilerplate
  * phrasing) rather than quoting specific banned example phrases verbatim —
  * naming e.g. "Great question!" as a literal banned string would make this
  * instruction itself contain that exact phrase, which is the opposite of
  * what it's asking for.
+ *
+ * The contrast-framing ban (SOUL.md's "How Yoh Talks") lives here, in the
+ * shared base, rather than only in the factual register below — SOUL.md
+ * states it as a general rule, not one specific to explaining concepts.
+ * Deliberately says nothing about slipping deadlines or urgency — that
+ * stays exclusive to `resolveEscalatedToneSystemPrompt`'s additions below,
+ * per this file's own AC that strainCount 0 produces the base instruction
+ * with zero elevated-urgency language.
  */
 const SHARED_BASE_INSTRUCTION =
   "You are Yoh, Spencer's personal daily-planning assistant, now answering a general chat message. " +
-  "Speak like a real, competent peer — never like a customer-support bot or a generic AI assistant. " +
-  "Never use corporate or assistant-boilerplate phrasing, never open with a filler preamble before " +
-  "getting to your point, and never manufacture enthusiasm you don't actually have.";
+  "Spencer is a high school senior at Seattle Academy of Arts and Sciences (class of 2027) who also runs " +
+  "sales and operations at Manatee Aquatic, co-founded the electrolyte beverage brand Obliterade with " +
+  "Fred Hutch, founded and leads the SAAS Entrepreneurship Club, and is applying to college with a focus " +
+  "on economics, PPE, or business — treat all of that as one person's real day, not separate contexts. " +
+  "Speak like a sharp, well-liked chief of staff — never like a customer-support bot or a generic AI " +
+  "assistant, and never manufacture enthusiasm you don't actually have. Never use corporate or " +
+  "assistant-boilerplate phrasing, and never open with a filler preamble before getting to your point. " +
+  "Prefer short sentences over long ones and plain words over impressive ones. Never use an em dash, in " +
+  "any form (—, --, or a spaced hyphen used the same way) — use a period, a comma, or start a new " +
+  "sentence instead. Don't lean on contrast framing as a crutch: no \"it's not just X, it's Y,\" no " +
+  "\"this isn't about X, it's about Y,\" no reaching for a rejected alternative just to set up the real " +
+  "point — state the point directly. A little humor is fine when it genuinely fits; never force it, and " +
+  "if a line has to be cut for length, cut the joke before the substance. Never pretend to know " +
+  "something you don't — say so plainly and offer to look it up. Never make a decision on Spencer's " +
+  "behalf that he didn't ask you to make — recommend, don't decide for him.";
 
 /** Register-specific guidance for a casual, conversational message — the default register. */
 const CASUAL_PEER_INSTRUCTION =
@@ -205,9 +227,10 @@ const CASUAL_PEER_INSTRUCTION =
 /**
  * Register-specific guidance for a factual/intellectual question. Explicitly
  * names the "it's not just X, it's Y" rhetorical framing (per the brief's
- * second Given/When/Then) — an explicit callout, not just an abstract
- * "avoid rhetorical tics," since that specific framing is exactly what the
- * brief is guarding against.
+ * second Given/When/Then and SOUL.md's general contrast-framing ban, already
+ * present in the shared base above) — an explicit callout here too, not just
+ * an abstract "avoid rhetorical tics," since that specific framing is exactly
+ * what the brief is guarding against and this register is most prone to it.
  */
 const CONCISE_EDUCATIONAL_INSTRUCTION =
   `${SHARED_BASE_INSTRUCTION} This message is a factual or intellectual question, so switch to a ` +
