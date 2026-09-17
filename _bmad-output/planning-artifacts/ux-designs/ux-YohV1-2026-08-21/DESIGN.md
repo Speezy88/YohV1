@@ -45,19 +45,21 @@ Because Yoh renders in whatever terminal and theme Spencer is already using, the
 - `{colors.text-default}` — inherits the terminal's own foreground. Yoh never overrides base body text color; this is a deliberate non-decision, not an oversight.
 - `{colors.accent}` — a single blue, used only for section labels (a Plan's header, a prompt's label) so the eye finds structure fast. Not used for emphasis within body text.
 - `{colors.attention}` — a warm amber reserved for the one moment escalation is visually marked (Night Ritual's second attempt, an unchecked-day flag). Deliberately not red — Yoh escalates under strain (per the Glossary's Escalate-Under-Strain), it doesn't alarm.
-- `{colors.muted}` — used only for the one-line Plan reasoning (FR-3), so the "why" reads as a quiet aside under the Plan, not a competing headline.
+- `{colors.muted}` — used only for the one-line Plan reasoning (FR-3) and (as of the 2026-09 chat-divider revision above) the between-turns rule in `chat-cli.ts`, so both read as a quiet aside rather than a competing headline.
+
+**Implementation note (2026-09):** the ANSI escapes for all three tokens switched from 24-bit truecolor to 256-color codes after real-usage testing found `{colors.accent}` rendering as an unintended color in Apple's Terminal.app, which has long had unreliable 24-bit truecolor support. 256-color mode is universally supported; `{colors.accent}`'s exact RGB lands on an exact 256-color palette entry (no loss), `{colors.muted}`/`{colors.attention}` use the nearest palette entry (imperceptible/minor shift respectively). The hex values above remain each token's canonical definition — see `rituals/ritual-shared.ts` for the actual escape codes.
 
 **Do not** use color as the *only* signal for anything meaningful (escalation, a slipped task, an unchecked day) — some terminals and some color-vision types won't render or distinguish it. Pair every color cue with plain-text wording that carries the same meaning on its own.
 
 ## Typography
 
-No font is set — Yoh inherits whatever monospace font and size the terminal is configured with. The only typographic tool available is structure: bold (via the terminal's own bold rendering) for the section label, plain weight for everything else. `[ASSUMPTION: whether Yoh uses terminal bold/underline at all, or renders everything at a single weight, is unconfirmed — default assumed here is a single bold label per section, nothing else.]`
+No font is set — Yoh inherits whatever monospace font and size the terminal is configured with. Two typographic tools are available: bold, for a section label (as before) and for a markdown heading/emphasis Claude's own chat prose produces; and italic, for markdown emphasis (`*text*`) in that same chat prose. Everything else stays plain weight. **Confirmed 2026-09 (real-usage revision):** Claude's general-chat replies (`shell/chat-cli.ts`) are not told to avoid markdown, so `**bold**`/`*italic*`/`# headings` in a reply are rendered as real terminal bold/italic (`rituals/ritual-shared.ts`'s `renderMarkdownForTerminal`) rather than left as literal asterisks/hashes or banned outright — this is the one place body text carries typographic weight, everything else (Plan blocks, prompts, confirmations) stays plain as originally specified.
 
 ## Layout & Spacing
 
 - `{spacing.wrap-width}` — body text wraps at roughly 80 characters so output stays readable in a standard terminal window without the user resizing.
 - `{spacing.block-gap}` — one blank line separates each structural unit (the Plan header from its block list, the block list from the reasoning line, one prompt from the next) — enough to scan, not so much that a short Plan feels sparse.
-- No box-drawing characters, rules, or ASCII dividers by default — structure comes from blank-line spacing and the accent-colored label, not decoration. `[ASSUMPTION: confirm this preference — some CLI tools do use a light box-drawing rule under a header; Yoh's brand posture argues against it, but it's a real style choice worth explicitly signing off on.]`
+- No box-drawing characters, rules, or ASCII dividers for Plan/prompt content — structure there still comes from blank-line spacing and the accent-colored label, not decoration. **Confirmed 2026-09 (real-usage revision, overriding this section's original `[ASSUMPTION]`):** the one exception is `shell/chat-cli.ts`'s interactive REPL, where a full-width `{colors.muted}` rule now separates one conversation turn from the next — real usage found bare blank-line spacing insufficient to visually parse a scrolling back-and-forth chat log the way it's sufficient for a single Plan or prompt. This is scoped to that one divider role; it does not license box-drawing or rules anywhere else.
 
 ## Components
 

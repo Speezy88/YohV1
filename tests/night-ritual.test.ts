@@ -490,8 +490,8 @@ test("the escalation email is marked with the attention color/marker and is shor
   assert.ok(!email.text.includes("!"), "escalates in directness, not alarm punctuation");
 });
 
-test("the {colors.attention} ANSI constant this task adds to morning-ritual.ts is genuinely the DESIGN.md #D08A3E token", () => {
-  assert.equal(ATTENTION, "\x1b[38;2;208;138;62m");
+test("the {colors.attention} ANSI constant this task adds to morning-ritual.ts is genuinely the DESIGN.md #D08A3E token (256-color mode, for Terminal.app compatibility — see ritual-shared.ts's own doc comment)", () => {
+  assert.equal(ATTENTION, "\x1b[38;5;173m");
 });
 
 test("renderNightEscalateNotice paints the terminal-side escalation notice with the literal ATTENTION escape when color is on — the one destination in this ritual that CAN render it", () => {

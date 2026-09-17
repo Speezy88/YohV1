@@ -189,7 +189,16 @@ import { shapeDeclaredTimeBudget } from "../core/time-budget.ts";
 import { resolveToneSystemPrompt } from "../core/tone.ts";
 import { DATA_COMPLETENESS_REQUEST_ID, PLANNING_FIELD_LABELS } from "../rituals/data-completeness.ts";
 import { buildBlockerConfirmationLine, runMidDayReflow } from "../rituals/mid-day-reflow.ts";
-import { ACCENT, localIsoDate, renderPlan, RESET } from "../rituals/ritual-shared.ts";
+import {
+  ACCENT,
+  localIsoDate,
+  MUTED,
+  paint,
+  renderMarkdownForTerminal,
+  renderPlan,
+  shouldUseColor,
+  WRAP_WIDTH,
+} from "../rituals/ritual-shared.ts";
 import {
   applyNightCloseOutConfirmation,
   clearNightCloseOutRequestIfOpen,
@@ -346,7 +355,8 @@ async function answerDataCompletenessRequest(
   const detail = record.data.detail as { readonly incomplete?: readonly MissingFieldReport[] } | undefined;
   const incomplete = detail?.incomplete ?? [];
 
-  io.writeLine(`${ACCENT}${record.data.promptText}${RESET}`);
+  io.writeLine(paint(record.data.promptText, ACCENT, shouldUseColor()));
+  io.writeLine("");
 
   for (const report of incomplete) {
     for (const field of report.missingFields) {
@@ -486,7 +496,8 @@ async function answerNightCloseOutRequest(
   // somehow absent (a malformed/legacy record).
   const closeOutDate = detail?.date ?? fallbackDate;
 
-  io.writeLine(`${ACCENT}${record.data.promptText}${RESET}`);
+  io.writeLine(paint(record.data.promptText, ACCENT, shouldUseColor()));
+  io.writeLine("");
 
   const skippedTitles: string[] = [];
 
@@ -607,7 +618,8 @@ async function answerSelfCheckRequest(
   today: IsoDate,
   random: () => number,
 ): Promise<boolean> {
-  io.writeLine(`${ACCENT}${record.data.promptText}${RESET}`);
+  io.writeLine(paint(record.data.promptText, ACCENT, shouldUseColor()));
+  io.writeLine("");
 
   for (;;) {
     const answer = await io.readLine("  Score + reason: ");
@@ -842,7 +854,8 @@ async function answerProposalRequest(
   io: ChatCliIo,
   record: StoredRecord<InteractionRequest>,
 ): Promise<boolean> {
-  io.writeLine(`${ACCENT}${record.data.promptText}${RESET}`);
+  io.writeLine(paint(record.data.promptText, ACCENT, shouldUseColor()));
+  io.writeLine("");
 
   const clearThisRequest = (): void => {
     const current = getOpenInteractionRequest(store, record.id);
@@ -977,7 +990,8 @@ export async function surfaceOpenInteractionRequests(
       continue;
     }
 
-    io.writeLine(`${ACCENT}${next.data.promptText}${RESET}`);
+    io.writeLine(paint(next.data.promptText, ACCENT, shouldUseColor()));
+    io.writeLine("");
     const answer = await io.readLine("> ");
     if (answer === null) return; // stdin closed — nothing more can be surfaced or answered.
     if (answer.trim().length === 0) continue; // wait indefinitely (UX-DR20): re-prompt, don't clear on a blank line.
@@ -1431,8 +1445,22 @@ export async function runChatCli(
 ): Promise<void> {
   await surfaceOpenInteractionRequests(store, io, setTaskStatus, currentIsoDate(timeZone, now));
 
+  // Set once the first real (non-blank) line has been handled, so a
+  // muted divider separates each conversation turn from the next —
+  // deliberately not printed before the very first prompt, when there is no
+  // prior turn yet to separate from.
+  let turnComplete = false;
+
   for (;;) {
-    const line = await io.readLine("yoh> ");
+    // The divider is folded into the PROMPT string itself, rather than a
+    // separate `io.writeLine` call before it — it must only ever appear
+    // attached to an actual next prompt Spencer is being shown, never as a
+    // dangling trailing line when `io.readLine` is about to return `null`
+    // (stdin/EOF) and the session is ending with nothing further to print.
+    const prompt = turnComplete
+      ? `${paint("─".repeat(WRAP_WIDTH), MUTED, shouldUseColor())}\n${paint("yoh> ", ACCENT, shouldUseColor())}`
+      : paint("yoh> ", ACCENT, shouldUseColor());
+    const line = await io.readLine(prompt);
     if (line === null) return;
 
     // Re-check before processing anything else — a ritual running
@@ -1441,6 +1469,7 @@ export async function runChatCli(
     await surfaceOpenInteractionRequests(store, io, setTaskStatus, currentIsoDate(timeZone, now));
 
     if (line.trim().length === 0) continue;
+    turnComplete = true;
 
     const timeBudgetCommand = parseTimeBudgetCommand(line);
     if (timeBudgetCommand) {
@@ -1477,7 +1506,7 @@ export async function runChatCli(
 
     try {
       const response = await answerGeneralQuestion(llmClient, line, resolveToneSystemPrompt(line));
-      io.writeLine(response);
+      io.writeLine(renderMarkdownForTerminal(response, shouldUseColor()));
     } catch (err) {
       io.writeLine(`I hit a problem trying to answer that: ${err instanceof Error ? err.message : String(err)}`);
     }

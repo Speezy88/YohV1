@@ -34,21 +34,36 @@ import type { IsoDate, IsoDateTime, Plan, PlanBlock } from "../types/domain.ts";
 // ============================================================================
 
 /**
- * 24-bit ANSI truecolor escape for DESIGN.md's `colors.accent` (#5FAFFF).
+ * 256-color (8-bit) ANSI escape for DESIGN.md's `colors.accent` (#5FAFFF).
  * Used ONLY for a section label — the Plan's header here, a prompt's label
  * in `chat-cli.ts` — never for emphasis inside body text.
+ *
+ * Was a 24-bit truecolor escape (`\x1b[38;2;95;175;255m`) until real-world
+ * testing found it rendering as an unintended color in Apple's Terminal.app,
+ * which has long had unreliable support for 24-bit truecolor SGR codes.
+ * 256-color mode is universally supported (including Terminal.app) and, for
+ * this exact color, lossless: xterm's 256-color cube is built from the same
+ * six steps [0, 95, 135, 175, 215, 255] per channel, and (95, 175, 255) is
+ * exactly index 75 in that cube (16 + 36*1 + 6*3 + 5) — not an approximation.
  */
-export const ACCENT = "\x1b[38;2;95;175;255m";
+export const ACCENT = "\x1b[38;5;75m";
 
 /**
- * 24-bit ANSI truecolor escape for DESIGN.md's `colors.muted` (#6B6B6B).
- * Used ONLY for the one-line Plan reasoning (UX-DR4), so the "why" reads as
- * a quiet aside rather than a competing headline.
+ * 256-color (8-bit) ANSI escape for DESIGN.md's `colors.muted` (#6B6B6B).
+ * Used ONLY for the one-line Plan reasoning (UX-DR4) and the between-turns
+ * divider in `chat-cli.ts`, so both read as a quiet aside rather than a
+ * competing headline.
+ *
+ * Same Terminal.app-compatibility switch as `ACCENT` above. #6B6B6B
+ * (107,107,107) doesn't land exactly on a 256-color cube step, so this uses
+ * the nearest entry on xterm's 24-step grayscale ramp instead: index 242 is
+ * RGB(108,108,108) — a 1-in-255 difference per channel, invisible in
+ * practice.
  */
-export const MUTED = "\x1b[38;2;107;107;107m";
+export const MUTED = "\x1b[38;5;242m";
 
 /**
- * 24-bit ANSI truecolor escape for DESIGN.md's `colors.attention` (#D08A3E)
+ * 256-color (8-bit) ANSI escape for DESIGN.md's `colors.attention` (#D08A3E)
  * — a warm amber, deliberately not red (DESIGN.md: "Yoh escalates under
  * strain, it doesn't alarm"). Reserved for exactly the two moments
  * DESIGN.md names ("Do reserve `{colors.attention}` for genuine escalation
@@ -59,11 +74,61 @@ export const MUTED = "\x1b[38;2;107;107;107m";
  * Task 20 — kept in this shared home (not a private copy per file) for the
  * same reason `ACCENT`/`MUTED` live here: it is the established shared
  * color-token home every ritual file imports from.
+ *
+ * Same Terminal.app-compatibility switch as `ACCENT`/`MUTED` above. #D08A3E
+ * (208,138,62) doesn't land exactly on a cube step either; nearest cube
+ * entry is index 173, RGB(215,135,95) — a slightly more salmon amber than
+ * the truecolor original, still clearly the same warm, non-alarming hue.
  */
-export const ATTENTION = "\x1b[38;2;208;138;62m";
+export const ATTENTION = "\x1b[38;5;173m";
 
 /** Ends any of the above spans, returning to the terminal's own default body color (`colors.text-default`). */
 export const RESET = "\x1b[0m";
+
+/**
+ * ANSI bold (SGR 1). Not a DESIGN.md color token — a text WEIGHT, the same
+ * kind of styling DESIGN.md's Typography section already allows for a
+ * section label ("bold... for the section label, plain weight for
+ * everything else"). Used by `renderMarkdownForTerminal` below for markdown
+ * emphasis in Claude's chat replies.
+ */
+const BOLD = "\x1b[1m";
+
+/** ANSI italic (SGR 3). Same rationale as `BOLD` above, for `*italic*`. */
+const ITALIC = "\x1b[3m";
+
+/**
+ * Turns markdown emphasis/structure syntax in `text` into either real
+ * terminal styling (`enabled: true` — pass `shouldUseColor()`, the same
+ * TTY/`NO_COLOR`/`TERM=dumb` gating color itself uses, since a destination
+ * that can't render color can't render bold/italic either) or plain text
+ * with the syntax characters simply removed (`enabled: false`) — never
+ * literal asterisks/hashes either way. `shell/chat-cli.ts`'s general-chat
+ * path calls this on every Claude reply: nothing tells Claude to avoid
+ * markdown, and a plain terminal doesn't render it on its own, so without
+ * this a reply that uses `**bold**` would print the literal asterisks.
+ *
+ * Deliberately narrow, not a full markdown parser — handles exactly the
+ * constructs Claude's own chat replies actually produce: `**bold**`,
+ * `*italic*`, `` `inline code` ``, fenced code block fences, and `#`
+ * headings. Skips underscore-delimited emphasis (`_italic_`/`__bold__`)
+ * entirely on purpose: this assistant discusses env-var-style names
+ * (`NOTION_TOKEN`, `PUSHOVER_APP_TOKEN`) constantly, and naive underscore
+ * emphasis would mangle every one of them.
+ */
+export function renderMarkdownForTerminal(text: string, enabled: boolean): string {
+  return text
+    // Fenced code blocks: drop the ``` fence lines/markers, keep the code plain.
+    .replace(/^```[^\n]*\n?/gm, "")
+    .replace(/```/g, "")
+    // Headings: strip the leading #'s; bold what's left when styling is on.
+    .replace(/^#{1,6}[ \t]+(.+)$/gm, (_match, heading: string) => (enabled ? `${BOLD}${heading}${RESET}` : heading))
+    // Bold before italic, so a "**x**" span isn't mis-split by the italic pass below.
+    .replace(/\*\*(\S(?:.*?\S)?)\*\*/g, (_match, inner: string) => (enabled ? `${BOLD}${inner}${RESET}` : inner))
+    .replace(/(?<!\*)\*(\S(?:.*?\S)?)\*(?!\*)/g, (_match, inner: string) => (enabled ? `${ITALIC}${inner}${RESET}` : inner))
+    // Inline code: drop the backticks either way — no styling budget left to spend on it.
+    .replace(/`([^`]+)`/g, "$1");
+}
 
 /**
  * Whether to emit color at all. DESIGN.md is explicit that truecolor support
