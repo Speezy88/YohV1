@@ -31,12 +31,17 @@
  * reflected on the very next call, with no manual re-sync step (Story 1.3's
  * acceptance criteria).
  *
- * Documented assumptions about Notion's Task/Project database shape (no
- * live Notion account is available in this environment to confirm against
- * a real workspace — see the Task 3 brief's "Before You Begin"; these are
- * reasonable-default readings of the real `@notionhq/client` v5 TypeScript
- * types in `node_modules/@notionhq/client`, checked live, not guessed
- * blindly):
+ * Documented assumptions about Notion's Task/Project database shape,
+ * updated once a real Notion workspace (Spencer's own) became available to
+ * confirm against — see the Task 3 brief's "Before You Begin" for how these
+ * started as reasonable-default readings of the real `@notionhq/client` v5
+ * TypeScript types, not guessed blindly; three of the four gaps a live
+ * comparison surfaced needed no code change (a "Estimated Duration" Number
+ * property and a native-Status "Status" property were simply added/converted
+ * on the Notion side to match what this file already expected), and the
+ * fourth (`Status`'s Notion option names) already matched
+ * `DEFAULT_TASK_STATUS_OPTION_NAMES` exactly. The two below did need code
+ * changes:
  *  - This SDK version (5.x, `Client.defaultNotionVersion = "2025-09-03"`,
  *    matching `.env.example`'s pinned `NOTION_API_VERSION`) queries via
  *    `client.dataSources.query({ data_source_id, ... })`, Notion's current
@@ -47,7 +52,11 @@
  *    "Energy" (select), "Project" (relation) — the exact names the Task 3
  *    brief's acceptance criteria uses. Overridable via
  *    `NotionAdapterConfig.taskPropertyNames` in case Spencer's real
- *    workspace differs, without a code change.
+ *    workspace differs, without a code change — confirmed genuinely needed
+ *    for `title`: Spencer's real Tasks database names it "Task Name", not
+ *    "Name". `loadTaskPropertyNamesFromEnv` (below) wires this one override
+ *    to `NOTION_TASK_TITLE_PROPERTY`; every caller that constructs
+ *    `NotionAdapterConfig` uses it rather than the bare default.
  *  - `Area` is read from either a `select` or `rich_text` property (select
  *    checked first) since `domain.ts` documents `Area` as Spencer's own
  *    free-form taxonomy, not a fixed enum — either Notion property type is
@@ -60,7 +69,12 @@
  *    brief's `Task` type already models every planning field as optional
  *    for exactly this "Notion row incompletely/inconsistently filled in"
  *    case; `core/data-completeness-gate.ts` (a later task) is what decides
- *    whether an incomplete Task is plan-eligible, not this file.
+ *    whether an incomplete Task is plan-eligible, not this file. `Energy`
+ *    additionally checks `DEFAULT_ENERGY_OPTION_NAMES` first (see that
+ *    constant's own doc comment) — confirmed genuinely needed: Spencer's
+ *    real Energy select uses his own "🔵 Deep Work"/"⚡ Light Work"
+ *    taxonomy, which this generic normalization alone would leave unset for
+ *    every Task.
  *  - A Task's "Project grouping" is read from a `relation` property named
  *    "Project"; only the first related page id is used (a Task's project
  *    relation is modeled as single-valued for this story). Projects
@@ -143,6 +157,41 @@ export const DEFAULT_TASK_PROPERTY_NAMES: NotionTaskPropertyNames = {
   project: "Project",
 };
 
+/**
+ * Loads `NotionTaskPropertyNames` from environment variables, overriding
+ * `DEFAULT_TASK_PROPERTY_NAMES.title` with `NOTION_TASK_TITLE_PROPERTY` when
+ * set (the other six property names stay at their defaults — no other
+ * per-workspace title-style mismatch has been found in Spencer's real
+ * workspace, so this deliberately does not grow into a generic
+ * one-env-var-per-property scheme until a second one actually turns up).
+ *
+ * This exists because Spencer's real Tasks database titles its title
+ * property "Task Name", not "Name" — `DEFAULT_TASK_PROPERTY_NAMES.title`'s
+ * "reasonable-default reading" (see the module docstring) guessed wrong for
+ * this workspace. `taskPropertyNames` on `NotionAdapterConfig` already
+ * existed as an override seam for exactly this case; this function is what
+ * actually wires it to an environment variable, following the same
+ * adapter-owns-its-env-parsing convention `token-store.ts`'s
+ * `loadGoogleOAuthConfigFromEnv` and `notification-adapter.ts`'s
+ * `loadPushoverConfigFromEnv` already establish — so the NEXT workspace
+ * property-name mismatch a future call site hits (title or otherwise) has a
+ * documented precedent to extend, rather than requiring another one-off code
+ * change the way this one did.
+ *
+ * Never throws: unlike `loadPushoverConfigFromEnv`'s required secrets, every
+ * field here has a sane default, so an unset `NOTION_TASK_TITLE_PROPERTY`
+ * just means "use the default" rather than a startup failure.
+ */
+export function loadTaskPropertyNamesFromEnv(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): NotionTaskPropertyNames {
+  const titleOverride = env["NOTION_TASK_TITLE_PROPERTY"];
+  return {
+    ...DEFAULT_TASK_PROPERTY_NAMES,
+    ...(titleOverride ? { title: titleOverride } : {}),
+  };
+}
+
 /** The Notion property name a Project's display name is read from. */
 export interface NotionProjectPropertyNames {
   readonly title: string;
@@ -171,6 +220,34 @@ export const DEFAULT_TASK_STATUS_OPTION_NAMES: Record<TaskStatus, string> = {
 };
 
 /**
+ * Maps Spencer's real Notion Energy-select option names onto `domain.ts`'s
+ * `Energy` enum ("the energy level a Task requires"). Spencer's workspace
+ * doesn't use a low/medium/high scale for this property — it uses his own
+ * pre-existing personal taxonomy, "🔵 Deep Work" / "⚡ Light Work", which
+ * already IS an energy-required distinction and maps directly onto the
+ * enum's two ends: Deep Work needs real focus/energy (`"high"`), Light Work
+ * doesn't (`"low"`). `"medium"` deliberately has no entry — nothing in
+ * Spencer's workspace corresponds to it, and `derived-priority.ts`'s
+ * `ENERGY_RANK`/secondary-axis tie-break doesn't require every enum value to
+ * be reachable, only that the ones that occur rank consistently (a decision
+ * made explicitly in favor of this direct mapping over adding a second,
+ * Yoh-only Low/Medium/High property: see the Energy field-mapping
+ * conversation this was resolved in — a duplicate property would mean
+ * double-tagging every Task with information Spencer's existing taxonomy
+ * already carries, for a finer-grained scale that reflects nothing true
+ * about the Tasks themselves).
+ *
+ * Overridable via `NotionAdapterConfig.energyOptionNames`, the same
+ * override convention `taskPropertyNames`/`statusOptionNames` already
+ * establish, in case this ever needs to point at different real option
+ * names later.
+ */
+export const DEFAULT_ENERGY_OPTION_NAMES: Partial<Record<Energy, string>> = {
+  high: "🔵 Deep Work",
+  low: "⚡ Light Work",
+};
+
+/**
  * `readNotionTasks`'s config. `setTaskStatus` does NOT take this type
  * directly (Task 19 review fix) — it takes only the narrower
  * `NotionStatusWriteConfig` slice below; see that type's own doc comment
@@ -188,6 +265,8 @@ export interface NotionAdapterConfig {
   readonly projectPropertyNames?: NotionProjectPropertyNames;
   /** Overrides `DEFAULT_TASK_STATUS_OPTION_NAMES` — used only by `setTaskStatus`. */
   readonly statusOptionNames?: Record<TaskStatus, string>;
+  /** Overrides `DEFAULT_ENERGY_OPTION_NAMES` — used only by `readNotionTasks`'s read-side Energy normalization. */
+  readonly energyOptionNames?: Partial<Record<Energy, string>>;
 }
 
 /**
@@ -241,6 +320,7 @@ export async function readNotionTasks(
 ): Promise<NotionTasksAndProjects> {
   const taskPropertyNames = config.taskPropertyNames ?? DEFAULT_TASK_PROPERTY_NAMES;
   const projectPropertyNames = config.projectPropertyNames ?? DEFAULT_PROJECT_PROPERTY_NAMES;
+  const energyOptionNames = config.energyOptionNames ?? DEFAULT_ENERGY_OPTION_NAMES;
 
   const [taskPages, projectPages] = await Promise.all([
     queryAllPages(client, config.tasksDataSourceId),
@@ -248,7 +328,7 @@ export async function readNotionTasks(
   ]);
 
   return {
-    tasks: taskPages.map((page) => toTask(page, taskPropertyNames)),
+    tasks: taskPages.map((page) => toTask(page, taskPropertyNames, energyOptionNames)),
     projects: projectPages.map((page) => toProject(page, projectPropertyNames)),
   };
 }
@@ -379,13 +459,17 @@ async function queryAllPages(
 // Page -> domain-type mapping
 // ============================================================================
 
-function toTask(page: PageObjectResponse, names: NotionTaskPropertyNames): Task {
+function toTask(
+  page: PageObjectResponse,
+  names: NotionTaskPropertyNames,
+  energyOptionNames: Partial<Record<Energy, string>>,
+): Task {
   const estimatedDurationMinutes = getNumber(page, names.estimatedDuration);
   const area = getAreaValue(page, names.area);
   const dueDateStart = getDateStart(page, names.dueDate);
   const dueDate = dueDateStart === undefined ? undefined : toIsoDateOnly(dueDateStart);
   const status = normalizeStatus(getStatusName(page, names.status));
-  const energy = normalizeEnergy(getSelectName(page, names.energy));
+  const energy = normalizeEnergy(getSelectName(page, names.energy), energyOptionNames);
   const projectId = getFirstRelationId(page, names.project);
 
   return {
@@ -501,7 +585,23 @@ function normalizeStatus(raw: string | undefined): TaskStatus | undefined {
     : undefined;
 }
 
-function normalizeEnergy(raw: string | undefined): Energy | undefined {
+/**
+ * Checks `raw` against `optionNames` (Spencer's real Energy-select option
+ * strings, e.g. "🔵 Deep Work") FIRST, by exact trimmed match — those option
+ * names don't survive `normalizeOptionName`'s lowercase/hyphenate pass into
+ * anything resembling `"low"`/`"medium"`/`"high"`, so they'd never match via
+ * the generic path below. Falls back to the generic low/medium/high string
+ * normalization `normalizeStatus` also uses, so a workspace that DOES use
+ * literal "Low"/"Medium"/"High" option names (the Task 3 brief's original
+ * reasonable-default assumption) still works unchanged.
+ */
+function normalizeEnergy(raw: string | undefined, optionNames: Partial<Record<Energy, string>>): Energy | undefined {
+  if (raw === undefined) return undefined;
+  const trimmed = raw.trim();
+  for (const level of ["low", "medium", "high"] as const) {
+    if (optionNames[level] === trimmed) return level;
+  }
+
   const normalized = normalizeOptionName(raw);
   return normalized !== undefined && VALID_ENERGY_LEVELS.has(normalized)
     ? (normalized as Energy)

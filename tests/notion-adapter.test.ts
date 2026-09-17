@@ -23,6 +23,8 @@ import type {
   QueryDataSourceResponse,
 } from "@notionhq/client";
 import {
+  DEFAULT_TASK_PROPERTY_NAMES,
+  loadTaskPropertyNamesFromEnv,
   readNotionTasks,
   setTaskStatus,
   type NotionDataSourceClient,
@@ -342,6 +344,43 @@ test("readNotionTasks pages through every result via start_cursor/has_more rathe
   );
 });
 
+test("readNotionTasks normalizes Spencer's real Energy taxonomy (Deep Work / Light Work) to high/low by default", async () => {
+  const client = new FakeNotionClient({
+    "tasks-ds": [
+      [
+        makeTaskPage({ id: "task-deep", title: "Deep focus task", energy: "🔵 Deep Work" }),
+        makeTaskPage({ id: "task-light", title: "Light admin task", energy: "⚡ Light Work" }),
+      ],
+    ],
+    "projects-ds": [[]],
+  });
+
+  const result = await readNotionTasks(client, CONFIG);
+  const byId = new Map(result.tasks.map((t) => [t.id, t]));
+  assert.equal(byId.get("task-deep")?.energy, "high");
+  assert.equal(byId.get("task-light")?.energy, "low");
+});
+
+test("readNotionTasks honors a custom energyOptionNames override", async () => {
+  const client = new FakeNotionClient({
+    "tasks-ds": [[makeTaskPage({ id: "task-custom", title: "Custom energy", energy: "Grindy" })]],
+    "projects-ds": [[]],
+  });
+
+  const result = await readNotionTasks(client, { ...CONFIG, energyOptionNames: { high: "Grindy" } });
+  assert.equal(result.tasks[0]?.energy, "high");
+});
+
+test("readNotionTasks leaves Energy unset for a value matching neither the option-name map nor the generic low/medium/high normalization", async () => {
+  const client = new FakeNotionClient({
+    "tasks-ds": [[makeTaskPage({ id: "task-unknown", title: "Mystery energy", energy: "🎲 Whatever" })]],
+    "projects-ds": [[]],
+  });
+
+  const result = await readNotionTasks(client, CONFIG);
+  assert.equal(result.tasks[0]?.energy, undefined);
+});
+
 test("readNotionTasks normalizes Status/Energy option casing to the fixed Yoh enums", async () => {
   const client = new FakeNotionClient({
     "tasks-ds": [
@@ -355,6 +394,39 @@ test("readNotionTasks normalizes Status/Energy option casing to the fixed Yoh en
   const result = await readNotionTasks(client, CONFIG);
   assert.equal(result.tasks[0]?.status, "slipped");
   assert.equal(result.tasks[0]?.energy, "low");
+});
+
+test("readNotionTasks honors a custom taskPropertyNames.title override — Spencer's real workspace names it 'Task Name', not 'Name'", async () => {
+  const page = makeTaskPage({ id: "task-titled", title: "placeholder" });
+  // makeTaskPage hardcodes the title property under the key "Name"; rename
+  // it to "Task Name" to simulate Spencer's real workspace shape.
+  const renamed = {
+    ...page,
+    properties: { ...page.properties, "Task Name": page.properties["Name"] },
+  } as unknown as PageObjectResponse;
+  delete (renamed as { properties: Record<string, unknown> }).properties["Name"];
+
+  const client = new FakeNotionClient({
+    "tasks-ds": [[renamed]],
+    "projects-ds": [[]],
+  });
+
+  const config = { ...CONFIG, taskPropertyNames: { ...DEFAULT_TASK_PROPERTY_NAMES, title: "Task Name" } };
+  const result = await readNotionTasks(client, config);
+  assert.equal(result.tasks[0]?.title, "placeholder");
+});
+
+// ============================================================================
+// loadTaskPropertyNamesFromEnv (title property mismatch fix)
+// ============================================================================
+
+test("loadTaskPropertyNamesFromEnv falls back to DEFAULT_TASK_PROPERTY_NAMES when NOTION_TASK_TITLE_PROPERTY is unset", () => {
+  assert.deepEqual(loadTaskPropertyNamesFromEnv({}), DEFAULT_TASK_PROPERTY_NAMES);
+});
+
+test("loadTaskPropertyNamesFromEnv overrides only .title from NOTION_TASK_TITLE_PROPERTY, leaving every other property name at its default", () => {
+  const result = loadTaskPropertyNamesFromEnv({ NOTION_TASK_TITLE_PROPERTY: "Task Name" });
+  assert.deepEqual(result, { ...DEFAULT_TASK_PROPERTY_NAMES, title: "Task Name" });
 });
 
 // ============================================================================

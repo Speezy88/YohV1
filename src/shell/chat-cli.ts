@@ -178,7 +178,11 @@ import {
   loadLlmAdapterConfigFromEnv,
   type AnthropicMessagesClient,
 } from "../adapters/llm-adapter.ts";
-import { readNotionTasks, setTaskStatus as notionSetTaskStatus } from "../adapters/notion-adapter.ts";
+import {
+  loadTaskPropertyNamesFromEnv,
+  readNotionTasks,
+  setTaskStatus as notionSetTaskStatus,
+} from "../adapters/notion-adapter.ts";
 import type { MissingFieldReport } from "../core/data-completeness-gate.ts";
 import { computeSlipBumpLevel } from "../core/slip-bump.ts";
 import { shapeDeclaredTimeBudget } from "../core/time-budget.ts";
@@ -1558,7 +1562,8 @@ export async function main(env: Readonly<Record<string, string | undefined>> = p
       auth: notionToken,
       ...(env["NOTION_API_VERSION"] ? { notionVersion: env["NOTION_API_VERSION"] } : {}),
     });
-    return (await readNotionTasks(notionClient, { tasksDataSourceId, projectsDataSourceId })).tasks;
+    const taskPropertyNames = loadTaskPropertyNamesFromEnv(env);
+    return (await readNotionTasks(notionClient, { tasksDataSourceId, projectsDataSourceId, taskPropertyNames })).tasks;
   };
   // Same "lazily constructed, no unrelated startup requirement" convention
   // as `readTasks` above (Task 19) — a session that never answers a Night

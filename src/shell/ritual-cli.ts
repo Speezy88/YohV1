@@ -210,7 +210,7 @@ import {
 import { loadEmailConfigFromEnv, sendEmail } from "../adapters/email-adapter.ts";
 import { writeStructuredLog } from "../adapters/logger.ts";
 import { loadPushoverConfigFromEnv, sendPushoverNotification } from "../adapters/notification-adapter.ts";
-import { readNotionTasks } from "../adapters/notion-adapter.ts";
+import { loadTaskPropertyNamesFromEnv, readNotionTasks } from "../adapters/notion-adapter.ts";
 import { createTokenStore, loadGoogleOAuthConfigFromEnv } from "../adapters/token-store.ts";
 import { computeSlipBumpLevels } from "../core/slip-bump.ts";
 import {
@@ -1011,6 +1011,7 @@ export function createMorningRitualDeps(
       "ritual-cli: missing required environment variable(s) NOTION_TOKEN / NOTION_TASKS_DATA_SOURCE_ID / NOTION_PROJECTS_DATA_SOURCE_ID",
     );
   }
+  const taskPropertyNames = loadTaskPropertyNamesFromEnv(env);
 
   const notionClient = new Client({
     auth: notionToken,
@@ -1057,7 +1058,8 @@ export function createMorningRitualDeps(
 
   return {
     store,
-    readTasks: async () => (await readNotionTasks(notionClient, { tasksDataSourceId, projectsDataSourceId })).tasks,
+    readTasks: async () =>
+      (await readNotionTasks(notionClient, { tasksDataSourceId, projectsDataSourceId, taskPropertyNames })).tasks,
     readCalendarEvents: () => readCalendarEvents(calendarClient, { timeZone }),
     // Final whole-branch review, Finding 1: mirrors `readCalendarEvents`
     // above — bound to the same `tokenStore`, which structurally satisfies
