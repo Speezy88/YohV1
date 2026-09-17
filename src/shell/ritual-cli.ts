@@ -1341,10 +1341,24 @@ export async function main(
 if (import.meta.main) {
   main()
     .then((code) => {
-      process.exitCode = code;
+      // AD-5: every ritual-cli.ts subcommand is a one-shot process that must
+      // exit on its own once its work is done — no daemon, nothing left
+      // waiting for input. Relying on `process.exitCode` plus a natural
+      // event-loop drain isn't enough here: the adapters this file wires up
+      // (Notion, Google Calendar) go over Node's built-in `fetch`, whose
+      // underlying HTTP client can leave an idle keep-alive socket open
+      // after the response — the process then sits well past its real work
+      // (all of which already happened, and `main`'s own `finally` block
+      // already closed the MemoryStore) waiting for that socket to be
+      // reclaimed before the event loop can drain on its own. By this point
+      // every real effect (Plan generation/delivery, notification, DB
+      // write/close) has already completed inside the awaited `main()` call,
+      // so forcing termination here can't cut off pending work — it only
+      // skips an unbounded wait on a handle nothing further needs.
+      process.exit(code);
     })
     .catch((err: unknown) => {
       process.stderr.write(`ritual-cli: fatal error: ${err instanceof Error ? err.message : String(err)}\n`);
-      process.exitCode = 1;
+      process.exit(1);
     });
 }
