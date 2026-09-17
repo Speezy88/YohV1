@@ -1,7 +1,7 @@
 ---
 title: PRD: Yoh
 created: 2026-08-21
-updated: 2026-08-22
+updated: 2026-09-16
 status: final
 ---
 
@@ -17,7 +17,7 @@ Yoh is a personal daily-planning system built for exactly one user. It reads a N
 
 This is Yoh's second attempt. The first was abandoned not for bugs or lost motivation but for an efficacy failure — what shipped wasn't useful enough to keep using. This PRD exists to convert the lessons of that failure into enforceable requirements: a narrow, working Morning/Night loop before anything else, a strict **Propose-Don't-Impose** boundary on anything Yoh infers about Spencer's behavior, and an **Escalate-Under-Strain** discipline that keeps the system's insistence proportional to how much it's actually being ignored — never more, never a flat nag.
 
-Everything past the MVP loop — a web app, physical voice hardware, an iOS app, a Research Vault, self-calibrating estimates — is real roadmap, not scope creep, but it is explicitly Phase 2 and later. This PRD specifies Phase 1 only, and treats the phases past it as constraints on *how* Phase 1 is built (modularly), not as requirements to satisfy now.
+Everything past the MVP loop — a web app, physical voice hardware, an iOS app, a Research Vault, self-calibrating estimates, a Canvas LMS assignment sync — is real roadmap, not scope creep, but it is explicitly Phase 2 and later. This PRD specifies Phase 1 only, and treats the phases past it as constraints on *how* Phase 1 is built (modularly), not as requirements to satisfy now.
 
 ## 2. Why Now
 
@@ -83,6 +83,8 @@ Yoh has exactly one user, permanently — not a v1 scoping choice (see §8 Non-G
 - **Cold Memory** — Yoh's full history, queried on demand and distilled into pattern-statements over time, rather than kept hot.
 - **Tone** — Yoh's default communication register (casual, peer-level), which shifts to concise/educational for factual questions and escalates in urgency only via Slip-Bump — never randomly or via manual Voice Packs.
 - **Voice Pack** — An optional, manually-selected character voice (Phase 5). Fully decoupled from Tone escalation.
+- **Canvas** — Spencer's school Canvas LMS (Instructure), the source of school assignment due dates. Read-only; not a planning input Yoh reads directly — see Canvas Sync. Blocked on school API access approval as of this PRD's last update.
+- **Canvas Sync** — The planned (currently blocked) process that reads assignment due dates from Canvas and creates/updates corresponding Notion Task records, so Canvas assignments flow through Yoh's existing Notion Tasks pipeline (Data-Completeness Gate, Derived Priority, etc.) unchanged rather than becoming a second Task-input path Yoh reads directly.
 
 ## 5. Features
 
@@ -374,6 +376,7 @@ On Night Ritual close-out, the system writes each Plan Block's resulting status 
 - **Self-calibrating task-duration estimates** — Phase 6; Estimated Duration remains a manually-entered Task field through Phase 1.
 - **Recurring Calendar events** — not part of MVP; several Google Calendar recurring-event gotchas are noted in the brief's addendum but are explicitly out of scope until recurrence is added.
 - **Room-cleanliness camera** — long-term/aspirational, not committed to any numbered phase.
+- **Canvas LMS assignment sync** — reads assignment due dates from Spencer's school Canvas LMS and creates/updates corresponding Notion Task records (course → Area, due date, name) so Canvas assignments flow through the existing Notion Tasks pipeline unchanged; Estimated Duration and Energy still get filled by Spencer via the existing Data-Completeness Gate (FR-4), since Canvas can't supply either. Blocked on the school's Canvas admin approving API access (a Canvas Developer Key); not assigned to a numbered phase yet — revisit once access is granted (§11).
 
 ## 10. Success Metrics
 
@@ -405,6 +408,7 @@ The four questions that blocked Phase 1 in the first draft are resolved below; f
 3. **Primary calendar + tagging vs. dedicated secondary calendar**: the technical research found no practitioner consensus on whether Yoh should write Plan Blocks to Spencer's primary Google Calendar (tagged) or a dedicated secondary calendar. Affects FR-22's implementation, not its behavior contract. Owner: Spencer. Revisit: architecture phase.
 4. **Personality/voice tuning cadence**: the brainstorm parked how Yoh's personality/voice gets refined iteratively through usage post-launch — not addressed by this PRD's Tone requirements (FR-18–FR-19), which cover only the default/escalation contract. Owner: Spencer. Revisit: post-launch, once real usage data exists.
 5. **OAuth production-mode verification** — launch-blocking failure mode, ties to SM-2; see `addendum.md` § Technical Dependency Verification for what it is and why. Owner: Spencer. Revisit: verify before September 2, 2026.
+6. **Canvas API access approval** — a Canvas Developer Key (OAuth2 app registration) requires the school's Canvas admin to approve API access before the Canvas Sync (§9.2) can be built at all; also unresolved once approved: course→Area mapping convention and the re-sync/dedup strategy for previously-synced assignments. See `addendum.md` § Canvas API Integration for the research and § "Next step once Canvas API access is granted — BMad path" for the implementation sequence. Owner: Spencer. Revisit: once school approval is granted.
 
 ## 12. Assumptions Index
 
