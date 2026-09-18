@@ -174,6 +174,7 @@ import {
 } from "../adapters/memory-store.ts";
 import {
   answerGeneralQuestion,
+  classifyChatIntent,
   createAnthropicMessagesClient,
   draftNotionPageFields,
   loadLlmAdapterConfigFromEnv,
@@ -188,6 +189,7 @@ import {
   setTaskStatus as notionSetTaskStatus,
   updateTaskField as notionUpdateTaskField,
 } from "../adapters/notion-adapter.ts";
+import { search as runSearch, type SearchAdapterConfig } from "../adapters/search-adapter.ts";
 import type { MissingFieldReport } from "../core/data-completeness-gate.ts";
 import { computeSlipBumpLevel } from "../core/slip-bump.ts";
 import { shapeDeclaredTimeBudget } from "../core/time-budget.ts";
@@ -213,6 +215,7 @@ import {
 } from "../rituals/night-ritual.ts";
 import { applySelfCheckAnswer, isValidSelfCheckScore, SELF_CHECK_REQUEST_ID } from "../rituals/self-check.ts";
 import type {
+  ChatIntent,
   FieldValueSuggestion,
   InteractionRequest,
   IsoDate,
@@ -221,6 +224,7 @@ import type {
   PlanningFieldNames,
   Proposal,
   Result,
+  SearchAnswer,
   Task,
   TaskFieldOverride,
   TaskStatus,
@@ -1560,6 +1564,41 @@ async function handleCreateItemCommand(
   io.writeLine(`Created "${draft.properties["title"]}" in ${database}.`);
 }
 
+// ============================================================================
+// Web search (Story 6.4 / FR-28)
+// ============================================================================
+
+type SearchFn = (query: string) => Promise<Result<SearchAnswer, YohError>>;
+
+/**
+ * Runs one search (Story 6.4 / FR-28) and renders the result: the answer
+ * text, then a "Sources:" list of citation URLs if any. A legitimate
+ * zero-result answer is relayed honestly, not as an error (AD-14). Returns
+ * the `SearchAnswer` on success so a later story can reference "the most
+ * recent search result in this session"; returns `undefined` on failure.
+ */
+async function handleSearchCommand(io: ChatCliIo, query: string, searchFn: SearchFn): Promise<SearchAnswer | undefined> {
+  const result = await searchFn(query);
+  if (!result.ok) {
+    io.writeLine(`I couldn't search for that: ${result.error.message}`);
+    return undefined;
+  }
+
+  const { answer, citations } = result.value;
+  if (answer.length === 0 && citations.length === 0) {
+    io.writeLine("I searched but didn't find anything useful.");
+    return result.value;
+  }
+
+  io.writeLine(renderMarkdownForTerminal(answer, shouldUseColor()));
+  if (citations.length > 0) {
+    io.writeLine("");
+    io.writeLine(paint("Sources:", MUTED, shouldUseColor()));
+    for (const url of citations) io.writeLine(`  - ${url}`);
+  }
+  return result.value;
+}
+
 /**
  * The REPL loop (Task 5, extended by Task 6, Task 11, Task 13, Task 14): on
  * start, and before processing every subsequent line of input, surfaces any
@@ -1626,6 +1665,9 @@ export async function runChatCli(
   },
   validateNotionPageDraft: ValidateNotionPageDraftFn = async () => {
     throw new Error("chat-cli: no validateNotionPageDraft dependency configured — cannot validate a Notion item draft");
+  },
+  searchFn: SearchFn = async () => {
+    throw new Error("chat-cli: no searchFn dependency configured — cannot run a web search");
   },
 ): Promise<void> {
   // FR-25 (Story 6.2): a small bounded window of Spencer's own recent
@@ -1730,6 +1772,18 @@ export async function runChatCli(
         createNotionPage,
         validateNotionPageDraft,
       );
+      continue;
+    }
+
+    let chatIntent: ChatIntent = { kind: "general-question" };
+    try {
+      chatIntent = await classifyChatIntent(llmClient, line);
+    } catch {
+      chatIntent = { kind: "general-question" }; // A classifier failure must never block the ordinary chat turn.
+    }
+
+    if (chatIntent.kind === "search-trigger") {
+      await handleSearchCommand(io, chatIntent.query, searchFn);
       continue;
     }
 
@@ -1932,6 +1986,24 @@ export async function main(env: Readonly<Record<string, string | undefined>> = p
     );
     return result.ok ? { ok: true, value: undefined } : result;
   };
+  // Same lazy-construction convention as every Notion binding above (Story
+  // 6.4) — a session that never triggers a search must not be unable to
+  // start just because Perplexity isn't configured.
+  const searchAdapterConfig: SearchAdapterConfig | undefined = env["PERPLEXITY_API_KEY"]
+    ? { apiKey: env["PERPLEXITY_API_KEY"] }
+    : undefined;
+  const searchFn: SearchFn = async (query) => {
+    if (!searchAdapterConfig) {
+      return {
+        ok: false,
+        error: {
+          kind: "missing-field",
+          message: "chat-cli: missing required environment variable PERPLEXITY_API_KEY — needed to search",
+        },
+      };
+    }
+    return runSearch(searchAdapterConfig, query);
+  };
   try {
     await runChatCli(
       store,
@@ -1944,6 +2016,7 @@ export async function main(env: Readonly<Record<string, string | undefined>> = p
       updateTaskField,
       createNotionPage,
       validateNotionPageDraft,
+      searchFn,
     );
   } finally {
     store.close();

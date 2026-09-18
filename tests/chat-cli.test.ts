@@ -74,6 +74,7 @@ import type {
   PlanningFieldNames,
   Proposal,
   Result,
+  SearchAnswer,
   Task,
   TaskStatus,
   TimeBudget,
@@ -723,6 +724,108 @@ test("when the LLM can't extract a title, Yoh says so and does not attempt valid
   store.close();
 });
 
+// ============================================================================
+// Web search via chat (Story 6.4 / FR-28)
+// ============================================================================
+
+test("an explicit search request routes to search() and renders the answer with its citations", async () => {
+  const store = tempStore();
+  const llmClient = makeFakeLlmClient("SEARCH: best hiking boots under $150");
+  const searchFn = makeFakeSearch({ ok: true, value: { answer: "Salomon and Merrell test well.", citations: ["https://example.com/a"] } });
+  const io = makeScriptedIo(["search for the best hiking boots under $150"]);
+
+  await runChatCli(
+    store,
+    io,
+    TEST_TIME_ZONE,
+    llmClient,
+    () => new Date(NOW),
+    async () => [],
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    searchFn,
+  );
+
+  assert.deepEqual(searchFn.calls, ["best hiking boots under $150"]);
+  assert.ok(io.written.some((line) => line.includes("Salomon and Merrell")));
+  assert.ok(io.written.some((line) => line.includes("https://example.com/a")));
+  store.close();
+});
+
+test("an ordinary message classified as general-question never calls search(), and still answers via the general-qa path", async () => {
+  const store = tempStore();
+  const llmClient = makeFakeLlmClient("GENERAL");
+  const searchFn = makeFakeSearch();
+  const io = makeScriptedIo(["how's the weather looking"]);
+
+  await runChatCli(
+    store,
+    io,
+    TEST_TIME_ZONE,
+    llmClient,
+    () => new Date(NOW),
+    async () => [],
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    searchFn,
+  );
+
+  assert.equal(searchFn.calls.length, 0);
+  store.close();
+});
+
+test("a search returning zero usable results is relayed honestly, not as an error", async () => {
+  const store = tempStore();
+  const llmClient = makeFakeLlmClient("SEARCH: an obscure query");
+  const searchFn = makeFakeSearch({ ok: true, value: { answer: "", citations: [] } });
+  const io = makeScriptedIo(["search for an obscure query"]);
+
+  await runChatCli(
+    store,
+    io,
+    TEST_TIME_ZONE,
+    llmClient,
+    () => new Date(NOW),
+    async () => [],
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    searchFn,
+  );
+
+  assert.ok(io.written.some((line) => /didn't find|couldn't find|no results/i.test(line)));
+  store.close();
+});
+
+test("a search failure (YohError) is reported plainly, not thrown", async () => {
+  const store = tempStore();
+  const llmClient = makeFakeLlmClient("SEARCH: query");
+  const searchFn = makeFakeSearch({ ok: false, error: { kind: "unreachable", message: "search-adapter: Perplexity returned HTTP 500" } });
+  const io = makeScriptedIo(["search for query"]);
+
+  await runChatCli(
+    store,
+    io,
+    TEST_TIME_ZONE,
+    llmClient,
+    () => new Date(NOW),
+    async () => [],
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    searchFn,
+  );
+
+  assert.ok(io.written.some((line) => line.includes("Perplexity returned HTTP 500")));
+  store.close();
+});
+
 test("end-to-end: a Task missing multiple fields is answered field-by-field in one surfacing pass, each stored as its own override", async () => {
   const store = tempStore();
   const rawTask = makeTask("t1", "Plan trip", { area: undefined, dueDate: undefined });
@@ -944,7 +1047,11 @@ test("runChatCli: input that isn't a Time Budget or Plan-view command routes thr
 
   assert.ok(!io.written.some((line) => line.includes("free-text routing arrives in a later task")));
   assert.ok(io.written.includes("It's sunny where you are, probably."));
-  assert.equal(llmClient.calls.length, 1, "expected exactly one Claude call for the unmatched input");
+  assert.equal(
+    llmClient.calls.length,
+    2,
+    "expected exactly two Claude calls for the unmatched input: classifyChatIntent (Story 6.4), then the general-qa answer",
+  );
   store.close();
 });
 
@@ -973,8 +1080,10 @@ test("runChatCli: passes core/tone.ts's resolveToneSystemPrompt(line) as the sys
 
   await runChatCli(store, io, TEST_TIME_ZONE, llmClient);
 
-  assert.equal(llmClient.calls.length, 1);
-  assert.equal(llmClient.calls[0]!.system, resolveToneSystemPrompt("hey, what's up"));
+  // calls[0] is classifyChatIntent's own system prompt (Story 6.4);
+  // calls[1] is the actual general-qa answer call this test is about.
+  assert.equal(llmClient.calls.length, 2);
+  assert.equal(llmClient.calls[1]!.system, resolveToneSystemPrompt("hey, what's up"));
   store.close();
 });
 
@@ -985,8 +1094,8 @@ test("runChatCli: passes core/tone.ts's resolveToneSystemPrompt(line) as the sys
 
   await runChatCli(store, io, TEST_TIME_ZONE, llmClient);
 
-  assert.equal(llmClient.calls.length, 1);
-  const sentSystemPrompt = llmClient.calls[0]!.system;
+  assert.equal(llmClient.calls.length, 2);
+  const sentSystemPrompt = llmClient.calls[1]!.system;
   assert.equal(sentSystemPrompt, resolveToneSystemPrompt("What's the difference between TCP and UDP?"));
   assert.notEqual(sentSystemPrompt, resolveToneSystemPrompt("hey, what's up"));
   store.close();
@@ -1534,6 +1643,18 @@ function makeFakeValidateDraft(
   result: Result<void, YohError> = { ok: true, value: undefined },
 ): (database: NotionDatabaseTarget, properties: Readonly<Record<string, string>>) => Promise<Result<void, YohError>> {
   return async () => result;
+}
+
+/** Fake `search` binding (Story 6.4 / FR-28) — records every call, returns a fixed `Result` by default. */
+function makeFakeSearch(
+  result: Result<SearchAnswer, YohError> = { ok: true, value: { answer: "A cited answer.", citations: ["https://example.com"] } },
+): ((query: string) => Promise<Result<SearchAnswer, YohError>>) & { readonly calls: string[] } {
+  const calls: string[] = [];
+  const fn = async (query: string) => {
+    calls.push(query);
+    return result;
+  };
+  return Object.assign(fn, { calls });
 }
 
 function closeOutPlan(date: IsoDate): Plan {
