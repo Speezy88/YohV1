@@ -175,13 +175,16 @@ import {
 import {
   answerGeneralQuestion,
   createAnthropicMessagesClient,
+  draftNotionPageFields,
   loadLlmAdapterConfigFromEnv,
   suggestFieldValue,
   type AnthropicMessagesClient,
 } from "../adapters/llm-adapter.ts";
 import {
+  createPage as notionCreatePage,
   loadTaskPropertyNamesFromEnv,
   readNotionTasks,
+  resolveNotionPageDraftProperties as notionResolveNotionPageDraftProperties,
   setTaskStatus as notionSetTaskStatus,
   updateTaskField as notionUpdateTaskField,
 } from "../adapters/notion-adapter.ts";
@@ -213,6 +216,8 @@ import type {
   FieldValueSuggestion,
   InteractionRequest,
   IsoDate,
+  NotionDatabaseTarget,
+  NotionPageDraft,
   PlanningFieldNames,
   Proposal,
   Result,
@@ -1446,6 +1451,115 @@ function whyPrioritizedCommand(store: MemoryStore, io: ChatCliIo, tasks: readonl
   );
 }
 
+// ============================================================================
+// Create-item command (Story 6.3 / FR-26)
+// ============================================================================
+
+/**
+ * Recognizes "create/add a [task|project|research vault item] ..." — the
+ * same deliberately-simple, documented starting heuristic every other
+ * trigger recognizer in this file uses (NOT real NLU). Only ever emits one
+ * of the three real `NotionDatabaseTarget` values — Story 6.3's AC2 ("Yoh
+ * does not attempt the creation" for any other target) holds by
+ * construction: anything that doesn't match one of these three database
+ * words simply doesn't match this regex at all, and falls through to the
+ * general-qa catch-all untouched.
+ */
+const CREATE_ITEM_RE = /^(?:create|add|new)\s+(?:a|an)?\s*(task|project|research\s*vault(?:\s+(?:item|entry))?)\b[:\s-]*(.*)$/i;
+
+export function parseCreateItemCommand(line: string): { readonly database: NotionDatabaseTarget; readonly request: string } | undefined {
+  const match = CREATE_ITEM_RE.exec(line.trim());
+  if (!match) return undefined;
+  const [, dbWord, rest] = match;
+  const database: NotionDatabaseTarget = /task/i.test(dbWord!) ? "Tasks" : /project/i.test(dbWord!) ? "Projects" : "ResearchVault";
+  const request = rest!.trim().length > 0 ? rest!.trim() : line.trim();
+  return { database, request };
+}
+
+type CreateNotionPageFn = (
+  database: NotionDatabaseTarget,
+  properties: Readonly<Record<string, string>>,
+) => Promise<Result<{ pageId: string; url?: string }, YohError>>;
+
+type ValidateNotionPageDraftFn = (
+  database: NotionDatabaseTarget,
+  properties: Readonly<Record<string, string>>,
+) => Promise<Result<void, YohError>>;
+
+/**
+ * Handles one recognized create-item request end-to-end (Story 6.3 /
+ * FR-26): asks Claude to draft the fields (`draftNotionPageFields`),
+ * validates the draft against the target database's real live schema
+ * (`validateDraft` — AD-12's draft-time check), shows it as a
+ * `Proposal<NotionPageDraft>` and waits for an explicit yes/no, and on
+ * "yes" creates it (`createPageFn`, which re-validates at write time —
+ * AD-12's binding guarantee) and echoes a one-line receipt (AD-5's Phase
+ * 1.5 chat-receipt requirement). Never persists this Proposal to
+ * `memory-store.ts` — per AD-3, a create has no live entity to snapshot,
+ * so it's built, shown, and resolved entirely within this one call.
+ */
+async function handleCreateItemCommand(
+  io: ChatCliIo,
+  llmClient: AnthropicMessagesClient,
+  database: NotionDatabaseTarget,
+  request: string,
+  createPageFn: CreateNotionPageFn,
+  validateDraft: ValidateNotionPageDraftFn,
+): Promise<void> {
+  let fields: Record<string, string> | undefined;
+  try {
+    fields = await draftNotionPageFields(llmClient, database, request);
+  } catch {
+    fields = undefined;
+  }
+
+  if (!fields) {
+    io.writeLine(`I couldn't tell what you want in the new ${database} item — try naming it more directly.`);
+    return;
+  }
+
+  const validated = await validateDraft(database, fields);
+  if (!validated.ok) {
+    io.writeLine(`I can't create that — ${validated.error.message}`);
+    return;
+  }
+
+  const draft: NotionPageDraft = { database, properties: fields };
+  const proposal: Proposal<NotionPageDraft> = {
+    id: `create-${database}-${Date.now()}`,
+    kind: "notion-page-draft",
+    entityId: database,
+    entityVersion: "new",
+    suggested: draft,
+    reason: `You asked me to create this in ${database}.`,
+    createdAt: new Date().toISOString(),
+  };
+
+  io.writeLine(`Here's what I'll create in ${database}:`);
+  for (const [field, value] of Object.entries(draft.properties)) {
+    io.writeLine(`  ${field}: ${value}`);
+  }
+
+  let confirmAnswer: string | null = null;
+  do {
+    confirmAnswer = await io.readLine("Create this? (yes/no): ");
+    if (confirmAnswer === null) return; // EOF — nothing created.
+  } while (confirmAnswer.trim().length === 0);
+
+  if (parseProposalAnswer(confirmAnswer) !== true) {
+    io.writeLine("Okay — I won't create that.");
+    return;
+  }
+
+  const created = await createPageFn(proposal.suggested.database, proposal.suggested.properties);
+  if (!created.ok) {
+    io.writeLine(`I couldn't create that: ${created.error.message}`);
+    return;
+  }
+
+  io.writeLine(`Created "${draft.properties["title"]}" in ${database}.`);
+}
+
 /**
  * The REPL loop (Task 5, extended by Task 6, Task 11, Task 13, Task 14): on
  * start, and before processing every subsequent line of input, surfaces any
@@ -1506,6 +1620,12 @@ export async function runChatCli(
   },
   updateTaskField: UpdateTaskFieldFn = async () => {
     throw new Error("chat-cli: no updateTaskField dependency configured — cannot record a Data-Completeness answer in Notion");
+  },
+  createNotionPage: CreateNotionPageFn = async () => {
+    throw new Error("chat-cli: no createNotionPage dependency configured — cannot create a Notion item");
+  },
+  validateNotionPageDraft: ValidateNotionPageDraftFn = async () => {
+    throw new Error("chat-cli: no validateNotionPageDraft dependency configured — cannot validate a Notion item draft");
   },
 ): Promise<void> {
   // FR-25 (Story 6.2): a small bounded window of Spencer's own recent
@@ -1597,6 +1717,19 @@ export async function runChatCli(
     if (whyPrioritizedTaskName !== undefined) {
       const tasks = await readTasks();
       whyPrioritizedCommand(store, io, tasks, whyPrioritizedTaskName);
+      continue;
+    }
+
+    const createItemCommand = parseCreateItemCommand(line);
+    if (createItemCommand) {
+      await handleCreateItemCommand(
+        io,
+        llmClient,
+        createItemCommand.database,
+        createItemCommand.request,
+        createNotionPage,
+        validateNotionPageDraft,
+      );
       continue;
     }
 
@@ -1747,8 +1880,71 @@ export async function main(env: Readonly<Record<string, string | undefined>> = p
     });
     return notionUpdateTaskField(notionClient, { tasksDataSourceId }, taskId, field, value);
   };
+  // Same lazy-construction convention as `updateTaskField` above (Story 6.3)
+  // — a session that never asks Yoh to create a Notion item must not be
+  // unable to start just because Notion isn't configured. Needs all three
+  // data source ids (unlike `updateTaskField`, which only ever needs
+  // Tasks'): a create request can target any of the three databases.
+  const createNotionPage: CreateNotionPageFn = async (database, properties) => {
+    const notionToken = env["NOTION_TOKEN"];
+    const tasksDataSourceId = env["NOTION_TASKS_DATA_SOURCE_ID"];
+    const projectsDataSourceId = env["NOTION_PROJECTS_DATA_SOURCE_ID"];
+    const researchVaultDataSourceId = env["NOTION_RESEARCH_VAULT_DATA_SOURCE_ID"];
+    if (!notionToken || !tasksDataSourceId || !projectsDataSourceId || !researchVaultDataSourceId) {
+      return {
+        ok: false,
+        error: {
+          kind: "missing-field",
+          message:
+            "chat-cli: missing required environment variable(s) NOTION_TOKEN / NOTION_TASKS_DATA_SOURCE_ID / NOTION_PROJECTS_DATA_SOURCE_ID / NOTION_RESEARCH_VAULT_DATA_SOURCE_ID — needed to create a Notion item",
+        },
+      };
+    }
+    const notionClient = new Client({
+      auth: notionToken,
+      ...(env["NOTION_API_VERSION"] ? { notionVersion: env["NOTION_API_VERSION"] } : {}),
+    });
+    return notionCreatePage(notionClient, { tasksDataSourceId, projectsDataSourceId, researchVaultDataSourceId }, database, properties);
+  };
+  const validateNotionPageDraft: ValidateNotionPageDraftFn = async (database, properties) => {
+    const notionToken = env["NOTION_TOKEN"];
+    const tasksDataSourceId = env["NOTION_TASKS_DATA_SOURCE_ID"];
+    const projectsDataSourceId = env["NOTION_PROJECTS_DATA_SOURCE_ID"];
+    const researchVaultDataSourceId = env["NOTION_RESEARCH_VAULT_DATA_SOURCE_ID"];
+    if (!notionToken || !tasksDataSourceId || !projectsDataSourceId || !researchVaultDataSourceId) {
+      return {
+        ok: false,
+        error: {
+          kind: "missing-field",
+          message: "chat-cli: missing required Notion environment variable(s) — needed to validate a Notion item draft",
+        },
+      };
+    }
+    const notionClient = new Client({
+      auth: notionToken,
+      ...(env["NOTION_API_VERSION"] ? { notionVersion: env["NOTION_API_VERSION"] } : {}),
+    });
+    const result = await notionResolveNotionPageDraftProperties(
+      notionClient,
+      { tasksDataSourceId, projectsDataSourceId, researchVaultDataSourceId },
+      database,
+      properties,
+    );
+    return result.ok ? { ok: true, value: undefined } : result;
+  };
   try {
-    await runChatCli(store, io, timeZone, llmClient, () => new Date(), readTasks, setTaskStatus, updateTaskField);
+    await runChatCli(
+      store,
+      io,
+      timeZone,
+      llmClient,
+      () => new Date(),
+      readTasks,
+      setTaskStatus,
+      updateTaskField,
+      createNotionPage,
+      validateNotionPageDraft,
+    );
   } finally {
     store.close();
   }

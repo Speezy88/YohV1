@@ -42,6 +42,7 @@ import {
   isPlanViewCommand,
   isBlockerReportCommand,
   parseWhyPrioritizedCommand,
+  parseCreateItemCommand,
   parseSelfCheckAnswer,
   apply,
   parseProposalAnswer,
@@ -65,7 +66,19 @@ import { checkDataCompleteness, type MissingFieldReport } from "../src/core/data
 import type { AnthropicMessagesClient } from "../src/adapters/llm-adapter.ts";
 import { resolveToneSystemPrompt } from "../src/core/tone.ts";
 import type Anthropic from "@anthropic-ai/sdk";
-import type { IsoDate, Plan, PlanBlock, PlanningFieldNames, Proposal, Result, Task, TaskStatus, TimeBudget, YohError } from "../src/types/domain.ts";
+import type {
+  IsoDate,
+  NotionDatabaseTarget,
+  Plan,
+  PlanBlock,
+  PlanningFieldNames,
+  Proposal,
+  Result,
+  Task,
+  TaskStatus,
+  TimeBudget,
+  YohError,
+} from "../src/types/domain.ts";
 
 function tempStore(): MemoryStore {
   return createMemoryStore({ databasePath: ":memory:" });
@@ -588,6 +601,125 @@ test("no llmClient supplied (the default) never attempts an inference — pre-ex
   await surfaceOpenInteractionRequests(store, io, undefined, undefined, undefined, makeFakeUpdateTaskField());
 
   assert.equal(getTaskFieldOverride(store, "t1")?.data.area, "Health");
+  store.close();
+});
+
+// ============================================================================
+// parseCreateItemCommand — pure trigger recognition (Story 6.3 / FR-26)
+// ============================================================================
+
+test("parseCreateItemCommand recognizes 'create a task ...' and targets Tasks", () => {
+  const result = parseCreateItemCommand("create a task to buy hiking boots");
+  assert.deepEqual(result, { database: "Tasks", request: "to buy hiking boots" });
+});
+
+test("parseCreateItemCommand recognizes 'add a project ...' and targets Projects", () => {
+  const result = parseCreateItemCommand("add a project called Kitchen Remodel");
+  assert.equal(result?.database, "Projects");
+});
+
+test("parseCreateItemCommand recognizes a research vault request and targets ResearchVault", () => {
+  const result = parseCreateItemCommand("create a research vault entry about hiking boots");
+  assert.equal(result?.database, "ResearchVault");
+});
+
+test("parseCreateItemCommand returns undefined for an unrelated database name — no fourth target is ever produced", () => {
+  assert.equal(parseCreateItemCommand("create a shopping list"), undefined);
+});
+
+test("parseCreateItemCommand returns undefined for ordinary conversational input", () => {
+  assert.equal(parseCreateItemCommand("what's my plan today"), undefined);
+});
+
+// ============================================================================
+// Create-item flow, end-to-end via runChatCli (Story 6.3 / FR-26)
+// ============================================================================
+
+test("a create-item request is drafted, validated, shown, and — on 'yes' — created via createPage, with a one-line receipt", async () => {
+  const store = tempStore();
+  const llmClient = makeFakeLlmClient("title=Buy hiking boots\narea=Errands");
+  const createPageFn = makeFakeCreatePage();
+  const validateDraft = makeFakeValidateDraft();
+  const io = makeScriptedIo(["create a task to buy hiking boots", "yes"]);
+
+  await runChatCli(
+    store,
+    io,
+    TEST_TIME_ZONE,
+    llmClient,
+    () => new Date(NOW),
+    async () => [],
+    undefined,
+    undefined,
+    createPageFn,
+    validateDraft,
+  );
+
+  assert.equal(createPageFn.calls.length, 1);
+  assert.equal(createPageFn.calls[0]!.database, "Tasks");
+  assert.equal(createPageFn.calls[0]!.properties["title"], "Buy hiking boots");
+  assert.ok(io.written.some((line) => /created/i.test(line)), "expected a one-line creation receipt");
+  store.close();
+});
+
+test("declining the draft does not create anything", async () => {
+  const store = tempStore();
+  const llmClient = makeFakeLlmClient("title=Buy hiking boots");
+  const createPageFn = makeFakeCreatePage();
+  const validateDraft = makeFakeValidateDraft();
+  const io = makeScriptedIo(["create a task to buy hiking boots", "no"]);
+
+  await runChatCli(
+    store,
+    io,
+    TEST_TIME_ZONE,
+    llmClient,
+    () => new Date(NOW),
+    async () => [],
+    undefined,
+    undefined,
+    createPageFn,
+    validateDraft,
+  );
+
+  assert.equal(createPageFn.calls.length, 0);
+  store.close();
+});
+
+test("a draft that fails validation is never shown for confirmation, and nothing is created", async () => {
+  const store = tempStore();
+  const llmClient = makeFakeLlmClient("title=Buy hiking boots\narea=Astronomy");
+  const createPageFn = makeFakeCreatePage();
+  const validateDraft = makeFakeValidateDraft({ ok: false, error: { kind: "validation", message: "no close match for Area" } });
+  const io = makeScriptedIo(["create a task to buy hiking boots"]);
+
+  await runChatCli(
+    store,
+    io,
+    TEST_TIME_ZONE,
+    llmClient,
+    () => new Date(NOW),
+    async () => [],
+    undefined,
+    undefined,
+    createPageFn,
+    validateDraft,
+  );
+
+  assert.equal(createPageFn.calls.length, 0);
+  store.close();
+});
+
+test("when the LLM can't extract a title, Yoh says so and does not attempt validation or creation", async () => {
+  const store = tempStore();
+  const llmClient = makeFakeLlmClient("NONE");
+  const createPageFn = makeFakeCreatePage();
+  const io = makeScriptedIo(["create a task, uh, something"]);
+
+  await runChatCli(store, io, TEST_TIME_ZONE, llmClient, () => new Date(NOW), async () => [], undefined, undefined, createPageFn);
+
+  assert.equal(createPageFn.calls.length, 0);
+  assert.equal(llmClient.calls.length, 1, "the create-item path must never fall through to the general-qa catch-all too");
   store.close();
 });
 
@@ -1378,6 +1510,30 @@ function makeFakeUpdateTaskField(
     return { ok: true, value: undefined };
   };
   return Object.assign(fn, { calls });
+}
+
+/** Fake `createNotionPage` binding (Story 6.3 / FR-26) — records every call, returns a fixed `Result` by default. */
+function makeFakeCreatePage(
+  result: Result<{ pageId: string; url?: string }, YohError> = { ok: true, value: { pageId: "page-1", url: "https://notion.so/page-1" } },
+): ((
+  database: NotionDatabaseTarget,
+  properties: Readonly<Record<string, string>>,
+) => Promise<Result<{ pageId: string; url?: string }, YohError>>) & {
+  readonly calls: Array<{ readonly database: NotionDatabaseTarget; readonly properties: Readonly<Record<string, string>> }>;
+} {
+  const calls: Array<{ database: NotionDatabaseTarget; properties: Readonly<Record<string, string>> }> = [];
+  const fn = async (database: NotionDatabaseTarget, properties: Readonly<Record<string, string>>) => {
+    calls.push({ database, properties });
+    return result;
+  };
+  return Object.assign(fn, { calls });
+}
+
+/** Fake `validateNotionPageDraft` binding — returns a fixed `Result<void, YohError>` (draft-time check, Story 6.3). */
+function makeFakeValidateDraft(
+  result: Result<void, YohError> = { ok: true, value: undefined },
+): (database: NotionDatabaseTarget, properties: Readonly<Record<string, string>>) => Promise<Result<void, YohError>> {
+  return async () => result;
 }
 
 function closeOutPlan(date: IsoDate): Plan {
