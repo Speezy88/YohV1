@@ -15,6 +15,7 @@ import assert from "node:assert/strict";
 import Anthropic from "@anthropic-ai/sdk";
 import {
   answerGeneralQuestion,
+  classifyChatIntent,
   draftNotionPageFields,
   loadLlmAdapterConfigFromEnv,
   suggestFieldValue,
@@ -214,4 +215,26 @@ test("draftNotionPageFields mentions the target database in its system prompt", 
   const { calls, client } = fakeClient(textMessage("title=X"));
   await draftNotionPageFields(client, "ResearchVault", "research vault entry about hiking boots");
   assert.match(calls[0]!.params.system as string, /ResearchVault|Research Vault/);
+});
+
+// ============================================================================
+// classifyChatIntent (Story 6.4 / FR-28)
+// ============================================================================
+
+test("classifyChatIntent returns a search-trigger intent with the extracted query for a SEARCH response", async () => {
+  const { client } = fakeClient(textMessage("SEARCH: best noise canceling earbuds under $150"));
+  const result = await classifyChatIntent(client, "search for the best noise canceling earbuds under $150");
+  assert.deepEqual(result, { kind: "search-trigger", query: "best noise canceling earbuds under $150" });
+});
+
+test("classifyChatIntent returns a general-question intent for a GENERAL response", async () => {
+  const { client } = fakeClient(textMessage("GENERAL"));
+  const result = await classifyChatIntent(client, "how's it going");
+  assert.deepEqual(result, { kind: "general-question" });
+});
+
+test("classifyChatIntent defaults to general-question for any unrecognized response shape, never throwing", async () => {
+  const { client } = fakeClient(textMessage("I'm not sure."));
+  const result = await classifyChatIntent(client, "hmm");
+  assert.deepEqual(result, { kind: "general-question" });
 });

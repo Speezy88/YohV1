@@ -60,6 +60,7 @@
  */
 import Anthropic from "@anthropic-ai/sdk";
 import type {
+  ChatIntent,
   Energy,
   ExternalId,
   FieldValueSuggestion,
@@ -364,4 +365,54 @@ export async function draftNotionPageFields(
   }
 
   return fields["title"] ? fields : undefined;
+}
+
+// ============================================================================
+// classifyChatIntent (Story 6.4 / FR-28, AD-14) — the ONE real producer of
+// ChatIntent today. Called only by shell/chat-cli.ts, only on a line that
+// already failed every existing deterministic trigger check (time budget,
+// plan view, mid-day reflow, blocker, why-prioritized, create-item) — never
+// on every message unconditionally, to avoid firing a paid search call on
+// an ordinary planning/status message (AD-14's own named risk).
+// ============================================================================
+
+const CLASSIFY_CHAT_INTENT_MAX_TOKENS = 128;
+
+const CLASSIFY_CHAT_INTENT_SYSTEM_PROMPT = [
+  "You are Yoh's chat-intent classifier. Decide whether Spencer's message is:",
+  '(a) an explicit request to search the web (e.g. "search for X", "look up X", "google X"), or an unambiguous factual/research question needing a live, current, or specific factual answer outside Yoh\'s own planning data — respond:',
+  "SEARCH: <a clean, focused search query capturing what to look up>",
+  "(b) anything else (ordinary planning, status, or conversational chat) — respond with exactly:",
+  "GENERAL",
+].join("\n");
+
+/**
+ * Classifies `line` into `{kind: 'search-trigger', query}` or
+ * `{kind: 'general-question'}` — the only two `ChatIntent` variants this
+ * function ever actually produces (see `ChatIntent`'s own doc comment).
+ * Defaults to `{kind: 'general-question'}` for ANY response that isn't a
+ * recognized `SEARCH: ...` line — never throws for "not a search," so a
+ * malformed classifier response degrades to the ordinary chat path rather
+ * than blocking it. A genuine API/transport failure still propagates as a
+ * thrown error (AD-8); `chat-cli.ts` treats that the same way.
+ */
+export async function classifyChatIntent(client: AnthropicMessagesClient, line: string): Promise<ChatIntent> {
+  const message = await client.messages.create({
+    model: CLAUDE_CHAT_MODEL,
+    max_tokens: CLASSIFY_CHAT_INTENT_MAX_TOKENS,
+    system: CLASSIFY_CHAT_INTENT_SYSTEM_PROMPT,
+    messages: [{ role: "user", content: line }],
+  });
+
+  const text = message.content
+    .filter((block): block is Anthropic.TextBlock => block.type === "text")
+    .map((block) => block.text)
+    .join("\n")
+    .trim();
+
+  const match = /^SEARCH:\s*(.+)$/is.exec(text);
+  if (match && match[1]!.trim().length > 0) {
+    return { kind: "search-trigger", query: match[1]!.trim() };
+  }
+  return { kind: "general-question" };
 }
