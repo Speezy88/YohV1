@@ -59,6 +59,7 @@
  * reserves for `rituals/*.ts`.
  */
 import Anthropic from "@anthropic-ai/sdk";
+import type { Energy, ExternalId, FieldValueSuggestion, PlanningFieldNames, Task, TaskStatus } from "../types/domain.ts";
 
 // ============================================================================
 // Injectable Claude client — narrow structural interface, mirroring
@@ -165,4 +166,127 @@ export async function answerGeneralQuestion(
     throw new Error("llm-adapter: Claude returned no text content for a general Q&A response");
   }
   return text;
+}
+
+// ============================================================================
+// suggestFieldValue (Story 6.2 / FR-25, AD-11) — lazy, display-time-only
+// inference of a missing Task planning field from Spencer's own recent chat
+// lines. Called ONLY by shell/chat-cli.ts, at the moment it's about to
+// surface an already-open "missing-field" interaction request — never by
+// core/data-completeness-gate.ts (pure/I-O-free, AD-1/AD-11) and never by a
+// ritual (chat context is typically sparse/nonexistent at an unattended
+// cron run).
+// ============================================================================
+
+/** Human-readable labels for `PlanningFieldNames`, used only to build this file's own Claude prompt — kept local rather than imported from `rituals/data-completeness.ts`'s `PLANNING_FIELD_LABELS`, since AD-1 forbids `adapters/` importing from `rituals/`. */
+const FIELD_LABELS: Record<PlanningFieldNames, string> = {
+  estimatedDurationMinutes: "Estimated Duration (a whole number of minutes)",
+  area: "Area (a short free-form label)",
+  dueDate: "Due Date (an ISO date, YYYY-MM-DD)",
+  status: "Status (one of: not-started, in-progress, completed, slipped)",
+  energy: "Energy (one of: low, medium, high)",
+};
+
+const SUGGEST_FIELD_VALUE_MAX_TOKENS = 256;
+
+function buildSuggestFieldValueSystemPrompt(taskTitle: string, field: PlanningFieldNames): string {
+  return [
+    "You are helping Yoh, Spencer's personal planning assistant, decide whether a specific Task field can be confidently answered from Spencer's own recent chat messages.",
+    `Task: "${taskTitle}"`,
+    `Missing field: ${FIELD_LABELS[field]}`,
+    "",
+    "Look ONLY at the messages below. If Spencer clearly and specifically stated this field's value for THIS task, respond on one line as:",
+    "CONFIDENT: <value> | <short reason quoting or paraphrasing what Spencer said>",
+    "",
+    "If nothing in the messages clearly and specifically answers this for THIS task, respond with exactly:",
+    "NONE",
+    "",
+    "Never guess, and never answer for a different task. If in doubt, respond NONE.",
+  ].join("\n");
+}
+
+const SUGGEST_FIELD_VALUE_TASK_STATUSES: readonly TaskStatus[] = ["not-started", "in-progress", "completed", "slipped"];
+const SUGGEST_FIELD_VALUE_ENERGIES: readonly Energy[] = ["low", "medium", "high"];
+const SUGGEST_FIELD_VALUE_ISO_DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/**
+ * Validates/coerces Claude's claimed raw value into `field`'s real type.
+ * Deliberately independent of `shell/chat-cli.ts`'s own `parseFieldAnswer`
+ * (AD-1 forbids this `adapters/` file importing from `shell/`) — and unlike
+ * that function, this one never surfaces a message to Spencer: an
+ * unparseable claim just means "no confident inference" (`undefined`),
+ * silently falling back to the ordinary blind ask.
+ */
+function parseSuggestedValue(field: PlanningFieldNames, raw: string): NonNullable<Task[PlanningFieldNames]> | undefined {
+  switch (field) {
+    case "estimatedDurationMinutes": {
+      const minutes = Number(raw);
+      return Number.isInteger(minutes) && minutes > 0 ? minutes : undefined;
+    }
+    case "area":
+      return raw.length > 0 ? raw : undefined;
+    case "dueDate": {
+      const match = SUGGEST_FIELD_VALUE_ISO_DATE_RE.exec(raw);
+      if (!match) return undefined;
+      const [, y, m, d] = match;
+      const year = Number(y);
+      const month = Number(m);
+      const day = Number(d);
+      const date = new Date(Date.UTC(year, month - 1, day));
+      const valid = date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+      return valid ? raw : undefined;
+    }
+    case "status": {
+      const normalized = raw.toLowerCase().replace(/\s+/g, "-");
+      return SUGGEST_FIELD_VALUE_TASK_STATUSES.find((status) => status === normalized);
+    }
+    case "energy": {
+      const normalized = raw.toLowerCase();
+      return SUGGEST_FIELD_VALUE_ENERGIES.find((energy) => energy === normalized);
+    }
+  }
+}
+
+/**
+ * Attempts to confidently infer `field`'s value for Task `taskId`
+ * (`taskTitle`) from `recentMessages` (Spencer's own recent chat lines,
+ * oldest first). Returns `undefined` — never throws — for every "no
+ * confident answer" case: no recent messages at all (a cheap short-circuit,
+ * no API call made); a response that doesn't match the required
+ * `CONFIDENT: <value> | <reason>` format; or a claimed value that doesn't
+ * parse as valid for `field` (never trusted blindly — see
+ * `parseSuggestedValue`). A genuine API/transport failure still propagates
+ * as a thrown error (AD-8) — `chat-cli.ts` treats that identically to "no
+ * confident inference" at its own call site.
+ */
+export async function suggestFieldValue(
+  client: AnthropicMessagesClient,
+  taskId: ExternalId,
+  taskTitle: string,
+  field: PlanningFieldNames,
+  recentMessages: readonly string[],
+): Promise<FieldValueSuggestion | undefined> {
+  if (recentMessages.length === 0) return undefined;
+
+  const message = await client.messages.create({
+    model: CLAUDE_CHAT_MODEL,
+    max_tokens: SUGGEST_FIELD_VALUE_MAX_TOKENS,
+    system: buildSuggestFieldValueSystemPrompt(taskTitle, field),
+    messages: [{ role: "user", content: recentMessages.join("\n") }],
+  });
+
+  const text = message.content
+    .filter((block): block is Anthropic.TextBlock => block.type === "text")
+    .map((block) => block.text)
+    .join("\n")
+    .trim();
+
+  const match = /^CONFIDENT:\s*(.+?)\s*\|\s*(.+)$/s.exec(text);
+  if (!match) return undefined;
+
+  const [, rawValue, rawReason] = match;
+  const value = parseSuggestedValue(field, rawValue!.trim());
+  if (value === undefined) return undefined;
+
+  return { taskId, taskTitle, field, value, reason: rawReason!.trim() };
 }

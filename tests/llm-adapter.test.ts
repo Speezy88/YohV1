@@ -16,9 +16,11 @@ import Anthropic from "@anthropic-ai/sdk";
 import {
   answerGeneralQuestion,
   loadLlmAdapterConfigFromEnv,
+  suggestFieldValue,
   CLAUDE_CHAT_MODEL,
   type AnthropicMessagesClient,
 } from "../src/adapters/llm-adapter.ts";
+import type { FieldValueSuggestion } from "../src/types/domain.ts";
 
 /** A minimal real-shaped `Anthropic.Message` carrying a single text block. */
 function textMessage(text: string): Anthropic.Message {
@@ -134,4 +136,53 @@ test("loadLlmAdapterConfigFromEnv reads CLAUDE_API_KEY", () => {
 
 test("loadLlmAdapterConfigFromEnv throws when CLAUDE_API_KEY is missing", () => {
   assert.throws(() => loadLlmAdapterConfigFromEnv({}), /CLAUDE_API_KEY/);
+});
+
+// ============================================================================
+// suggestFieldValue (Story 6.2 / FR-25)
+// ============================================================================
+
+test("suggestFieldValue never calls the client when there are no recent messages to look at", async () => {
+  const { calls, client } = fakeClient(textMessage("NONE"));
+  const result = await suggestFieldValue(client, "t1", "Call dentist", "area", []);
+  assert.equal(result, undefined);
+  assert.equal(calls.length, 0);
+});
+
+test("suggestFieldValue returns a FieldValueSuggestion for a CONFIDENT response with a value that parses for the field", async () => {
+  const { client } = fakeClient(textMessage("CONFIDENT: 30 | Spencer said it'll take about half an hour"));
+  const result = await suggestFieldValue(
+    client,
+    "t1",
+    "Call dentist",
+    "estimatedDurationMinutes",
+    ["that dentist call will take about half an hour"],
+  );
+  assert.deepEqual(result, {
+    taskId: "t1",
+    taskTitle: "Call dentist",
+    field: "estimatedDurationMinutes",
+    value: 30,
+    reason: "Spencer said it'll take about half an hour",
+  } satisfies FieldValueSuggestion);
+});
+
+test("suggestFieldValue returns undefined for a plain NONE response", async () => {
+  const { client } = fakeClient(textMessage("NONE"));
+  const result = await suggestFieldValue(client, "t1", "Call dentist", "area", ["unrelated chatter"]);
+  assert.equal(result, undefined);
+});
+
+test("suggestFieldValue never trusts a CONFIDENT value that doesn't parse for the field's real type", async () => {
+  const { client } = fakeClient(textMessage("CONFIDENT: sometime soon | vague timing mention"));
+  const result = await suggestFieldValue(client, "t1", "Call dentist", "dueDate", ["I'll do it sometime soon"]);
+  assert.equal(result, undefined);
+});
+
+test("suggestFieldValue sends the joined recent messages and mentions the Task/field in its system prompt", async () => {
+  const { calls, client } = fakeClient(textMessage("NONE"));
+  await suggestFieldValue(client, "t1", "Call dentist", "energy", ["msg one", "msg two"]);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0]!.params.system as string, /Call dentist/);
+  assert.equal(calls[0]!.params.messages[0]?.content, "msg one\nmsg two");
 });
