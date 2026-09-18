@@ -200,6 +200,24 @@ export interface CompleteTask
  */
 export type TaskFieldOverride = Partial<Pick<Task, PlanningFieldNames>>;
 
+/**
+ * FieldValueSuggestion — FR-25's inferred-value payload. `llm-adapter.ts`'s
+ * `suggestFieldValue` returns this when it can confidently infer a missing
+ * planning field's value from Spencer's own recent chat lines (AD-11:
+ * generated lazily, at `chat-cli.ts` display time, never at ritual time).
+ * `taskTitle` rides alongside `taskId` for the same reason
+ * `MissingFieldReport` does — so a caller can render a confirmation prompt
+ * without a separate Task lookup. `reason` is Claude's own short
+ * justification for the inference (what Spencer actually said).
+ */
+export interface FieldValueSuggestion {
+  readonly taskId: ExternalId;
+  readonly taskTitle: string;
+  readonly field: PlanningFieldNames;
+  readonly value: NonNullable<Task[PlanningFieldNames]>;
+  readonly reason: string;
+}
+
 // ============================================================================
 // Plan / PlanBlock (FR-1, FR-6–FR-8, AD-9)
 // ============================================================================
