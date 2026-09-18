@@ -21,6 +21,7 @@ import { OAuth2Client } from "google-auth-library";
 import {
   loadGoogleOAuthConfigFromEnv,
   createTokenStore,
+  GOOGLE_CALENDAR_BROAD_SCOPE,
   GOOGLE_OAUTH_SCOPES,
 } from "../src/adapters/token-store.ts";
 
@@ -187,6 +188,101 @@ test("GOOGLE_OAUTH_SCOPES exposes the exact confirmed 2026 scope strings for pri
     "https://www.googleapis.com/auth/calendar.events.readonly",
     "https://www.googleapis.com/auth/calendar.app.created",
   ]);
+});
+
+// ============================================================================
+// Second, broader-scoped OAuth2Client (Story 6.6 / FR-27, AD-13)
+// ============================================================================
+
+test("createTokenStore constructs a SECOND, separately-scoped OAuth2Client for AD-13, distinct from the narrow one", () => {
+  const tokenFilePath = tempTokenFilePath();
+  const store = createTokenStore({
+    clientId: "fake-client-id",
+    clientSecret: "fake-client-secret",
+    redirectUri: "http://localhost:3000/oauth2callback",
+    tokenFilePath,
+    initialRefreshToken: "narrow-seed",
+    broadInitialRefreshToken: "broad-seed",
+  });
+
+  const narrow = store.getOAuth2Client();
+  const broad = store.getBroadOAuth2Client();
+  assert.notEqual(narrow, broad, "the broad client must be a genuinely separate instance, not the same client reused");
+  assert.ok(broad instanceof OAuth2Client);
+});
+
+test("the broad OAuth2Client is seeded from broadInitialRefreshToken on first run, and persists its own refresh separately from the narrow client's", () => {
+  const tokenFilePath = tempTokenFilePath();
+  const store = createTokenStore({
+    clientId: "fake-client-id",
+    clientSecret: "fake-client-secret",
+    redirectUri: "http://localhost:3000/oauth2callback",
+    tokenFilePath,
+    initialRefreshToken: "narrow-seed",
+    broadInitialRefreshToken: "broad-seed",
+  });
+
+  assert.equal(store.getOAuth2Client().credentials.refresh_token, "narrow-seed");
+  assert.equal(store.getBroadOAuth2Client().credentials.refresh_token, "broad-seed");
+
+  const onDisk = JSON.parse(readFileSync(tokenFilePath, "utf8"));
+  assert.equal(onDisk.refreshToken, "narrow-seed");
+  assert.equal(onDisk.broadRefreshToken, "broad-seed");
+});
+
+test("a refreshed broad-client token is rewritten to disk immediately, independent of the narrow client's own token", () => {
+  const tokenFilePath = tempTokenFilePath();
+  const store = createTokenStore({
+    clientId: "fake-client-id",
+    clientSecret: "fake-client-secret",
+    redirectUri: "http://localhost:3000/oauth2callback",
+    tokenFilePath,
+    initialRefreshToken: "narrow-seed",
+    broadInitialRefreshToken: "broad-seed",
+  });
+
+  store.getBroadOAuth2Client().emit("tokens", { refresh_token: "broad-refreshed" });
+
+  const onDisk = JSON.parse(readFileSync(tokenFilePath, "utf8"));
+  assert.equal(onDisk.broadRefreshToken, "broad-refreshed");
+  assert.equal(onDisk.refreshToken, "narrow-seed", "the narrow client's own stored token must be untouched");
+});
+
+test("a refreshed narrow-client token does not overwrite the broad client's own stored token", () => {
+  const tokenFilePath = tempTokenFilePath();
+  const store = createTokenStore({
+    clientId: "fake-client-id",
+    clientSecret: "fake-client-secret",
+    redirectUri: "http://localhost:3000/oauth2callback",
+    tokenFilePath,
+    initialRefreshToken: "narrow-seed",
+    broadInitialRefreshToken: "broad-seed",
+  });
+
+  store.getOAuth2Client().emit("tokens", { refresh_token: "narrow-refreshed" });
+
+  const onDisk = JSON.parse(readFileSync(tokenFilePath, "utf8"));
+  assert.equal(onDisk.refreshToken, "narrow-refreshed");
+  assert.equal(onDisk.broadRefreshToken, "broad-seed");
+});
+
+test("createTokenStore works with no broadInitialRefreshToken at all — a session that never touches FR-27 needs no second grant yet", () => {
+  const tokenFilePath = tempTokenFilePath();
+  const store = createTokenStore({
+    clientId: "fake-client-id",
+    clientSecret: "fake-client-secret",
+    redirectUri: "http://localhost:3000/oauth2callback",
+    tokenFilePath,
+    initialRefreshToken: "narrow-seed",
+  });
+
+  assert.equal(store.getBroadOAuth2Client().credentials.refresh_token, undefined);
+  const onDisk = JSON.parse(readFileSync(tokenFilePath, "utf8"));
+  assert.equal(onDisk.broadRefreshToken, undefined);
+});
+
+test("GOOGLE_CALENDAR_BROAD_SCOPE is the confirmed 2026 calendar.events scope string", () => {
+  assert.equal(GOOGLE_CALENDAR_BROAD_SCOPE, "https://www.googleapis.com/auth/calendar.events");
 });
 
 test("AD-10: no file other than token-store.ts imports google-auth-library", () => {

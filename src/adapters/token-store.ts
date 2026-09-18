@@ -68,6 +68,24 @@ export const GOOGLE_OAUTH_SCOPES = [
   GOOGLE_CALENDAR_WRITE_SCOPE,
 ] as const;
 
+/**
+ * Broader read/write access across all of Spencer's accessible Google
+ * Calendars (AD-13, FR-27) — Google's scope catalog has no narrower
+ * "primary only" grant. "Primary only" for FR-27's confirm-gated path is
+ * enforced entirely by `calendar-adapter.ts` checking `calendarId ===
+ * 'primary'` in code, not by this grant itself (AD-13, confirmed by
+ * Spencer 2026-09-18). This client is NEVER handed to AD-4's automatic
+ * "Yoh Plan" path — only `calendar-adapter.ts`'s own
+ * `proposeCalendarEdit`/`proposeNewCalendarEvent`/`applyCalendarEdit` use
+ * it, via `TokenStore.getBroadOAuth2Client()`.
+ *
+ * Confirmed live 2026-08-22 (and re-checked 2026-09-18 per AD-13's own
+ * "final live-docs re-check" Deferred item) against
+ * https://developers.google.com/workspace/calendar/api/auth (scope
+ * `calendar.events`).
+ */
+export const GOOGLE_CALENDAR_BROAD_SCOPE = "https://www.googleapis.com/auth/calendar.events";
+
 // ============================================================================
 // Config
 // ============================================================================
@@ -93,6 +111,14 @@ export interface GoogleOAuthConfig {
    * immediately (AD-10), never back to the environment.
    */
   readonly initialRefreshToken?: string;
+  /**
+   * A refresh token to seed the BROAD-scoped client's token file entry
+   * with, if the file doesn't exist yet — the AD-13 analogue of
+   * `initialRefreshToken` above, sourced from `GOOGLE_BROAD_REFRESH_TOKEN`
+   * (Spencer's own separate, broader-scope consent grant). After the first
+   * run, the on-disk `broadRefreshToken` field is authoritative.
+   */
+  readonly broadInitialRefreshToken?: string;
 }
 
 const REQUIRED_ENV_VARS = ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REDIRECT_URI"] as const;
@@ -119,6 +145,7 @@ export function loadGoogleOAuthConfigFromEnv(
     redirectUri: env["GOOGLE_REDIRECT_URI"] as string,
     tokenFilePath: env["GOOGLE_TOKEN_FILE_PATH"] || "./data/google-token.json",
     ...(env["GOOGLE_REFRESH_TOKEN"] ? { initialRefreshToken: env["GOOGLE_REFRESH_TOKEN"] } : {}),
+    ...(env["GOOGLE_BROAD_REFRESH_TOKEN"] ? { broadInitialRefreshToken: env["GOOGLE_BROAD_REFRESH_TOKEN"] } : {}),
   };
   return config;
 }
@@ -131,6 +158,8 @@ interface StoredGoogleToken {
   readonly refreshToken: string;
   /** The "Yoh Plan" secondary calendar id, once `calendar-adapter.ts` creates it (AD-10). */
   readonly calendarId?: string;
+  /** The broad-scoped client's own refresh token (AD-13, Story 6.6), stored and rewritten independently of `refreshToken`. */
+  readonly broadRefreshToken?: string;
 }
 
 // ============================================================================
@@ -151,11 +180,20 @@ interface StoredGoogleToken {
  */
 export class TokenStore {
   private readonly client: OAuth2Client;
+  private readonly broadClient: OAuth2Client;
   private readonly tokenFilePath: string;
 
   constructor(config: GoogleOAuthConfig) {
     this.tokenFilePath = config.tokenFilePath;
     this.client = new OAuth2Client({
+      clientId: config.clientId,
+      clientSecret: config.clientSecret,
+      redirectUri: config.redirectUri,
+    });
+    // A second, separately-scoped client (AD-13, Story 6.6) — same client
+    // id/secret/redirect (one registered OAuth app), but its own distinct
+    // refresh token, obtained via a separate, broader-scope consent grant.
+    this.broadClient = new OAuth2Client({
       clientId: config.clientId,
       clientSecret: config.clientSecret,
       redirectUri: config.redirectUri,
@@ -169,14 +207,26 @@ export class TokenStore {
         // First run against this file: persist the seed value immediately
         // so the file (not the env var) becomes the source of truth from
         // here on, per AD-10.
-        this.writeStoredToken(refreshToken, undefined);
+        this.writeStoredToken({ refreshToken });
+      }
+    }
+
+    const broadRefreshToken = stored?.broadRefreshToken ?? config.broadInitialRefreshToken;
+    if (broadRefreshToken) {
+      this.broadClient.setCredentials({ refresh_token: broadRefreshToken });
+      if (!stored?.broadRefreshToken) {
+        this.writeStoredToken({ broadRefreshToken });
       }
     }
 
     this.client.on("tokens", (tokens: Credentials) => {
       if (tokens.refresh_token) {
-        const current = this.readStoredToken();
-        this.writeStoredToken(tokens.refresh_token, current?.calendarId);
+        this.writeStoredToken({ refreshToken: tokens.refresh_token });
+      }
+    });
+    this.broadClient.on("tokens", (tokens: Credentials) => {
+      if (tokens.refresh_token) {
+        this.writeStoredToken({ broadRefreshToken: tokens.refresh_token });
       }
     });
   }
@@ -186,6 +236,11 @@ export class TokenStore {
     return this.client;
   }
 
+  /** The second, broader-scoped `OAuth2Client` (AD-13, Story 6.6) — used ONLY by `calendar-adapter.ts`'s FR-27 functions, never AD-4's automatic path. */
+  getBroadOAuth2Client(): OAuth2Client {
+    return this.broadClient;
+  }
+
   /** The "Yoh Plan" secondary calendar id, if `calendar-adapter.ts` has created and recorded it yet (AD-10). */
   getCalendarId(): string | undefined {
     return this.readStoredToken()?.calendarId;
@@ -193,12 +248,7 @@ export class TokenStore {
 
   /** Persists the "Yoh Plan" secondary calendar id once `calendar-adapter.ts` creates it (AD-10). */
   setCalendarId(calendarId: string): void {
-    const current = this.readStoredToken();
-    const refreshToken = current?.refreshToken ?? this.client.credentials.refresh_token;
-    if (!refreshToken) {
-      throw new Error("token-store: cannot persist calendarId before a refresh token exists");
-    }
-    this.writeStoredToken(refreshToken, calendarId);
+    this.writeStoredToken({ calendarId });
   }
 
   private readStoredToken(): StoredGoogleToken | undefined {
@@ -207,12 +257,24 @@ export class TokenStore {
     return JSON.parse(raw) as StoredGoogleToken;
   }
 
-  private writeStoredToken(refreshToken: string, calendarId: string | undefined): void {
+  /** Merges `patch` onto whatever is currently on disk (never wholesale-replaces) — so the narrow client's refresh, the broad client's refresh, and the "Yoh Plan" calendar id can each be updated independently without clobbering the other two. */
+  private writeStoredToken(patch: Partial<StoredGoogleToken>): void {
     const dir = dirname(this.tokenFilePath);
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true });
     }
-    const onDisk: StoredGoogleToken = calendarId === undefined ? { refreshToken } : { refreshToken, calendarId };
+    const current = this.readStoredToken();
+    const refreshToken = patch.refreshToken ?? current?.refreshToken ?? this.client.credentials.refresh_token;
+    if (!refreshToken) {
+      throw new Error("token-store: cannot persist token state before a narrow refresh token exists");
+    }
+    const calendarId = patch.calendarId ?? current?.calendarId;
+    const broadRefreshToken = patch.broadRefreshToken ?? current?.broadRefreshToken;
+    const onDisk: StoredGoogleToken = {
+      refreshToken,
+      ...(calendarId !== undefined ? { calendarId } : {}),
+      ...(broadRefreshToken !== undefined ? { broadRefreshToken } : {}),
+    };
     writeFileSync(this.tokenFilePath, JSON.stringify(onDisk, null, 2), "utf8");
   }
 }
