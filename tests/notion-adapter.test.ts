@@ -18,21 +18,26 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type {
+  CreatePageParameters,
   PageObjectResponse,
   QueryDataSourceParameters,
   QueryDataSourceResponse,
 } from "@notionhq/client";
 import {
+  DEFAULT_RESEARCH_VAULT_PROPERTY_NAMES,
   DEFAULT_TASK_PROPERTY_NAMES,
   loadTaskPropertyNamesFromEnv,
   readNotionTasks,
   setTaskStatus,
+  toResearchVaultPageProperties,
   updateTaskField,
   type NotionDataSourceClient,
   type NotionFieldWriteConfig,
+  type NotionResearchVaultPropertyNames,
   type NotionSchemaClient,
   type NotionStatusWriteConfig,
   type NotionWriteClient,
+  type ResearchVaultEntryFields,
 } from "../src/adapters/notion-adapter.ts";
 import type { DataSourceObjectResponse, UpdatePageParameters, UpdatePageResponse } from "@notionhq/client";
 
@@ -671,4 +676,85 @@ test("updateTaskField returns a Result failure (not a throw) when the Notion SDK
   assert.equal(result.ok, false);
   if (result.ok) return;
   assert.equal(result.error.kind, "unreachable");
+});
+
+// ============================================================================
+// Research Vault schema (Story 6.1)
+// ============================================================================
+
+test("DEFAULT_RESEARCH_VAULT_PROPERTY_NAMES matches Spencer's confirmed live Research Vault schema", () => {
+  assert.deepEqual(DEFAULT_RESEARCH_VAULT_PROPERTY_NAMES, {
+    title: "Research Title",
+    keyFindings: "Key Findings",
+    query: "Query",
+    date: "Date",
+    sources: "Sources",
+    status: "Status",
+    area: "Area",
+    confidence: "Confidence",
+    openQuestions: "Open Questions",
+    linkedProject: "Linked Project",
+  });
+});
+
+test("toResearchVaultPageProperties maps Yoh's internal fields to Research Vault's real Notion property names/types", () => {
+  const fields: ResearchVaultEntryFields = {
+    title: "Best noise-canceling earbuds under $150",
+    keyFindings: "The Sony LinkBuds S and Anker Soundcore Liberty 4 both test well; Sony edges out on ANC depth.",
+    query: "best noise canceling earbuds under $150",
+    searchDate: "2026-09-18",
+    sourceUrls: ["https://example.com/review-a", "https://example.com/review-b"],
+  };
+
+  const properties = toResearchVaultPageProperties(fields);
+
+  assert.deepEqual(properties, {
+    "Research Title": {
+      title: [{ type: "text", text: { content: fields.title } }],
+    },
+    "Key Findings": {
+      rich_text: [{ type: "text", text: { content: fields.keyFindings } }],
+    },
+    Query: {
+      rich_text: [{ type: "text", text: { content: fields.query! } }],
+    },
+    Date: {
+      date: { start: fields.searchDate },
+    },
+    Sources: {
+      rich_text: [
+        { type: "text", text: { content: "https://example.com/review-a\nhttps://example.com/review-b" } },
+      ],
+    },
+  } satisfies CreatePageParameters["properties"]);
+});
+
+test("toResearchVaultPageProperties omits Query when not provided (FR-26's manual-create path may not have an original search query)", () => {
+  const fields: ResearchVaultEntryFields = {
+    title: "Manually noted finding",
+    keyFindings: "Spencer typed this directly, no search involved.",
+    searchDate: "2026-09-18",
+    sourceUrls: [],
+  };
+
+  const properties = toResearchVaultPageProperties(fields);
+
+  assert.equal("Query" in properties!, false);
+  assert.deepEqual((properties as Record<string, unknown>)["Sources"], { rich_text: [] });
+});
+
+test("toResearchVaultPageProperties honors a custom NotionResearchVaultPropertyNames override", () => {
+  const customNames: NotionResearchVaultPropertyNames = {
+    ...DEFAULT_RESEARCH_VAULT_PROPERTY_NAMES,
+    title: "Title",
+    keyFindings: "Summary",
+  };
+
+  const properties = toResearchVaultPageProperties(
+    { title: "X", keyFindings: "Y", searchDate: "2026-09-18", sourceUrls: [] },
+    customNames,
+  );
+
+  assert.ok("Title" in properties!);
+  assert.ok("Summary" in properties!);
 });

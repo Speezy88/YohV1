@@ -87,6 +87,7 @@
 
 import { isFullDataSource, isFullPage, type Client } from "@notionhq/client";
 import type {
+  CreatePageParameters,
   GetDataSourceResponse,
   PageObjectResponse,
   QueryDataSourceParameters,
@@ -264,6 +265,58 @@ export const DEFAULT_TASK_STATUS_OPTION_NAMES: Record<TaskStatus, string> = {
 export const DEFAULT_ENERGY_OPTION_NAMES: Partial<Record<Energy, string>> = {
   high: "🔵 Deep Work",
   low: "⚡ Light Work",
+};
+
+/**
+ * The Notion property name each of Yoh's internal Research Vault field
+ * concepts is read from/written to — confirmed live against Spencer's real
+ * "Research Vault" database (data source id `33ee0769-3060-8103-
+ * 86f6-000be2d03654`) on 2026-09-18, per Story 6.1's spike. Unlike
+ * `NotionTaskPropertyNames`, every field here maps to a property Spencer's
+ * database already has today — none needed adding. `status`, `area`, and
+ * `confidence` are `select`-backed in Notion (see
+ * `DEFAULT_RESEARCH_VAULT_PROPERTY_NAMES`'s own doc comment for their real
+ * option names) and go through the same live-schema fuzzy-match resolution
+ * `writeSelectLikeField` already establishes for Task's `select` properties,
+ * once Story 6.3 wires them into a draft — this story only confirms and
+ * names them, it does not write them.
+ */
+export interface NotionResearchVaultPropertyNames {
+  readonly title: string;
+  readonly keyFindings: string;
+  readonly query: string;
+  readonly date: string;
+  readonly sources: string;
+  readonly status: string;
+  readonly area: string;
+  readonly confidence: string;
+  readonly openQuestions: string;
+  readonly linkedProject: string;
+}
+
+/**
+ * The confirmed real property names on Spencer's live Research Vault
+ * database (Story 6.1's spike, 2026-09-18) — see this file's own inline
+ * comment above `NotionResearchVaultPropertyNames` for the id and
+ * confirmation date. `select`-backed properties and their real, live option
+ * names (also confirmed live, not assumed): `status` -> "Draft" | "Reviewed"
+ * | "Applied"; `area` -> "Manatee" | "School/ACT/College Apps" | "Wellbeing
+ * Think Tank" | "Personal Goals" | "Side Projects/Business" |
+ * "Reading/Learning"; `confidence` -> "High" | "Medium" | "Low". A write to
+ * any of those three must resolve to one of its own listed options via
+ * `closestOption` (AD-12) — never raw/invented text.
+ */
+export const DEFAULT_RESEARCH_VAULT_PROPERTY_NAMES: NotionResearchVaultPropertyNames = {
+  title: "Research Title",
+  keyFindings: "Key Findings",
+  query: "Query",
+  date: "Date",
+  sources: "Sources",
+  status: "Status",
+  area: "Area",
+  confidence: "Confidence",
+  openQuestions: "Open Questions",
+  linkedProject: "Linked Project",
 };
 
 /**
@@ -631,6 +684,69 @@ async function writeSelectLikeField(
 /** `"low"` -> `"Low"` — the last-resort Energy candidate string when `value` has no `energyOptionNames` entry (e.g. `"medium"`, which `DEFAULT_ENERGY_OPTION_NAMES` deliberately leaves unmapped — see that constant's own doc comment). Still goes through `closestOption` against the LIVE options, so this only needs to be a reasonable guess, not exact. */
 function capitalizeFirst(raw: string): string {
   return raw.length === 0 ? raw : raw[0]!.toUpperCase() + raw.slice(1);
+}
+
+// ============================================================================
+// toResearchVaultPageProperties (Story 6.1) — maps Yoh's internal Research
+// Vault field names to Spencer's real, confirmed Notion property names/
+// types (DEFAULT_RESEARCH_VAULT_PROPERTY_NAMES). Pure and does no I/O: it
+// only builds the `properties` payload Story 6.3's createPage will pass to
+// `client.pages.create`. It does NOT write to Notion, and does not resolve
+// select-backed properties (status/area/confidence) — those aren't among
+// the fields FR-29's automated "save that" path ever sets, and Story 6.3's
+// general create-from-chat path is responsible for routing any
+// select-backed value it accepts through the same closestOption/
+// live-schema-retrieve mechanism writeSelectLikeField already establishes.
+// ============================================================================
+
+/**
+ * Yoh's internal shape for a Research Vault entry, independent of Notion's
+ * property names — `toResearchVaultPageProperties` is the only place that
+ * translates between the two. `query` is optional: Story 6.5's automated
+ * file-a-search-result path always has one (the question Spencer asked),
+ * but Story 6.3's manual "create a Research Vault item" path may not.
+ */
+export interface ResearchVaultEntryFields {
+  readonly title: string;
+  readonly keyFindings: string;
+  readonly query?: string;
+  readonly searchDate: IsoDate;
+  readonly sourceUrls: readonly string[];
+}
+
+/**
+ * Maps `fields` onto Spencer's confirmed real Research Vault Notion
+ * property names (`names`, defaulting to `DEFAULT_RESEARCH_VAULT_PROPERTY_
+ * NAMES`) and Notion's own property-value wire shapes — one-to-one, no
+ * silent renaming or guessing (Story 6.1 AC2). `sourceUrls` (citations) are
+ * joined with `\n` into `Sources`, since that property is `rich_text` in
+ * Spencer's live workspace, not a dedicated URL-type property. `query` is
+ * omitted from the returned properties object entirely when absent, rather
+ * than written as an empty string — an absent property is simply not part
+ * of the create-page request, so Notion leaves that property unset on the
+ * new page (its own default), which is the correct "nothing to say here"
+ * representation for an optional field.
+ */
+export function toResearchVaultPageProperties(
+  fields: ResearchVaultEntryFields,
+  names: NotionResearchVaultPropertyNames = DEFAULT_RESEARCH_VAULT_PROPERTY_NAMES,
+): NonNullable<CreatePageParameters["properties"]> {
+  const properties: NonNullable<CreatePageParameters["properties"]> = {
+    [names.title]: { title: [{ type: "text", text: { content: fields.title } }] },
+    [names.keyFindings]: { rich_text: [{ type: "text", text: { content: fields.keyFindings } }] },
+    [names.date]: { date: { start: fields.searchDate } },
+    [names.sources]: {
+      rich_text: fields.sourceUrls.length > 0
+        ? [{ type: "text", text: { content: fields.sourceUrls.join("\n") } }]
+        : [],
+    },
+  };
+
+  if (fields.query !== undefined) {
+    properties[names.query] = { rich_text: [{ type: "text", text: { content: fields.query } }] };
+  }
+
+  return properties;
 }
 
 // ============================================================================
