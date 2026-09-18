@@ -272,6 +272,18 @@ export type ChatIntent =
   | { readonly kind: "general-question" }
   | { readonly kind: "search-trigger"; readonly query: string };
 
+/**
+ * CalendarEditChange — FR-27's `Proposal<T>` payload (AD-3/AD-13). A union
+ * of exactly `move`/`resize`/`create` — there is deliberately no `delete`
+ * variant, so a non-Yoh event cannot be deleted through this path even by a
+ * future coding mistake; it isn't a value the type system can construct
+ * here, not merely a rule someone has to remember.
+ */
+export type CalendarEditChange =
+  | { readonly kind: "move"; readonly eventId: ExternalId; readonly calendarId: string; readonly newStart: IsoDateTime; readonly newEnd: IsoDateTime }
+  | { readonly kind: "resize"; readonly eventId: ExternalId; readonly calendarId: string; readonly newEnd: IsoDateTime }
+  | { readonly kind: "create"; readonly calendarId: string; readonly title: string; readonly start: IsoDateTime; readonly end: IsoDateTime };
+
 // ============================================================================
 // Plan / PlanBlock (FR-1, FR-6–FR-8, AD-9)
 // ============================================================================
