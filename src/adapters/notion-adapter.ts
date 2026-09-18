@@ -85,13 +85,16 @@
  *    pair is read.
  */
 
-import { isFullPage, type Client } from "@notionhq/client";
+import { isFullDataSource, isFullPage, type Client } from "@notionhq/client";
 import type {
+  GetDataSourceResponse,
   PageObjectResponse,
   QueryDataSourceParameters,
   QueryDataSourceResponse,
+  UpdatePageParameters,
 } from "@notionhq/client";
-import type { Energy, ExternalId, IsoDate, Project, Result, Task, TaskStatus, YohError } from "../types/domain.ts";
+import type { Energy, ExternalId, IsoDate, PlanningFieldNames, Project, Result, Task, TaskStatus, YohError } from "../types/domain.ts";
+import { closestOption } from "./notion-select-match.ts";
 
 // ============================================================================
 // Injectable client
@@ -128,6 +131,22 @@ export interface NotionDataSourceClient {
 export interface NotionWriteClient {
   readonly pages: {
     readonly update: Client["pages"]["update"];
+  };
+}
+
+/**
+ * The minimal slice of `@notionhq/client`'s `Client` `updateTaskField`
+ * needs to check a `select`-backed property's live options before writing
+ * it (AD-12's revised rule) — just `dataSources.retrieve`, the same
+ * minimal-injectable-slice convention every other client interface in this
+ * file uses. Kept separate from `NotionDataSourceClient` (which only ever
+ * needs `.query`) for the same reason `NotionWriteClient` is kept separate
+ * from it — a real `Client` satisfies every one of these interfaces at
+ * once, so `shell/chat-cli.ts` still only ever constructs one real client.
+ */
+export interface NotionSchemaClient {
+  readonly dataSources: {
+    readonly retrieve: Client["dataSources"]["retrieve"];
   };
 }
 
@@ -289,6 +308,22 @@ export interface NotionAdapterConfig {
  */
 export type NotionStatusWriteConfig = Pick<NotionAdapterConfig, "taskPropertyNames" | "statusOptionNames">;
 
+/**
+ * `updateTaskField`'s config — `NotionStatusWriteConfig`'s two fields (it
+ * delegates its own `"status"` case straight to `setTaskStatus`) plus
+ * `tasksDataSourceId` (needed for `dataSources.retrieve`'s live-schema
+ * lookup ahead of a `select`-backed write) and `energyOptionNames` (Energy's
+ * preferred real-option-name mapping — see `updateTaskField`'s own doc
+ * comment). Deliberately excludes `projectsDataSourceId`/
+ * `projectPropertyNames`: nothing about a Project is ever touched by this
+ * write, the same "don't require an unrelated field" reasoning
+ * `NotionStatusWriteConfig`'s own doc comment gives.
+ */
+export type NotionFieldWriteConfig = Pick<
+  NotionAdapterConfig,
+  "tasksDataSourceId" | "taskPropertyNames" | "statusOptionNames" | "energyOptionNames"
+>;
+
 // ============================================================================
 // Result shape
 // ============================================================================
@@ -418,6 +453,184 @@ export async function setTaskStatus(
       },
     };
   }
+}
+
+// ============================================================================
+// updateTaskField (FR-24, AD-12 revised) — the write for the other four
+// PlanningFieldNames (Estimated Duration, Area, Due Date, Energy); Status
+// keeps going through setTaskStatus above, unchanged.
+// ============================================================================
+
+/**
+ * Writes `value` to Task `taskId`'s Notion property for `field` — one of
+ * `types/domain.ts`'s five `PlanningFieldNames`, never an arbitrary Notion
+ * property name (AD-12: the write surface stays this closed, enumerated
+ * set). `"status"` delegates straight to `setTaskStatus` (unchanged — see
+ * that function's own doc comment); this is genuinely just a second entry
+ * point onto the SAME one write, not a duplicate.
+ *
+ * For the remaining four fields:
+ *  - Estimated Duration (`number`) and Due Date (`date`) are written
+ *    directly — Notion can't silently corrupt a number or a date the way it
+ *    can a `select`, so no live-schema check applies.
+ *  - Area and Energy each go through `writeSelectLikeField`, which checks
+ *    the property's LIVE type first: a `rich_text` Area is written as raw
+ *    text (Spencer's own free-form taxonomy, per the module docstring's
+ *    read-side assumption); a `select` Area or Energy is resolved to one of
+ *    that property's real, currently-existing options via
+ *    `notion-select-match.ts`'s `closestOption` — Energy's candidate input
+ *    is `energyOptionNames`'s (or `DEFAULT_ENERGY_OPTION_NAMES`'s)
+ *    already-known real option string for `value`, so a config that's
+ *    drifted from Spencer's actual live workspace still resolves correctly
+ *    rather than failing outright. A write that can't be confidently
+ *    resolved fails (`YohError.kind: "validation"`) rather than writing raw
+ *    text or letting Notion create a new option.
+ */
+export async function updateTaskField(
+  client: NotionWriteClient & NotionSchemaClient,
+  config: NotionFieldWriteConfig,
+  taskId: string,
+  field: PlanningFieldNames,
+  value: NonNullable<Task[PlanningFieldNames]>,
+): Promise<Result<void, YohError>> {
+  const propertyNames = config.taskPropertyNames ?? DEFAULT_TASK_PROPERTY_NAMES;
+
+  if (field === "status") {
+    return setTaskStatus(client, config, taskId, value as TaskStatus);
+  }
+
+  if (field === "estimatedDurationMinutes") {
+    return writePageProperty(client, taskId, propertyNames.estimatedDuration, { number: value as number });
+  }
+
+  if (field === "dueDate") {
+    return writePageProperty(client, taskId, propertyNames.dueDate, { date: { start: value as string } });
+  }
+
+  if (field === "area") {
+    return writeSelectLikeField(client, config.tasksDataSourceId, taskId, propertyNames.area, value as string);
+  }
+
+  // field === "energy" — the only PlanningFieldNames value not yet handled.
+  const energyOptionNames = config.energyOptionNames ?? DEFAULT_ENERGY_OPTION_NAMES;
+  const preferredOptionName = energyOptionNames[value as Energy] ?? capitalizeFirst(value as Energy);
+  return writeSelectLikeField(client, config.tasksDataSourceId, taskId, propertyNames.energy, preferredOptionName);
+}
+
+/** The single shared `client.pages.update` call site for every `updateTaskField` write except Status (which keeps its own, inside `setTaskStatus`, unchanged) — AD-12's write surface stays exactly these two call sites. */
+async function writePageProperty(
+  client: NotionWriteClient,
+  taskId: string,
+  propertyName: string,
+  propertyValue: NonNullable<UpdatePageParameters["properties"]>[string],
+): Promise<Result<void, YohError>> {
+  try {
+    await client.pages.update({
+      page_id: taskId,
+      properties: { [propertyName]: propertyValue },
+    });
+    return { ok: true, value: undefined };
+  } catch (err) {
+    return {
+      ok: false,
+      error: {
+        kind: "unreachable",
+        message: `notion-adapter: could not write "${propertyName}" for Task ${taskId} — ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+        detail: err,
+      },
+    };
+  }
+}
+
+/**
+ * Writes Area or Energy — the two planning fields that may be modeled as a
+ * Notion `select` property, where AD-12's data-integrity guard applies.
+ * Retrieves the property's LIVE definition first (never trusts a cached
+ * assumption about its type): a `rich_text` property is written directly
+ * with `candidateInput`; a `select`/`status` property is resolved to one of
+ * its real, live option names via `closestOption` before writing — never
+ * the raw `candidateInput` itself. Any other live property type, or a
+ * schema-retrieval failure, fails the write rather than guessing.
+ */
+async function writeSelectLikeField(
+  client: NotionWriteClient & NotionSchemaClient,
+  dataSourceId: string,
+  taskId: string,
+  propertyName: string,
+  candidateInput: string,
+): Promise<Result<void, YohError>> {
+  let schema: GetDataSourceResponse;
+  try {
+    schema = await client.dataSources.retrieve({ data_source_id: dataSourceId });
+  } catch (err) {
+    return {
+      ok: false,
+      error: {
+        kind: "unreachable",
+        message: `notion-adapter: could not read the live schema for "${propertyName}" — ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+        detail: err,
+      },
+    };
+  }
+
+  if (!isFullDataSource(schema)) {
+    return {
+      ok: false,
+      error: {
+        kind: "unreachable",
+        message: `notion-adapter: Notion returned a partial data source object — cannot read "${propertyName}"'s live schema`,
+      },
+    };
+  }
+
+  const propertyConfig = schema.properties[propertyName];
+
+  if (propertyConfig?.type === "rich_text") {
+    return writePageProperty(client, taskId, propertyName, {
+      rich_text: [{ type: "text", text: { content: candidateInput } }],
+    });
+  }
+
+  if (propertyConfig?.type !== "select" && propertyConfig?.type !== "status") {
+    return {
+      ok: false,
+      error: {
+        kind: "validation",
+        message: `notion-adapter: "${propertyName}" is not a select/status/rich_text property in Notion — refusing to guess how to write it`,
+      },
+    };
+  }
+
+  const liveOptionNames = (propertyConfig.type === "select" ? propertyConfig.select.options : propertyConfig.status.options).map(
+    (option) => option.name,
+  );
+
+  const resolved = closestOption(candidateInput, liveOptionNames);
+  if (resolved === undefined) {
+    return {
+      ok: false,
+      error: {
+        kind: "validation",
+        message: `notion-adapter: no existing "${propertyName}" option is a close enough match to "${candidateInput}" — refusing to write raw text or create a new option`,
+      },
+    };
+  }
+
+  return writePageProperty(
+    client,
+    taskId,
+    propertyName,
+    propertyConfig.type === "select" ? { select: { name: resolved } } : { status: { name: resolved } },
+  );
+}
+
+/** `"low"` -> `"Low"` — the last-resort Energy candidate string when `value` has no `energyOptionNames` entry (e.g. `"medium"`, which `DEFAULT_ENERGY_OPTION_NAMES` deliberately leaves unmapped — see that constant's own doc comment). Still goes through `closestOption` against the LIVE options, so this only needs to be a reasonable guess, not exact. */
+function capitalizeFirst(raw: string): string {
+  return raw.length === 0 ? raw : raw[0]!.toUpperCase() + raw.slice(1);
 }
 
 // ============================================================================

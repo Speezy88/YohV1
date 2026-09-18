@@ -1,7 +1,7 @@
 ---
 title: PRD: Yoh
 created: 2026-08-21
-updated: 2026-09-16
+updated: 2026-09-17
 status: final
 ---
 
@@ -129,7 +129,7 @@ Before including a Task in a Plan, the system verifies its required planning fie
 - A Task missing a required field never silently appears in a Plan with a defaulted/assumed value for that field.
 - A Task missing a required field never silently disappears from planning consideration without Spencer being prompted at least once.
 
-**Notes:** Projects (organizational grouping only) and Research Vault (output-only) are explicitly excluded as planning inputs — confirmed in the brief, not open for reinterpretation without revisiting the brief.
+**Notes:** Projects (organizational grouping only) and Research Vault (output-only) are explicitly excluded as planning inputs — confirmed in the brief, not open for reinterpretation without revisiting the brief. Spencer's answer to a missing-field prompt is also written back to Notion, not just stored locally — see FR-24.
 
 ---
 
@@ -297,7 +297,7 @@ The system's Tone becomes more urgent/authoritative only as a function of the Sl
 
 ### 5.7 Notion & Calendar Integration
 
-**Description:** Yoh reads Task and Project data from Notion, writes Task Status back to Notion on Night Ritual close-out, and reads/writes Plan-related events on Google Calendar, without ever modifying a Calendar event it doesn't own. Capability-level only — see `addendum.md` for the technical mechanism (auth, endpoints, tagging implementation).
+**Description:** Yoh reads Task and Project data from Notion, and reads/writes Plan-related events on Google Calendar without ever modifying a Calendar event it doesn't own. It writes back to Notion in two cases: Task Status on Night Ritual close-out, and a Task's other missing planning fields when Spencer answers the Data-Completeness Gate's prompt via the CLI. Capability-level only — see `addendum.md` for the technical mechanism (auth, endpoints, tagging implementation).
 
 **Functional Requirements:**
 
@@ -331,10 +331,22 @@ On Night Ritual close-out, the system writes each Plan Block's resulting status 
 - A Task marked completed or slipped during Night Ritual close-out shows that same Status when viewed directly in Notion, without Spencer manually updating it.
 - Only the Status field is written by this requirement — no other Task field (Area, Due Date, Estimated Duration, etc.) is modified by Yoh as a side effect of close-out.
 
+#### FR-24: Write missing planning fields back to Notion via the CLI
+
+When Spencer answers the Data-Completeness Gate's (FR-4) prompt via the CLI for a Task's missing Estimated Duration, Area, Due Date, Energy, or Status, the answer is written to that Task's corresponding property in Notion, not just stored locally.
+
+**Consequences (testable):**
+- A Task's field answered via the CLI's Data-Completeness prompt shows that same value when viewed directly in Notion, without Spencer manually updating it.
+- This write path is reachable only through the CLI's interactive answer flow — never from an automated Morning Ritual, Night Ritual, or Self-Check run, which stay one-shot and non-interactive.
+- For any select-backed Notion property (Area if modeled as a select, Energy, Status), the written value is always one of that property's real, currently-existing Notion options — a close-but-imperfect answer is matched to the nearest real option rather than written as raw text or used to create a new option. If no existing option is a close enough match, the write fails and Spencer is re-prompted rather than Yoh guessing.
+- Free-typed fields (Due Date, Estimated Duration) keep their existing strict validation (ISO date, positive integer) before any write is attempted.
+
+**Notes:** This is a distinct capability from FR-23 — a different trigger (an explicit answer to a direct question, not a Night Ritual outcome) writing a different field set. FR-23's own scope (Status-only, close-out-triggered) is unchanged by this requirement.
+
 ## 6. Cross-Cutting NFRs
 
 - **Reliability.** The Morning and Night Rituals must run daily without manual intervention. A failure to run — a crash, an expired auth token, an unreachable API — must be surfaced to Spencer, not fail silently. There is no support team and no other user to notice; if Yoh goes quiet, Spencer is the only signal, so the system must not rely on him noticing an *absence*.
-- **Data integrity.** Writes to Calendar or Notion must never corrupt or lose Task/Calendar data, and must never touch a record Yoh doesn't own (FR-22, FR-23). This is a harder guarantee than most personal tools need, because the data being written into is Spencer's real calendar and real task list, not a sandbox.
+- **Data integrity.** Writes to Calendar or Notion must never corrupt or lose Task/Calendar data, and must never touch a record Yoh doesn't own (FR-22, FR-23, FR-24). This is a harder guarantee than most personal tools need, because the data being written into is Spencer's real calendar and real task list, not a sandbox. FR-24 widens the Notion write surface beyond Status, so it satisfies this guarantee its own way: a select-backed property is only ever written as one of its real, currently-existing options (fuzzy-matched from Spencer's answer, never a raw or invented value), and a write that can't confidently resolve to a real option fails and re-prompts instead of guessing.
 - **Latency.** Plan generation must complete comfortably before the Morning Ritual notification is due — no hard SLA, but "fast enough to not feel broken" (low seconds, not minutes) is a real requirement, since a slow or hung Morning Ritual is functionally the same failure as one that doesn't run at all.
 - **Observability.** Because there's no one else to catch a silent failure, Yoh must be able to tell Spencer when something has gone wrong with its own operation (auth expired, an integration is unreachable, a scheduled ritual didn't fire) rather than simply going dark. This directly counters the OAuth "Testing mode" 7-day silent-expiry trap named in the brief's Known Risks.
 
@@ -363,7 +375,7 @@ On Night Ritual close-out, the system writes each Plan Block's resulting status 
 - Night Ritual close-out, capped escalating retry, unchecked-day handling (FR-12–FR-14).
 - Hot/Cold memory, Propose-Don't-Impose confirmation gate, periodic Self-Check (FR-15–FR-17).
 - Default/contextual Tone with Escalate-Under-Strain-driven escalation (FR-18–FR-19).
-- Notion Tasks/Projects read, Task Status write-back; Google Calendar read/write with strict Yoh-owned-event isolation (FR-20–FR-23).
+- Notion Tasks/Projects read, Task Status write-back, CLI-driven missing-planning-field write-back; Google Calendar read/write with strict Yoh-owned-event isolation (FR-20–FR-24).
 - Terminal/CLI interface — the only surface for Phase 1.
 
 ### 9.2 Out of Scope for MVP

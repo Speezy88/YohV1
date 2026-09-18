@@ -182,6 +182,7 @@ import {
   loadTaskPropertyNamesFromEnv,
   readNotionTasks,
   setTaskStatus as notionSetTaskStatus,
+  updateTaskField as notionUpdateTaskField,
 } from "../adapters/notion-adapter.ts";
 import type { MissingFieldReport } from "../core/data-completeness-gate.ts";
 import { computeSlipBumpLevel } from "../core/slip-bump.ts";
@@ -325,16 +326,27 @@ export function parseFieldAnswer<F extends PlanningFieldNames>(field: F, raw: st
   }
 }
 
+/** The shape `runChatCli`/`surfaceOpenInteractionRequests` thread through to `answerDataCompletenessRequest` — `notion-adapter.ts`'s `updateTaskField` (FR-24), pre-bound to its client/config, the same binding-convention `SetTaskStatusFn` (below) already establishes for `setTaskStatus`. */
+type UpdateTaskFieldFn = (
+  taskId: string,
+  field: PlanningFieldNames,
+  value: NonNullable<Task[PlanningFieldNames]>,
+) => Promise<Result<void, YohError>>;
+
 /**
  * Answers the single combined `"data-completeness"` interaction request:
  * shows its (already-built) combined prompt line, then asks one follow-up
  * question per missing field per Task named in its `detail.incomplete`
  * payload, in order. Each answer is parsed via `parseFieldAnswer` and, once
- * valid, immediately persisted as a `TaskFieldOverride`
- * (`mergeTaskFieldOverride`) — so a later field's answer isn't lost even if
- * stdin closes partway through. An unparseable or blank answer re-prompts
- * the SAME question indefinitely (UX-DR20) rather than skipping it or
- * storing anything.
+ * valid, written to Notion FIRST (FR-24's `updateTaskField`, injected) and
+ * only THEN persisted locally as a `TaskFieldOverride`
+ * (`mergeTaskFieldOverride`) — mirroring `applyNightCloseOutConfirmation`'s
+ * own "Notion written before any local state changes" ordering, so a local
+ * override can never claim a value Notion doesn't actually have. A Notion
+ * write failure re-asks the SAME question (Spencer sees why, via the
+ * failure message) rather than storing an override Notion never agreed to;
+ * an unparseable or blank answer does the same, unrelated to Notion at all
+ * (UX-DR20) — neither skips the field nor stores anything.
  *
  * Only once every missing field across every named Task has been answered
  * is the interaction request itself cleared — re-reading its current
@@ -351,6 +363,7 @@ async function answerDataCompletenessRequest(
   store: MemoryStore,
   io: ChatCliIo,
   record: StoredRecord<InteractionRequest>,
+  updateTaskField: UpdateTaskFieldFn,
 ): Promise<boolean> {
   const detail = record.data.detail as { readonly incomplete?: readonly MissingFieldReport[] } | undefined;
   const incomplete = detail?.incomplete ?? [];
@@ -370,6 +383,14 @@ async function answerDataCompletenessRequest(
         if (!parsed.ok) {
           io.writeLine(parsed.message);
           continue; // re-ask the SAME question — an unparseable answer is not an answer.
+        }
+
+        const written = await updateTaskField(report.taskId, field, parsed.value as NonNullable<Task[PlanningFieldNames]>);
+        if (!written.ok) {
+          io.writeLine(
+            `I couldn't record that in Notion: ${written.error.message} — try again with a value closer to what's already in Notion.`,
+          );
+          continue; // re-ask — the Notion write must actually succeed before an override is stored.
         }
 
         mergeTaskFieldOverride(store, report.taskId, { [field]: parsed.value } as TaskFieldOverride);
@@ -957,6 +978,9 @@ export async function surfaceOpenInteractionRequests(
   },
   fallbackDate: IsoDate = localIsoDate(new Date(), "UTC"),
   random: () => number = Math.random,
+  updateTaskField: UpdateTaskFieldFn = async () => {
+    throw new Error("chat-cli: no updateTaskField dependency configured — cannot record a Data-Completeness answer in Notion");
+  },
 ): Promise<void> {
   for (;;) {
     const open = listOpenInteractionRequests(store);
@@ -964,7 +988,7 @@ export async function surfaceOpenInteractionRequests(
     const next = open[0]!;
 
     if (next.id === DATA_COMPLETENESS_REQUEST_ID && next.data.requestKind === "data-completeness") {
-      const resolved = await answerDataCompletenessRequest(store, io, next);
+      const resolved = await answerDataCompletenessRequest(store, io, next, updateTaskField);
       if (!resolved) return; // EOF mid-answer.
       continue;
     }
@@ -1442,8 +1466,11 @@ export async function runChatCli(
   setTaskStatus: SetTaskStatusFn = async () => {
     throw new Error("chat-cli: no setTaskStatus dependency configured — cannot record Night Ritual close-out");
   },
+  updateTaskField: UpdateTaskFieldFn = async () => {
+    throw new Error("chat-cli: no updateTaskField dependency configured — cannot record a Data-Completeness answer in Notion");
+  },
 ): Promise<void> {
-  await surfaceOpenInteractionRequests(store, io, setTaskStatus, currentIsoDate(timeZone, now));
+  await surfaceOpenInteractionRequests(store, io, setTaskStatus, currentIsoDate(timeZone, now), undefined, updateTaskField);
 
   // Set once the first real (non-blank) line has been handled, so a
   // muted divider separates each conversation turn from the next —
@@ -1466,7 +1493,7 @@ export async function runChatCli(
     // Re-check before processing anything else — a ritual running
     // concurrently (AD-10) may have opened a new interaction request since
     // the last check.
-    await surfaceOpenInteractionRequests(store, io, setTaskStatus, currentIsoDate(timeZone, now));
+    await surfaceOpenInteractionRequests(store, io, setTaskStatus, currentIsoDate(timeZone, now), undefined, updateTaskField);
 
     if (line.trim().length === 0) continue;
     turnComplete = true;
@@ -1625,8 +1652,34 @@ export async function main(env: Readonly<Record<string, string | undefined>> = p
     });
     return notionSetTaskStatus(notionClient, {}, taskId, status);
   };
+  // Same lazy-construction convention as `setTaskStatus` above (FR-24) — a
+  // session that never answers a Data-Completeness prompt must not be
+  // unable to start just because Notion isn't configured. Needs
+  // `NOTION_TASKS_DATA_SOURCE_ID` (unlike `setTaskStatus`): `updateTaskField`
+  // may call `dataSources.retrieve` to check a `select`-backed property's
+  // live options before writing it (AD-12's data-integrity guard) — a
+  // dependency `setTaskStatus` genuinely has no equivalent of.
+  const updateTaskField: UpdateTaskFieldFn = async (taskId, field, value) => {
+    const notionToken = env["NOTION_TOKEN"];
+    const tasksDataSourceId = env["NOTION_TASKS_DATA_SOURCE_ID"];
+    if (!notionToken || !tasksDataSourceId) {
+      return {
+        ok: false,
+        error: {
+          kind: "missing-field",
+          message:
+            "chat-cli: missing required environment variable(s) NOTION_TOKEN / NOTION_TASKS_DATA_SOURCE_ID — needed to record this answer in Notion",
+        },
+      };
+    }
+    const notionClient = new Client({
+      auth: notionToken,
+      ...(env["NOTION_API_VERSION"] ? { notionVersion: env["NOTION_API_VERSION"] } : {}),
+    });
+    return notionUpdateTaskField(notionClient, { tasksDataSourceId }, taskId, field, value);
+  };
   try {
-    await runChatCli(store, io, timeZone, llmClient, () => new Date(), readTasks, setTaskStatus);
+    await runChatCli(store, io, timeZone, llmClient, () => new Date(), readTasks, setTaskStatus, updateTaskField);
   } finally {
     store.close();
   }

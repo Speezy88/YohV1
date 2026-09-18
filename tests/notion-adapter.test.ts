@@ -27,11 +27,14 @@ import {
   loadTaskPropertyNamesFromEnv,
   readNotionTasks,
   setTaskStatus,
+  updateTaskField,
   type NotionDataSourceClient,
+  type NotionFieldWriteConfig,
+  type NotionSchemaClient,
   type NotionStatusWriteConfig,
   type NotionWriteClient,
 } from "../src/adapters/notion-adapter.ts";
-import type { UpdatePageParameters, UpdatePageResponse } from "@notionhq/client";
+import type { DataSourceObjectResponse, UpdatePageParameters, UpdatePageResponse } from "@notionhq/client";
 
 // ============================================================================
 // Fixture helpers
@@ -506,9 +509,166 @@ test("setTaskStatus honors a custom taskPropertyNames.status override", async ()
   assert.deepEqual(Object.keys(call.properties ?? {}), ["Task Status"]);
 });
 
-test("AD-12: notion-adapter.ts has exactly ONE write call site (client.pages.update) — no generic 'update Task property' function alongside it", () => {
+test("AD-12: notion-adapter.ts's write surface is exactly setTaskStatus + updateTaskField — no generic 'update any Notion property' function exists", () => {
   const source = readFileSync(join(import.meta.dirname, "..", "src", "adapters", "notion-adapter.ts"), "utf8");
   const writeCallSites = source.match(/\.pages\.update\(/g) ?? [];
-  assert.equal(writeCallSites.length, 1, "expected exactly one `client.pages.update(` call site in the whole file");
+  assert.equal(writeCallSites.length, 2, "expected exactly two `client.pages.update(` call sites: setTaskStatus's own, and updateTaskField's single shared writer");
   assert.doesNotMatch(source, /\.pages\.create\(|\.dataSources\.update\(|\.pages\.move\(/, "no other write/update capability may exist anywhere in this file (AD-12)");
+});
+
+// ============================================================================
+// updateTaskField (FR-24 / AD-12 revised) — the schema-checked write for
+// the other four PlanningFieldNames (Estimated Duration, Area, Due Date,
+// Energy); Status still delegates to setTaskStatus, unchanged.
+// ============================================================================
+
+/** A fake write+schema client: `pages.update` is scripted like `FakeNotionWriteClient`; `dataSources.retrieve` returns a scripted schema and records every data source id it was asked for. */
+class FakeNotionFieldWriteClient implements NotionWriteClient, NotionSchemaClient {
+  readonly updateCalls: UpdatePageParameters[] = [];
+  readonly retrieveCalls: string[] = [];
+  private readonly schema: DataSourceObjectResponse;
+  private readonly throwOnUpdate: Error | undefined;
+
+  constructor(schema: DataSourceObjectResponse, options: { throwOnUpdate?: Error } = {}) {
+    this.schema = schema;
+    this.throwOnUpdate = options.throwOnUpdate;
+  }
+
+  pages = {
+    update: async (args: UpdatePageParameters): Promise<UpdatePageResponse> => {
+      this.updateCalls.push(args);
+      if (this.throwOnUpdate) throw this.throwOnUpdate;
+      return { object: "page", id: "task-1" } as UpdatePageResponse;
+    },
+  };
+
+  dataSources = {
+    retrieve: async (args: { data_source_id: string }): Promise<DataSourceObjectResponse> => {
+      this.retrieveCalls.push(args.data_source_id);
+      return this.schema;
+    },
+  };
+}
+
+function makeSelectSchema(propertyName: string, optionNames: readonly string[]): DataSourceObjectResponse {
+  return {
+    object: "data_source",
+    id: "tasks-ds",
+    title: [],
+    description: [],
+    parent: { type: "database_id", database_id: "tasks-db" },
+    database_parent: { type: "database_id", database_id: "tasks-db" },
+    is_inline: false,
+    in_trash: false,
+    archived: false,
+    created_time: "2026-08-01T09:00:00.000Z",
+    last_edited_time: "2026-08-01T09:00:00.000Z",
+    created_by: FAKE_USER,
+    last_edited_by: FAKE_USER,
+    icon: null,
+    cover: null,
+    url: "https://notion.so/tasks-ds",
+    public_url: null,
+    properties: {
+      [propertyName]: {
+        id: "prop-1",
+        name: propertyName,
+        description: null,
+        type: "select",
+        select: { options: optionNames.map((name, i) => ({ id: `opt-${i}`, name, color: "default", description: null })) },
+      },
+    },
+  } as unknown as DataSourceObjectResponse;
+}
+
+function makeRichTextSchema(propertyName: string): DataSourceObjectResponse {
+  const schema = makeSelectSchema(propertyName, []) as unknown as { properties: Record<string, unknown> };
+  schema.properties[propertyName] = { id: "prop-1", name: propertyName, description: null, type: "rich_text", rich_text: {} };
+  return schema as unknown as DataSourceObjectResponse;
+}
+
+const FIELD_WRITE_CONFIG: NotionFieldWriteConfig = { tasksDataSourceId: "tasks-ds" };
+
+test("updateTaskField writes Estimated Duration as a number property", async () => {
+  const client = new FakeNotionFieldWriteClient(makeSelectSchema("Estimated Duration", []));
+  const result = await updateTaskField(client, FIELD_WRITE_CONFIG, "task-1", "estimatedDurationMinutes", 45);
+
+  assert.equal(result.ok, true);
+  const call = client.updateCalls[0]!;
+  assert.equal(call.page_id, "task-1");
+  assert.deepEqual(call.properties, { "Estimated Duration": { number: 45 } });
+});
+
+test("updateTaskField writes Due Date as a date property", async () => {
+  const client = new FakeNotionFieldWriteClient(makeSelectSchema("Due Date", []));
+  const result = await updateTaskField(client, FIELD_WRITE_CONFIG, "task-1", "dueDate", "2026-09-20");
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(client.updateCalls[0]!.properties, { "Due Date": { date: { start: "2026-09-20" } } });
+});
+
+test("updateTaskField delegates Status to setTaskStatus's own mapping", async () => {
+  const client = new FakeNotionFieldWriteClient(makeSelectSchema("Status", []));
+  const result = await updateTaskField(client, FIELD_WRITE_CONFIG, "task-1", "status", "completed");
+
+  assert.equal(result.ok, true);
+  assert.equal(client.retrieveCalls.length, 0, "Status writes never need a schema lookup — delegates straight to setTaskStatus");
+  const prop = (client.updateCalls[0]!.properties as Record<string, { status?: { name?: string } }>)["Status"];
+  assert.equal(prop?.status?.name, "Completed");
+});
+
+test("updateTaskField writes Area directly when the live property is rich_text — no option matching needed", async () => {
+  const client = new FakeNotionFieldWriteClient(makeRichTextSchema("Area"));
+  const result = await updateTaskField(client, FIELD_WRITE_CONFIG, "task-1", "area", "Finance");
+
+  assert.equal(result.ok, true);
+  const prop = (client.updateCalls[0]!.properties as Record<string, { rich_text?: Array<{ text?: { content?: string } }> }>)["Area"];
+  assert.equal(prop?.rich_text?.[0]?.text?.content, "Finance");
+});
+
+test("updateTaskField writes Area's exact-matching live select option", async () => {
+  const client = new FakeNotionFieldWriteClient(makeSelectSchema("Area", ["Finance", "Health", "Work"]));
+  const result = await updateTaskField(client, FIELD_WRITE_CONFIG, "task-1", "area", "Finance");
+
+  assert.equal(result.ok, true);
+  const prop = (client.updateCalls[0]!.properties as Record<string, { select?: { name?: string } }>)["Area"];
+  assert.equal(prop?.select?.name, "Finance");
+});
+
+test("updateTaskField autocorrects a typo'd Area answer to the nearest real live select option, never writing the raw typo", async () => {
+  const client = new FakeNotionFieldWriteClient(makeSelectSchema("Area", ["Finance", "Health", "Work"]));
+  const result = await updateTaskField(client, FIELD_WRITE_CONFIG, "task-1", "area", "Financ");
+
+  assert.equal(result.ok, true);
+  const prop = (client.updateCalls[0]!.properties as Record<string, { select?: { name?: string } }>)["Area"];
+  assert.equal(prop?.select?.name, "Finance");
+});
+
+test("updateTaskField fails (not a throw) rather than writing or inventing a new Area select option when nothing live is a close match", async () => {
+  const client = new FakeNotionFieldWriteClient(makeSelectSchema("Area", ["Finance", "Health", "Work"]));
+  const result = await updateTaskField(client, FIELD_WRITE_CONFIG, "task-1", "area", "Astronomy");
+
+  assert.equal(result.ok, false);
+  assert.equal(client.updateCalls.length, 0, "no write may happen when the answer can't be confidently matched to a real option");
+  if (!result.ok) assert.equal(result.error.kind, "validation");
+});
+
+test("updateTaskField resolves Energy through the configured real-option-name mapping against the live select options", async () => {
+  const client = new FakeNotionFieldWriteClient(makeSelectSchema("Energy", ["🔵 Deep Work", "⚡ Light Work"]));
+  const result = await updateTaskField(client, FIELD_WRITE_CONFIG, "task-1", "energy", "high");
+
+  assert.equal(result.ok, true);
+  const prop = (client.updateCalls[0]!.properties as Record<string, { select?: { name?: string } }>)["Energy"];
+  assert.equal(prop?.select?.name, "🔵 Deep Work");
+});
+
+test("updateTaskField returns a Result failure (not a throw) when the Notion SDK write call fails", async () => {
+  const client = new FakeNotionFieldWriteClient(makeSelectSchema("Estimated Duration", []), {
+    throwOnUpdate: new Error("notion: 500 internal server error"),
+  });
+  const result = await updateTaskField(client, FIELD_WRITE_CONFIG, "task-1", "estimatedDurationMinutes", 30);
+
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.equal(result.error.kind, "unreachable");
 });

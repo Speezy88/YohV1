@@ -4,12 +4,12 @@ type: architecture-spine
 purpose: build-substrate
 altitude: initiative
 paradigm: Functional Core / Imperative Shell
-scope: Phase 1 MVP — the Morning/Night Ritual loop, Notion + Google Calendar integration, memory/learning, tone, and the terminal/CLI surface. Governs FR-1–FR-23 and their NFRs; does not govern Phase 2+ (web, hardware voice pipeline, iOS, Research Vault).
+scope: Phase 1 MVP — the Morning/Night Ritual loop, Notion + Google Calendar integration, memory/learning, tone, and the terminal/CLI surface. Governs FR-1–FR-24 and their NFRs; does not govern Phase 2+ (web, hardware voice pipeline, iOS, Research Vault).
 status: final
 created: '2026-08-22'
-updated: '2026-08-22'
+updated: '2026-09-17'
 binds:
-  - FR-1..FR-23
+  - FR-1..FR-24
   - NFR-Reliability
   - NFR-DataIntegrity
   - NFR-Latency
@@ -125,11 +125,11 @@ graph TD
 - **Prevents:** a future Plan-assembly code path bypassing the gate and including a Task with a missing field, defaulted or not
 - **Rule:** `data-completeness-gate.ts` is the only function that produces a `CompleteTask` value from a raw `Task`. Every function downstream of the gate — `derived-priority.ts`, `work-break-fit.ts`, `plan-reasoning.ts` — accepts `CompleteTask`, never `Task`, in its signature. A Task with a missing required field cannot type-check its way into Plan assembly; it can only ever produce an open interaction request (AD-5) asking for the missing field. `[ADOPTED]`
 
-### AD-12 — Notion write surface is Status-only, by construction
+### AD-12 — Notion write surface is enumerated, schema-checked, and CLI-only
 
-- **Binds:** FR-23, NFR-DataIntegrity
-- **Prevents:** a Night Ritual close-out write touching any Task field other than Status; an attempt to write a rollup or formula property, which Notion documents as not updatable
-- **Rule:** `notion-adapter.ts` exposes exactly one write function, `setTaskStatus(taskId: string, status: TaskStatus): Promise<Result<void, YohError>>` — there is no generic "update this Task property" function in the adapter's surface, so "only Status is written" is enforced by the API not existing, not by convention. `[ADOPTED]`
+- **Binds:** FR-23, FR-24, NFR-DataIntegrity
+- **Prevents:** a Night Ritual close-out write touching any Task field other than Status; an attempt to write a rollup or formula property, which Notion documents as not updatable; a `select`-backed property being written a value that doesn't already exist as a real option (Notion silently creates a new option for an unrecognized `select` write, corrupting Spencer's taxonomy) or being reachable from a cron-triggered `ritual-cli.ts` subcommand
+- **Rule:** `notion-adapter.ts`'s write surface stays a closed, enumerated set — `setTaskStatus` (Status only, on Night Ritual close-out, unchanged since the original decision) plus `updateTaskFields`, added for FR-24, which writes only the fields named in `types/domain.ts`'s `PlanningFieldNames` (Estimated Duration, Area, Due Date, Energy, Status) and nothing else — there is still no generic "update any Notion property" function. Before `updateTaskFields` writes a `select`-backed property (Area when modeled as a `select` rather than `rich_text`; Energy), it retrieves that property's live option list (`dataSources.retrieve`) and resolves the value to one of those real, existing options — exact match, then normalized match, then closest-match by edit distance within a bounded threshold — never writing raw or invented text into a `select` property; a value that can't be confidently resolved fails the write rather than guessing or creating a new option. A `rich_text`-backed Area, Due Date (`date`), and Estimated Duration (`number`) are written directly — no live-option check applies to a property type Notion can't silently corrupt this way. Both write functions are called ONLY from `shell/chat-cli.ts`'s interactive answer flow, never from `shell/ritual-cli.ts` — a cron-triggered subcommand stays one-shot and non-interactive per this spine's own "ritual output is never a blocking question" rule, and never itself writes to Notion. `[ADOPTED, revised for FR-24]`
 
 ## Consistency Conventions
 
@@ -174,7 +174,7 @@ src/
     mid-day-reflow.ts           # FR-9–10
     self-check.ts               # FR-17
   adapters/                     # imperative shell — all I/O, one file per external system
-    notion-adapter.ts           # FR-20, FR-23 (Status-only write, AD-12)
+    notion-adapter.ts           # FR-20, FR-23, FR-24 (enumerated write surface, AD-12)
     calendar-adapter.ts         # FR-21, FR-22 (secondary-calendar write, primary read-only, AD-4)
     notification-adapter.ts     # Pushover
     email-adapter.ts            # nodemailer — FR-13 second attempt
@@ -229,7 +229,7 @@ graph LR
 | Memory, learning, Self-Check (FR-15–FR-17) | `adapters/memory-store.ts` + `core/escalate-under-strain.ts` + `rituals/self-check.ts` | AD-5, AD-6, AD-10 |
 | Tone & communication (FR-18–FR-19) | `core/tone.ts` + `adapters/llm-adapter.ts` | AD-6 |
 | Chat intent routing & on-demand interaction | `shell/chat-cli.ts` + `adapters/llm-adapter.ts` | AD-5 |
-| Notion & Calendar integration (FR-20–FR-23) | `adapters/{notion,calendar}-adapter.ts` | AD-4, AD-8, AD-10, AD-12 |
+| Notion & Calendar integration (FR-20–FR-24) | `adapters/{notion,calendar}-adapter.ts` | AD-4, AD-8, AD-10, AD-12 |
 | Reliability / Observability / Latency (cross-cutting NFRs) | `shell/ritual-cli.ts` + `adapters/notification-adapter.ts` | AD-7, Performance convention |
 
 ## Deferred

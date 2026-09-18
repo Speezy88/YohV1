@@ -65,7 +65,7 @@ import { checkDataCompleteness, type MissingFieldReport } from "../src/core/data
 import type { AnthropicMessagesClient } from "../src/adapters/llm-adapter.ts";
 import { resolveToneSystemPrompt } from "../src/core/tone.ts";
 import type Anthropic from "@anthropic-ai/sdk";
-import type { IsoDate, Plan, PlanBlock, Proposal, Result, Task, TaskStatus, TimeBudget, YohError } from "../src/types/domain.ts";
+import type { IsoDate, Plan, PlanBlock, PlanningFieldNames, Proposal, Result, Task, TaskStatus, TimeBudget, YohError } from "../src/types/domain.ts";
 
 function tempStore(): MemoryStore {
   return createMemoryStore({ databasePath: ":memory:" });
@@ -267,7 +267,7 @@ test("surfaceOpenInteractionRequests prints the prompt and blocks (reads an answ
   syncDataCompletenessInteractionRequest(store, [makeTask("t1", "Call dentist", { area: undefined })]);
   const io = makeScriptedIo(["Work"]);
 
-  await surfaceOpenInteractionRequests(store, io);
+  await surfaceOpenInteractionRequests(store, io, undefined, undefined, undefined, makeFakeUpdateTaskField());
 
   assert.ok(io.written.some((line) => line.includes("Call dentist")), "expected the prompt to be printed");
   store.close();
@@ -278,7 +278,7 @@ test("surfaceOpenInteractionRequests clears the request once a non-empty answer 
   syncDataCompletenessInteractionRequest(store, [makeTask("t1", "Call dentist", { area: undefined })]);
   const io = makeScriptedIo(["Work"]);
 
-  await surfaceOpenInteractionRequests(store, io);
+  await surfaceOpenInteractionRequests(store, io, undefined, undefined, undefined, makeFakeUpdateTaskField());
 
   assert.equal(getOpenInteractionRequest(store, DATA_COMPLETENESS_REQUEST_ID), undefined);
   store.close();
@@ -300,7 +300,7 @@ test("surfaceOpenInteractionRequests keeps waiting (no timeout) on an empty answ
   // Blank line, then a real answer.
   const io = makeScriptedIo(["", "Work"]);
 
-  await surfaceOpenInteractionRequests(store, io);
+  await surfaceOpenInteractionRequests(store, io, undefined, undefined, undefined, makeFakeUpdateTaskField());
 
   assert.equal(getOpenInteractionRequest(store, DATA_COMPLETENESS_REQUEST_ID), undefined);
   store.close();
@@ -313,7 +313,7 @@ test("runChatCli surfaces an open interaction request before accepting any other
   // "unrelated command" if it were processed before the prompt.
   const io = makeScriptedIo(["Work", "show me today's plan"]);
 
-  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient());
+  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), undefined, undefined, undefined, makeFakeUpdateTaskField());
 
   const promptIndex = io.written.findIndex((line) => line.includes("Call dentist"));
   assert.ok(promptIndex !== -1, "expected the interaction request to be surfaced");
@@ -491,7 +491,12 @@ test("end-to-end: a missing field answered through chat-cli is stored as an over
 
   // 2. chat-cli answers it with real (scripted) input.
   const io = makeScriptedIo(["Health"]);
-  await surfaceOpenInteractionRequests(store, io);
+  const updateTaskField = makeFakeUpdateTaskField();
+  await surfaceOpenInteractionRequests(store, io, undefined, undefined, undefined, updateTaskField);
+
+  // 2.5. The answer was ALSO written to Notion (FR-24) — not just stored
+  // locally, and with the same taskId/field/value the local override gets.
+  assert.deepEqual(updateTaskField.calls, [{ taskId: "t1", field: "area", value: "Health" }]);
 
   // 3. The override is now stored...
   const override = getTaskFieldOverride(store, "t1");
@@ -525,7 +530,7 @@ test("end-to-end: a Task missing multiple fields is answered field-by-field in o
 
   syncDataCompletenessInteractionRequest(store, [rawTask]);
   const io = makeScriptedIo(["Health", "2026-09-01"]);
-  await surfaceOpenInteractionRequests(store, io);
+  await surfaceOpenInteractionRequests(store, io, undefined, undefined, undefined, makeFakeUpdateTaskField());
 
   const override = getTaskFieldOverride(store, "t1");
   assert.equal(override?.data.area, "Health");
@@ -547,7 +552,7 @@ test("an unparseable answer for a numeric field is rejected and re-prompted, not
   syncDataCompletenessInteractionRequest(store, [rawTask]);
   const io = makeScriptedIo(["not-a-number", "45"]);
 
-  await surfaceOpenInteractionRequests(store, io);
+  await surfaceOpenInteractionRequests(store, io, undefined, undefined, undefined, makeFakeUpdateTaskField());
 
   const override = getTaskFieldOverride(store, "t1");
   assert.equal(override?.data.estimatedDurationMinutes, 45);
@@ -555,6 +560,28 @@ test("an unparseable answer for a numeric field is rejected and re-prompted, not
     io.written.some((line) => /didn't understand|invalid|couldn't/i.test(line)),
     "expected a re-prompt/error message for the unparseable first answer",
   );
+  store.close();
+});
+
+test("FR-24: a Notion write failure re-prompts the SAME question rather than storing the override — Notion must actually succeed before moving on", async () => {
+  const store = tempStore();
+  const rawTask = makeTask("t1", "Call dentist", { area: undefined });
+  syncDataCompletenessInteractionRequest(store, [rawTask]);
+  // First answer's Notion write fails (e.g. no live Area option is a close
+  // enough match); Spencer is re-prompted and answers again, which succeeds.
+  const io = makeScriptedIo(["Astronomy", "Health"]);
+  const updateTaskField = makeFakeUpdateTaskField(["area"]);
+
+  await surfaceOpenInteractionRequests(store, io, undefined, undefined, undefined, updateTaskField);
+
+  assert.equal(updateTaskField.calls.length, 2, "expected a retry call after the first write failed");
+  assert.equal(updateTaskField.calls[0]?.value, "Astronomy");
+  assert.equal(updateTaskField.calls[1]?.value, "Health");
+  // The FAILED first answer is never stored as an override...
+  const override = getTaskFieldOverride(store, "t1");
+  assert.equal(override?.data.area, "Health", "only the eventually-successful answer is stored");
+  // ...and Spencer sees why the first answer didn't stick.
+  assert.ok(io.written.some((line) => /couldn't record|notion/i.test(line)));
   store.close();
 });
 
@@ -1248,6 +1275,39 @@ function makeFakeSetTaskStatus(): ((taskId: string, status: TaskStatus) => Promi
   const calls: Array<{ taskId: string; status: TaskStatus }> = [];
   const fn = async (taskId: string, status: TaskStatus): Promise<Result<void, YohError>> => {
     calls.push({ taskId, status });
+    return { ok: true, value: undefined };
+  };
+  return Object.assign(fn, { calls });
+}
+
+/**
+ * A fake `UpdateTaskFieldFn` (FR-24): records every call and, by default,
+ * succeeds every write. `failFieldsOnce` names field(s) whose FIRST call
+ * fails (`YohError.kind: "validation"`, mirroring a real
+ * `updateTaskField` resolution failure) — every subsequent call for that
+ * same field succeeds, for tests exercising the re-prompt-on-failure path.
+ */
+function makeFakeUpdateTaskField(
+  failFieldsOnce: readonly PlanningFieldNames[] = [],
+): ((
+  taskId: string,
+  field: PlanningFieldNames,
+  value: NonNullable<Task[PlanningFieldNames]>,
+) => Promise<Result<void, YohError>>) & {
+  readonly calls: Array<{ readonly taskId: string; readonly field: PlanningFieldNames; readonly value: unknown }>;
+} {
+  const calls: Array<{ taskId: string; field: PlanningFieldNames; value: unknown }> = [];
+  const alreadyFailed = new Set<PlanningFieldNames>();
+  const fn = async (
+    taskId: string,
+    field: PlanningFieldNames,
+    value: NonNullable<Task[PlanningFieldNames]>,
+  ): Promise<Result<void, YohError>> => {
+    calls.push({ taskId, field, value });
+    if (failFieldsOnce.includes(field) && !alreadyFailed.has(field)) {
+      alreadyFailed.add(field);
+      return { ok: false, error: { kind: "validation", message: `notion-adapter: no confident match for "${field}"` } };
+    }
     return { ok: true, value: undefined };
   };
   return Object.assign(fn, { calls });
