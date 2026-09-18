@@ -1480,6 +1480,20 @@ export function parseCreateItemCommand(line: string): { readonly database: Notio
   return { database, request };
 }
 
+/**
+ * Recognizes "save/file that/this [to the (research) vault]" — the same
+ * deliberately-simple starting heuristic every other trigger recognizer in
+ * this file uses (Story 6.5 / FR-29). Deliberately does NOT match "save my
+ * progress" or similar — the trigger word must be immediately followed by
+ * "that"/"this" (optionally then "to the vault"/"to the research vault"),
+ * not an arbitrary object.
+ */
+const SAVE_SEARCH_RESULT_RE = /^(?:save|file)\s+(?:that|this)(?:\s+to\s+the\s+(?:research\s+)?vault)?\.?$/i;
+
+export function isSaveSearchResultCommand(line: string): boolean {
+  return SAVE_SEARCH_RESULT_RE.test(line.trim());
+}
+
 type CreateNotionPageFn = (
   database: NotionDatabaseTarget,
   properties: Readonly<Record<string, string>>,
@@ -1600,6 +1614,42 @@ async function handleSearchCommand(io: ChatCliIo, query: string, searchFn: Searc
 }
 
 /**
+ * Files `lastSearchAnswer` to the Research Vault directly (Story 6.5 /
+ * FR-29) — no `Proposal`, no confirm step (AD-3: FR-29 is a direct write,
+ * the save request itself is the confirmation). Uses the query that
+ * produced the answer as both the page's title and its `query` field.
+ * `undefined` (no recent search this session) reports plainly rather than
+ * fabricating a page from nothing.
+ */
+async function handleSaveSearchResultCommand(
+  io: ChatCliIo,
+  lastSearchAnswer: { readonly query: string; readonly answer: SearchAnswer } | undefined,
+  today: IsoDate,
+  createPageFn: CreateNotionPageFn,
+): Promise<void> {
+  if (!lastSearchAnswer) {
+    io.writeLine("I don't have a recent search result to save — search for something first.");
+    return;
+  }
+
+  const properties: Record<string, string> = {
+    title: lastSearchAnswer.query,
+    keyFindings: lastSearchAnswer.answer.answer,
+    query: lastSearchAnswer.query,
+    searchDate: today,
+    sources: lastSearchAnswer.answer.citations.join("\n"),
+  };
+
+  const created = await createPageFn("ResearchVault", properties);
+  if (!created.ok) {
+    io.writeLine(`I couldn't file that: ${created.error.message}`);
+    return;
+  }
+
+  io.writeLine(`Filed "${properties["title"]}" to the Research Vault.`);
+}
+
+/**
  * The REPL loop (Task 5, extended by Task 6, Task 11, Task 13, Task 14): on
  * start, and before processing every subsequent line of input, surfaces any
  * open interaction request(s) first (AD-5). Then checks whether the line is
@@ -1677,6 +1727,11 @@ export async function runChatCli(
   // per-session accumulator.
   const recentMessages: string[] = [];
   const RECENT_MESSAGES_WINDOW = 20;
+
+  // Story 6.5 (FR-29): the most recent SearchAnswer produced THIS session
+  // (never persisted — "save that" only ever files a result from the
+  // current conversation), set by the search-trigger branch below.
+  let lastSearchAnswer: { readonly query: string; readonly answer: SearchAnswer } | undefined;
 
   await surfaceOpenInteractionRequests(
     store,
@@ -1775,6 +1830,11 @@ export async function runChatCli(
       continue;
     }
 
+    if (isSaveSearchResultCommand(line)) {
+      await handleSaveSearchResultCommand(io, lastSearchAnswer, currentIsoDate(timeZone, now), createNotionPage);
+      continue;
+    }
+
     let chatIntent: ChatIntent = { kind: "general-question" };
     try {
       chatIntent = await classifyChatIntent(llmClient, line);
@@ -1783,7 +1843,8 @@ export async function runChatCli(
     }
 
     if (chatIntent.kind === "search-trigger") {
-      await handleSearchCommand(io, chatIntent.query, searchFn);
+      const answer = await handleSearchCommand(io, chatIntent.query, searchFn);
+      if (answer) lastSearchAnswer = { query: chatIntent.query, answer };
       continue;
     }
 

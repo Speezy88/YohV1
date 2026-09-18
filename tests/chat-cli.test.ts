@@ -43,6 +43,7 @@ import {
   isBlockerReportCommand,
   parseWhyPrioritizedCommand,
   parseCreateItemCommand,
+  isSaveSearchResultCommand,
   parseSelfCheckAnswer,
   apply,
   parseProposalAnswer,
@@ -823,6 +824,79 @@ test("a search failure (YohError) is reported plainly, not thrown", async () => 
   );
 
   assert.ok(io.written.some((line) => line.includes("Perplexity returned HTTP 500")));
+  store.close();
+});
+
+// ============================================================================
+// isSaveSearchResultCommand — pure trigger recognition (Story 6.5 / FR-29)
+// ============================================================================
+
+test("isSaveSearchResultCommand recognizes 'save that'/'save this'/'file that' phrasings, case-insensitively", () => {
+  for (const line of ["save that", "Save This", "file that", "save that to the vault", "file this to the research vault"]) {
+    assert.equal(isSaveSearchResultCommand(line), true, `expected "${line}" to be recognized`);
+  }
+});
+
+test("isSaveSearchResultCommand returns false for unrelated input", () => {
+  for (const line of ["what's my plan", "create a task to buy boots", "save my progress"]) {
+    assert.equal(isSaveSearchResultCommand(line), false, `expected "${line}" NOT to be recognized`);
+  }
+});
+
+// ============================================================================
+// "save that" -> file the last search result to Research Vault (Story 6.5 / FR-29)
+// ============================================================================
+
+test("'save that' after a search files it to Research Vault directly, with no confirm step, and echoes a receipt", async () => {
+  const store = tempStore();
+  const llmClient = makeFakeLlmClient("SEARCH: best hiking boots under $150");
+  const createPageFn = makeFakeCreatePage();
+  const searchFn = makeFakeSearch({ ok: true, value: { answer: "Salomon and Merrell test well.", citations: ["https://example.com/a"] } });
+  const io = makeScriptedIo(["search for the best hiking boots under $150", "save that"]);
+
+  await runChatCli(
+    store,
+    io,
+    TEST_TIME_ZONE,
+    llmClient,
+    () => new Date(NOW),
+    async () => [],
+    undefined,
+    undefined,
+    createPageFn,
+    undefined,
+    searchFn,
+  );
+
+  assert.equal(createPageFn.calls.length, 1);
+  assert.equal(createPageFn.calls[0]!.database, "ResearchVault");
+  assert.equal(createPageFn.calls[0]!.properties["keyFindings"], "Salomon and Merrell test well.");
+  assert.equal(createPageFn.calls[0]!.properties["sources"], "https://example.com/a");
+  assert.ok(createPageFn.calls[0]!.properties["searchDate"]);
+  assert.ok(io.written.some((line) => /filed/i.test(line)));
+  store.close();
+});
+
+test("'save that' with no recent search result in the session does not fabricate a page — nothing is created", async () => {
+  const store = tempStore();
+  const llmClient = makeFakeLlmClient("GENERAL");
+  const createPageFn = makeFakeCreatePage();
+  const io = makeScriptedIo(["save that"]);
+
+  await runChatCli(
+    store,
+    io,
+    TEST_TIME_ZONE,
+    llmClient,
+    () => new Date(NOW),
+    async () => [],
+    undefined,
+    undefined,
+    createPageFn,
+  );
+
+  assert.equal(createPageFn.calls.length, 0);
+  assert.ok(io.written.some((line) => /don't have|no recent|nothing to save/i.test(line)));
   store.close();
 });
 
