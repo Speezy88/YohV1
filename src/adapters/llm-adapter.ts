@@ -59,7 +59,15 @@
  * reserves for `rituals/*.ts`.
  */
 import Anthropic from "@anthropic-ai/sdk";
-import type { Energy, ExternalId, FieldValueSuggestion, PlanningFieldNames, Task, TaskStatus } from "../types/domain.ts";
+import type {
+  Energy,
+  ExternalId,
+  FieldValueSuggestion,
+  NotionDatabaseTarget,
+  PlanningFieldNames,
+  Task,
+  TaskStatus,
+} from "../types/domain.ts";
 
 // ============================================================================
 // Injectable Claude client — narrow structural interface, mirroring
@@ -289,4 +297,71 @@ export async function suggestFieldValue(
   if (value === undefined) return undefined;
 
   return { taskId, taskTitle, field, value, reason: rawReason!.trim() };
+}
+
+// ============================================================================
+// draftNotionPageFields (Story 6.3 / FR-26) — extracts a structured field
+// map from Spencer's free-text "create a ..." request. Never validates
+// against Notion's live schema itself (that's notion-adapter.ts's
+// resolveNotionPageDraftProperties, called by chat-cli.ts right after this)
+// — this function only turns prose into a flat internal-field-name ->
+// raw-string-value map, on a best-effort basis, failing closed to
+// `undefined` whenever no usable title was extracted.
+// ============================================================================
+
+const DRAFT_NOTION_PAGE_MAX_TOKENS = 512;
+
+const DRAFT_NOTION_PAGE_KNOWN_FIELDS: Readonly<Record<NotionDatabaseTarget, readonly string[]>> = {
+  Tasks: ["title", "estimatedDurationMinutes", "area", "dueDate", "status", "energy"],
+  Projects: ["title"],
+  ResearchVault: ["title", "keyFindings", "query", "searchDate", "sources", "status", "area", "confidence", "openQuestions"],
+};
+
+function buildDraftNotionPageSystemPrompt(database: NotionDatabaseTarget): string {
+  const fields = DRAFT_NOTION_PAGE_KNOWN_FIELDS[database];
+  return [
+    `You are helping Yoh, Spencer's personal planning assistant, turn a chat request into a structured draft for a new "${database}" Notion item.`,
+    `Extract ONLY fields Spencer actually mentioned, from this list: ${fields.join(", ")}.`,
+    `Respond with one "field=value" line per field you can confidently extract, using EXACTLY these field names. "title" is required — if you cannot confidently extract a title, respond with exactly: NONE`,
+    "Never invent a value Spencer didn't say or clearly imply.",
+  ].join("\n");
+}
+
+/**
+ * Extracts a `{internalField: rawValue}` map from `request` (Spencer's
+ * free-text "create a ..." message) for `database`. Returns `undefined` —
+ * never throws for "couldn't extract" — when Claude's response has no
+ * parseable `field=value` lines at all, or extracts no `title`. A genuine
+ * API/transport failure still propagates as a thrown error (AD-8);
+ * `chat-cli.ts` treats that the same as "couldn't draft."
+ */
+export async function draftNotionPageFields(
+  client: AnthropicMessagesClient,
+  database: NotionDatabaseTarget,
+  request: string,
+): Promise<Record<string, string> | undefined> {
+  const message = await client.messages.create({
+    model: CLAUDE_CHAT_MODEL,
+    max_tokens: DRAFT_NOTION_PAGE_MAX_TOKENS,
+    system: buildDraftNotionPageSystemPrompt(database),
+    messages: [{ role: "user", content: request }],
+  });
+
+  const text = message.content
+    .filter((block): block is Anthropic.TextBlock => block.type === "text")
+    .map((block) => block.text)
+    .join("\n")
+    .trim();
+
+  const fields: Record<string, string> = {};
+  for (const line of text.split("\n")) {
+    const match = /^([A-Za-z]+)\s*=\s*(.+)$/.exec(line.trim());
+    if (!match) continue;
+    const [, key, value] = match;
+    if (DRAFT_NOTION_PAGE_KNOWN_FIELDS[database].includes(key!)) {
+      fields[key!] = value!.trim();
+    }
+  }
+
+  return fields["title"] ? fields : undefined;
 }

@@ -15,6 +15,7 @@ import assert from "node:assert/strict";
 import Anthropic from "@anthropic-ai/sdk";
 import {
   answerGeneralQuestion,
+  draftNotionPageFields,
   loadLlmAdapterConfigFromEnv,
   suggestFieldValue,
   CLAUDE_CHAT_MODEL,
@@ -185,4 +186,32 @@ test("suggestFieldValue sends the joined recent messages and mentions the Task/f
   assert.equal(calls.length, 1);
   assert.match(calls[0]!.params.system as string, /Call dentist/);
   assert.equal(calls[0]!.params.messages[0]?.content, "msg one\nmsg two");
+});
+
+// ============================================================================
+// draftNotionPageFields (Story 6.3 / FR-26)
+// ============================================================================
+
+test("draftNotionPageFields parses key=value lines into a field map", async () => {
+  const { client } = fakeClient(textMessage("title=Buy hiking boots\narea=Errands\nestimatedDurationMinutes=30"));
+  const result = await draftNotionPageFields(client, "Tasks", "add a task to buy hiking boots, errands, 30 min");
+  assert.deepEqual(result, { title: "Buy hiking boots", area: "Errands", estimatedDurationMinutes: "30" });
+});
+
+test("draftNotionPageFields returns undefined when Claude extracts no title", async () => {
+  const { client } = fakeClient(textMessage("area=Errands"));
+  const result = await draftNotionPageFields(client, "Tasks", "something about errands");
+  assert.equal(result, undefined);
+});
+
+test("draftNotionPageFields returns undefined for a response with no parseable key=value lines at all", async () => {
+  const { client } = fakeClient(textMessage("I'm not sure what you mean."));
+  const result = await draftNotionPageFields(client, "Tasks", "uhh");
+  assert.equal(result, undefined);
+});
+
+test("draftNotionPageFields mentions the target database in its system prompt", async () => {
+  const { calls, client } = fakeClient(textMessage("title=X"));
+  await draftNotionPageFields(client, "ResearchVault", "research vault entry about hiking boots");
+  assert.match(calls[0]!.params.system as string, /ResearchVault|Research Vault/);
 });
