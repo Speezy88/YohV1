@@ -240,6 +240,38 @@ export interface NotionPageDraft {
   readonly properties: Readonly<Record<string, string>>;
 }
 
+/**
+ * SearchAnswer — FR-28's result shape (AD-14), pinned once here so
+ * `search-adapter.ts` (the implementer) and `llm-adapter.ts`/`chat-cli.ts`
+ * (the callers) can't independently diverge on it. A legitimate zero-result
+ * search is `{ answer: "", citations: [] }` — still a successful value, not
+ * absent.
+ */
+export interface SearchAnswer {
+  readonly answer: string;
+  readonly citations: readonly string[];
+}
+
+/**
+ * ChatIntent — the discriminated union AD-14 names for `chat-cli.ts`'s
+ * intent routing. Only `search-trigger` (Story 6.4/FR-28) has a real
+ * classifier producing it today (`llm-adapter.ts`'s `classifyChatIntent`,
+ * called only after every existing deterministic trigger check has already
+ * failed to match). The other four kinds name the territory
+ * `parseTimeBudgetCommand`/`isPlanViewCommand`/`isMidDayReflowCommand`/
+ * `isBlockerReportCommand`/`parseWhyPrioritizedCommand`/
+ * `parseCreateItemCommand` already cover via their own deterministic
+ * checks, by `chat-cli.ts`'s own documented design choice — named here so
+ * this type's inventory is complete per AD-9, not because a second
+ * classifier produces them.
+ */
+export type ChatIntent =
+  | { readonly kind: "mid-day-reflow" }
+  | { readonly kind: "blocker" }
+  | { readonly kind: "open-prompt-answer" }
+  | { readonly kind: "general-question" }
+  | { readonly kind: "search-trigger"; readonly query: string };
+
 // ============================================================================
 // Plan / PlanBlock (FR-1, FR-6–FR-8, AD-9)
 // ============================================================================
