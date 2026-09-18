@@ -24,13 +24,18 @@ import type {
   QueryDataSourceResponse,
 } from "@notionhq/client";
 import {
+  createPage,
+  DEFAULT_PROJECT_PROPERTY_NAMES,
   DEFAULT_RESEARCH_VAULT_PROPERTY_NAMES,
   DEFAULT_TASK_PROPERTY_NAMES,
   loadTaskPropertyNamesFromEnv,
   readNotionTasks,
+  resolveNotionPageDraftProperties,
   setTaskStatus,
   toResearchVaultPageProperties,
   updateTaskField,
+  type NotionCreatePageClient,
+  type NotionCreatePageConfig,
   type NotionDataSourceClient,
   type NotionFieldWriteConfig,
   type NotionResearchVaultPropertyNames,
@@ -514,11 +519,13 @@ test("setTaskStatus honors a custom taskPropertyNames.status override", async ()
   assert.deepEqual(Object.keys(call.properties ?? {}), ["Task Status"]);
 });
 
-test("AD-12: notion-adapter.ts's write surface is exactly setTaskStatus + updateTaskField — no generic 'update any Notion property' function exists", () => {
+test("AD-12: notion-adapter.ts's write surface is exactly setTaskStatus + updateTaskField + createPage — no generic 'update or create any Notion property/page' function exists", () => {
   const source = readFileSync(join(import.meta.dirname, "..", "src", "adapters", "notion-adapter.ts"), "utf8");
-  const writeCallSites = source.match(/\.pages\.update\(/g) ?? [];
-  assert.equal(writeCallSites.length, 2, "expected exactly two `client.pages.update(` call sites: setTaskStatus's own, and updateTaskField's single shared writer");
-  assert.doesNotMatch(source, /\.pages\.create\(|\.dataSources\.update\(|\.pages\.move\(/, "no other write/update capability may exist anywhere in this file (AD-12)");
+  const updateCallSites = source.match(/\.pages\.update\(/g) ?? [];
+  assert.equal(updateCallSites.length, 2, "expected exactly two `client.pages.update(` call sites: setTaskStatus's own, and updateTaskField's single shared writer");
+  const createCallSites = source.match(/\.pages\.create\(/g) ?? [];
+  assert.equal(createCallSites.length, 1, "expected exactly one `client.pages.create(` call site: createPage's own (Story 6.3)");
+  assert.doesNotMatch(source, /\.dataSources\.update\(|\.pages\.move\(/, "no other write/update capability may exist anywhere in this file (AD-12)");
 });
 
 // ============================================================================
@@ -757,4 +764,190 @@ test("toResearchVaultPageProperties honors a custom NotionResearchVaultPropertyN
 
   assert.ok("Title" in properties!);
   assert.ok("Summary" in properties!);
+});
+
+// ============================================================================
+// resolveNotionPageDraftProperties / createPage (Story 6.3 / FR-26, AD-12)
+// ============================================================================
+
+const CREATE_PAGE_CONFIG: NotionCreatePageConfig = {
+  tasksDataSourceId: "tasks-ds",
+  projectsDataSourceId: "projects-ds",
+  researchVaultDataSourceId: "research-vault-ds",
+};
+
+function fakeSchemaFor(id: string, properties: DataSourceObjectResponse["properties"]): DataSourceObjectResponse {
+  return {
+    object: "data_source",
+    id,
+    title: [],
+    description: [],
+    parent: { type: "database_id", database_id: `${id}-db` },
+    database_parent: { type: "database_id", database_id: `${id}-db` },
+    is_inline: false,
+    in_trash: false,
+    archived: false,
+    created_time: "2026-08-01T09:00:00.000Z",
+    last_edited_time: "2026-08-01T09:00:00.000Z",
+    created_by: FAKE_USER,
+    last_edited_by: FAKE_USER,
+    icon: null,
+    cover: null,
+    url: `https://notion.so/${id}`,
+    public_url: null,
+    properties,
+  } as unknown as DataSourceObjectResponse;
+}
+
+function fakeCreatePageClient(
+  schemasByDataSourceId: Readonly<Record<string, DataSourceObjectResponse>>,
+  options: { readonly throwOnCreate?: Error } = {},
+): NotionCreatePageClient & {
+  readonly createCalls: Array<{ readonly parent: unknown; readonly properties: unknown }>;
+} {
+  const createCalls: Array<{ parent: unknown; properties: unknown }> = [];
+  return {
+    createCalls,
+    dataSources: {
+      retrieve: (async ({ data_source_id }: { data_source_id: string }) => {
+        const schema = schemasByDataSourceId[data_source_id];
+        if (!schema) throw new Error(`no fake schema configured for data source "${data_source_id}"`);
+        return schema;
+      }) as NotionCreatePageClient["dataSources"]["retrieve"],
+    },
+    pages: {
+      create: (async (args: { parent: unknown; properties: unknown }) => {
+        createCalls.push(args);
+        if (options.throwOnCreate) throw options.throwOnCreate;
+        return { object: "page", id: "new-page-id", url: "https://notion.so/new-page-id" };
+      }) as NotionCreatePageClient["pages"]["create"],
+    },
+  };
+}
+
+const TASKS_SCHEMA = fakeSchemaFor("tasks-ds", {
+  Name: { id: "title", name: "Name", description: null, type: "title", title: {} },
+  "Estimated Duration": { id: "dur", name: "Estimated Duration", description: null, type: "number", number: { format: "number" } },
+  Area: {
+    id: "area",
+    name: "Area",
+    description: null,
+    type: "select",
+    select: { options: [{ id: "1", name: "Work", color: "blue", description: null }, { id: "2", name: "Health", color: "green", description: null }] },
+  },
+  "Due Date": { id: "due", name: "Due Date", description: null, type: "date", date: {} },
+  Status: {
+    id: "status",
+    name: "Status",
+    description: null,
+    type: "status",
+    status: { options: [{ id: "1", name: "Not Started", color: "gray", description: null }], groups: [] },
+  },
+  Energy: {
+    id: "energy",
+    name: "Energy",
+    description: null,
+    type: "select",
+    select: { options: [{ id: "1", name: "Low", color: "gray", description: null }, { id: "2", name: "High", color: "red", description: null }] },
+  },
+} as unknown as DataSourceObjectResponse["properties"]);
+
+const PROJECTS_SCHEMA = fakeSchemaFor("projects-ds", {
+  Name: { id: "title", name: "Name", description: null, type: "title", title: {} },
+} as unknown as DataSourceObjectResponse["properties"]);
+
+const RESEARCH_VAULT_SCHEMA = fakeSchemaFor("research-vault-ds", {
+  "Research Title": { id: "title", name: "Research Title", description: null, type: "title", title: {} },
+  "Key Findings": { id: "kf", name: "Key Findings", description: null, type: "rich_text", rich_text: {} },
+  Query: { id: "q", name: "Query", description: null, type: "rich_text", rich_text: {} },
+  Date: { id: "date", name: "Date", description: null, type: "date", date: {} },
+  Sources: { id: "src", name: "Sources", description: null, type: "rich_text", rich_text: {} },
+  Status: { id: "status", name: "Status", description: null, type: "select", select: { options: [{ id: "1", name: "Draft", color: "gray", description: null }] } },
+  Area: {
+    id: "area",
+    name: "Area",
+    description: null,
+    type: "select",
+    select: { options: [{ id: "1", name: "Reading/Learning", color: "blue", description: null }] },
+  },
+  Confidence: { id: "conf", name: "Confidence", description: null, type: "select", select: { options: [{ id: "1", name: "High", color: "green", description: null }] } },
+  "Open Questions": { id: "oq", name: "Open Questions", description: null, type: "rich_text", rich_text: {} },
+} as unknown as DataSourceObjectResponse["properties"]);
+
+const ALL_CREATE_PAGE_SCHEMAS: Record<string, DataSourceObjectResponse> = {
+  "tasks-ds": TASKS_SCHEMA,
+  "projects-ds": PROJECTS_SCHEMA,
+  "research-vault-ds": RESEARCH_VAULT_SCHEMA,
+};
+
+test("resolveNotionPageDraftProperties succeeds for a valid Tasks draft, resolving Area's select fuzzy-match", async () => {
+  const client = fakeCreatePageClient(ALL_CREATE_PAGE_SCHEMAS);
+  const result = await resolveNotionPageDraftProperties(client, CREATE_PAGE_CONFIG, "Tasks", {
+    title: "Buy hiking boots",
+    area: "wrk",
+    estimatedDurationMinutes: "30",
+  });
+  assert.equal(result.ok, true);
+});
+
+test("resolveNotionPageDraftProperties fails closed when a select-backed value has no close live match, never guessing", async () => {
+  const client = fakeCreatePageClient(ALL_CREATE_PAGE_SCHEMAS);
+  const result = await resolveNotionPageDraftProperties(client, CREATE_PAGE_CONFIG, "Tasks", {
+    title: "Buy hiking boots",
+    area: "Astronomy",
+  });
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.error.kind, "validation");
+});
+
+test("resolveNotionPageDraftProperties fails closed when title is missing", async () => {
+  const client = fakeCreatePageClient(ALL_CREATE_PAGE_SCHEMAS);
+  const result = await resolveNotionPageDraftProperties(client, CREATE_PAGE_CONFIG, "Projects", {});
+  assert.equal(result.ok, false);
+});
+
+test("resolveNotionPageDraftProperties fails closed for an internal field name not recognized for that database", async () => {
+  const client = fakeCreatePageClient(ALL_CREATE_PAGE_SCHEMAS);
+  const result = await resolveNotionPageDraftProperties(client, CREATE_PAGE_CONFIG, "Projects", {
+    title: "New initiative",
+    estimatedDurationMinutes: "30",
+  });
+  assert.equal(result.ok, false);
+});
+
+test("resolveNotionPageDraftProperties never calls pages.create — validation only, no write", async () => {
+  const client = fakeCreatePageClient(ALL_CREATE_PAGE_SCHEMAS);
+  await resolveNotionPageDraftProperties(client, CREATE_PAGE_CONFIG, "Tasks", { title: "X" });
+  assert.equal(client.createCalls.length, 0);
+});
+
+test("createPage creates a page in the target database's data source and returns its id/url", async () => {
+  const client = fakeCreatePageClient(ALL_CREATE_PAGE_SCHEMAS);
+  const result = await createPage(client, CREATE_PAGE_CONFIG, "ResearchVault", {
+    title: "Best hiking boots",
+    keyFindings: "Salomon and Merrell both test well.",
+    searchDate: "2026-09-18",
+    sources: "https://example.com",
+  });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.value.pageId, "new-page-id");
+  assert.deepEqual(client.createCalls[0]!.parent, { data_source_id: "research-vault-ds" });
+  const props = client.createCalls[0]!.properties as Record<string, unknown>;
+  assert.ok("Research Title" in props);
+  assert.ok("Key Findings" in props);
+});
+
+test("createPage re-validates at write time and fails closed exactly like the draft-time check, never writing an unresolved select", async () => {
+  const client = fakeCreatePageClient(ALL_CREATE_PAGE_SCHEMAS);
+  const result = await createPage(client, CREATE_PAGE_CONFIG, "Tasks", { title: "X", area: "Astronomy" });
+  assert.equal(result.ok, false);
+  assert.equal(client.createCalls.length, 0, "no write may happen when a property can't be confidently resolved");
+});
+
+test("createPage propagates a pages.create failure as a Result failure, not a throw", async () => {
+  const client = fakeCreatePageClient(ALL_CREATE_PAGE_SCHEMAS, { throwOnCreate: new Error("notion: 500") });
+  const result = await createPage(client, CREATE_PAGE_CONFIG, "Projects", { title: "New initiative" });
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.error.kind, "unreachable");
 });

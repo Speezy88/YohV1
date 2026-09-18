@@ -88,13 +88,25 @@
 import { isFullDataSource, isFullPage, type Client } from "@notionhq/client";
 import type {
   CreatePageParameters,
+  CreatePageResponse,
   GetDataSourceResponse,
   PageObjectResponse,
   QueryDataSourceParameters,
   QueryDataSourceResponse,
   UpdatePageParameters,
 } from "@notionhq/client";
-import type { Energy, ExternalId, IsoDate, PlanningFieldNames, Project, Result, Task, TaskStatus, YohError } from "../types/domain.ts";
+import type {
+  Energy,
+  ExternalId,
+  IsoDate,
+  NotionDatabaseTarget,
+  PlanningFieldNames,
+  Project,
+  Result,
+  Task,
+  TaskStatus,
+  YohError,
+} from "../types/domain.ts";
 import { closestOption } from "./notion-select-match.ts";
 
 // ============================================================================
@@ -747,6 +759,223 @@ export function toResearchVaultPageProperties(
   }
 
   return properties;
+}
+
+// ============================================================================
+// createPage (Story 6.3 / FR-26, FR-29, AD-12) — the adapter's THIRD and
+// final write function. resolveNotionPageDraftProperties is the shared,
+// no-write schema-resolution core both createPage (write time) and
+// shell/chat-cli.ts (draft time, before showing Spencer a Proposal) call —
+// the exact same resolution genuinely runs twice, per AD-12.
+// ============================================================================
+
+export interface NotionCreatePageClient {
+  readonly pages: {
+    readonly create: Client["pages"]["create"];
+  };
+  readonly dataSources: {
+    readonly retrieve: Client["dataSources"]["retrieve"];
+  };
+}
+
+/** `createPage`/`resolveNotionPageDraftProperties`'s config — one data source id + property-name map per target database. */
+export interface NotionCreatePageConfig {
+  readonly tasksDataSourceId: string;
+  readonly projectsDataSourceId: string;
+  readonly researchVaultDataSourceId: string;
+  readonly taskPropertyNames?: NotionTaskPropertyNames;
+  readonly projectPropertyNames?: NotionProjectPropertyNames;
+  readonly researchVaultPropertyNames?: NotionResearchVaultPropertyNames;
+}
+
+/** Yoh-internal field name -> real Notion property name, per target database. Deliberately excludes relation-typed properties (e.g. Research Vault's "Linked Project") — a chat-driven raw-string draft can't supply a valid relation target. */
+function createPagePropertyNameMap(database: NotionDatabaseTarget, config: NotionCreatePageConfig): Record<string, string> {
+  if (database === "Tasks") {
+    const names = config.taskPropertyNames ?? DEFAULT_TASK_PROPERTY_NAMES;
+    return {
+      title: names.title,
+      estimatedDurationMinutes: names.estimatedDuration,
+      area: names.area,
+      dueDate: names.dueDate,
+      status: names.status,
+      energy: names.energy,
+    };
+  }
+  if (database === "Projects") {
+    const names = config.projectPropertyNames ?? DEFAULT_PROJECT_PROPERTY_NAMES;
+    return { title: names.title };
+  }
+  const names = config.researchVaultPropertyNames ?? DEFAULT_RESEARCH_VAULT_PROPERTY_NAMES;
+  return {
+    title: names.title,
+    keyFindings: names.keyFindings,
+    query: names.query,
+    searchDate: names.date,
+    sources: names.sources,
+    status: names.status,
+    area: names.area,
+    confidence: names.confidence,
+    openQuestions: names.openQuestions,
+  };
+}
+
+function createPageDataSourceId(database: NotionDatabaseTarget, config: NotionCreatePageConfig): string {
+  if (database === "Tasks") return config.tasksDataSourceId;
+  if (database === "Projects") return config.projectsDataSourceId;
+  return config.researchVaultDataSourceId;
+}
+
+/**
+ * Resolves ONE already-retrieved live property definition + a raw string
+ * value into a `CreatePageParameters["properties"]` entry, or a failure
+ * reason. `title`/`rich_text` are written directly; `number`/`date` are
+ * coerced; `select`/`status` are resolved via `closestOption` against the
+ * property's REAL live options (never raw/invented text — AD-12). Any other
+ * live property type fails.
+ */
+function resolveCreatePageProperty(
+  propertyName: string,
+  propertyConfig: GetDataSourceResponse["properties"][string] | undefined,
+  rawValue: string,
+): { readonly ok: true; readonly value: NonNullable<CreatePageParameters["properties"]>[string] } | { readonly ok: false; readonly message: string } {
+  if (!propertyConfig) {
+    return { ok: false, message: `"${propertyName}" does not exist on this database's live schema` };
+  }
+  switch (propertyConfig.type) {
+    case "title":
+      return { ok: true, value: { title: [{ type: "text", text: { content: rawValue } }] } };
+    case "rich_text":
+      return { ok: true, value: { rich_text: [{ type: "text", text: { content: rawValue } }] } };
+    case "number": {
+      const n = Number(rawValue);
+      if (!Number.isFinite(n)) return { ok: false, message: `"${propertyName}" expects a number, got "${rawValue}"` };
+      return { ok: true, value: { number: n } };
+    }
+    case "date":
+      return { ok: true, value: { date: { start: rawValue } } };
+    case "select":
+    case "status": {
+      const liveOptionNames = (propertyConfig.type === "select" ? propertyConfig.select.options : propertyConfig.status.options).map(
+        (option) => option.name,
+      );
+      const resolved = closestOption(rawValue, liveOptionNames);
+      if (resolved === undefined) {
+        return { ok: false, message: `no existing "${propertyName}" option is a close enough match to "${rawValue}"` };
+      }
+      return { ok: true, value: propertyConfig.type === "select" ? { select: { name: resolved } } : { status: { name: resolved } } };
+    }
+    default:
+      return { ok: false, message: `"${propertyName}" is a ${propertyConfig.type} property — not supported for chat-driven creation` };
+  }
+}
+
+/**
+ * Retrieves `database`'s live schema and resolves every entry in
+ * `properties` (Yoh-internal field name -> Spencer's raw string value)
+ * against it — never writes anything. Fails closed (AD-12) on: an unknown
+ * internal field name for `database`, a missing/unresolvable `title`, or
+ * any single property that can't be confidently resolved (e.g. a
+ * `select`-backed value with no close live match). Called by
+ * `shell/chat-cli.ts` at DRAFT time (so the `Proposal<NotionPageDraft>`
+ * shown to Spencer is actually accurate) and internally by `createPage`
+ * again at WRITE time (the binding guarantee) — the exact same resolution,
+ * genuinely run twice.
+ */
+export async function resolveNotionPageDraftProperties(
+  client: NotionCreatePageClient,
+  config: NotionCreatePageConfig,
+  database: NotionDatabaseTarget,
+  properties: Readonly<Record<string, string>>,
+): Promise<Result<NonNullable<CreatePageParameters["properties"]>, YohError>> {
+  const nameMap = createPagePropertyNameMap(database, config);
+  const dataSourceId = createPageDataSourceId(database, config);
+
+  if (!properties["title"] || properties["title"].trim().length === 0) {
+    return {
+      ok: false,
+      error: { kind: "validation", message: `notion-adapter: a "${database}" page draft needs a non-blank title` },
+    };
+  }
+
+  let schema: GetDataSourceResponse;
+  try {
+    schema = await client.dataSources.retrieve({ data_source_id: dataSourceId });
+  } catch (err) {
+    return {
+      ok: false,
+      error: {
+        kind: "unreachable",
+        message: `notion-adapter: could not read the live schema for "${database}" — ${err instanceof Error ? err.message : String(err)}`,
+        detail: err,
+      },
+    };
+  }
+  if (!isFullDataSource(schema)) {
+    return {
+      ok: false,
+      error: { kind: "unreachable", message: `notion-adapter: Notion returned a partial data source object for "${database}"` },
+    };
+  }
+
+  const resolved: NonNullable<CreatePageParameters["properties"]> = {};
+  for (const [internalField, rawValue] of Object.entries(properties)) {
+    const realName = nameMap[internalField];
+    if (!realName) {
+      return {
+        ok: false,
+        error: { kind: "validation", message: `notion-adapter: "${internalField}" is not a settable field for "${database}"` },
+      };
+    }
+    const result = resolveCreatePageProperty(realName, schema.properties[realName], rawValue);
+    if (!result.ok) {
+      return { ok: false, error: { kind: "validation", message: `notion-adapter: ${result.message}` } };
+    }
+    resolved[realName] = result.value;
+  }
+
+  return { ok: true, value: resolved };
+}
+
+/**
+ * Creates a new page in `database`'s live data source. Re-runs
+ * `resolveNotionPageDraftProperties` itself (the write-time half of AD-12's
+ * "runs twice") rather than trusting an already-resolved payload from a
+ * caller — so a draft that was valid moments ago but has since drifted
+ * still fails closed here, not just at draft time. Only called from
+ * `shell/chat-cli.ts`, never `shell/ritual-cli.ts` (AD-12).
+ */
+export async function createPage(
+  client: NotionCreatePageClient,
+  config: NotionCreatePageConfig,
+  database: NotionDatabaseTarget,
+  properties: Readonly<Record<string, string>>,
+): Promise<Result<{ pageId: string; url?: string }, YohError>> {
+  const resolved = await resolveNotionPageDraftProperties(client, config, database, properties);
+  if (!resolved.ok) return resolved;
+
+  const dataSourceId = createPageDataSourceId(database, config);
+
+  let response: CreatePageResponse;
+  try {
+    response = await client.pages.create({
+      parent: { data_source_id: dataSourceId },
+      properties: resolved.value,
+    });
+  } catch (err) {
+    return {
+      ok: false,
+      error: {
+        kind: "unreachable",
+        message: `notion-adapter: could not create the "${database}" page — ${err instanceof Error ? err.message : String(err)}`,
+        detail: err,
+      },
+    };
+  }
+
+  return {
+    ok: true,
+    value: isFullPage(response) ? { pageId: response.id, url: response.url } : { pageId: response.id },
+  };
 }
 
 // ============================================================================
