@@ -218,6 +218,28 @@ export interface FieldValueSuggestion {
   readonly reason: string;
 }
 
+/**
+ * NotionDatabaseTarget — the closed set of Notion databases `createPage`
+ * (FR-26/FR-29, AD-12) may ever target. A TS union, not a runtime string
+ * check — Story 6.3's AC2 requires this be enforced at the type level.
+ */
+export type NotionDatabaseTarget = "Tasks" | "Projects" | "ResearchVault";
+
+/**
+ * NotionPageDraft — FR-26's `Proposal<T>` payload (AD-3): what Yoh would
+ * create, shown to Spencer before anything is written. `properties` maps
+ * Yoh-internal field names (e.g. `"title"`, `"area"`, `"keyFindings"`) —
+ * never raw Notion property names — to Spencer's own raw string values;
+ * `notion-adapter.ts`'s `resolveNotionPageDraftProperties`/`createPage` are
+ * the only places that resolve an internal field name to `database`'s real
+ * live Notion property name and coerce the raw string into that property's
+ * real type (AD-12).
+ */
+export interface NotionPageDraft {
+  readonly database: NotionDatabaseTarget;
+  readonly properties: Readonly<Record<string, string>>;
+}
+
 // ============================================================================
 // Plan / PlanBlock (FR-1, FR-6–FR-8, AD-9)
 // ============================================================================
