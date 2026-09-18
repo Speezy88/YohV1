@@ -176,6 +176,7 @@ import {
   answerGeneralQuestion,
   createAnthropicMessagesClient,
   loadLlmAdapterConfigFromEnv,
+  suggestFieldValue,
   type AnthropicMessagesClient,
 } from "../adapters/llm-adapter.ts";
 import {
@@ -209,6 +210,7 @@ import {
 } from "../rituals/night-ritual.ts";
 import { applySelfCheckAnswer, isValidSelfCheckScore, SELF_CHECK_REQUEST_ID } from "../rituals/self-check.ts";
 import type {
+  FieldValueSuggestion,
   InteractionRequest,
   IsoDate,
   PlanningFieldNames,
@@ -364,6 +366,8 @@ async function answerDataCompletenessRequest(
   io: ChatCliIo,
   record: StoredRecord<InteractionRequest>,
   updateTaskField: UpdateTaskFieldFn,
+  llmClient?: AnthropicMessagesClient,
+  recentMessages: readonly string[] = [],
 ): Promise<boolean> {
   const detail = record.data.detail as { readonly incomplete?: readonly MissingFieldReport[] } | undefined;
   const incomplete = detail?.incomplete ?? [];
@@ -373,8 +377,40 @@ async function answerDataCompletenessRequest(
 
   for (const report of incomplete) {
     for (const field of report.missingFields) {
+      const label = PLANNING_FIELD_LABELS[field];
+
+      if (llmClient) {
+        let suggestion: FieldValueSuggestion | undefined;
+        try {
+          suggestion = await suggestFieldValue(llmClient, report.taskId, report.taskTitle, field, recentMessages);
+        } catch {
+          suggestion = undefined; // A Claude/API failure must never block the fallback blind ask.
+        }
+
+        if (suggestion) {
+          io.writeLine(`  ${report.taskTitle} — ${label}: I think it's "${suggestion.value}" — ${suggestion.reason}`);
+          let confirmAnswer: string | null = null;
+          do {
+            confirmAnswer = await io.readLine("  Sound right? (yes/no): ");
+            if (confirmAnswer === null) return false; // stdin closed mid-answer.
+          } while (confirmAnswer.trim().length === 0); // UX-DR20: silence is never an answer.
+
+          if (parseProposalAnswer(confirmAnswer) === true) {
+            const written = await updateTaskField(report.taskId, field, suggestion.value);
+            if (written.ok) {
+              mergeTaskFieldOverride(store, report.taskId, { [field]: suggestion.value } as TaskFieldOverride);
+              continue; // done with this field — skip the blind ask below.
+            }
+            io.writeLine(`I couldn't record that in Notion: ${written.error.message} — let's try a value directly.`);
+          }
+          // Anything other than a confirmed "yes" (an explicit "no," an
+          // unrecognized reply, or a Notion write failure on "yes") falls
+          // through to FR-4's plain blind ask below — FR-25 never blocks or
+          // replaces the baseline gate behavior.
+        }
+      }
+
       for (;;) {
-        const label = PLANNING_FIELD_LABELS[field];
         const answer = await io.readLine(`  ${report.taskTitle} — ${label}: `);
         if (answer === null) return false; // stdin closed mid-answer.
         if (answer.trim().length === 0) continue; // wait indefinitely (UX-DR20): re-ask, don't skip.
@@ -981,6 +1017,8 @@ export async function surfaceOpenInteractionRequests(
   updateTaskField: UpdateTaskFieldFn = async () => {
     throw new Error("chat-cli: no updateTaskField dependency configured — cannot record a Data-Completeness answer in Notion");
   },
+  llmClient?: AnthropicMessagesClient,
+  recentMessages: readonly string[] = [],
 ): Promise<void> {
   for (;;) {
     const open = listOpenInteractionRequests(store);
@@ -988,7 +1026,7 @@ export async function surfaceOpenInteractionRequests(
     const next = open[0]!;
 
     if (next.id === DATA_COMPLETENESS_REQUEST_ID && next.data.requestKind === "data-completeness") {
-      const resolved = await answerDataCompletenessRequest(store, io, next, updateTaskField);
+      const resolved = await answerDataCompletenessRequest(store, io, next, updateTaskField, llmClient, recentMessages);
       if (!resolved) return; // EOF mid-answer.
       continue;
     }
@@ -1470,7 +1508,24 @@ export async function runChatCli(
     throw new Error("chat-cli: no updateTaskField dependency configured — cannot record a Data-Completeness answer in Notion");
   },
 ): Promise<void> {
-  await surfaceOpenInteractionRequests(store, io, setTaskStatus, currentIsoDate(timeZone, now), undefined, updateTaskField);
+  // FR-25 (Story 6.2): a small bounded window of Spencer's own recent
+  // (non-blank) chat lines, threaded into `suggestFieldValue`'s inference
+  // attempt — never persisted (AD-11's "enrichment happens at display time,
+  // every time, not once at write time"), so it's purely an in-memory,
+  // per-session accumulator.
+  const recentMessages: string[] = [];
+  const RECENT_MESSAGES_WINDOW = 20;
+
+  await surfaceOpenInteractionRequests(
+    store,
+    io,
+    setTaskStatus,
+    currentIsoDate(timeZone, now),
+    undefined,
+    updateTaskField,
+    llmClient,
+    recentMessages,
+  );
 
   // Set once the first real (non-blank) line has been handled, so a
   // muted divider separates each conversation turn from the next —
@@ -1490,10 +1545,24 @@ export async function runChatCli(
     const line = await io.readLine(prompt);
     if (line === null) return;
 
+    if (line.trim().length > 0) {
+      recentMessages.push(line.trim());
+      if (recentMessages.length > RECENT_MESSAGES_WINDOW) recentMessages.shift();
+    }
+
     // Re-check before processing anything else — a ritual running
     // concurrently (AD-10) may have opened a new interaction request since
     // the last check.
-    await surfaceOpenInteractionRequests(store, io, setTaskStatus, currentIsoDate(timeZone, now), undefined, updateTaskField);
+    await surfaceOpenInteractionRequests(
+      store,
+      io,
+      setTaskStatus,
+      currentIsoDate(timeZone, now),
+      undefined,
+      updateTaskField,
+      llmClient,
+      recentMessages,
+    );
 
     if (line.trim().length === 0) continue;
     turnComplete = true;

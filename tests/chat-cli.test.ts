@@ -524,6 +524,73 @@ test("end-to-end: a missing field answered through chat-cli is stored as an over
   store.close();
 });
 
+// ============================================================================
+// FR-25 — inferred-value proposal ahead of the Data-Completeness blind ask
+// ============================================================================
+
+test("a confident inference is shown as a proposal and, on 'yes', applied through the same updateTaskField path a manual answer uses", async () => {
+  const store = tempStore();
+  syncDataCompletenessInteractionRequest(store, [makeTask("t1", "Call dentist", { estimatedDurationMinutes: undefined })]);
+
+  const llmClient = makeFakeLlmClient("CONFIDENT: 30 | Spencer said it'll take about half an hour");
+  const updateTaskField = makeFakeUpdateTaskField();
+  const io = makeScriptedIo(["yes"]);
+
+  await surfaceOpenInteractionRequests(store, io, undefined, undefined, undefined, updateTaskField, llmClient, [
+    "that dentist call will take about half an hour",
+  ]);
+
+  assert.deepEqual(updateTaskField.calls, [{ taskId: "t1", field: "estimatedDurationMinutes", value: 30 }]);
+  assert.equal(getTaskFieldOverride(store, "t1")?.data.estimatedDurationMinutes, 30);
+  assert.equal(getOpenInteractionRequest(store, DATA_COMPLETENESS_REQUEST_ID), undefined);
+  assert.ok(io.written.some((line) => line.includes("I think it's")), "expected the proposal line to be shown");
+  store.close();
+});
+
+test("declining a confident inference falls back to the plain blind ask (FR-25 never blocks or replaces FR-4's baseline)", async () => {
+  const store = tempStore();
+  syncDataCompletenessInteractionRequest(store, [makeTask("t1", "Call dentist", { estimatedDurationMinutes: undefined })]);
+
+  const llmClient = makeFakeLlmClient("CONFIDENT: 30 | Spencer said it'll take about half an hour");
+  const updateTaskField = makeFakeUpdateTaskField();
+  const io = makeScriptedIo(["no", "45"]);
+
+  await surfaceOpenInteractionRequests(store, io, undefined, undefined, undefined, updateTaskField, llmClient, [
+    "that dentist call will take about half an hour",
+  ]);
+
+  assert.deepEqual(updateTaskField.calls, [{ taskId: "t1", field: "estimatedDurationMinutes", value: 45 }]);
+  store.close();
+});
+
+test("no confident inference (NONE) falls straight through to the plain blind ask, unchanged", async () => {
+  const store = tempStore();
+  syncDataCompletenessInteractionRequest(store, [makeTask("t1", "Call dentist", { estimatedDurationMinutes: undefined })]);
+
+  const llmClient = makeFakeLlmClient("NONE");
+  const updateTaskField = makeFakeUpdateTaskField();
+  const io = makeScriptedIo(["30"]);
+
+  await surfaceOpenInteractionRequests(store, io, undefined, undefined, undefined, updateTaskField, llmClient, [
+    "unrelated chatter",
+  ]);
+
+  assert.deepEqual(updateTaskField.calls, [{ taskId: "t1", field: "estimatedDurationMinutes", value: 30 }]);
+  assert.equal(io.written.some((line) => line.includes("I think it's")), false);
+  store.close();
+});
+
+test("no llmClient supplied (the default) never attempts an inference — pre-existing blind-ask behavior is fully preserved", async () => {
+  const store = tempStore();
+  syncDataCompletenessInteractionRequest(store, [makeTask("t1", "Call dentist", { area: undefined })]);
+  const io = makeScriptedIo(["Health"]);
+
+  await surfaceOpenInteractionRequests(store, io, undefined, undefined, undefined, makeFakeUpdateTaskField());
+
+  assert.equal(getTaskFieldOverride(store, "t1")?.data.area, "Health");
+  store.close();
+});
+
 test("end-to-end: a Task missing multiple fields is answered field-by-field in one surfacing pass, each stored as its own override", async () => {
   const store = tempStore();
   const rawTask = makeTask("t1", "Plan trip", { area: undefined, dueDate: undefined });
