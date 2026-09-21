@@ -5,6 +5,8 @@ inputDocuments:
   - _bmad-output/planning-artifacts/architecture/architecture-YohV1-2026-08-22/ARCHITECTURE-SPINE.md
   - _bmad-output/planning-artifacts/ux-designs/ux-YohV1-2026-08-21/DESIGN.md
   - _bmad-output/planning-artifacts/ux-designs/ux-YohV1-2026-08-21/EXPERIENCE.md
+updated: '2026-09-18'
+epic6Status: "Complete -- Epic 6 (Phase 1.5, FR-25-29, Stories 6.1-6.6) fully designed, validated, and approved. Epics 1-6 all done; workflow finished 2026-09-18."
 ---
 
 # Yoh - Epic Breakdown
@@ -12,6 +14,8 @@ inputDocuments:
 ## Overview
 
 This document provides the complete epic and story breakdown for Yoh, decomposing the requirements from the PRD, UX Design, and Architecture Spine into implementable stories.
+
+> **Epic 6 status (2026-09-18):** Epics 1–5 are complete and shipped (Phase 1, `sprint-status.yaml`). Epic 6 (Phase 1.5: FR-25–FR-29, Live Integrations — Stories 6.1–6.6) is now also complete: designed, story-generated, and validated via `bmad-create-epics-and-stories`. All six epics are ready for sprint planning.
 
 ## Requirements Inventory
 
@@ -63,11 +67,25 @@ FR-22: Write Plan Blocks to Calendar without touching non-Yoh events — writes 
 
 FR-23: Write Task Status back to Notion — on Night Ritual close-out, writes each Plan Block's resulting status (completed/slipped) back to the corresponding Task's Status field in Notion; only the Status field is written, no other Task field.
 
+FR-24: Write missing planning fields back to Notion via the CLI — when Spencer answers the Data-Completeness Gate's prompt via chat, the answer is written to Notion (not just stored locally); select-backed properties are fuzzy-matched to real existing options, fail-closed if unresolved. *(Already implemented directly, outside the epic/story process — listed here for traceability only; not part of Epic 6.)*
+
+**Phase 1.5 (Epic 6):**
+
+FR-25: Propose inferred values for the Data-Completeness Gate — when `llm-adapter.ts` can confidently derive a missing field's value from recent chat context, Yoh proposes it instead of a blind ask; Spencer confirms or corrects; falls back to FR-4's plain ask when no confident inference exists; the confirmed value flows through FR-24's existing write path. Generation is lazy, at `chat-cli.ts` display time — never eager, at ritual time (AD-11).
+
+FR-26: Create Notion pages/DB items via chat — Spencer asks Yoh to create an item in Tasks, Projects, or Research Vault (the only valid targets); Yoh drafts it, shows the draft, creates only on Spencer's explicit confirmation; schema-validated against the target database's real properties both at draft time and write time (AD-12).
+
+FR-27: Confirm-gated Calendar time-block editing beyond Yoh-owned events — Spencer asks Yoh to move, resize, or create a time block on his real Calendar, including events Yoh didn't create; Yoh shows what would change and edits only on explicit confirmation naming that event. Deletion of a non-Yoh event is never performed, confirmed or not — not a constructible value in the type system (AD-13).
+
+FR-28: Web search lookup via chat — Spencer asks a factual/research question or explicitly asks Yoh to search; Yoh performs a live search and returns a synthesized, cited answer; triggered only by explicit ask or an unambiguous factual question, never on every chat turn; writes nothing to Notion or Calendar (AD-14).
+
+FR-29: File a search result to the Research Vault on request — Spencer asks Yoh to save/file a search result (e.g. "save that"); Yoh creates a new page in the Research Vault database, tagged with source and date. Direct-write — the explicit request is the confirmation, no preview step (AD-12).
+
 ### NonFunctional Requirements
 
 NFR-Reliability: The Morning and Night Rituals must run daily without manual intervention. A failure to run (crash, expired auth token, unreachable API) must be surfaced to Spencer, not fail silently — there is no other user to notice an absence.
 
-NFR-DataIntegrity: Writes to Calendar or Notion must never corrupt or lose Task/Calendar data, and must never touch a record Yoh doesn't own (FR-22, FR-23).
+NFR-DataIntegrity: Writes to Calendar or Notion must never corrupt or lose Task/Calendar data, and must never touch a record Yoh doesn't own (FR-22, FR-23) — with exactly one confirm-gated exception, FR-27 (AD-13). **Phase 1.5:** every write sits at one of three tiers, chosen per capability and never defaulted — automatic (FR-22, FR-23), direct-write (FR-24, FR-29), or confirm-then-write (FR-25, FR-26, FR-27). Every write triggered from chat (FR-24–FR-29) is echoed back to Spencer as a one-line receipt in that same session.
 
 NFR-Latency: Plan generation must complete comfortably before the Morning Ritual notification is due — no hard SLA, but "fast enough to not feel broken" (low seconds, not minutes); a slow/hung Morning Ritual is functionally the same failure as one that doesn't run.
 
@@ -94,12 +112,25 @@ NFR-Observability: Yoh must be able to tell Spencer when something has gone wron
 - File-level ownership (AD-9): `types/domain.ts` (Task, CompleteTask, Plan, PlanBlock, TimeBudget, Proposal<T>, EscalationCurve, EscalationLevel, Result<T,E>, YohError) is authored/locked as its own prerequisite task before any file importing from it is dispatched; `PlanBlock` carries a stable `id`, addressed by id everywhere, never array position.
 - Storage split (AD-10): `memory-store.ts` (hot/cold memory + open interaction requests/Proposals) and `token-store.ts` (sole OAuth2Client constructor/holder, rewrites refresh token to disk immediately after every refresh) are two separate files. Static secrets load from env vars at process start; only the Google refresh token is a persisted mutable secret. Multi-step read-modify-write sequences in `memory-store.ts` run inside a single SQLite transaction with optimistic concurrency (version/`updated_at` check), surfacing conflicting writes as `YohError.kind: 'conflict'`.
 - Data-Completeness Gate at the type level (AD-11): `data-completeness-gate.ts` is the only function producing a `CompleteTask` from a raw `Task`; every downstream function (`derived-priority.ts`, `work-break-fit.ts`, `plan-reasoning.ts`) accepts only `CompleteTask`, never `Task`.
-- Notion write surface (AD-12): `notion-adapter.ts` exposes exactly one write function, `setTaskStatus(taskId, status): Promise<Result<void, YohError>>` — no generic "update Task property" function exists.
+- Notion write surface (AD-12, as extended for FR-24/FR-26/FR-29): `notion-adapter.ts`'s write surface is a closed, enumerated set — `setTaskStatus(taskId, status)`, `updateTaskField(client, config, taskId, field, value)` (FR-24, one field/value pair per call, singular), and `createPage(database, properties)` (FR-26/FR-29, `database` a closed enum `Tasks | Projects | ResearchVault`) — no generic "update/create any Notion property/page" function exists. `select`-backed properties are fuzzy-matched against their live option list before every write (exact → normalized → closest-match within a bounded threshold); a value that can't confidently resolve fails the write rather than guessing.
 - Logging convention: single-line structured JSON to stderr, one line per ritual step, including Plan-generation timing as one logged field; a slow run (exceeding a low-seconds threshold, exact number set at build time) is treated as degraded-not-failed and raised through the AD-7 alert path.
 - Dates/IDs/errors convention: ISO-8601 UTC internally in `core/` and storage, converted to Spencer's local timezone only at the `shell/`/notification edge; Notion page IDs and Google Calendar event IDs are opaque strings, never parsed; errors are the `Result<T, YohError>` discriminated union.
 - Deployment: single environment, single host (laptop, Raspberry Pi, or existing server), one Node process tree, no containerization, no staging/prod split; SQLite file + `.env` secrets file are the only persistent state, living alongside the checkout.
 - Build-time / launch-blocking verifications to track as explicit stories or gating tasks: OAuth production-mode consent-screen flip (blocking — Testing-mode default silently expires refresh tokens after 7 days); Notion internal-integration-token auth pattern confirmation against current docs; service-account-vs-personal-calendar constraint verification (OAuth 2.0 user consent required, not a service account); current Notion API version recheck before the build window; exact 2026 Google Calendar OAuth scope names verification for the primary-read/"Yoh Plan"-write split.
 - Deferred tuning parameters (implementation decisions, not blocking, but should be represented as explicit story tasks with a stated starting value): FR-2 secondary-factor weights (start with an even split across Area/Energy fit/difficulty); FR-11 Slip-Bump increment curve and cap (small bump on slip 1, ~double on slip 2, cap by slip 3–4); FR-17 Self-Check low-score threshold (bias toward under-triggering initially); Plan-generation performance threshold's concrete low-seconds number.
+
+**Phase 1.5 (Epic 6) — from ARCHITECTURE-SPINE.md AD-3/AD-10/AD-11/AD-12/AD-13/AD-14:**
+
+- Two separately-scoped Google Calendar `OAuth2Client` instances, both sole-constructed/held by `token-store.ts` (AD-10, AD-13): the existing narrow client (`calendar.events.readonly` primary, `calendar.app.created` "Yoh Plan" write) stays exactly as built for the automatic path; a new, broader client (`calendar.events` — read/write across all accessible calendars) is provisioned only for FR-27's confirm-gated path. "Primary only" is enforced by `calendar-adapter.ts` checking `calendarId === 'primary'` in code, not by the OAuth grant itself — confirmed accepted trade-off, not an open question.
+- New Perplexity API key (static secret, env var, same pattern as existing secrets) targeting the **Agent API** (`/v1/responses`) — explicitly not Sonar's `/v1/chat/completions`, which is deprecated 2026-09-27. Citation extraction reads the `search_results` item inside the response's `output[]` array, not a top-level `citations` field.
+- New `adapters/search-adapter.ts` (FR-28, AD-14): exports exactly `search(query: string): Promise<Result<SearchAnswer, YohError>>`; structurally holds no write capability (no import path to any write function). A zero-result answer is a successful `Result`, never a `YohError`.
+- `calendar-adapter.ts` gains (AD-13): `resolveCalendarEditRoute(eventId): {kind: 'owned'} | {kind: 'external'}` — the single named routing function every caller (including AD-4's own automatic path) goes through; `proposeCalendarEdit(eventId, change: MoveOrResize)` for move/resize on an existing event; `proposeNewCalendarEvent(change: CreateBlock)` for create (no `eventId` parameter — none exists yet); `applyCalendarEdit(proposal)`.
+- `types/domain.ts`'s locked inventory (AD-9) gains: `FieldValueSuggestion`, `NotionPageDraft`, `CalendarEditChange` (union of `move | resize | create` only — no `delete` variant, so a non-Yoh event cannot be deleted even by a coding mistake), `ChatIntent` (discriminated union: `mid-day-reflow | blocker | open-prompt-answer | general-question | search-trigger`), `SearchAnswer`.
+- `Proposal<T>`/`apply(proposal)` calling convention clarified (AD-3): `apply(proposal)` is a pattern name, not one shared signature — `applyCalendarEdit` takes the `Proposal` itself (needs the snapshot for the staleness re-check); `updateTaskField`/`createPage` take unwrapped arguments extracted from the confirmed `Proposal`. The stale-proposal re-read doesn't apply to a `Proposal<T>` that creates a new entity (`NotionPageDraft`; `CalendarEditChange`'s `create` variant) — there's no live entity yet to re-read; AD-12's schema re-resolution (or, for calendar `create`, nothing additional) is the substitute guarantee.
+- FR-25's suggestion generation is lazy, at `chat-cli.ts` display time (AD-11) — `data-completeness-gate.ts` (`core/*`) cannot call `llm-adapter.ts` (an adapter) itself per AD-1; the gate always persists a bare `{kind: 'missing-field', taskId, field}` placeholder, and `chat-cli.ts` calls `llm-adapter.ts` on demand right before surfacing it, only then constructing the `Proposal<FieldValueSuggestion>`.
+- `chat-cli.ts` echoes a one-line receipt for every chat-triggered write (FR-24–FR-29), naming what changed, using the returned success value from the write function — no re-query needed.
+- **Open pre-build item, not yet resolved:** Research Vault's actual Notion database property names (source URL, search date, title/body fields) are unconfirmed anywhere in the PRD or spine — needed before FR-26/FR-29 stories can be built, since AD-12's schema validation can't validate against a schema nobody has captured. Should surface as an explicit early task/spike in Epic 6, not assumed.
+- Deferred tuning parameters (Phase 1.5): FR-28's search-trigger classification rule (start narrow: explicit-ask phrasings + direct factual questions referencing something outside Yoh's own data); Perplexity Agent API pricing/context-tier confirmation + a daily cost ceiling (warn, not silently throttle).
 
 ### UX Design Requirements
 
@@ -170,6 +201,11 @@ FR-20: Epic 1 - Read Notion Tasks and Projects
 FR-21: Epic 1 - Read Google Calendar events
 FR-22: Epic 1 - Write Plan Blocks to Calendar without touching non-Yoh events
 FR-23: Epic 3 - Write Task Status back to Notion
+FR-25: Epic 6 - Propose inferred values for Data-Completeness Gate
+FR-26: Epic 6 - Create Notion pages/DB items via chat
+FR-27: Epic 6 - Confirm-gated Calendar time-block editing beyond Yoh-owned events
+FR-28: Epic 6 - Web search lookup via chat
+FR-29: Epic 6 - File a search result to Research Vault on request
 
 **NFR Coverage:** NFR-Reliability, NFR-Observability, NFR-Latency → Epic 5 (formalized/hardened here). NFR-DataIntegrity → structurally enforced in Epic 1 (AD-4, calendar ownership) and Epic 3 (AD-12, Status-only Notion writes).
 
@@ -224,6 +260,18 @@ Since there's no one else to notice a silent failure, every ritual's crash, expi
 **Also carries:** top-level alert wrapper (AD-7) across all four `ritual-cli.ts` subcommands (`morning`, `night-prompt`, `night-escalate`, `self-check`) raising a distinctly-worded Pushover alert on any failure; the self-referential dead-man's-switch check (each subcommand verifies its own prior scheduled run succeeded); structured single-line JSON logging to stderr per ritual step; Plan-generation timing logged and treated as degraded (not failed) past a chosen low-seconds threshold, alerted through the same AD-7 path (NFR-Latency).
 
 **Note:** no new FRs — this epic hardens the rituals Epics 1/3/4 already built, sequenced last so it wraps all four subcommands at once rather than being touched piecemeal per epic.
+
+### Epic 6: Live Integrations — Yoh acts through chat, not just plans
+
+Spencer can ask Yoh, from chat, to infer a missing Task field instead of guessing, create real items in Notion, edit Calendar events beyond the ones Yoh itself created, search the live web for an answer, and file research to the Vault — each write gated at the tier its risk warrants (automatic, direct, or confirm-then-write) before it ever touches his real data.
+
+**FRs covered:** FR-25, FR-26, FR-27, FR-28, FR-29
+
+**Also carries:** `llm-adapter.ts` lazy inference for FR-25 (AD-11, gate stays pure — adapter call happens at `chat-cli.ts` display time, not ritual time); `notion-adapter.ts`'s closed write surface gains `createPage(database, properties)` (FR-26, FR-29); a second, broader-scoped Calendar `OAuth2Client` (AD-13) plus `calendar-adapter.ts`'s `resolveCalendarEditRoute`, `proposeCalendarEdit`, `proposeNewCalendarEvent`, `applyCalendarEdit` (FR-27 — no delete variant exists in the type system, so a non-Yoh event can't be deleted even by mistake); new `search-adapter.ts`, structurally write-incapable (FR-28, AD-14); `types/domain.ts` additions (`FieldValueSuggestion`, `NotionPageDraft`, `CalendarEditChange`, `ChatIntent`, `SearchAnswer`); a `chat-cli.ts` one-line write receipt for every chat-triggered write (FR-24–FR-29); an early spike story to confirm Research Vault's real Notion schema, blocking for the FR-26/FR-29 stories.
+
+**UX:** none new — reuses the existing Prompt component and the Propose-Don't-Impose confirmation pattern (UX-DR5, UX-DR16) already built for Epics 1 and 4.
+
+**Note:** kept as a single epic rather than split per-FR — all five FRs extend the same surface (`chat-cli.ts`'s REPL and the `Proposal<T>`/confirm-then-`apply` pattern, AD-3), and the Architecture Spine already fully specifies each of them (AD-10–AD-14), so there's no open design risk a split would de-risk.
 
 ## Epic 1: Morning Ritual — the day arrives already planned
 
@@ -771,3 +819,156 @@ So that I can reconstruct what happened after the fact and catch a "technically 
 **Given** that duration exceeds a defined low-seconds threshold
 **When** the run completes
 **Then** `ritual-cli.ts` treats it as degraded-not-failed and raises it through the same alert path as Story 5.1, rather than silently accepting it as normal
+
+## Epic 6: Live Integrations — Yoh acts through chat, not just plans
+
+Spencer can ask Yoh, from chat, to infer a missing Task field instead of guessing, create real items in Notion, edit Calendar events beyond the ones Yoh itself created, search the live web for an answer, and file research to the Vault — each write gated at the tier its risk warrants (automatic, direct, or confirm-then-write) before it ever touches his real data.
+
+### Story 6.1: Confirm the Research Vault's Notion Schema
+
+As a developer building Yoh,
+I want the Research Vault database's actual property names (source URL, search date, title/body) confirmed and documented,
+So that FR-26's and FR-29's schema validation has real property names to validate against instead of an assumption nobody has captured.
+
+**Acceptance Criteria:**
+
+**Given** the Research Vault database in Spencer's live Notion workspace
+**When** its schema is inspected via the Notion API
+**Then** the actual property names and types for source URL, search date, and title/body fields are documented in the codebase (e.g. alongside `notion-adapter.ts`) rather than assumed
+
+**Given** the confirmed schema
+**When** `createPage(database, properties)` is called with `database: 'ResearchVault'`
+**Then** it maps Yoh's internal field names to the real Notion property names one-to-one, with no silent renaming or guessing at call sites
+
+**Given** a property in the confirmed schema that is `select`-backed
+**When** a value is written to it
+**Then** it goes through the same fuzzy-match-then-fail-closed resolution as every other `select`-backed Notion write (AD-12)
+
+### Story 6.2: Propose Inferred Values for the Data-Completeness Gate
+
+As Spencer,
+I want Yoh to propose a likely value for a missing Task field when it can confidently infer one from our recent chat, instead of always just asking blind,
+So that answering the Data-Completeness Gate is faster when Yoh actually knows the answer, without ever guessing silently.
+
+**Acceptance Criteria:**
+
+**Given** an open `missing-field` interaction request for a Task
+**When** `chat-cli.ts` is about to surface it
+**Then** it calls `llm-adapter.ts` at that moment (not before, per AD-11 — `data-completeness-gate.ts` itself never calls an adapter) to check for a confident inference from recent chat context
+
+**Given** `llm-adapter.ts` returns a confident inferred value
+**When** the prompt is shown to Spencer
+**Then** it is presented as a `Proposal<FieldValueSuggestion>` — stating the proposed value and why — rather than a blind "what's the value?" ask
+
+**Given** Spencer confirms the proposed value
+**When** it is applied
+**Then** it flows through FR-24's existing Notion write path exactly as a manually-typed answer would — no separate write path for inferred vs. typed answers
+
+**Given** Spencer corrects the proposed value, or `llm-adapter.ts` has no confident inference
+**Then** Yoh falls back to FR-4's plain, blind ask — the inference path never blocks or replaces the baseline gate behavior
+
+### Story 6.3: Create Notion Pages via Chat
+
+As Spencer,
+I want to ask Yoh to create a new item in Tasks, Projects, or the Research Vault from chat, and see exactly what it will create before it's real,
+So that I can add things on the fly without opening Notion, and never get a page created that I didn't actually approve.
+
+**Acceptance Criteria:**
+
+**Given** Spencer asks Yoh to create an item and names one of Tasks, Projects, or Research Vault
+**When** Yoh drafts it
+**Then** the draft is validated against that database's real, live properties (AD-12) and shown to Spencer as a `Proposal<NotionPageDraft>` before anything is written
+
+**Given** Spencer asks for a target database that isn't Tasks, Projects, or Research Vault
+**Then** Yoh does not attempt the creation — those three are the only valid targets, enforced by `createPage`'s closed enum, not by a runtime string check alone
+
+**Given** Spencer confirms the draft
+**When** `createPage(database, properties)` runs
+**Then** the schema is re-validated at write time (not just draft time) against the database's live properties, and the page is created only if it still resolves cleanly
+
+**Given** a `select`-backed property in the draft
+**When** it's validated, at draft time and again at write time
+**Then** it is fuzzy-matched against the database's real live option list (exact → normalized → closest-match within a bounded threshold); a value that can't confidently resolve fails the write rather than guessing (AD-12)
+
+**Given** the page is created
+**When** `chat-cli.ts` responds
+**Then** it echoes a one-line receipt naming what was created, built from `createPage`'s returned success value — no re-query needed
+
+### Story 6.4: Web Search Lookup via Chat
+
+As Spencer,
+I want to ask Yoh a factual question and get a live, cited answer instead of a stale or made-up one,
+So that I can get real answers without leaving chat, and trust that they're actually sourced.
+
+**Acceptance Criteria:**
+
+**Given** Spencer asks an explicit "search for X" request, or asks an unambiguous factual/research question
+**When** `chat-cli.ts` classifies the `ChatIntent`
+**Then** it routes to `search-adapter.ts`'s `search(query)`, calling Perplexity's Agent API (`/v1/responses`), never the deprecated Sonar chat-completions endpoint
+
+**Given** a search completes
+**When** the response is parsed
+**Then** citations are extracted from the `search_results` item inside the response's `output[]` array, not from a top-level `citations` field
+
+**Given** a search returns zero usable results
+**Then** that is a successful `Result` carrying an empty/no-answer `SearchAnswer`, not a `YohError` — a search that legitimately found nothing hasn't failed
+
+**Given** any other chat turn that is not an explicit search request or an unambiguous factual question
+**Then** Yoh does not trigger a search — this is not run on every turn (FR-28)
+
+**Given** a search runs
+**Then** nothing is written to Notion or Calendar as a side effect of running it — search is read-only end to end
+
+### Story 6.5: File a Search Result to the Research Vault
+
+As Spencer,
+I want to tell Yoh to save a search result it just gave me, and have it filed immediately,
+So that useful research doesn't get lost, without an extra confirmation step for something I already just asked for.
+
+**Acceptance Criteria:**
+
+**Given** Yoh has just returned a `SearchAnswer` in the current chat session
+**When** Spencer asks to save/file it (e.g. "save that")
+**Then** `createPage('ResearchVault', properties)` is called directly, without a preview/confirm step — the save request itself is the confirmation (AD-12)
+
+**Given** the page is created
+**When** it's written
+**Then** it is tagged with the search's source (from the `SearchAnswer`'s citations) and today's date, using the schema confirmed in Story 6.1
+
+**Given** Spencer asks to save something that isn't a recent `SearchAnswer` from this session
+**Then** Yoh does not fabricate a page from nothing — there must be an actual search result in play to file
+
+**Given** the page is created
+**When** `chat-cli.ts` responds
+**Then** it echoes a one-line receipt naming what was filed
+
+### Story 6.6: Confirm-Gated Calendar Editing Beyond Yoh-Owned Events
+
+As Spencer,
+I want to ask Yoh to move, resize, or create a time block on my real Calendar — including events it didn't create — and see exactly what will change before it touches anything,
+So that I can manage my whole calendar through chat, without ever risking an event I care about being silently altered or deleted.
+
+**Acceptance Criteria:**
+
+**Given** `token-store.ts` needs to support FR-27
+**When** it is provisioned
+**Then** it holds a second, separately-scoped `OAuth2Client` (`calendar.events`, read/write across all accessible calendars) alongside the existing narrow client — both sole-constructed and held by `token-store.ts` per AD-10, and the existing narrow client's automatic "Yoh Plan" path is untouched
+
+**Given** Spencer asks to move, resize, or create a time block on his Calendar
+**When** `calendar-adapter.ts`'s `resolveCalendarEditRoute(eventId)` runs
+**Then** every caller — including AD-4's own automatic path — routes through this single named function, returning `{kind: 'owned'}` or `{kind: 'external'}`
+
+**Given** the target event is external (`{kind: 'external'}`) or the request is to create a new block
+**When** Yoh proposes the change
+**Then** it calls `proposeCalendarEdit(eventId, change)` (move/resize) or `proposeNewCalendarEvent(change)` (create, no `eventId`) and shows Spencer exactly what would change as a `Proposal<CalendarEditChange>`, naming the specific event
+
+**Given** Spencer confirms, naming that specific event
+**When** `applyCalendarEdit(proposal)` runs
+**Then** it re-reads the live event and applies only a `move` or `resize` or `create` change — `CalendarEditChange`'s union has no `delete` variant, so a non-Yoh event cannot be deleted through this path even by a coding mistake
+
+**Given** Spencer asks Yoh to delete a non-Yoh-owned event
+**Then** Yoh does not perform it, confirmed or not — deletion of an external event isn't a constructible value in `CalendarEditChange`, so there is no code path that could carry it out
+
+**Given** the edit is applied
+**When** `chat-cli.ts` responds
+**Then** it echoes a one-line receipt naming the event and what changed

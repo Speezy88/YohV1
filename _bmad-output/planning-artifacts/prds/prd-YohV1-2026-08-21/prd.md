@@ -1,7 +1,7 @@
 ---
 title: PRD: Yoh
 created: 2026-08-21
-updated: 2026-09-17
+updated: 2026-09-18
 status: final
 ---
 
@@ -17,11 +17,13 @@ Yoh is a personal daily-planning system built for exactly one user. It reads a N
 
 This is Yoh's second attempt. The first was abandoned not for bugs or lost motivation but for an efficacy failure — what shipped wasn't useful enough to keep using. This PRD exists to convert the lessons of that failure into enforceable requirements: a narrow, working Morning/Night loop before anything else, a strict **Propose-Don't-Impose** boundary on anything Yoh infers about Spencer's behavior, and an **Escalate-Under-Strain** discipline that keeps the system's insistence proportional to how much it's actually being ignored — never more, never a flat nag.
 
-Everything past the MVP loop — a web app, physical voice hardware, an iOS app, a Research Vault, self-calibrating estimates, a Canvas LMS assignment sync — is real roadmap, not scope creep, but it is explicitly Phase 2 and later. This PRD specifies Phase 1 only, and treats the phases past it as constraints on *how* Phase 1 is built (modularly), not as requirements to satisfy now.
+Everything past the MVP loop — a web app, physical voice hardware, an iOS app, self-calibrating estimates, a Canvas LMS assignment sync — is real roadmap, not scope creep, and is explicitly Phase 2 and later. Phase 1 shipped September 2, 2026 (all epics done). This PRD now also specifies **Phase 1.5**: a narrow, CLI-scoped extension of Phase 1's Notion/Calendar write surface (page/database creation, confirm-gated time-block editing beyond Yoh-owned events) plus a first slice of Research Vault brought forward as a chat-triggered web-search capability — without retiring the CLI or starting Phase 2's web app. Phases past Phase 1.5 remain constraints on *how* this is built (modularly), not requirements to satisfy now.
 
 ## 2. Why Now
 
-Timing here isn't external — it's self-imposed, and load-bearing anyway. This rebuild's entire discipline is a direct response to naming that efficacy failure precisely rather than repeating it under a new coat of paint. The **September 2, 2026** target isn't arbitrary scope-padding insurance — it's the forcing function that keeps Phase 1 narrow: anything that doesn't serve "does the Morning/Night loop actually get used" is explicitly deferred (§9.2), not squeezed in because it's easy. If this PRD lets Phase 1 scope drift, it has failed at the one thing it exists to prevent.
+Timing here isn't external — it's self-imposed, and load-bearing anyway. This rebuild's entire discipline is a direct response to naming that efficacy failure precisely rather than repeating it under a new coat of paint. The **September 2, 2026** target isn't arbitrary scope-padding insurance — it's the forcing function that keeps Phase 1 narrow: anything that doesn't serve "does the Morning/Night loop actually get used" is explicitly deferred (§9.3), not squeezed in because it's easy. If this PRD lets Phase 1 scope drift, it has failed at the one thing it exists to prevent.
+
+Phase 1.5 (§5.7 FR-25–FR-27, §5.8) is roadmap-driven, not usage-driven — it was not prompted by a specific friction Spencer hit running Phase 1 day-to-day (only about two weeks of real use had elapsed when this update was made). It came out of a dedicated brainstorm on where Yoh's write/search surface should go next, and was pulled forward deliberately rather than discovered as a gap. Named here plainly so a future reader doesn't infer usage evidence that doesn't exist.
 
 ## 3. Target User
 
@@ -64,7 +66,9 @@ Yoh has exactly one user, permanently — not a v1 scoping choice (see §8 Non-G
 
 - **Task** — A Notion Tasks DB item. Nine fields exist (Task name, Area, Chunk Size, Due Date, Energy, Estimated Duration, Linked Project, Priority, Status); Yoh's planning reads only Estimated Duration, Area, Due Date, Status, and Energy.
 - **Project** — A Notion Projects DB item. Organizational grouping only — not a planning input.
-- **Research Vault** — A Notion store for on-demand research output. Output-only; not a planning input. Out of scope until Phase 5.
+- **Research Vault** — A Notion store for on-demand research output. Output-only; not a planning input. A first slice — live web search plus filing a result on request (§5.8) — is in scope as of Phase 1.5, brought forward from its original Phase 5 placement.
+- **Live Write Registry** — The fixed, named set of actions Yoh may perform from chat as of Phase 1.5: create Task (existing), create Page (FR-26), edit Calendar time-block (FR-27), search the web (FR-28, read-only — writes nothing), file a search result to Research Vault (FR-29). Yoh is never given raw Notion/Calendar API or token access to route from freeform chat text — only these named actions.
+- **Chat** — The CLI's interactive text interaction surface (the terminal session run via `chat-cli`), as distinct from the non-interactive Morning/Night Ritual runs. FR-24–FR-29 all gate on a request arriving through Chat; no new interface surface is introduced by Phase 1.5 (§9.2).
 - **Plan** — The ordered set of Plan Blocks Yoh generates for a single day.
 - **Plan Block** — A single scheduled unit within a Plan: either a Task fitted into a work/break slot, or a fixed Calendar event the Plan is built around.
 - **Morning Ritual** — The daily process that generates the Plan and sends it as one notification, then disengages.
@@ -291,13 +295,13 @@ The system's Tone becomes more urgent/authoritative only as a function of the Sl
 **Consequences (testable):**
 - Two days with identical slip history produce the same Tone escalation level, regardless of what day of the week or how much time has passed.
 
-**Out of Scope:** Manual Voice Packs (character voices) — Phase 5, tracked in §9.2, not part of this feature's MVP surface. `[NON-GOAL for MVP]`
+**Out of Scope:** Manual Voice Packs (character voices) — Phase 5, tracked in §9.3, not part of this feature's MVP surface. `[NON-GOAL for MVP]`
 
 ---
 
 ### 5.7 Notion & Calendar Integration
 
-**Description:** Yoh reads Task and Project data from Notion, and reads/writes Plan-related events on Google Calendar without ever modifying a Calendar event it doesn't own. It writes back to Notion in two cases: Task Status on Night Ritual close-out, and a Task's other missing planning fields when Spencer answers the Data-Completeness Gate's prompt via the CLI. Capability-level only — see `addendum.md` for the technical mechanism (auth, endpoints, tagging implementation).
+**Description:** Yoh reads Task and Project data from Notion, and reads/writes Plan-related events on Google Calendar without ever modifying a Calendar event it doesn't own. It writes back to Notion in two cases: Task Status on Night Ritual close-out, and a Task's other missing planning fields when Spencer answers the Data-Completeness Gate's prompt via the CLI. Phase 1.5 extends this three ways: a smarter path into the existing Data-Completeness write (FR-25, no new write mechanism), and two further write capabilities routed through the Live Write Registry (§4) rather than raw API access — creating new Notion pages/database items (FR-26), and confirm-gated Calendar time-block editing beyond events Yoh created (FR-27, a narrow exception to FR-22). Capability-level only — see `addendum.md` for the technical mechanism (auth, endpoints, tagging implementation).
 
 **Functional Requirements:**
 
@@ -343,17 +347,74 @@ When Spencer answers the Data-Completeness Gate's (FR-4) prompt via the CLI for 
 
 **Notes:** This is a distinct capability from FR-23 — a different trigger (an explicit answer to a direct question, not a Night Ritual outcome) writing a different field set. FR-23's own scope (Status-only, close-out-triggered) is unchanged by this requirement.
 
+#### FR-25: Propose inferred values for the Data-Completeness Gate
+
+When the Data-Completeness Gate (FR-4) would otherwise ask Spencer to fill a Task's missing field, and Yoh can infer a likely value from the current chat context (e.g. Spencer just mentioned the task's scope or deadline in conversation), the system proposes that value instead of asking blind — Spencer confirms or corrects it rather than typing an answer from scratch.
+
+**Consequences (testable):**
+- A proposed value is never written without Spencer's explicit confirmation — this is a Propose-Don't-Impose (FR-16) instance, not an auto-fill.
+- Once confirmed, the value is written back to Notion via FR-24's existing write path — no new write mechanism, only a new way of arriving at the answer.
+- When Yoh has no confident inference for a field, the Gate falls back to today's plain ask (FR-4 unchanged) — this requirement only ever adds an option, never removes the baseline path.
+
+**Notes:** This is the "reuse over invention" instance the Phase 1.5 brainstorm named directly — no new gate, no new write path, just a smarter way of answering the one that already exists.
+
+#### FR-26: Create Notion pages and database items via chat
+
+When Spencer asks Yoh, in chat, to create a new item in Tasks, Projects, or Research Vault — the same three Notion databases already named elsewhere in this PRD (§4) — the system drafts the item, shows the draft, and creates it only on Spencer's explicit confirmation. No other Notion database is a valid target, regardless of what the integration token can technically reach.
+
+**Consequences (testable):**
+- Every created item's properties are validated against the target database's real schema before the write is attempted — a select-backed property is written only as one of its real, currently-existing options (fuzzy-matched, same guard as FR-24), and a property that can't resolve fails and re-prompts rather than guessing or inventing a new option.
+- No item is created without an explicit chat confirmation of the shown draft — there is no auto-create path.
+- A successful creation is echoed back in chat as a one-line receipt naming the item and its database.
+
+**Notes:** This is the Notion side of the Phase 1.5 Live Write Registry (§4) — schema validation is what keeps a created item visible to Yoh's existing planning pipeline (FR-1, FR-20) instead of becoming an orphaned page the Data-Completeness Gate and Derived Priority never see.
+
+#### FR-27: Confirm-gated Calendar time-block editing beyond Yoh-owned events
+
+When Spencer asks Yoh, in chat, to move, resize, or create a time block on his real Google Calendar — including an event Yoh did not create — the system shows what would change and edits the Calendar only on an explicit confirmation naming that specific event.
+
+**Consequences (testable):**
+- This is the sole exception to FR-22's ownership check: editing a non-Yoh event requires an explicit per-action confirmation naming that event. FR-22's own unconfirmed, automatic writes remain scoped to Yoh-owned events only — this requirement does not loosen FR-22 itself.
+- Deleting an event Yoh did not create is never performed by this requirement, confirmed or not — only move, resize, and create actions are in scope for Phase 1.5 (see §8 Non-Goals).
+- A successful edit is echoed back in chat as a one-line receipt naming the event and the change made.
+
+**Notes:** Scoping this to move/resize/create (never delete) is a deliberate Phase 1.5 restraint, not an oversight — deleting a record Spencer didn't ask Yoh to manage carries asymmetric downside for a single confirmation prompt to fully protect against.
+
+### 5.8 Web Search (Research Vault, Phase 1.5 slice)
+
+**Description:** A first slice of the Research Vault (§4) roadmap item, brought forward from Phase 5 to Phase 1.5: Yoh can perform a live web search when Spencer asks a question in chat that needs external or current information, and can file a useful result into the Research Vault Notion database on request. FR-28 and FR-29 are deliberately kept as two small, composable steps rather than one combined FR — "research X and file the results" is one chat exchange chaining them (search, answer, "save that," file), but each also stands alone: a lookup that's answered and forgotten never touches Notion, and nothing is filed without having first been searched and shown. Capability-level only — see `addendum.md` for the technical mechanism (search provider, API cost).
+
+**Functional Requirements:**
+
+#### FR-28: Web search lookup via chat
+
+When Spencer asks a factual or research question in chat, or explicitly asks Yoh to search, the system performs a live web search and returns a synthesized answer with source citations — writing nothing to Notion or Calendar as a side effect.
+
+**Consequences (testable):**
+- Search is triggered only by an explicit ask (e.g. "look up X," "search for X") or an unambiguous factual question with a clear external answer (e.g. "when is X's deadline," "what's the current price of X") — never run automatically on every chat turn (ties to the Cost guardrail, §7). Implementation note: the exact classification boundary for "unambiguous factual question" is deferred to `addendum.md` § Deferred Implementation Parameters, the same treatment FR-2/FR-11/FR-17 give their own deferred specifics — an ordinary planning or status message (e.g. "I finished the report") must never trigger a search call.
+- Every search-derived answer includes at least one citation or link Spencer can verify.
+- A search failure (no results, provider error) is surfaced honestly in chat — never presented as a confident answer.
+
+#### FR-29: File a search result to the Research Vault on request
+
+When Spencer asks Yoh to save or file a search result (e.g. "save that"), the system creates a new page in the Research Vault Notion database containing the result, tagged with its source and the date of the search.
+
+**Consequences (testable):**
+- Nothing is written to the Research Vault as a side effect of FR-28 alone — filing is always a separate, explicit request.
+- The created page is source-tagged and dated, so a later reader can tell it came from a Yoh-run search rather than Spencer's own notes.
+- The Research Vault otherwise remains output-only, not a planning input (§5.1 Notes, §4) — this requirement does not change that.
+
 ## 6. Cross-Cutting NFRs
 
 - **Reliability.** The Morning and Night Rituals must run daily without manual intervention. A failure to run — a crash, an expired auth token, an unreachable API — must be surfaced to Spencer, not fail silently. There is no support team and no other user to notice; if Yoh goes quiet, Spencer is the only signal, so the system must not rely on him noticing an *absence*.
-- **Data integrity.** Writes to Calendar or Notion must never corrupt or lose Task/Calendar data, and must never touch a record Yoh doesn't own (FR-22, FR-23, FR-24). This is a harder guarantee than most personal tools need, because the data being written into is Spencer's real calendar and real task list, not a sandbox. FR-24 widens the Notion write surface beyond Status, so it satisfies this guarantee its own way: a select-backed property is only ever written as one of its real, currently-existing options (fuzzy-matched from Spencer's answer, never a raw or invented value), and a write that can't confidently resolve to a real option fails and re-prompts instead of guessing.
+- **Data integrity.** Writes to Calendar or Notion must never corrupt or lose Task/Calendar data. This is a harder guarantee than most personal tools need, because the data being written into is Spencer's real calendar and real task list, not a sandbox. Every write capability sits at exactly one of three tiers, chosen per capability and never defaulted: **automatic**, Ritual-triggered and scoped to Yoh-owned records only (FR-22, FR-23); **direct-write**, where Spencer's own explicit instruction is validated and written immediately with no separate draft-and-confirm step — the instruction itself is the confirmation (FR-24, an explicit answer to a direct question; FR-29, an explicit "save that" request); or **confirm-then-write**, where Yoh proposes or drafts something and nothing is written until Spencer explicitly confirms it (FR-25, FR-26, FR-27). FR-28's search is read-only and writes nothing at any tier. The guarantee that Yoh never touches a record it doesn't own has exactly one explicit exception, FR-27: the boundary moves from "never" to "never without naming the event and being told yes," trading ownership for an explicit per-action confirmation. FR-24 and FR-26 both widen the Notion write surface beyond Status; both satisfy this guarantee the way FR-24 established it — a select-backed or schema-bound property is only ever written as one of its real, currently-existing options (fuzzy-matched, never invented), and a write that can't confidently resolve fails and re-prompts instead of guessing. All Phase 1.5 write capabilities (FR-26–FR-29; FR-25 reuses FR-24's existing write path rather than adding a new one) route through the fixed, named Live Write Registry (§4) — Yoh is never given raw Notion/Calendar API access to route from freeform chat text. Every write triggered from Chat (FR-24–FR-29) is echoed back to Spencer as a one-line receipt in that same chat, so nothing changes silently mid-conversation. Ritual-triggered writes (FR-22, FR-23) run outside any chat session and keep their own existing channel — the Ritual's notification (Observability, below); this NFR does not add a new chat-receipt requirement to those already-shipped Phase 1 paths.
 - **Latency.** Plan generation must complete comfortably before the Morning Ritual notification is due — no hard SLA, but "fast enough to not feel broken" (low seconds, not minutes) is a real requirement, since a slow or hung Morning Ritual is functionally the same failure as one that doesn't run at all.
 - **Observability.** Because there's no one else to catch a silent failure, Yoh must be able to tell Spencer when something has gone wrong with its own operation (auth expired, an integration is unreachable, a scheduled ritual didn't fire) rather than simply going dark. This directly counters the OAuth "Testing mode" 7-day silent-expiry trap named in the brief's Known Risks.
 
 ## 7. Constraints and Guardrails
 
 - **Privacy.** All Task and Calendar data is personal and single-user. No data leaves Spencer's own Notion workspace and Google account except as required by the Notion and Calendar integrations themselves (§5.7). No third-party analytics, telemetry, or data sharing.
-- **Cost.** Yoh must run on infrastructure Spencer already owns — laptop, Raspberry Pi, or existing cloud/server setup. No new recurring paid service is required for Phase 1. (Any Perplexity API cost is scoped to Phase 5's Research Vault integration and is out of scope here.)
+- **Cost.** Yoh must run on infrastructure Spencer already owns — laptop, Raspberry Pi, or existing cloud/server setup. No new recurring paid service was required for Phase 1. Web search (FR-28, §5.8) introduces the first ongoing external API cost, brought forward from its original Phase 5 placement — single-user, on-demand search volume; provider choice and pricing tier are implementation detail (`addendum.md`), not a PRD requirement.
 - **Safety.** Not a meaningful concern for Phase 1's software-only surface. Becomes relevant once Phase 3 introduces physical hardware (speaker placement/volume near water, an always-on device) — deferred to that phase's own scoping, not applicable now.
 
 ## 8. Non-Goals (Explicit)
@@ -364,10 +425,13 @@ When Spencer answers the Data-Completeness Gate's (FR-4) prompt via the CLI for 
 - Yoh will not act on a learned pattern or suggested change without explicit confirmation (FR-16) — this is a permanent trust boundary, not a v1 limitation to relax later.
 - Yoh will not attempt to resolve, judge, or problem-solve reported Blockers — only reschedule around them (FR-10).
 - Yoh will not auto-switch character Voice Packs based on Tone or escalation state, at any phase — Voice Packs (Phase 5) are manual-only by permanent design, not a temporary MVP restriction.
+- Yoh will never delete a Calendar event it did not create, confirmed or not — FR-27's confirm-gated exception covers move/resize/create only; deletion of non-Yoh events is permanently out of scope, not a Phase 1.5 gap to close later.
+- Yoh will never run a web search automatically on every chat turn, and will never write a search result to the Research Vault without an explicit save request (FR-28, FR-29) — a permanent trust boundary, consistent with Propose-Don't-Impose (FR-16).
+- Yoh is never given raw Notion or Calendar API/token access to route from freeform natural language, at any phase — every write goes through the fixed, named Live Write Registry (§4).
 
 ## 9. MVP Scope
 
-### 9.1 In Scope (Phase 1 — hard deadline September 2, 2026)
+### 9.1 In Scope (Phase 1 — hard deadline September 2, 2026) — shipped, all 5 epics done
 
 - Morning Ritual: Plan generation, single notification, Data-Completeness Gate, Derived Priority, one-line reasoning (FR-1–FR-4).
 - Time Budget declaration/persistence and Work/Break Block fitting (FR-5–FR-8).
@@ -378,15 +442,22 @@ When Spencer answers the Data-Completeness Gate's (FR-4) prompt via the CLI for 
 - Notion Tasks/Projects read, Task Status write-back, CLI-driven missing-planning-field write-back; Google Calendar read/write with strict Yoh-owned-event isolation (FR-20–FR-24).
 - Terminal/CLI interface — the only surface for Phase 1.
 
-### 9.2 Out of Scope for MVP
+### 9.2 In Scope (Phase 1.5 — Live Integrations)
+
+- Proposing inferred values for the Data-Completeness Gate instead of only asking blind (FR-25).
+- Notion page/database item creation via chat, schema-validated against the target database (FR-26).
+- Confirm-gated Calendar time-block editing beyond Yoh-owned events — move/resize/create only, never delete (FR-27).
+- Web search lookup via chat with source citations (FR-28), and filing a result to the Research Vault on explicit request (FR-29).
+- FR-26–FR-29 routed through the Live Write Registry (§4); no new interface surface — still terminal/CLI only, same as Phase 1.
+
+### 9.3 Out of Scope
 
 - **Physical hardware device** (Pi 5, wake-word/STT/TTS voice pipeline, bedroom/bathroom build) — Phase 3. Architecture direction already researched (see brief `addendum.md`), but no product-level parts (mic/speaker/display) chosen yet. The Phase-1 Night Ritual's second escalation attempt (FR-13) no longer depends on this — it uses email for Phase 1, with the home-speaker call-out remaining a Phase 3 upgrade once the hardware exists, not a blocking dependency.
-- **Web app** — Phase 2, would retire the CLI as primary interface.
+- **Web app** — Phase 2, would retire the CLI as primary interface. Phase 1.5 (§9.2) does not touch or accelerate this — it stays CLI-only.
 - **iOS app** — Phase 4.
-- **Research Vault + Perplexity integration** — Phase 5. Notion Research Vault remains output-only until then (§4 Glossary).
 - **Manual Voice Packs** — Phase 5, and permanently decoupled from Tone escalation (§5.6 Out of Scope).
-- **Self-calibrating task-duration estimates** — Phase 6; Estimated Duration remains a manually-entered Task field through Phase 1.
-- **Recurring Calendar events** — not part of MVP; several Google Calendar recurring-event gotchas are noted in the brief's addendum but are explicitly out of scope until recurrence is added.
+- **Self-calibrating task-duration estimates** — Phase 6; Estimated Duration remains a manually-entered Task field.
+- **Recurring Calendar events** — not part of MVP or Phase 1.5; several Google Calendar recurring-event gotchas are noted in the brief's addendum but are explicitly out of scope until recurrence is added.
 - **Room-cleanliness camera** — long-term/aspirational, not committed to any numbered phase.
 - **Canvas LMS assignment sync** — reads assignment due dates from Spencer's school Canvas LMS and creates/updates corresponding Notion Task records (course → Area, due date, name) so Canvas assignments flow through the existing Notion Tasks pipeline unchanged; Estimated Duration and Energy still get filled by Spencer via the existing Data-Completeness Gate (FR-4), since Canvas can't supply either. Blocked on the school's Canvas admin approving API access (a Canvas Developer Key); not assigned to a numbered phase yet — revisit once access is granted (§11).
 
@@ -404,9 +475,11 @@ When Spencer answers the Data-Completeness Gate's (FR-4) prompt via the CLI for 
 - **SM-C1**: Night Ritual escalation frequency (how often FR-13's second attempt fires) — this is a symptom of the Plan or the day going wrong, not a target to increase or feature-tune toward. Counterbalances SM-1.
 - **SM-C2**: Self-Check prompt frequency — a system that checks in more often because scores are trending low is doing what it's designed to do (Escalate-Under-Strain), not something to be proud of; the frequency itself is not a success signal. Counterbalances SM-4.
 
+**Phase 1.5 (FR-25–FR-29): intentionally unmetered.** No SM extends to Phase 1.5 yet — a decision, not an oversight. These capabilities were added roadmap-driven (§2), not in response to observed Phase 1 usage, so there's no real baseline yet to set a meaningful target against. Whether chat-driven Notion writes, calendar edits, and web search actually get used (vs. sitting unused) is exactly the kind of signal Self-Check (FR-17) and ordinary usage observation should surface within a few weeks — a Phase 1.5 SM belongs in a near-future PRD update once that evidence exists, not guessed at here.
+
 ## 11. Open Questions
 
-The four questions that blocked Phase 1 in the first draft are resolved below; five non-blocking items remain, including two surfaced during finalization's reconciliation pass against source documents.
+The four questions that blocked Phase 1 in the first draft are resolved below; seven non-blocking items remain, including two surfaced during finalization's reconciliation pass against source documents and one surfaced during the Phase 1.5 update.
 
 **Resolved (Phase 1, no longer blocking):**
 - ~~FR-13 escalation channel~~ — resolved, see FR-13.
@@ -420,8 +493,9 @@ The four questions that blocked Phase 1 in the first draft are resolved below; f
 3. **Primary calendar + tagging vs. dedicated secondary calendar**: the technical research found no practitioner consensus on whether Yoh should write Plan Blocks to Spencer's primary Google Calendar (tagged) or a dedicated secondary calendar. Affects FR-22's implementation, not its behavior contract. Owner: Spencer. Revisit: architecture phase.
 4. **Personality/voice tuning cadence**: the brainstorm parked how Yoh's personality/voice gets refined iteratively through usage post-launch — not addressed by this PRD's Tone requirements (FR-18–FR-19), which cover only the default/escalation contract. Owner: Spencer. Revisit: post-launch, once real usage data exists.
 5. **OAuth production-mode verification** — launch-blocking failure mode, ties to SM-2; see `addendum.md` § Technical Dependency Verification for what it is and why. Owner: Spencer. Revisit: verify before September 2, 2026.
-6. **Canvas API access approval** — a Canvas Developer Key (OAuth2 app registration) requires the school's Canvas admin to approve API access before the Canvas Sync (§9.2) can be built at all; also unresolved once approved: course→Area mapping convention and the re-sync/dedup strategy for previously-synced assignments. See `addendum.md` § Canvas API Integration for the research and § "Next step once Canvas API access is granted — BMad path" for the implementation sequence. Owner: Spencer. Revisit: once school approval is granted.
+6. **Canvas API access approval** — a Canvas Developer Key (OAuth2 app registration) requires the school's Canvas admin to approve API access before the Canvas Sync (§9.3) can be built at all; also unresolved once approved: course→Area mapping convention and the re-sync/dedup strategy for previously-synced assignments. See `addendum.md` § Canvas API Integration for the research and § "Next step once Canvas API access is granted — BMad path" for the implementation sequence. Owner: Spencer. Revisit: once school approval is granted.
+7. **Perplexity API pricing/terms verification** — FR-28/FR-29's search-provider assumption, carried forward from when Research Vault was Phase 5-scoped, hasn't been re-confirmed against current terms. See `addendum.md` § Phase 1.5: Live Integrations — Technical Notes. Owner: Spencer. Revisit: before FR-28/FR-29 implementation starts.
 
 ## 12. Assumptions Index
 
-No open assumptions remain. Three of §11's four newly-resolved questions started as inline `[ASSUMPTION]` tags in the first draft — FR-2's weighting approach, FR-11's cap/growth curve, and FR-13's escalation channel — all now resolved and removed from the FR text. FR-17's threshold was an Open Question only; it never carried an inline tag.
+No open assumptions remain in the FR text itself. Three of §11's four newly-resolved Phase 1 questions started as inline `[ASSUMPTION]` tags in the first draft — FR-2's weighting approach, FR-11's cap/growth curve, and FR-13's escalation channel — all now resolved and removed from the FR text. FR-17's threshold was an Open Question only; it never carried an inline tag. One Phase 1.5 assumption exists outside the FR text: the working choice of Perplexity as FR-28/FR-29's search provider carries forward from Research Vault's original Phase 5 scoping without reconfirmation. It's capability-level-irrelevant (§7 deliberately keeps provider choice out of the FR text as implementation detail) and tracked as Open Question §11 item 7 rather than an inline tag.

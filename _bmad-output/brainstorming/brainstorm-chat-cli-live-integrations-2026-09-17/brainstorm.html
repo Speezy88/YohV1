@@ -1,0 +1,818 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Yoh Goes Live — Brainstorm Keepsake</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f3efe4;
+    --bg-soft: #ece5d3;
+    --bg-elevated: #fffdf8;
+    --text: #221f19;
+    --text-muted: #6b6455;
+    --text-faint: #918a78;
+    --border: #d8cfb8;
+    --border-strong: #c2b697;
+    --rule: #c9bf9f;
+
+    --white-c: #7a7360;   --white-bg: #f8f5ec;  --white-line: #d8cfb8;
+    --red-c:   #a8341f;   --red-bg:   #fbe9e2;
+    --yellow-c:#8a5a00;   --yellow-bg:#fbf0d4;
+    --black-c: #f3efe4;   --black-bg: #24211b;
+    --green-c: #2e6b3e;   --green-bg: #e6f0e2;
+    --blue-c:  #274c86;   --blue-bg:  #e6ecf6;
+
+    --danger: #a8341f;
+    --danger-bg: #fbe9e2;
+    --safe: #2e6b3e;
+    --safe-bg: #e6f0e2;
+    --gold: #96660a;
+    --gold-bg: #fbf0d4;
+    --gold-line: #d8b35c;
+
+    --font-display: Georgia, 'Iowan Old Style', 'Palatino Linotype', 'Book Antiqua', serif;
+    --font-body: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    --font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', 'Courier New', monospace;
+
+    --shadow: 0 1px 2px rgba(40,32,10,0.06), 0 6px 20px -10px rgba(40,32,10,0.18);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16140f;
+      --bg-soft: #1c1a14;
+      --bg-elevated: #201e17;
+      --text: #ede6d3;
+      --text-muted: #b3a98e;
+      --text-faint: #8a8168;
+      --border: #37332527;
+      --border: #3a3528;
+      --border-strong: #4a4430;
+      --rule: #3a3528;
+
+      --white-c: #cfc7ac;   --white-bg: #221f18;  --white-line: #3a3528;
+      --red-c:   #e2725a;   --red-bg:   #2c1a15;
+      --yellow-c:#d9ab4a;   --yellow-bg:#2a2313;
+      --black-c: #16140f;   --black-bg: #d9d2bb;
+      --green-c: #7bc190;   --green-bg: #17251b;
+      --blue-c:  #8fb0e8;   --blue-bg:  #16212f;
+
+      --danger: #e2725a;
+      --danger-bg: #2c1a15;
+      --safe: #7bc190;
+      --safe-bg: #17251b;
+      --gold: #e0b95a;
+      --gold-bg: #2a2313;
+      --gold-line: #6b5321;
+
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 10px 30px -12px rgba(0,0,0,0.6);
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html { background: var(--bg); }
+  body {
+    margin: 0;
+    background: var(--bg);
+    background-image:
+      linear-gradient(var(--rule) 1px, transparent 1px),
+      linear-gradient(90deg, var(--rule) 1px, transparent 1px);
+    background-size: 34px 34px;
+    background-position: -1px -1px;
+    color: var(--text);
+    font-family: var(--font-body);
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+  @media (prefers-color-scheme: dark) {
+    body { background-image:
+      linear-gradient(var(--rule) 1px, transparent 1px),
+      linear-gradient(90deg, var(--rule) 1px, transparent 1px);
+      background-size: 34px 34px;
+      opacity: 1;
+    }
+  }
+
+  .wrap { max-width: 900px; margin: 0 auto; padding: 0 20px 90px; }
+
+  /* ---------- nav ---------- */
+  nav.toc {
+    position: sticky; top: 0; z-index: 20;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: blur(6px);
+    border-bottom: 1px solid var(--border);
+  }
+  nav.toc .inner {
+    max-width: 900px; margin: 0 auto; padding: 10px 20px;
+    display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
+    font-family: var(--font-mono); font-size: 12px;
+  }
+  nav.toc a {
+    color: var(--text-muted); text-decoration: none;
+    padding: 5px 10px; border-radius: 999px; border: 1px solid transparent;
+    white-space: nowrap;
+  }
+  nav.toc a:hover { border-color: var(--border-strong); color: var(--text); }
+  nav.toc .tag {
+    color: var(--text-faint); padding-right: 4px; letter-spacing: 0.04em;
+  }
+
+  /* ---------- header ---------- */
+  header.dossier {
+    max-width: 900px; margin: 0 auto; padding: 56px 20px 30px;
+  }
+  .kicker {
+    font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--text-faint); margin-bottom: 14px;
+  }
+  h1.title {
+    font-family: var(--font-display); font-weight: 400;
+    font-size: clamp(28px, 5vw, 44px); line-height: 1.15;
+    margin: 0 0 20px; color: var(--text);
+  }
+  .field {
+    display: grid; grid-template-columns: 84px 1fr; gap: 4px 16px;
+    padding: 10px 0; border-top: 1px solid var(--border);
+    font-size: 15px;
+  }
+  .field:last-of-type { border-bottom: 1px solid var(--border); }
+  .field dt {
+    font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--text-faint); padding-top: 3px;
+  }
+  .field dd { margin: 0; color: var(--text-muted); }
+
+  .stat-strip {
+    margin-top: 22px; display: flex; flex-wrap: wrap; gap: 10px 22px;
+    font-family: var(--font-mono); font-size: 12px; color: var(--text-faint);
+  }
+  .stat-strip b { color: var(--text); font-weight: 600; }
+
+  /* ---------- generic section chrome ---------- */
+  section { max-width: 900px; margin: 0 auto; padding: 70px 20px 10px; scroll-margin-top: 60px; }
+  .section-head { margin-bottom: 30px; }
+  .section-eyebrow {
+    font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--text-faint); margin-bottom: 6px;
+  }
+  h2.section-title {
+    font-family: var(--font-display); font-weight: 400;
+    font-size: clamp(24px, 4vw, 32px); margin: 0 0 10px; color: var(--text);
+  }
+  .section-note {
+    color: var(--text-muted); max-width: 62ch; font-size: 15px;
+  }
+
+  /* ================= SIX HATS ================= */
+  .hats-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 16px;
+  }
+  .hat-card {
+    background: var(--bg-elevated); border: 1px solid var(--border);
+    border-radius: 12px; padding: 20px 20px 18px; box-shadow: var(--shadow);
+  }
+  .hat-card .hat-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+  .hat-icon {
+    width: 26px; height: 26px; border-radius: 50%;
+    border: 3px solid var(--text);
+    position: relative; flex: none;
+  }
+  .hat-icon::after {
+    content: ""; position: absolute; left: -7px; right: -7px; bottom: -7px;
+    height: 5px; border-radius: 3px; background: var(--text);
+  }
+  .hat-name { font-family: var(--font-display); font-size: 19px; }
+  .hat-sub { font-family: var(--font-mono); font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.06em; }
+  .hat-card ul { margin: 0; padding-left: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; }
+  .hat-card li {
+    font-size: 14px; color: var(--text); line-height: 1.5;
+    padding-left: 14px; position: relative;
+  }
+  .hat-card li::before {
+    content: "—"; position: absolute; left: 0; color: var(--text-faint);
+  }
+
+  .hat-white { --c: var(--white-c); }
+  .hat-red   { --c: var(--red-c); }
+  .hat-yellow{ --c: var(--yellow-c); }
+  .hat-black { --c: var(--black-c); }
+  .hat-green { --c: var(--green-c); }
+  .hat-blue  { --c: var(--blue-c); }
+
+  .hat-card.hat-white  .hat-icon { background: var(--white-c); }
+  .hat-card.hat-red    .hat-icon { background: var(--red-c); }
+  .hat-card.hat-yellow .hat-icon { background: var(--yellow-c); }
+  .hat-card.hat-black  .hat-icon { background: var(--black-c); }
+  .hat-card.hat-green  .hat-icon { background: var(--green-c); }
+  .hat-card.hat-blue   .hat-icon { background: var(--blue-c); }
+
+  .hat-card.hat-white  { background: var(--white-bg); }
+  .hat-card.hat-red    { background: var(--red-bg); }
+  .hat-card.hat-yellow { background: var(--yellow-bg); }
+  .hat-card.hat-green  { background: var(--green-bg); }
+  .hat-card.hat-blue   { background: var(--blue-bg); }
+  .hat-card.hat-black  { background: var(--black-bg); color: var(--black-c); }
+  .hat-card.hat-black .hat-sub,
+  .hat-card.hat-black li { color: var(--black-c); }
+  .hat-card.hat-black li::before { color: color-mix(in srgb, var(--black-c) 55%, transparent); }
+  .hat-card.hat-black .hat-name { color: var(--black-c); }
+
+  /* ================= WORST POSSIBLE IDEA ================= */
+  .worst-list { display: flex; flex-direction: column; gap: 22px; }
+  .worst-pair {
+    display: grid; grid-template-columns: 1fr 44px 1fr; align-items: stretch; gap: 0;
+  }
+  @media (max-width: 640px) {
+    .worst-pair { grid-template-columns: 1fr; gap: 10px; }
+    .worst-pair .flip-arrow { transform: rotate(90deg); margin: 0 auto; }
+  }
+  .turn-card {
+    border-radius: 10px; padding: 16px 18px; font-size: 14px; line-height: 1.5;
+    box-shadow: var(--shadow);
+  }
+  .wrong-turn {
+    background: var(--danger-bg); border: 1px solid var(--danger);
+    background-image: repeating-linear-gradient(
+      135deg, transparent, transparent 10px,
+      color-mix(in srgb, var(--danger) 8%, transparent) 10px,
+      color-mix(in srgb, var(--danger) 8%, transparent) 20px
+    );
+  }
+  .correct-turn { background: var(--safe-bg); border: 1px solid var(--safe); }
+  .turn-label {
+    font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.1em;
+    text-transform: uppercase; font-weight: 700; margin-bottom: 8px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .wrong-turn .turn-label { color: var(--danger); }
+  .correct-turn .turn-label { color: var(--safe); }
+  .turn-card p { margin: 0; color: var(--text); }
+  .flip-arrow {
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-faint); font-size: 20px;
+  }
+
+  /* ================= MORPHOLOGICAL ================= */
+  .matrix-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-elevated); box-shadow: var(--shadow); }
+  table.matrix { border-collapse: collapse; width: 100%; min-width: 640px; }
+  table.matrix th, table.matrix td { padding: 14px 16px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--border); }
+  table.matrix tr:last-child th, table.matrix tr:last-child td { border-bottom: none; }
+  table.matrix th {
+    font-family: var(--font-mono); font-size: 11.5px; letter-spacing: 0.05em;
+    text-transform: uppercase; color: var(--text-faint); font-weight: 600;
+    width: 190px; white-space: nowrap;
+  }
+  .pill-row { display: flex; flex-wrap: wrap; gap: 7px; }
+  .pill {
+    font-size: 12.5px; padding: 5px 11px; border-radius: 999px;
+    border: 1px solid var(--border-strong); background: var(--bg-soft); color: var(--text);
+    white-space: nowrap;
+  }
+  .pill.pill-danger {
+    border-style: dashed; border-color: var(--danger);
+    color: var(--danger); background: var(--danger-bg);
+  }
+
+  .combo-head { margin: 44px 0 18px; }
+  .combo-head h3 { font-family: var(--font-display); font-weight: 400; font-size: 21px; margin: 0 0 6px; }
+  .combo-head p { margin: 0; color: var(--text-muted); font-size: 14px; max-width: 60ch; }
+
+  .combo-grid { display: flex; flex-direction: column; gap: 14px; }
+  .combo-card {
+    background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 10px;
+    padding: 16px 18px; box-shadow: var(--shadow);
+  }
+  .combo-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .chip {
+    font-family: var(--font-mono); font-size: 11px; padding: 3px 9px; border-radius: 6px;
+    background: var(--bg-soft); border: 1px solid var(--border); color: var(--text-muted);
+  }
+  .chip.chip-domain { color: var(--blue-c); border-color: color-mix(in srgb, var(--blue-c) 45%, var(--border)); }
+  .chip.chip-tier    { color: var(--green-c); border-color: color-mix(in srgb, var(--green-c) 45%, var(--border)); }
+  .combo-card p { margin: 0; font-size: 14.5px; color: var(--text); }
+  .combo-card p em { color: var(--text-muted); font-style: italic; }
+
+  .combo-card.forbidden {
+    border: 1px solid var(--danger); background: var(--danger-bg);
+    background-image: repeating-linear-gradient(
+      135deg, transparent, transparent 9px,
+      color-mix(in srgb, var(--danger) 10%, transparent) 9px,
+      color-mix(in srgb, var(--danger) 10%, transparent) 18px
+    );
+  }
+  .forbidden-stamp {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-family: var(--font-mono); font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+    color: var(--danger); border: 1.5px solid var(--danger); border-radius: 6px;
+    padding: 3px 8px; margin-bottom: 10px; text-transform: uppercase;
+    transform: rotate(-1.5deg);
+  }
+  .combo-card.fusion { border-color: var(--gold-line); }
+  .fusion-badge {
+    display: inline-block; font-family: var(--font-mono); font-size: 10.5px;
+    letter-spacing: 0.08em; text-transform: uppercase; color: var(--gold);
+    background: var(--gold-bg); border: 1px solid var(--gold-line);
+    border-radius: 6px; padding: 2px 8px; margin-bottom: 10px;
+  }
+
+  /* ================= SYNTHESIS ================= */
+  section#synthesis { padding-top: 90px; }
+  .synth-intro { text-align: center; margin-bottom: 46px; }
+  .synth-intro .section-eyebrow { text-align: center; }
+  .synth-intro h2 { font-size: clamp(26px, 5vw, 38px); }
+  .synth-intro p { max-width: 56ch; margin: 0 auto; color: var(--text-muted); }
+
+  .timeline { position: relative; padding-left: 34px; }
+  .timeline::before {
+    content: ""; position: absolute; left: 11px; top: 6px; bottom: 6px; width: 2px;
+    background: linear-gradient(var(--gold-line), var(--border));
+  }
+  .insight {
+    position: relative; margin-bottom: 26px; background: var(--bg-elevated);
+    border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px;
+    box-shadow: var(--shadow);
+  }
+  .insight::before {
+    content: attr(data-n); position: absolute; left: -34px; top: 18px;
+    width: 24px; height: 24px; border-radius: 50%; background: var(--bg);
+    border: 2px solid var(--border-strong); color: var(--text-faint);
+    font-family: var(--font-mono); font-size: 11px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .insight p { margin: 0; font-size: 15px; color: var(--text); }
+  .insight .insight-tag {
+    font-family: var(--font-mono); font-size: 10.5px; text-transform: uppercase;
+    letter-spacing: 0.08em; color: var(--text-faint); margin-bottom: 8px; display: block;
+  }
+
+  .insight.keystone {
+    border: 1.5px solid var(--gold-line); background: var(--gold-bg);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--gold) 10%, transparent), var(--shadow);
+  }
+  .insight.keystone::before {
+    background: var(--gold); border-color: var(--gold-line); color: var(--bg-elevated);
+    content: "★";
+  }
+  .insight.keystone .insight-tag { color: var(--gold); }
+
+  .roadmap { display: flex; flex-direction: column; gap: 0; margin-top: 6px; }
+  .road-step { display: flex; gap: 16px; align-items: flex-start; padding: 12px 0; }
+  .road-step .n {
+    font-family: var(--font-display); font-size: 26px; color: var(--gold);
+    width: 34px; flex: none; text-align: center;
+  }
+  .road-step .body { border-bottom: 1px solid var(--border); padding-bottom: 14px; flex: 1; }
+  .road-step:last-child .body { border-bottom: none; }
+  .road-step .body b { display: block; font-size: 14.5px; margin-bottom: 3px; }
+  .road-step .body span { color: var(--text-muted); font-size: 13.5px; }
+
+  /* ---------- footer / seal ---------- */
+  footer {
+    max-width: 900px; margin: 90px auto 0; padding: 30px 20px 10px;
+    border-top: 1px solid var(--border); text-align: center;
+  }
+  .seal {
+    display: inline-flex; align-items: center; gap: 10px; margin-bottom: 14px;
+    font-family: var(--font-mono); font-size: 11.5px; color: var(--text-faint);
+    letter-spacing: 0.04em;
+  }
+  .seal .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--safe); }
+  footer .colophon { font-size: 12.5px; color: var(--text-faint); }
+</style>
+</head>
+<body>
+
+<nav class="toc">
+  <div class="inner">
+    <span class="tag">JUMP</span>
+    <a href="#hats">Six Hats</a>
+    <a href="#worst">Worst Idea</a>
+    <a href="#morph">Morphology</a>
+    <a href="#synthesis">Synthesis</a>
+  </div>
+</nav>
+
+<header class="dossier">
+  <div class="kicker">Brainstorm Keepsake · Session Dossier</div>
+  <h1 class="title">Yoh Goes Live</h1>
+  <dl>
+    <div class="field">
+      <dt>Topic</dt>
+      <dd>Giving Yoh's chat CLI live integration access: Notion (TaskDB + broader read/write, page/DB creation), Google Calendar + daily plan (time-blocking), web search, and other live/real-time functionality.</dd>
+    </div>
+    <div class="field">
+      <dt>Goal</dt>
+      <dd>Design what live capabilities the chat CLI should have and how it should use them, so Yoh becomes a genuinely active assistant rather than a passive one.</dd>
+    </div>
+  </dl>
+  <div class="stat-strip">
+    <span><b>3</b> techniques run</span>
+    <span><b>29</b> facts / feelings / benefits / risks / ideas / process notes</span>
+    <span><b>12</b> worst ideas, each flipped</span>
+    <span><b>6</b> parameters × <b>14</b> configurations mapped</span>
+    <span><b>7</b> converging insights</span>
+    <span>mode: <b>autonomous</b> · status: <b>complete</b> · updated <b>2026-09-17 23:13</b></span>
+  </div>
+</header>
+
+<div class="wrap">
+
+<!-- ================= SIX THINKING HATS ================= -->
+<section id="hats">
+  <div class="section-head">
+    <div class="section-eyebrow">Technique 01 — Six Thinking Hats</div>
+    <h2 class="section-title">Six lenses, one question</h2>
+    <p class="section-note">Before any idea got judged, the same question — what should Yoh be allowed to actually <em>do</em>? — passed through six deliberately separate modes of thinking. Facts first, then feelings, then benefits, risks, new ideas, and finally process.</p>
+  </div>
+
+  <div class="hats-grid">
+    <article class="hat-card hat-white">
+      <div class="hat-head">
+        <span class="hat-icon"></span>
+        <div><div class="hat-name">White</div><div class="hat-sub">Facts</div></div>
+      </div>
+      <ul>
+        <li>Notion adapter today only does <code>readNotionTasks</code>/<code>setTaskStatus</code>/<code>updateTaskField</code> — narrow, schema-bound writes, no arbitrary page or DB creation.</li>
+        <li>Calendar adapter already reads events and writes the daily plan to a dedicated 'Yoh Plan' calendar, but doesn't read/write the user's main calendar for ad hoc time-blocking.</li>
+        <li>chat-cli.ts is currently a deterministic command parser (parseTimeBudgetCommand, parseFieldAnswer, etc.), not a freeform LLM tool-calling loop.</li>
+        <li>There is no existing search/browsing capability anywhere in the codebase — web search would be wholly new surface area.</li>
+        <li>FR-24 already established the precedent of chat-cli writing missing planning fields back to Notion live from a chat turn.</li>
+      </ul>
+    </article>
+
+    <article class="hat-card hat-red">
+      <div class="hat-head">
+        <span class="hat-icon"></span>
+        <div><div class="hat-name">Red</div><div class="hat-sub">Feelings</div></div>
+      </div>
+      <ul>
+        <li><strong>Excited:</strong> turns Yoh from a read-mostly planner into an actual doer — 'add a task and put it on my calendar' becomes one sentence instead of three app-switches.</li>
+        <li><strong>Nervous:</strong> broad write access is the first time a bug or hallucination could silently corrupt real data the user depends on daily.</li>
+        <li><strong>Relief-seeking:</strong> web search finally lets Yoh answer factual questions without the user tabbing away, preserving the single-surface promise of a CLI assistant.</li>
+        <li><strong>Wary of scope creep:</strong> 'other live functionality' is open-ended enough to turn this into scaffolding a general agent platform instead of shipping the three asked-for things.</li>
+      </ul>
+    </article>
+
+    <article class="hat-card hat-yellow">
+      <div class="hat-head">
+        <span class="hat-icon"></span>
+        <div><div class="hat-name">Yellow</div><div class="hat-sub">Benefits</div></div>
+      </div>
+      <ul>
+        <li>One chat turn can create a task, timebox it on the calendar, and pull a web fact — collapsing 3+ manual app-switches into one.</li>
+        <li>Notion page/DB creation lets Yoh spin up structure on demand instead of the user pre-building every container.</li>
+        <li>Live calendar write closes the loop the prior brainstorm left open — the daily plan becomes editable conversationally, not just re-rendered.</li>
+        <li>Web search turns Yoh into the front door for the existing Research Vault DB pattern — search-then-file becomes one flow.</li>
+        <li>Because chat-cli is already structured/deterministic, new capabilities can ship as small well-scoped commands rather than a fully open agent — safer and simpler to ship incrementally.</li>
+      </ul>
+    </article>
+
+    <article class="hat-card hat-black">
+      <div class="hat-head">
+        <span class="hat-icon"></span>
+        <div><div class="hat-name">Black</div><div class="hat-sub">Risks</div></div>
+      </div>
+      <ul>
+        <li>Free-form Notion page/DB creation risks schema drift — a page whose properties don't match TaskDB's real fields becomes invisible to the planning engine.</li>
+        <li>Calendar write conflicts: an arbitrary-event-capable Yoh could collide with the Yoh Plan calendar's block-ID tracking or with real user-created events.</li>
+        <li>Web search results are non-deterministic and can be wrong or stale; without a cite/confirm step bad facts could quietly feed planning decisions.</li>
+        <li>Notion, Calendar, and search APIs all have quotas — per-turn live calls could hit throttling during high-usage moments like the morning ritual.</li>
+        <li>Moving chat-cli from deterministic parsing to a tool-calling LLM loop is an architecture shift with its own failure modes (hallucinated args, loops) not present today.</li>
+        <li>'Other live functionality' left unscoped could balloon into new credential/OAuth surface area that wasn't budgeted for.</li>
+      </ul>
+    </article>
+
+    <article class="hat-card hat-green">
+      <div class="hat-head">
+        <span class="hat-icon"></span>
+        <div><div class="hat-name">Green</div><div class="hat-sub">New Ideas</div></div>
+      </div>
+      <ul>
+        <li>Confirmation-gated writes: any create/destructive Notion or Calendar action gets a one-line confirm before executing, mirroring the existing 'propose, don't impose' rule.</li>
+        <li>A dry-run mode shows what would be created/changed without committing, building trust before write actions go live.</li>
+        <li>Scoped tool registry: expose a small fixed verb set (create_task, create_page_in, move_calendar_block, search_web) instead of raw API access.</li>
+        <li>Web search results get written into the Research Vault DB automatically when the user says 'save that,' reusing the existing DB instead of inventing a new store.</li>
+        <li>Time-blocking via chat ('push my 2pm to 4pm') maps onto the existing plan-block-ID tracking so edits stay reconciled with the Yoh Plan calendar.</li>
+        <li>A capability manifest surfaced in chat ('what can you do right now?') makes live functionality discoverable, not just known to the developer.</li>
+      </ul>
+    </article>
+
+    <article class="hat-card hat-blue">
+      <div class="hat-head">
+        <span class="hat-icon"></span>
+        <div><div class="hat-name">Blue</div><div class="hat-sub">Process</div></div>
+      </div>
+      <ul>
+        <li>Sequence by smallest gap first: Notion task/page writes, then calendar time-block editing, then web search last as the highest-uncertainty net-new piece.</li>
+        <li>Define a safety tier system (read-only / confirm-then-write / auto-write) up front that every new capability slots into, rather than deciding safety per feature ad hoc.</li>
+        <li>Decide early whether chat-cli stays a deterministic parser with more commands, or graduates to a real LLM tool-use loop — that fork point shapes everything downstream.</li>
+      </ul>
+    </article>
+  </div>
+</section>
+
+<!-- ================= WORST POSSIBLE IDEA ================= -->
+<section id="worst">
+  <div class="section-head">
+    <div class="section-eyebrow">Technique 02 — Worst Possible Idea</div>
+    <h2 class="section-title">Twelve wrong turns, twelve corrections</h2>
+    <p class="section-note">Every design flaw a live-write assistant could have — deliberately imagined at full strength — then flipped into the rule that prevents it. The flips, taken together, form most of the session's actual safety architecture.</p>
+  </div>
+
+  <div class="worst-list">
+
+    <div class="worst-pair">
+      <div class="turn-card wrong-turn"><div class="turn-label">⚠ Wrong turn</div><p>Give the chat CLI a raw Notion integration token with full workspace access and let the model run arbitrary API calls on the fly.</p></div>
+      <div class="flip-arrow">→</div>
+      <div class="turn-card correct-turn"><div class="turn-label">✓ Correct turn</div><p>Scope every write to an explicit, hardcoded verb set (a scoped tool registry) — never hand the model the raw token.</p></div>
+    </div>
+
+    <div class="worst-pair">
+      <div class="turn-card wrong-turn"><div class="turn-label">⚠ Wrong turn</div><p>Let Yoh auto-create and auto-schedule calendar events with zero confirmation, including moving or deleting the user's existing meetings.</p></div>
+      <div class="flip-arrow">→</div>
+      <div class="turn-card correct-turn"><div class="turn-label">✓ Correct turn</div><p>Writes are additive-only and confirm-gated by default; moving or deleting anything Yoh didn't create requires explicit named confirmation.</p></div>
+    </div>
+
+    <div class="worst-pair">
+      <div class="turn-card wrong-turn"><div class="turn-label">⚠ Wrong turn</div><p>Web search results get pasted straight into the plan or TaskDB as fact, with no indication they came from the web or when.</p></div>
+      <div class="flip-arrow">→</div>
+      <div class="turn-card correct-turn"><div class="turn-label">✓ Correct turn</div><p>Every search-derived write is tagged with source and timestamp so provenance is always visible later.</p></div>
+    </div>
+
+    <div class="worst-pair">
+      <div class="turn-card wrong-turn"><div class="turn-label">⚠ Wrong turn</div><p>One universal 'do_anything' tool takes a natural-language instruction and routes it internally to Notion/Calendar/search with no per-capability limits.</p></div>
+      <div class="flip-arrow">→</div>
+      <div class="turn-card correct-turn"><div class="turn-label">✓ Correct turn</div><p>Keep chat-cli's existing deterministic-parser strength — small, named, typed commands beat one mega-tool.</p></div>
+    </div>
+
+    <div class="worst-pair">
+      <div class="turn-card wrong-turn"><div class="turn-label">⚠ Wrong turn</div><p>New Notion pages get created with freeform titles/properties that don't match any existing DB schema, so the planning engine can't see them.</p></div>
+      <div class="flip-arrow">→</div>
+      <div class="turn-card correct-turn"><div class="turn-label">✓ Correct turn</div><p>Page/DB creation is always schema-validated against the target DB's real property names (e.g. DEFAULT_TASK_PROPERTY_NAMES) before writing.</p></div>
+    </div>
+
+    <div class="worst-pair">
+      <div class="turn-card wrong-turn"><div class="turn-label">⚠ Wrong turn</div><p>Calendar and Notion writes happen silently in the background with no chat transcript record, so the user has no idea what changed unless they open the app.</p></div>
+      <div class="flip-arrow">→</div>
+      <div class="turn-card correct-turn"><div class="turn-label">✓ Correct turn</div><p>Every live write is echoed back in chat as a one-line receipt (e.g. 'created task X, due Y').</p></div>
+    </div>
+
+    <div class="worst-pair">
+      <div class="turn-card wrong-turn"><div class="turn-label">⚠ Wrong turn</div><p>Web search runs on every single chat turn 'just in case,' burning API quota and slowing every reply.</p></div>
+      <div class="flip-arrow">→</div>
+      <div class="turn-card correct-turn"><div class="turn-label">✓ Correct turn</div><p>Search is a triggered capability (explicit ask or clear intent), never a default per-turn tool call.</p></div>
+    </div>
+
+    <div class="worst-pair">
+      <div class="turn-card wrong-turn"><div class="turn-label">⚠ Wrong turn</div><p>If a Notion or Calendar API call fails mid-action, Yoh just says 'done' anyway.</p></div>
+      <div class="flip-arrow">→</div>
+      <div class="turn-card correct-turn"><div class="turn-label">✓ Correct turn</div><p>Failures are surfaced honestly with a retry/undo path, never a false success.</p></div>
+    </div>
+
+    <div class="worst-pair">
+      <div class="turn-card wrong-turn"><div class="turn-label">⚠ Wrong turn</div><p>All new live capabilities ship at once in one giant PR with no staged rollout, so a bug in web search can take down task creation too.</p></div>
+      <div class="flip-arrow">→</div>
+      <div class="turn-card correct-turn"><div class="turn-label">✓ Correct turn</div><p>Ship capabilities independently, each behind its own safety tier, so one failing feature never blocks the others.</p></div>
+    </div>
+
+    <div class="worst-pair">
+      <div class="turn-card wrong-turn"><div class="turn-label">⚠ Wrong turn</div><p>The assistant uses its new write powers to 'proactively' reorganize the user's whole Notion workspace based on a hunch.</p></div>
+      <div class="flip-arrow">→</div>
+      <div class="turn-card correct-turn"><div class="turn-label">✓ Correct turn</div><p>Reinforces the existing 'propose, don't impose' rule from the prior Yoh session — even with write access, restructuring stays a proposal until confirmed.</p></div>
+    </div>
+
+    <div class="worst-pair">
+      <div class="turn-card wrong-turn"><div class="turn-label">⚠ Wrong turn</div><p>Hardcode API keys/tokens directly in chat-cli.ts source so the new live features are quick to wire up.</p></div>
+      <div class="flip-arrow">→</div>
+      <div class="turn-card correct-turn"><div class="turn-label">✓ Correct turn</div><p>Credentials load from env/config the same way the existing Notion/Calendar adapters already do — new capabilities follow the established adapter pattern, not a shortcut.</p></div>
+    </div>
+
+    <div class="worst-pair">
+      <div class="turn-card wrong-turn"><div class="turn-label">⚠ Wrong turn</div><p>Web search results are allowed to override or contradict decisions already logged in the memlog/plan without flagging the conflict.</p></div>
+      <div class="flip-arrow">→</div>
+      <div class="turn-card correct-turn"><div class="turn-label">✓ Correct turn</div><p>If a search result conflicts with existing plan data, Yoh surfaces the conflict rather than silently overwriting it.</p></div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ================= MORPHOLOGICAL ANALYSIS ================= -->
+<section id="morph">
+  <div class="section-head">
+    <div class="section-eyebrow">Technique 03 — Morphological Analysis</div>
+    <h2 class="section-title">Six parameters, fourteen configurations</h2>
+    <p class="section-note">Chosen because the design is inherently combinatorial: capability, trigger, autonomy, scope, provenance, and failure-handling are independent axes. Every real feature is one point picked from this grid.</p>
+  </div>
+
+  <div class="matrix-scroll">
+    <table class="matrix">
+      <tbody>
+        <tr>
+          <th>Capability domain</th>
+          <td><div class="pill-row">
+            <span class="pill">Notion tasks</span>
+            <span class="pill">Notion pages/DBs (new)</span>
+            <span class="pill">Calendar read</span>
+            <span class="pill">Calendar write/time-block</span>
+            <span class="pill">Web search</span>
+            <span class="pill">Other (reminders, email, voice)</span>
+          </div></td>
+        </tr>
+        <tr>
+          <th>Trigger mode</th>
+          <td><div class="pill-row">
+            <span class="pill">Explicit command</span>
+            <span class="pill">Natural-language intent detection</span>
+            <span class="pill">Scheduled / ritual-triggered</span>
+            <span class="pill">Proactive / unprompted</span>
+          </div></td>
+        </tr>
+        <tr>
+          <th>Autonomy / safety tier</th>
+          <td><div class="pill-row">
+            <span class="pill">Read-only</span>
+            <span class="pill">Propose + confirm</span>
+            <span class="pill">Auto-write with receipt</span>
+            <span class="pill pill-danger">Auto-write silent</span>
+          </div></td>
+        </tr>
+        <tr>
+          <th>Scope of target</th>
+          <td><div class="pill-row">
+            <span class="pill">Yoh-owned objects only</span>
+            <span class="pill">User's full workspace / calendar</span>
+          </div></td>
+        </tr>
+        <tr>
+          <th>Provenance / feedback</th>
+          <td><div class="pill-row">
+            <span class="pill pill-danger">Silent</span>
+            <span class="pill">Chat receipt</span>
+            <span class="pill">Memlog-logged</span>
+            <span class="pill">Both chat + memlog</span>
+          </div></td>
+        </tr>
+        <tr>
+          <th>Failure handling</th>
+          <td><div class="pill-row">
+            <span class="pill pill-danger">Silent fail</span>
+            <span class="pill">Chat error</span>
+            <span class="pill">Retry</span>
+            <span class="pill">Fallback to manual instruction</span>
+          </div></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="combo-head">
+    <h3>Configurations actually worth building</h3>
+    <p>Eleven single-domain combinations, picked as sensible points in the grid above.</p>
+  </div>
+
+  <div class="combo-grid">
+    <div class="combo-card">
+      <div class="combo-chips"><span class="chip chip-domain">Notion pages/DBs (new)</span><span class="chip">NL intent</span><span class="chip chip-tier">propose+confirm</span><span class="chip">Yoh-owned scope</span><span class="chip">chat receipt</span></div>
+      <p>Say 'make me a research page for X,' Yoh drafts it, shows the draft, creates only on confirm, only inside spaces Yoh already manages.</p>
+    </div>
+    <div class="combo-card">
+      <div class="combo-chips"><span class="chip chip-domain">Calendar write/time-block</span><span class="chip">ritual-triggered</span><span class="chip chip-tier">auto-write+receipt</span><span class="chip">Yoh-owned scope</span><span class="chip">memlog-logged</span></div>
+      <p>Morning ritual auto time-blocks today's plan onto the Yoh Plan calendar and logs block IDs — no per-block confirmation needed since it's already Yoh's own calendar.</p>
+    </div>
+    <div class="combo-card">
+      <div class="combo-chips"><span class="chip chip-domain">Calendar write/time-block</span><span class="chip">explicit command</span><span class="chip chip-tier">propose+confirm</span><span class="chip">user's full calendar</span><span class="chip">chat receipt</span></div>
+      <p>'Move my 2pm to 4pm' when the 2pm is a real non-Yoh meeting — show what would move, confirm before touching anything outside Yoh Plan.</p>
+    </div>
+    <div class="combo-card">
+      <div class="combo-chips"><span class="chip chip-domain">Web search</span><span class="chip">explicit command</span><span class="chip chip-tier">read-only</span><span class="chip">chat receipt</span></div>
+      <p>'Look up X' returns a synthesized answer with source links in chat; no write anywhere unless the user then says 'save that.'</p>
+    </div>
+    <div class="combo-card">
+      <div class="combo-chips"><span class="chip chip-domain">Web search</span><span class="chip">NL intent</span><span class="chip chip-tier">read-only</span><span class="chip">memlog + chat</span></div>
+      <p>A factual mid-planning question ('when's that conference again?') is silently recognized as needing a lookup, answered inline, and logged for later reference — no separate search command needed.</p>
+    </div>
+    <div class="combo-card">
+      <div class="combo-chips"><span class="chip chip-domain">Notion tasks</span><span class="chip">proactive/unprompted</span><span class="chip chip-tier">propose+confirm</span><span class="chip">Yoh-owned scope</span><span class="chip">chat receipt</span></div>
+      <p>On a data-completeness gap, Yoh now proposes the missing field value itself (inferred from chat context) instead of only asking — user confirms instead of typing.</p>
+    </div>
+    <div class="combo-card">
+      <div class="combo-chips"><span class="chip chip-domain">Notion pages/DBs (new)</span><span class="chip">ritual-triggered</span><span class="chip chip-tier">auto-write</span><span class="chip">Yoh-owned scope</span><span class="chip">memlog-logged</span></div>
+      <p>Night ritual auto-files today's captured research/notes into the Research Vault DB as a new dated page — additive and reversible, so no confirmation needed.</p>
+    </div>
+    <div class="combo-card">
+      <div class="combo-chips"><span class="chip chip-domain">Calendar read</span><span class="chip">explicit command</span><span class="chip chip-tier">read-only</span><span class="chip">user's full calendar</span><span class="chip">chat receipt</span></div>
+      <p>'What's my afternoon look like' pulls real calendar state, not just the plan, to answer honestly when plan and reality have diverged.</p>
+    </div>
+    <div class="combo-card">
+      <div class="combo-chips"><span class="chip chip-domain">Other (reminders)</span><span class="chip">ritual-triggered</span><span class="chip chip-tier">auto-write+receipt</span><span class="chip">Yoh-owned scope</span><span class="chip">retry-on-fail</span></div>
+      <p>The existing escalating night retry (notification then speaker) becomes a formal reusable capability slot instead of a special case.</p>
+    </div>
+    <div class="combo-card">
+      <div class="combo-chips"><span class="chip chip-domain">Web search</span><span class="chip">proactive/unprompted</span><span class="chip chip-tier">propose+confirm</span><span class="chip">chat receipt</span></div>
+      <p>Planning a task that clearly needs external info ('book flight to X'), Yoh proactively offers to search rather than waiting to be asked.</p>
+    </div>
+    <div class="combo-card">
+      <div class="combo-chips"><span class="chip chip-domain">Notion tasks</span><span class="chip">explicit command</span><span class="chip chip-tier">auto-write+receipt</span><span class="chip">Yoh-owned scope</span></div>
+      <p>'Add a task: draft the Q3 report, due Friday' creates the row directly with a one-line receipt — lowest-risk, already-established write path, no confirm-first friction needed.</p>
+    </div>
+  </div>
+
+  <div class="combo-head">
+    <h3>Cross-domain fusions</h3>
+    <p>Two combinations that chain more than one capability domain into a single flow.</p>
+  </div>
+  <div class="combo-grid">
+    <div class="combo-card fusion">
+      <span class="fusion-badge">⚭ cross-domain</span>
+      <div class="combo-chips"><span class="chip chip-domain">Notion pages/DBs (new)</span><span class="chip chip-domain">+ Web search</span><span class="chip">explicit command</span><span class="chip chip-tier">propose+confirm</span></div>
+      <p>'Research X and file the results' chains search → draft page → confirm → create, composing the two new capabilities into one flow.</p>
+    </div>
+    <div class="combo-card fusion">
+      <span class="fusion-badge">⚭ cross-domain</span>
+      <div class="combo-chips"><span class="chip chip-domain">Calendar write</span><span class="chip chip-domain">+ Notion tasks</span><span class="chip">ritual-triggered</span><span class="chip chip-tier">auto-write+receipt</span></div>
+      <p>Mid-day reflow (existing feature) also nudges calendar block times when task estimates change, keeping calendar and plan reconciled automatically.</p>
+    </div>
+  </div>
+
+  <div class="combo-head">
+    <h3>Explicitly ruled out</h3>
+    <p>One cell of the grid was named on purpose so it never gets built later as a convenience shortcut.</p>
+  </div>
+  <div class="combo-grid">
+    <div class="combo-card forbidden">
+      <span class="forbidden-stamp">⛔ do not build</span>
+      <div class="combo-chips"><span class="chip chip-domain">Calendar write</span><span class="chip">explicit command</span><span class="chip pill-danger" style="border-color:var(--danger);color:var(--danger);">auto-write SILENT</span><span class="chip">Yoh-owned scope</span></div>
+      <p>Flagged-against cell — worth explicitly deciding against this configuration now so it never gets implemented later as a convenience shortcut.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ================= SYNTHESIS ================= -->
+<section id="synthesis">
+  <div class="synth-intro">
+    <div class="section-eyebrow">Synthesis</div>
+    <h2 class="section-title">What all three techniques were actually pointing at</h2>
+    <p>Seven insights, surfaced independently across hats, flips, and the grid — then read together as one converging design.</p>
+  </div>
+
+  <div class="timeline">
+
+    <div class="insight keystone" data-n="★">
+      <span class="insight-tag">Keystone insight</span>
+      <p>The safety-tier system (read-only / propose+confirm / auto-write+receipt) is the single most load-bearing idea in the session — it surfaced independently from Six Hats' Green/Blue hats, every Worst-Possible-Idea flip, and threads through nearly every Morphological combo. Design it once as a shared primitive, don't decide safety per-feature.</p>
+    </div>
+
+    <div class="insight" data-n="02">
+      <p>Scope discipline is the second recurring axis: auto-write is only safe when the target is Yoh-owned (Yoh Plan calendar, Yoh-created rows); anything touching the user's real calendar or full workspace needs propose+confirm regardless of trigger mode. Safety tier and scope are coupled, not independent.</p>
+    </div>
+
+    <div class="insight" data-n="03">
+      <p>Provenance (chat receipt + memlog log) is the antidote to nearly every Worst-Possible failure mode: silent background writes, swallowed API failures, unlabeled web-search facts. The fix in all three cases is the same move — never silent, always shown and logged.</p>
+    </div>
+
+    <div class="insight" data-n="04">
+      <p>The session converges <em>against</em> rebuilding chat-cli into an open LLM tool-calling loop. Instead: extend the existing adapter pattern (notion-adapter.ts, calendar-adapter.ts) with a small scoped tool registry of named, typed commands — the architecture fork resolves toward 'more commands,' not 'general agent.'</p>
+    </div>
+
+    <div class="insight" data-n="05">
+      <p>The most novel direction wasn't visible from any single technique alone: composing the two new capabilities together ('research X and file the results' — search then draft-page then confirm then create) is more valuable than either shipped in isolation.</p>
+    </div>
+
+    <div class="insight" data-n="06">
+      <p>Nearly every high-value idea reuses something that already exists rather than inventing new machinery: Research Vault DB as the search-results sink, Yoh Plan's block-ID tracking as the time-block edit anchor, the earlier session's 'propose, don't impose' rule as the write-confirmation philosophy, the existing data-completeness gate extended to also propose inferred values.</p>
+    </div>
+
+    <div class="insight" data-n="07">
+      <span class="insight-tag">Chosen build sequence</span>
+      <div class="roadmap">
+        <div class="road-step">
+          <div class="n">1</div>
+          <div class="body"><b>Notion task/page writes</b><span>Extending the existing adapter — smallest gap from current state.</span></div>
+        </div>
+        <div class="road-step">
+          <div class="n">2</div>
+          <div class="body"><b>Calendar time-block editing via chat</b><span>Reconciled through existing plan-block-ID tracking.</span></div>
+        </div>
+        <div class="road-step">
+          <div class="n">3</div>
+          <div class="body"><b>Web search, last</b><span>Highest-uncertainty net-new capability — read-only-with-citation before any write-back to Notion is enabled.</span></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+</div>
+
+<footer>
+  <div class="seal"><span class="dot"></span> Session sealed — autonomous mode, complete</div>
+  <div class="colophon">brainstorm-chat-cli-live-integrations-2026-09-17 · updated 2026-09-17T23:13</div>
+</footer>
+
+</body>
+</html>
