@@ -33,18 +33,26 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { calendar_v3 } from "@googleapis/calendar";
 import type { GlobalOptions } from "@googleapis/calendar";
 import {
   readCalendarEvents,
   createCalendarReadClient,
   createCalendarWriteClient,
+  createCalendarBroadClient,
+  resolveCalendarEditRoute,
+  proposeCalendarEdit,
+  proposeNewCalendarEvent,
+  applyCalendarEdit,
   ensureYohPlanCalendar,
   writeTodaysPlanToCalendar,
   YOH_PLAN_CALENDAR_SUMMARY,
   PLAN_BLOCK_ID_EXTENDED_PROPERTY,
   type CalendarReadClient,
   type CalendarWriteClient,
+  type CalendarBroadClient,
   type CalendarIdStore,
 } from "../src/adapters/calendar-adapter.ts";
 import type { PlanBlock } from "../src/types/domain.ts";
@@ -695,4 +703,179 @@ test("writeTodaysPlanToCalendar's config type structurally cannot express a call
   // `calendarId: "yoh-plan-calendar-id"` — asserted directly in the tests
   // above — never `"primary"`.
   assert.equal(client.calendarsInsertCalls.length, 1);
+});
+
+// ============================================================================
+// resolveCalendarEditRoute / proposeCalendarEdit / proposeNewCalendarEvent /
+// applyCalendarEdit (Story 6.6 / FR-27, AD-13)
+// ============================================================================
+
+function fakeBroadClient(overrides: {
+  getResult?: calendar_v3.Schema$Event;
+  insertResult?: calendar_v3.Schema$Event;
+  throwOnGet?: Error;
+  throwOnPatch?: Error;
+  throwOnInsert?: Error;
+} = {}): CalendarBroadClient & {
+  readonly getCalls: calendar_v3.Params$Resource$Events$Get[];
+  readonly patchCalls: calendar_v3.Params$Resource$Events$Patch[];
+  readonly insertCalls: calendar_v3.Params$Resource$Events$Insert[];
+} {
+  const getCalls: calendar_v3.Params$Resource$Events$Get[] = [];
+  const patchCalls: calendar_v3.Params$Resource$Events$Patch[] = [];
+  const insertCalls: calendar_v3.Params$Resource$Events$Insert[] = [];
+  return {
+    getCalls,
+    patchCalls,
+    insertCalls,
+    events: {
+      get: async (params) => {
+        getCalls.push(params);
+        if (overrides.throwOnGet) throw overrides.throwOnGet;
+        return {
+          data: overrides.getResult ?? {
+            id: "evt-1",
+            etag: '"etag-1"',
+            summary: "Team sync",
+            start: { dateTime: "2026-09-18T15:00:00.000Z" },
+            end: { dateTime: "2026-09-18T16:00:00.000Z" },
+          },
+        };
+      },
+      patch: async (params) => {
+        patchCalls.push(params);
+        if (overrides.throwOnPatch) throw overrides.throwOnPatch;
+        return { data: { id: "evt-1" } };
+      },
+      insert: async (params) => {
+        insertCalls.push(params);
+        if (overrides.throwOnInsert) throw overrides.throwOnInsert;
+        return { data: overrides.insertResult ?? { id: "evt-new" } };
+      },
+    },
+  };
+}
+
+test("resolveCalendarEditRoute reports 'owned' for an event stamped with PLAN_BLOCK_ID_EXTENDED_PROPERTY", async () => {
+  const client = fakeBroadClient({
+    getResult: { id: "evt-1", extendedProperties: { private: { [PLAN_BLOCK_ID_EXTENDED_PROPERTY]: "block-1" } } },
+  });
+  const route = await resolveCalendarEditRoute(client, "yoh-plan-id", "evt-1");
+  assert.deepEqual(route, { kind: "owned" });
+});
+
+test("resolveCalendarEditRoute reports 'external' for an event with no such stamp", async () => {
+  const client = fakeBroadClient({ getResult: { id: "evt-1" } });
+  const route = await resolveCalendarEditRoute(client, "primary", "evt-1");
+  assert.deepEqual(route, { kind: "external" });
+});
+
+test("proposeCalendarEdit (move) preserves the live event's duration when computing the new end time", async () => {
+  const client = fakeBroadClient();
+  const proposal = await proposeCalendarEdit(client, "primary", "evt-1", { kind: "move", newStart: "2026-09-18T18:00:00.000Z" });
+  assert.equal(proposal.suggested.kind, "move");
+  if (proposal.suggested.kind !== "move") return;
+  assert.equal(proposal.suggested.newStart, "2026-09-18T18:00:00.000Z");
+  assert.equal(proposal.suggested.newEnd, "2026-09-18T19:00:00.000Z"); // same 1-hour duration as the live event
+  assert.equal(proposal.entityVersion, '"etag-1"');
+});
+
+test("proposeCalendarEdit (resize) carries the given new end time straight through", async () => {
+  const client = fakeBroadClient();
+  const proposal = await proposeCalendarEdit(client, "primary", "evt-1", { kind: "resize", newEnd: "2026-09-18T17:30:00.000Z" });
+  assert.deepEqual(proposal.suggested, {
+    kind: "resize",
+    eventId: "evt-1",
+    calendarId: "primary",
+    newEnd: "2026-09-18T17:30:00.000Z",
+  });
+});
+
+test("proposeNewCalendarEvent is pure — makes no client call at all", () => {
+  const proposal = proposeNewCalendarEvent({
+    calendarId: "primary",
+    title: "Focus block",
+    start: "2026-09-18T14:00:00.000Z",
+    end: "2026-09-18T15:00:00.000Z",
+  });
+  assert.deepEqual(proposal.suggested, {
+    kind: "create",
+    calendarId: "primary",
+    title: "Focus block",
+    start: "2026-09-18T14:00:00.000Z",
+    end: "2026-09-18T15:00:00.000Z",
+  });
+});
+
+test("applyCalendarEdit (move/resize) re-reads the live event, confirms the etag still matches, and patches only start/end", async () => {
+  const client = fakeBroadClient();
+  const proposal = await proposeCalendarEdit(client, "primary", "evt-1", { kind: "move", newStart: "2026-09-18T18:00:00.000Z" });
+
+  const result = await applyCalendarEdit(client, proposal);
+
+  assert.equal(result.ok, true);
+  assert.equal(client.patchCalls.length, 1);
+  assert.deepEqual(client.patchCalls[0]!.requestBody, {
+    start: { dateTime: "2026-09-18T18:00:00.000Z" },
+    end: { dateTime: "2026-09-18T19:00:00.000Z" },
+  });
+});
+
+test("applyCalendarEdit (move/resize) rejects a stale proposal (etag changed since proposal time) without patching anything", async () => {
+  const client = fakeBroadClient();
+  const proposal = await proposeCalendarEdit(client, "primary", "evt-1", { kind: "move", newStart: "2026-09-18T18:00:00.000Z" });
+
+  // Simulate the event changing between propose and apply.
+  const staleClient = fakeBroadClient({ getResult: { id: "evt-1", etag: '"etag-2"' } });
+  const result = await applyCalendarEdit(staleClient, proposal);
+
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.error.kind, "stale-proposal");
+  assert.equal(staleClient.patchCalls.length, 0);
+});
+
+test("applyCalendarEdit (create) inserts the new event directly, with no re-read/staleness check (AD-3's create exemption)", async () => {
+  const client = fakeBroadClient();
+  const proposal = proposeNewCalendarEvent({
+    calendarId: "primary",
+    title: "Focus block",
+    start: "2026-09-18T14:00:00.000Z",
+    end: "2026-09-18T15:00:00.000Z",
+  });
+
+  const result = await applyCalendarEdit(client, proposal);
+
+  assert.equal(result.ok, true);
+  assert.equal(client.getCalls.length, 0, "create must never re-read a live entity — there isn't one yet");
+  assert.equal(client.insertCalls.length, 1);
+  assert.deepEqual(client.insertCalls[0]!.requestBody, {
+    summary: "Focus block",
+    start: { dateTime: "2026-09-18T14:00:00.000Z" },
+    end: { dateTime: "2026-09-18T15:00:00.000Z" },
+  });
+});
+
+test("applyCalendarEdit returns an 'unreachable' failure (not a throw) when the patch call fails", async () => {
+  const proposal = await proposeCalendarEdit(fakeBroadClient(), "primary", "evt-1", { kind: "resize", newEnd: "2026-09-18T17:30:00.000Z" });
+  const failing = fakeBroadClient({ throwOnPatch: new Error("boom") });
+
+  const result = await applyCalendarEdit(failing, proposal);
+
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.error.kind, "unreachable");
+});
+
+test("createCalendarBroadClient wraps an auth client without making a network call", () => {
+  const client = createCalendarBroadClient("fake-api-key");
+  assert.equal(typeof client.events.get, "function");
+  assert.equal(typeof client.events.patch, "function");
+  assert.equal(typeof client.events.insert, "function");
+});
+
+test("CalendarEditChange has no delete variant — structurally impossible to construct one", () => {
+  // A grep-based structural guard, the same convention notion-adapter.ts's
+  // AD-12 test already uses: this file's source can never construct a
+  // 'delete' kind for CalendarEditChange.
+  const source = readFileSync(join(import.meta.dirname, "..", "src", "adapters", "calendar-adapter.ts"), "utf8");
+  assert.doesNotMatch(source, /kind:\s*["']delete["']/, "no delete variant may ever be constructed for CalendarEditChange (AD-13)");
 });

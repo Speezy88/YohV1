@@ -16,6 +16,15 @@
  * which a caller could even attempt to target the primary calendar or any
  * calendar other than the one Yoh itself created and persisted.
  *
+ * Story 6.6 / FR-27 (AD-13) adds a THIRD, genuinely separate client type,
+ * `CalendarBroadClient` (built from the SECOND, broader-scoped `OAuth2Client`
+ * `token-store.ts` holds), plus `resolveCalendarEditRoute` /
+ * `proposeCalendarEdit` / `proposeNewCalendarEvent` / `applyCalendarEdit` —
+ * confirm-gated move/resize/create of Calendar events beyond Yoh's own.
+ * `CalendarEditChange` has no `delete` variant, and `CalendarBroadClient`
+ * has no `delete` member, so an external event cannot be deleted through
+ * this file even by mistake.
+ *
  * Per AD-10 of the Architecture Spine, this file receives an
  * already-authenticated `OAuth2Client` (constructed and held solely by
  * `token-store.ts`) as a parameter and must NEVER import
@@ -138,7 +147,16 @@
  *    thrown failure per AD-8, not silently mapped to a guessed value.
  */
 import { calendar, type calendar_v3, type GlobalOptions } from "@googleapis/calendar";
-import type { CalendarEvent, IsoDateTime, PlanBlock } from "../types/domain.ts";
+import type {
+  CalendarEditChange,
+  CalendarEvent,
+  ExternalId,
+  IsoDateTime,
+  PlanBlock,
+  Proposal,
+  Result,
+  YohError,
+} from "../types/domain.ts";
 
 // ============================================================================
 // Injectable read client
@@ -232,6 +250,25 @@ export interface CalendarWriteClient {
       params: calendar_v3.Params$Resource$Events$Update,
     ) => Promise<{ readonly data: calendar_v3.Schema$Event }>;
     readonly delete: (params: calendar_v3.Params$Resource$Events$Delete) => Promise<{ readonly data: void }>;
+  };
+}
+
+// ============================================================================
+// Injectable broad client (Story 6.6 / FR-27, AD-13) — genuinely separate
+// from CalendarReadClient/CalendarWriteClient, same reasoning as those two:
+// shares no member, built from the SECOND, broader-scoped OAuth2Client
+// token-store.ts holds (never the narrow one AD-4's automatic path uses).
+// Deliberately has no `delete` member. "Primary only" for this path is
+// enforced by the calendarId === 'primary' checks in shell/chat-cli.ts's own
+// wiring, not by this client's scope (AD-13 — Google's scope catalog has no
+// narrower "primary only" grant).
+// ============================================================================
+
+export interface CalendarBroadClient {
+  readonly events: {
+    readonly get: (params: calendar_v3.Params$Resource$Events$Get) => Promise<{ readonly data: calendar_v3.Schema$Event }>;
+    readonly patch: (params: calendar_v3.Params$Resource$Events$Patch) => Promise<{ readonly data: calendar_v3.Schema$Event }>;
+    readonly insert: (params: calendar_v3.Params$Resource$Events$Insert) => Promise<{ readonly data: calendar_v3.Schema$Event }>;
   };
 }
 
@@ -463,6 +500,194 @@ export async function writeTodaysPlanToCalendar(
 }
 
 // ============================================================================
+// FR-27 (AD-13): confirm-gated Calendar editing beyond Yoh-owned events
+// ============================================================================
+
+/**
+ * Checks whether `eventId` (on `calendarId`) is a Yoh-created "Yoh Plan"
+ * event — the SAME `PLAN_BLOCK_ID_EXTENDED_PROPERTY` tag AD-4's automatic
+ * path already stamps every "Yoh Plan" event with. Every FR-27 caller
+ * (`shell/chat-cli.ts`) routes through this first; `'owned'` means this
+ * confirm-gated path must decline and defer to AD-4's existing automatic
+ * mechanism instead (Mid-Day Re-Flow) — it never proceeds to
+ * `proposeCalendarEdit` for an `'owned'` result.
+ */
+export async function resolveCalendarEditRoute(
+  client: CalendarBroadClient,
+  calendarId: string,
+  eventId: ExternalId,
+): Promise<{ readonly kind: "owned" } | { readonly kind: "external" }> {
+  const response = await client.events.get({ calendarId, eventId });
+  const isYohOwned = Boolean(response.data.extendedProperties?.private?.[PLAN_BLOCK_ID_EXTENDED_PROPERTY]);
+  return isYohOwned ? { kind: "owned" } : { kind: "external" };
+}
+
+/** Input to `proposeCalendarEdit` — `newStart` for `move` (duration preserved from the live event), `newEnd` for `resize` (start stays put). */
+export type MoveOrResizeChange =
+  | { readonly kind: "move"; readonly newStart: IsoDateTime }
+  | { readonly kind: "resize"; readonly newEnd: IsoDateTime };
+
+/**
+ * Reads the live event (for its current start/end/etag) and returns a
+ * `Proposal<CalendarEditChange>` describing exactly what would change —
+ * writes nothing. `move` preserves the live event's own duration when
+ * computing `newEnd`; `resize` carries the given `newEnd` straight through,
+ * leaving the start untouched. `entityVersion` is the live event's `etag`,
+ * checked for staleness by `applyCalendarEdit` (AD-3).
+ *
+ * Per AD-8, SDK/network errors from the live read propagate as a throw.
+ */
+export async function proposeCalendarEdit(
+  client: CalendarBroadClient,
+  calendarId: string,
+  eventId: ExternalId,
+  change: MoveOrResizeChange,
+): Promise<Proposal<CalendarEditChange>> {
+  const response = await client.events.get({ calendarId, eventId });
+  const event = response.data;
+  const summary = event.summary ?? "this event";
+
+  let suggested: CalendarEditChange;
+  let reason: string;
+  if (change.kind === "move") {
+    const durationMs = new Date(toIsoDateTime(event.end)).getTime() - new Date(toIsoDateTime(event.start)).getTime();
+    suggested = {
+      kind: "move",
+      eventId,
+      calendarId,
+      newStart: change.newStart,
+      newEnd: new Date(new Date(change.newStart).getTime() + durationMs).toISOString(),
+    };
+    reason = `Move "${summary}" to start at ${change.newStart}`;
+  } else {
+    suggested = { kind: "resize", eventId, calendarId, newEnd: change.newEnd };
+    reason = `Resize "${summary}" to end at ${change.newEnd}`;
+  }
+
+  return {
+    id: `calendar-edit-${eventId}-${Date.now()}`,
+    kind: "calendar-edit",
+    entityId: eventId,
+    entityVersion: event.etag ?? "",
+    suggested,
+    reason,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+/** Input to `proposeNewCalendarEvent` — `create`, by definition, has no `eventId` yet. */
+export interface CreateBlockChange {
+  readonly calendarId: string;
+  readonly title: string;
+  readonly start: IsoDateTime;
+  readonly end: IsoDateTime;
+}
+
+/**
+ * Builds a `Proposal<CalendarEditChange>` for a NEW event — pure, no I/O:
+ * there is no live entity to read yet, so unlike `proposeCalendarEdit` this
+ * makes no client call at all (mirroring `NotionPageDraft`'s own no-live-
+ * entity exemption under AD-3).
+ */
+export function proposeNewCalendarEvent(change: CreateBlockChange): Proposal<CalendarEditChange> {
+  return {
+    id: `calendar-create-${Date.now()}`,
+    kind: "calendar-edit",
+    entityId: "new-event",
+    entityVersion: "new",
+    suggested: { kind: "create", calendarId: change.calendarId, title: change.title, start: change.start, end: change.end },
+    reason: `Create "${change.title}" from ${change.start} to ${change.end}`,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * Applies a confirmed `Proposal<CalendarEditChange>`. For `move`/`resize`:
+ * re-reads the live event and compares its CURRENT `etag` against
+ * `proposal.entityVersion` — a mismatch rejects with
+ * `YohError.kind: "stale-proposal"` WITHOUT patching anything (AD-3); only
+ * on a genuine match does it call `events.patch` with just the changed
+ * field(s). For `create`: calls `events.insert` directly, skipping the
+ * re-read entirely — there is no live entity to re-check.
+ *
+ * Unlike this file's other exports, failures come back as a `Result`
+ * rather than a throw: this is the confirm-then-write boundary
+ * `chat-cli.ts` must be able to report on without a try/catch.
+ */
+export async function applyCalendarEdit(
+  client: CalendarBroadClient,
+  proposal: Proposal<CalendarEditChange>,
+): Promise<Result<{ readonly eventId: string; readonly calendarId: string }, YohError>> {
+  const change = proposal.suggested;
+
+  if (change.kind === "create") {
+    try {
+      const response = await client.events.insert({
+        calendarId: change.calendarId,
+        requestBody: { summary: change.title, start: { dateTime: change.start }, end: { dateTime: change.end } },
+      });
+      const eventId = response.data.id;
+      if (!eventId) {
+        return { ok: false, error: { kind: "unreachable", message: "calendar-adapter: events.insert response is missing an id" } };
+      }
+      return { ok: true, value: { eventId, calendarId: change.calendarId } };
+    } catch (err) {
+      return {
+        ok: false,
+        error: {
+          kind: "unreachable",
+          message: `calendar-adapter: could not create the event — ${err instanceof Error ? err.message : String(err)}`,
+          detail: err,
+        },
+      };
+    }
+  }
+
+  let liveEvent: calendar_v3.Schema$Event;
+  try {
+    const response = await client.events.get({ calendarId: change.calendarId, eventId: change.eventId });
+    liveEvent = response.data;
+  } catch (err) {
+    return {
+      ok: false,
+      error: {
+        kind: "unreachable",
+        message: `calendar-adapter: could not re-read the event before applying — ${err instanceof Error ? err.message : String(err)}`,
+        detail: err,
+      },
+    };
+  }
+
+  if ((liveEvent.etag ?? "") !== proposal.entityVersion) {
+    return {
+      ok: false,
+      error: {
+        kind: "stale-proposal",
+        message: `calendar-adapter: event "${change.eventId}" has changed since this proposal was generated`,
+        detail: { eventId: change.eventId, expectedVersion: proposal.entityVersion, actualVersion: liveEvent.etag },
+      },
+    };
+  }
+
+  const requestBody: calendar_v3.Schema$Event =
+    change.kind === "move" ? { start: { dateTime: change.newStart }, end: { dateTime: change.newEnd } } : { end: { dateTime: change.newEnd } };
+
+  try {
+    await client.events.patch({ calendarId: change.calendarId, eventId: change.eventId, requestBody });
+    return { ok: true, value: { eventId: change.eventId, calendarId: change.calendarId } };
+  } catch (err) {
+    return {
+      ok: false,
+      error: {
+        kind: "unreachable",
+        message: `calendar-adapter: could not apply the edit — ${err instanceof Error ? err.message : String(err)}`,
+        detail: err,
+      },
+    };
+  }
+}
+
+// ============================================================================
 // Auth wiring (AD-10)
 // ============================================================================
 
@@ -500,6 +725,19 @@ export function createCalendarReadClient(
 export function createCalendarWriteClient(
   authClient: Exclude<GlobalOptions["auth"], undefined>,
 ): CalendarWriteClient {
+  return calendar({ version: "v3", auth: authClient });
+}
+
+/**
+ * Wraps an already-authenticated auth client into a `CalendarBroadClient`.
+ * The token this `authClient` carries is expected to have been granted
+ * `GOOGLE_CALENDAR_BROAD_SCOPE` (`token-store.ts`, `calendar.events`) — the
+ * SECOND, broader-scoped client — never the narrow "Yoh Plan"-only one
+ * AD-4's automatic path uses. Makes no network call itself.
+ */
+export function createCalendarBroadClient(
+  authClient: Exclude<GlobalOptions["auth"], undefined>,
+): CalendarBroadClient {
   return calendar({ version: "v3", auth: authClient });
 }
 
