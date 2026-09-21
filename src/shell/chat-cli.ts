@@ -176,11 +176,24 @@ import {
   answerGeneralQuestion,
   classifyChatIntent,
   createAnthropicMessagesClient,
+  draftCalendarEditRequest,
   draftNotionPageFields,
   loadLlmAdapterConfigFromEnv,
   suggestFieldValue,
   type AnthropicMessagesClient,
+  type DraftedCalendarEditRequest,
 } from "../adapters/llm-adapter.ts";
+import {
+  applyCalendarEdit as calendarApplyEdit,
+  createCalendarBroadClient,
+  createCalendarReadClient,
+  proposeCalendarEdit as calendarProposeEdit,
+  proposeNewCalendarEvent,
+  readCalendarEvents,
+  resolveCalendarEditRoute as calendarResolveRoute,
+  type CalendarBroadClient,
+  type MoveOrResizeChange,
+} from "../adapters/calendar-adapter.ts";
 import {
   createPage as notionCreatePage,
   loadTaskPropertyNamesFromEnv,
@@ -190,6 +203,7 @@ import {
   updateTaskField as notionUpdateTaskField,
 } from "../adapters/notion-adapter.ts";
 import { search as runSearch, type SearchAdapterConfig } from "../adapters/search-adapter.ts";
+import { createTokenStore, loadGoogleOAuthConfigFromEnv, type TokenStore } from "../adapters/token-store.ts";
 import type { MissingFieldReport } from "../core/data-completeness-gate.ts";
 import { computeSlipBumpLevel } from "../core/slip-bump.ts";
 import { shapeDeclaredTimeBudget } from "../core/time-budget.ts";
@@ -215,6 +229,8 @@ import {
 } from "../rituals/night-ritual.ts";
 import { applySelfCheckAnswer, isValidSelfCheckScore, SELF_CHECK_REQUEST_ID } from "../rituals/self-check.ts";
 import type {
+  CalendarEditChange,
+  CalendarEvent,
   ChatIntent,
   FieldValueSuggestion,
   InteractionRequest,
@@ -1649,6 +1665,149 @@ async function handleSaveSearchResultCommand(
   io.writeLine(`Filed "${properties["title"]}" to the Research Vault.`);
 }
 
+// ============================================================================
+// Calendar editing beyond Yoh-owned events (Story 6.6 / FR-27, AD-13)
+// ============================================================================
+
+/**
+ * Recognizes a calendar-edit request — the same deliberately-simple
+ * starting keyword heuristic every other trigger recognizer in this file
+ * uses. Broad on purpose (natural phrasing for "move this meeting" varies
+ * far more than this file's fixed-phrase triggers): the actual
+ * move/resize/create and event-name extraction is `draftCalendarEditRequest`'s
+ * job (an LLM call), which returns nothing for a line that turns out not to
+ * be a calendar edit. There is deliberately no "delete" trigger — deleting
+ * an event isn't a value `CalendarEditChange` can even express (AD-13).
+ */
+const CALENDAR_EDIT_TRIGGER_RE = /^(move|reschedule|resize|extend|shorten|schedule a|block off|create (a|an) (time )?(block|event))\b/i;
+
+export function isCalendarEditCommand(line: string): boolean {
+  return CALENDAR_EDIT_TRIGGER_RE.test(line.trim());
+}
+
+type ResolveCalendarEditRouteFn = (
+  calendarId: string,
+  eventId: string,
+) => Promise<{ readonly kind: "owned" } | { readonly kind: "external" }>;
+type ProposeCalendarEditFn = (
+  calendarId: string,
+  eventId: string,
+  change: MoveOrResizeChange,
+) => Promise<Proposal<CalendarEditChange>>;
+type ApplyCalendarEditFn = (
+  proposal: Proposal<CalendarEditChange>,
+) => Promise<Result<{ readonly eventId: string; readonly calendarId: string }, YohError>>;
+
+/** `iso` as Spencer's local wall-clock time (e.g. "6:00 PM"), for display only. */
+function formatLocalTime(iso: string, timeZone: string): string {
+  return new Intl.DateTimeFormat("en-US", { timeZone, hour: "numeric", minute: "2-digit" }).format(new Date(iso));
+}
+
+/** One line describing `change` to `eventTitle`, in Spencer's local time — used for both the confirm preview and the receipt. */
+function describeCalendarEdit(change: CalendarEditChange, eventTitle: string, timeZone: string, past: boolean): string {
+  switch (change.kind) {
+    case "move":
+      return `${past ? "Moved" : "Move"} "${eventTitle}" to ${formatLocalTime(change.newStart, timeZone)}–${formatLocalTime(change.newEnd, timeZone)}`;
+    case "resize":
+      return `${past ? "Resized" : "Resize"} "${eventTitle}" to end at ${formatLocalTime(change.newEnd, timeZone)}`;
+    case "create":
+      return `${past ? "Created" : "Create"} "${eventTitle}" from ${formatLocalTime(change.start, timeZone)} to ${formatLocalTime(change.end, timeZone)}`;
+  }
+}
+
+/**
+ * Handles one recognized calendar-edit request end-to-end. Event lookup is
+ * scoped to TODAY's primary-calendar events only (this story's documented
+ * boundary) — a `move`/`resize` request names an event by title, matched
+ * case-insensitively among `readCalendarEventsFn`'s result; `create` needs
+ * no lookup. Every `move`/`resize` routes through `resolveRoute` first: an
+ * `'owned'` event (a "Yoh Plan" block) is declined here — it stays on AD-4's
+ * existing automatic path (Mid-Day Re-Flow), never this confirm-gated one
+ * (AD-13). Nothing is written until Spencer confirms the exact change,
+ * naming the specific event; the receipt is one line naming the event and
+ * what changed.
+ */
+async function handleCalendarEditCommand(
+  io: ChatCliIo,
+  llmClient: AnthropicMessagesClient,
+  line: string,
+  today: IsoDate,
+  timeZone: string,
+  readCalendarEventsFn: () => Promise<readonly CalendarEvent[]>,
+  resolveRoute: ResolveCalendarEditRouteFn,
+  proposeEdit: ProposeCalendarEditFn,
+  applyEdit: ApplyCalendarEditFn,
+): Promise<void> {
+  const events = await readCalendarEventsFn();
+
+  let draft: DraftedCalendarEditRequest | undefined;
+  try {
+    draft = await draftCalendarEditRequest(
+      llmClient,
+      line,
+      today,
+      timeZone,
+      events.map((e) => ({ title: e.title, start: e.start, end: e.end })),
+    );
+  } catch {
+    draft = undefined;
+  }
+
+  if (!draft) {
+    io.writeLine("I couldn't tell what calendar change you want — try naming the event and the new time directly.");
+    return;
+  }
+
+  let proposal: Proposal<CalendarEditChange>;
+  let eventTitle: string;
+
+  if (draft.kind === "create") {
+    eventTitle = draft.title;
+    proposal = proposeNewCalendarEvent({ calendarId: "primary", title: draft.title, start: draft.start, end: draft.end });
+  } else {
+    const requestedTitle = draft.eventTitle.trim().toLowerCase();
+    const matchedEvent = events.find((e) => e.title.trim().toLowerCase() === requestedTitle);
+    if (!matchedEvent) {
+      io.writeLine(`I couldn't find an event called "${draft.eventTitle}" on today's calendar.`);
+      return;
+    }
+    eventTitle = matchedEvent.title;
+
+    const route = await resolveRoute("primary", matchedEvent.id);
+    if (route.kind === "owned") {
+      io.writeLine("That's one of my own Plan blocks — ask me to re-flow the day to adjust it instead.");
+      return;
+    }
+
+    proposal = await proposeEdit(
+      "primary",
+      matchedEvent.id,
+      draft.kind === "move" ? { kind: "move", newStart: draft.newStart } : { kind: "resize", newEnd: draft.newEnd },
+    );
+  }
+
+  io.writeLine(describeCalendarEdit(proposal.suggested, eventTitle, timeZone, false));
+
+  let confirmAnswer: string | null = null;
+  do {
+    confirmAnswer = await io.readLine("Apply this change? (yes/no): ");
+    if (confirmAnswer === null) return; // EOF — nothing changed.
+  } while (confirmAnswer.trim().length === 0);
+
+  if (parseProposalAnswer(confirmAnswer) !== true) {
+    io.writeLine("Okay — I won't make that change.");
+    return;
+  }
+
+  const applied = await applyEdit(proposal);
+  if (!applied.ok) {
+    io.writeLine(`I couldn't apply that: ${applied.error.message}`);
+    return;
+  }
+
+  io.writeLine(`${describeCalendarEdit(proposal.suggested, eventTitle, timeZone, true)}.`);
+}
+
 /**
  * The REPL loop (Task 5, extended by Task 6, Task 11, Task 13, Task 14): on
  * start, and before processing every subsequent line of input, surfaces any
@@ -1718,6 +1877,18 @@ export async function runChatCli(
   },
   searchFn: SearchFn = async () => {
     throw new Error("chat-cli: no searchFn dependency configured — cannot run a web search");
+  },
+  readCalendarEventsFn: () => Promise<readonly CalendarEvent[]> = async () => {
+    throw new Error("chat-cli: no readCalendarEventsFn dependency configured — cannot look up today's Calendar events");
+  },
+  resolveCalendarEditRouteFn: ResolveCalendarEditRouteFn = async () => {
+    throw new Error("chat-cli: no resolveCalendarEditRouteFn dependency configured — cannot route a Calendar edit");
+  },
+  proposeCalendarEditFn: ProposeCalendarEditFn = async () => {
+    throw new Error("chat-cli: no proposeCalendarEditFn dependency configured — cannot propose a Calendar edit");
+  },
+  applyCalendarEditFn: ApplyCalendarEditFn = async () => {
+    throw new Error("chat-cli: no applyCalendarEditFn dependency configured — cannot apply a Calendar edit");
   },
 ): Promise<void> {
   // FR-25 (Story 6.2): a small bounded window of Spencer's own recent
@@ -1832,6 +2003,25 @@ export async function runChatCli(
 
     if (isSaveSearchResultCommand(line)) {
       await handleSaveSearchResultCommand(io, lastSearchAnswer, currentIsoDate(timeZone, now), createNotionPage);
+      continue;
+    }
+
+    if (isCalendarEditCommand(line)) {
+      try {
+        await handleCalendarEditCommand(
+          io,
+          llmClient,
+          line,
+          currentIsoDate(timeZone, now),
+          timeZone,
+          readCalendarEventsFn,
+          resolveCalendarEditRouteFn,
+          proposeCalendarEditFn,
+          applyCalendarEditFn,
+        );
+      } catch (err) {
+        io.writeLine(`I hit a problem with that calendar change: ${err instanceof Error ? err.message : String(err)}`);
+      }
       continue;
     }
 
@@ -2065,6 +2255,32 @@ export async function main(env: Readonly<Record<string, string | undefined>> = p
     }
     return runSearch(searchAdapterConfig, query);
   };
+  // Story 6.6 (FR-27): same lazy-construction convention as every binding
+  // above — a session that never asks for a Calendar edit must not be unable
+  // to start just because Google OAuth isn't configured. chat-cli.ts never
+  // needed Google OAuth before this story, so this is its own TokenStore,
+  // constructed once on first actual use. Reading today's events uses the
+  // existing narrow client (its calendar.readonly scope already covers
+  // this, exactly as ritual-cli.ts's Morning Ritual read does); only the
+  // route/propose/apply calls use the second, broader-scoped client (AD-13).
+  let cachedTokenStore: TokenStore | undefined;
+  const getTokenStore = (): TokenStore => {
+    cachedTokenStore ??= createTokenStore(loadGoogleOAuthConfigFromEnv(env));
+    return cachedTokenStore;
+  };
+  const readCalendarEventsFn = async (): Promise<readonly CalendarEvent[]> => {
+    const readClient = createCalendarReadClient(
+      getTokenStore().getOAuth2Client() as unknown as Parameters<typeof createCalendarReadClient>[0],
+    );
+    return readCalendarEvents(readClient, { timeZone });
+  };
+  const getCalendarBroadClient = (): CalendarBroadClient =>
+    createCalendarBroadClient(getTokenStore().getBroadOAuth2Client() as unknown as Parameters<typeof createCalendarBroadClient>[0]);
+  const resolveCalendarEditRouteFn: ResolveCalendarEditRouteFn = (calendarId, eventId) =>
+    calendarResolveRoute(getCalendarBroadClient(), calendarId, eventId);
+  const proposeCalendarEditFn: ProposeCalendarEditFn = (calendarId, eventId, change) =>
+    calendarProposeEdit(getCalendarBroadClient(), calendarId, eventId, change);
+  const applyCalendarEditFn: ApplyCalendarEditFn = (proposal) => calendarApplyEdit(getCalendarBroadClient(), proposal);
   try {
     await runChatCli(
       store,
@@ -2078,6 +2294,10 @@ export async function main(env: Readonly<Record<string, string | undefined>> = p
       createNotionPage,
       validateNotionPageDraft,
       searchFn,
+      readCalendarEventsFn,
+      resolveCalendarEditRouteFn,
+      proposeCalendarEditFn,
+      applyCalendarEditFn,
     );
   } finally {
     store.close();

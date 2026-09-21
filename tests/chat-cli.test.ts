@@ -44,6 +44,7 @@ import {
   parseWhyPrioritizedCommand,
   parseCreateItemCommand,
   isSaveSearchResultCommand,
+  isCalendarEditCommand,
   parseSelfCheckAnswer,
   apply,
   parseProposalAnswer,
@@ -68,6 +69,8 @@ import type { AnthropicMessagesClient } from "../src/adapters/llm-adapter.ts";
 import { resolveToneSystemPrompt } from "../src/core/tone.ts";
 import type Anthropic from "@anthropic-ai/sdk";
 import type {
+  CalendarEditChange,
+  CalendarEvent,
   IsoDate,
   NotionDatabaseTarget,
   Plan,
@@ -1731,6 +1734,59 @@ function makeFakeSearch(
   return Object.assign(fn, { calls });
 }
 
+/** Fake `readCalendarEvents` binding (Story 6.6 / FR-27) — returns a fixed event list. */
+function makeFakeReadCalendarEvents(events: readonly CalendarEvent[] = []): () => Promise<readonly CalendarEvent[]> {
+  return async () => events;
+}
+
+function makeFakeResolveCalendarEditRoute(
+  result: { readonly kind: "owned" } | { readonly kind: "external" } = { kind: "external" },
+): (calendarId: string, eventId: string) => Promise<{ readonly kind: "owned" } | { readonly kind: "external" }> {
+  return async () => result;
+}
+
+function makeFakeProposeCalendarEdit(): ((
+  calendarId: string,
+  eventId: string,
+  change: { readonly kind: "move"; readonly newStart: string } | { readonly kind: "resize"; readonly newEnd: string },
+) => Promise<Proposal<CalendarEditChange>>) & { readonly calls: unknown[] } {
+  const calls: unknown[] = [];
+  const fn = async (
+    calendarId: string,
+    eventId: string,
+    change: { readonly kind: "move"; readonly newStart: string } | { readonly kind: "resize"; readonly newEnd: string },
+  ) => {
+    calls.push({ calendarId, eventId, change });
+    const suggested: CalendarEditChange =
+      change.kind === "move"
+        ? { kind: "move", eventId, calendarId, newStart: change.newStart, newEnd: "2026-09-18T19:00:00.000Z" }
+        : { kind: "resize", eventId, calendarId, newEnd: change.newEnd };
+    return {
+      id: "proposal-1",
+      kind: "calendar-edit",
+      entityId: eventId,
+      entityVersion: "etag-1",
+      suggested,
+      reason: "Test proposal",
+      createdAt: NOW,
+    } satisfies Proposal<CalendarEditChange>;
+  };
+  return Object.assign(fn, { calls });
+}
+
+function makeFakeApplyCalendarEdit(
+  result: Result<{ eventId: string; calendarId: string }, YohError> = { ok: true, value: { eventId: "evt-1", calendarId: "primary" } },
+): ((proposal: Proposal<CalendarEditChange>) => Promise<Result<{ eventId: string; calendarId: string }, YohError>>) & {
+  readonly calls: Array<Proposal<CalendarEditChange>>;
+} {
+  const calls: Array<Proposal<CalendarEditChange>> = [];
+  const fn = async (proposal: Proposal<CalendarEditChange>) => {
+    calls.push(proposal);
+    return result;
+  };
+  return Object.assign(fn, { calls });
+}
+
 function closeOutPlan(date: IsoDate): Plan {
   const blocks: PlanBlock[] = [
     { id: "work-0", kind: "work", start: `${date}T13:00:00.000Z`, end: `${date}T14:00:00.000Z`, label: "Draft the memo", taskId: "t1" },
@@ -2457,4 +2513,177 @@ test("Review fix (Important #2): a ConflictError's own .yohError is passed throu
   assert.equal(result.ok, false);
   if (result.ok) return;
   assert.equal(result.error, conflict.yohError);
+});
+
+// ============================================================================
+// isCalendarEditCommand — pure trigger recognition (Story 6.6 / FR-27)
+// ============================================================================
+
+test("isCalendarEditCommand recognizes move/reschedule/resize/extend/schedule/block-off phrasings", () => {
+  for (const line of [
+    "move team sync to 6pm",
+    "reschedule my meeting to 5",
+    "resize team sync to end at 6",
+    "extend team sync to 6pm",
+    "schedule a focus block from 2 to 3",
+    "block off 2-3pm for deep work",
+  ]) {
+    assert.equal(isCalendarEditCommand(line), true, `expected "${line}" to be recognized`);
+  }
+});
+
+test("isCalendarEditCommand returns false for unrelated input — including a delete request, which has no trigger at all", () => {
+  for (const line of ["what's my plan", "create a task to buy boots", "search for the weather", "delete my team sync", "remove the 3pm meeting"]) {
+    assert.equal(isCalendarEditCommand(line), false, `expected "${line}" NOT to be recognized`);
+  }
+});
+
+// ============================================================================
+// Calendar editing flow, end-to-end via runChatCli (Story 6.6 / FR-27)
+// ============================================================================
+
+const TEAM_SYNC: CalendarEvent = { id: "evt-1", title: "Team sync", start: "2026-09-18T15:00:00.000Z", end: "2026-09-18T16:00:00.000Z" };
+
+async function runCalendarEditSession(
+  lines: readonly string[],
+  llmResponse: string,
+  deps: {
+    readonly events?: readonly CalendarEvent[];
+    readonly route?: { readonly kind: "owned" } | { readonly kind: "external" };
+    readonly propose?: ReturnType<typeof makeFakeProposeCalendarEdit>;
+    readonly apply?: ReturnType<typeof makeFakeApplyCalendarEdit>;
+    readonly readEvents?: () => Promise<readonly CalendarEvent[]>;
+  } = {},
+): Promise<{
+  readonly io: ReturnType<typeof makeScriptedIo>;
+  readonly propose: ReturnType<typeof makeFakeProposeCalendarEdit>;
+  readonly apply: ReturnType<typeof makeFakeApplyCalendarEdit>;
+}> {
+  const store = tempStore();
+  const io = makeScriptedIo(lines);
+  const propose = deps.propose ?? makeFakeProposeCalendarEdit();
+  const apply = deps.apply ?? makeFakeApplyCalendarEdit();
+  await runChatCli(
+    store,
+    io,
+    TEST_TIME_ZONE,
+    makeFakeLlmClient(llmResponse),
+    () => new Date(NOW),
+    async () => [],
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    deps.readEvents ?? makeFakeReadCalendarEvents(deps.events ?? []),
+    makeFakeResolveCalendarEditRoute(deps.route ?? { kind: "external" }),
+    propose,
+    apply,
+  );
+  store.close();
+  return { io, propose, apply };
+}
+
+test("moving a named event: draft -> route (external) -> propose -> confirm -> apply, with a receipt naming the event and change", async () => {
+  const { io, propose, apply } = await runCalendarEditSession(
+    ["move team sync to 6pm", "yes"],
+    "MOVE: Team sync | 2026-09-18T18:00:00.000Z",
+    { events: [TEAM_SYNC] },
+  );
+
+  assert.equal(propose.calls.length, 1);
+  assert.equal(apply.calls.length, 1);
+  assert.ok(io.written.some((line) => /Moved "Team sync" to/.test(line)), `expected a receipt naming the event, got: ${io.written.join(" | ")}`);
+});
+
+test("resizing a named event proposes a resize and applies it on confirm", async () => {
+  const { io, apply } = await runCalendarEditSession(
+    ["extend team sync to 5:30", "yes"],
+    "RESIZE: Team sync | 2026-09-18T21:30:00.000Z",
+    { events: [TEAM_SYNC] },
+  );
+
+  assert.equal(apply.calls.length, 1);
+  assert.equal(apply.calls[0]!.suggested.kind, "resize");
+  assert.ok(io.written.some((line) => /Resized "Team sync" to end at/.test(line)));
+});
+
+test("the confirm preview names the specific event before anything is applied", async () => {
+  const { io } = await runCalendarEditSession(["move team sync to 6pm", "no"], "MOVE: Team sync | 2026-09-18T18:00:00.000Z", {
+    events: [TEAM_SYNC],
+  });
+
+  assert.ok(io.written.some((line) => /Move "Team sync" to/.test(line)));
+});
+
+test("declining the proposed edit applies nothing", async () => {
+  const { io, apply } = await runCalendarEditSession(["move team sync to 6pm", "no"], "MOVE: Team sync | 2026-09-18T18:00:00.000Z", {
+    events: [TEAM_SYNC],
+  });
+
+  assert.equal(apply.calls.length, 0);
+  assert.ok(io.written.some((line) => /won't make that change/i.test(line)));
+});
+
+test("an event resolveCalendarEditRoute reports as 'owned' is declined — this path never touches it, deferring to the automatic re-flow path", async () => {
+  const { propose, apply } = await runCalendarEditSession(["move yoh block to 6pm"], "MOVE: Yoh block | 2026-09-18T18:00:00.000Z", {
+    events: [{ ...TEAM_SYNC, title: "Yoh block" }],
+    route: { kind: "owned" },
+  });
+
+  assert.equal(propose.calls.length, 0);
+  assert.equal(apply.calls.length, 0);
+});
+
+test("creating a new time block skips route resolution entirely and proposes/applies directly on the primary calendar", async () => {
+  const { io, apply } = await runCalendarEditSession(
+    ["block off 2-3pm for focus time", "yes"],
+    "CREATE: Focus block | 2026-09-18T18:00:00.000Z | 2026-09-18T19:00:00.000Z",
+  );
+
+  assert.equal(apply.calls.length, 1);
+  assert.equal(apply.calls[0]!.suggested.kind, "create");
+  if (apply.calls[0]!.suggested.kind === "create") assert.equal(apply.calls[0]!.suggested.calendarId, "primary");
+  assert.ok(io.written.some((line) => /Created "Focus block" from/.test(line)));
+});
+
+test("an event named in the request that isn't found among today's events reports plainly, nothing is proposed", async () => {
+  const { io, propose, apply } = await runCalendarEditSession(
+    ["move nonexistent meeting to 6pm"],
+    "MOVE: Nonexistent meeting | 2026-09-18T18:00:00.000Z",
+  );
+
+  assert.equal(propose.calls.length, 0);
+  assert.equal(apply.calls.length, 0);
+  assert.ok(io.written.some((line) => /couldn't find/i.test(line)));
+});
+
+test("a request the LLM can't turn into a structured edit is reported plainly, nothing is proposed or applied", async () => {
+  const { io, propose, apply } = await runCalendarEditSession(["move it somewhere"], "NONE", { events: [TEAM_SYNC] });
+
+  assert.equal(propose.calls.length, 0);
+  assert.equal(apply.calls.length, 0);
+  assert.ok(io.written.some((line) => /couldn't tell what calendar change/i.test(line)));
+});
+
+test("an apply failure (e.g. a stale proposal) is reported instead of a success receipt", async () => {
+  const apply = makeFakeApplyCalendarEdit({ ok: false, error: { kind: "stale-proposal", message: "the event has changed" } });
+  const { io } = await runCalendarEditSession(["move team sync to 6pm", "yes"], "MOVE: Team sync | 2026-09-18T18:00:00.000Z", {
+    events: [TEAM_SYNC],
+    apply,
+  });
+
+  assert.ok(io.written.some((line) => /couldn't apply that: the event has changed/i.test(line)));
+  assert.ok(!io.written.some((line) => /^Moved /.test(line)));
+});
+
+test("a thrown error while reading today's events (e.g. Google auth not configured) is surfaced as a line, not a crash", async () => {
+  const { io, apply } = await runCalendarEditSession(["move team sync to 6pm"], "MOVE: Team sync | 2026-09-18T18:00:00.000Z", {
+    readEvents: async () => {
+      throw new Error("no Google credentials");
+    },
+  });
+
+  assert.equal(apply.calls.length, 0);
+  assert.ok(io.written.some((line) => /no Google credentials/.test(line)));
 });
