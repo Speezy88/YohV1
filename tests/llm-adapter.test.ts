@@ -16,6 +16,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import {
   answerGeneralQuestion,
   classifyChatIntent,
+  draftCalendarEditRequest,
   draftNotionPageFields,
   loadLlmAdapterConfigFromEnv,
   suggestFieldValue,
@@ -237,4 +238,49 @@ test("classifyChatIntent defaults to general-question for any unrecognized respo
   const { client } = fakeClient(textMessage("I'm not sure."));
   const result = await classifyChatIntent(client, "hmm");
   assert.deepEqual(result, { kind: "general-question" });
+});
+
+// ============================================================================
+// draftCalendarEditRequest (Story 6.6 / FR-27)
+// ============================================================================
+
+test("draftCalendarEditRequest parses a MOVE response into a structured move request", async () => {
+  const { client } = fakeClient(textMessage("MOVE: Team sync | 2026-09-18T18:00:00.000Z"));
+  const result = await draftCalendarEditRequest(client, "move team sync to 6pm", "2026-09-18", "America/New_York", []);
+  assert.deepEqual(result, { kind: "move", eventTitle: "Team sync", newStart: "2026-09-18T18:00:00.000Z" });
+});
+
+test("draftCalendarEditRequest parses a RESIZE response", async () => {
+  const { client } = fakeClient(textMessage("RESIZE: Team sync | 2026-09-18T17:30:00.000Z"));
+  const result = await draftCalendarEditRequest(client, "extend team sync to 5:30", "2026-09-18", "America/New_York", []);
+  assert.deepEqual(result, { kind: "resize", eventTitle: "Team sync", newEnd: "2026-09-18T17:30:00.000Z" });
+});
+
+test("draftCalendarEditRequest parses a CREATE response", async () => {
+  const { client } = fakeClient(textMessage("CREATE: Focus block | 2026-09-18T14:00:00.000Z | 2026-09-18T15:00:00.000Z"));
+  const result = await draftCalendarEditRequest(client, "block off 2-3pm for focus time", "2026-09-18", "America/New_York", []);
+  assert.deepEqual(result, { kind: "create", title: "Focus block", start: "2026-09-18T14:00:00.000Z", end: "2026-09-18T15:00:00.000Z" });
+});
+
+test("draftCalendarEditRequest returns undefined for a NONE response", async () => {
+  const { client } = fakeClient(textMessage("NONE"));
+  const result = await draftCalendarEditRequest(client, "hmm", "2026-09-18", "America/New_York", []);
+  assert.equal(result, undefined);
+});
+
+test("draftCalendarEditRequest rejects an unparseable/invalid ISO datetime rather than trusting it", async () => {
+  const { client } = fakeClient(textMessage("MOVE: Team sync | not a real time"));
+  const result = await draftCalendarEditRequest(client, "move team sync", "2026-09-18", "America/New_York", []);
+  assert.equal(result, undefined);
+});
+
+test("draftCalendarEditRequest gives Claude today's date, timezone, and candidate events in its system prompt", async () => {
+  const { calls, client } = fakeClient(textMessage("NONE"));
+  await draftCalendarEditRequest(client, "move standup", "2026-09-18", "America/New_York", [
+    { title: "Standup", start: "2026-09-18T13:00:00.000Z", end: "2026-09-18T13:15:00.000Z" },
+  ]);
+  const system = calls[0]!.params.system as string;
+  assert.match(system, /2026-09-18/);
+  assert.match(system, /America\/New_York/);
+  assert.match(system, /Standup/);
 });

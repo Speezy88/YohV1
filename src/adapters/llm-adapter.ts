@@ -416,3 +416,106 @@ export async function classifyChatIntent(client: AnthropicMessagesClient, line: 
   }
   return { kind: "general-question" };
 }
+
+// ============================================================================
+// draftCalendarEditRequest (Story 6.6 / FR-27) — extracts a structured
+// move/resize/create request from Spencer's free-text calendar-edit
+// message. Never validates against the live Calendar itself (that's
+// calendar-adapter.ts's job, via resolveCalendarEditRoute/
+// proposeCalendarEdit) — this only turns prose (plus a `today`/`timeZone`
+// anchor for resolving relative times) into structured, ISO-validated
+// fields, failing closed to `undefined` on anything unparseable.
+// ============================================================================
+
+export type DraftedCalendarEditRequest =
+  | { readonly kind: "move"; readonly eventTitle: string; readonly newStart: string }
+  | { readonly kind: "resize"; readonly eventTitle: string; readonly newEnd: string }
+  | { readonly kind: "create"; readonly title: string; readonly start: string; readonly end: string };
+
+const DRAFT_CALENDAR_EDIT_MAX_TOKENS = 256;
+
+interface CalendarEditCandidateEvent {
+  readonly title: string;
+  readonly start: string;
+  readonly end: string;
+}
+
+function buildDraftCalendarEditSystemPrompt(
+  today: string,
+  timeZone: string,
+  candidateEvents: readonly CalendarEditCandidateEvent[],
+): string {
+  const eventsList =
+    candidateEvents.length > 0
+      ? candidateEvents.map((e) => `  - "${e.title}": ${e.start} to ${e.end}`).join("\n")
+      : "  (none)";
+  return [
+    "You are helping Yoh, Spencer's personal planning assistant, turn a chat request into a structured Calendar edit.",
+    `Today's date is ${today}, Spencer's timezone is ${timeZone}. Resolve any relative time Spencer gives (e.g. "4pm", "in an hour") into a full ISO-8601 UTC datetime (e.g. "2026-09-18T20:00:00.000Z").`,
+    "Today's known calendar events (for matching an event Spencer refers to by name):",
+    eventsList,
+    "Respond on ONE line, in exactly one of these forms:",
+    "MOVE: <exact event title> | <new start, ISO-8601 UTC>",
+    "RESIZE: <exact event title> | <new end, ISO-8601 UTC>",
+    "CREATE: <title> | <start, ISO-8601 UTC> | <end, ISO-8601 UTC>",
+    "or, if you cannot confidently determine this:",
+    "NONE",
+  ].join("\n");
+}
+
+function isValidIsoDateTime(raw: string): boolean {
+  return !Number.isNaN(Date.parse(raw));
+}
+
+/**
+ * Extracts a structured move/resize/create request from `line`. Returns
+ * `undefined` — never throws for "couldn't extract" — when the response
+ * doesn't match one of the three recognized forms, or any of its ISO
+ * datetime fields fails to parse (never trusted blindly). A genuine
+ * API/transport failure still propagates as a thrown error (AD-8);
+ * `chat-cli.ts` treats that the same as "couldn't draft."
+ */
+export async function draftCalendarEditRequest(
+  client: AnthropicMessagesClient,
+  line: string,
+  today: string,
+  timeZone: string,
+  candidateEvents: readonly CalendarEditCandidateEvent[],
+): Promise<DraftedCalendarEditRequest | undefined> {
+  const message = await client.messages.create({
+    model: CLAUDE_CHAT_MODEL,
+    max_tokens: DRAFT_CALENDAR_EDIT_MAX_TOKENS,
+    system: buildDraftCalendarEditSystemPrompt(today, timeZone, candidateEvents),
+    messages: [{ role: "user", content: line }],
+  });
+
+  const text = message.content
+    .filter((block): block is Anthropic.TextBlock => block.type === "text")
+    .map((block) => block.text)
+    .join("\n")
+    .trim();
+
+  const moveMatch = /^MOVE:\s*(.+?)\s*\|\s*(.+)$/i.exec(text);
+  if (moveMatch) {
+    const eventTitle = moveMatch[1]!.trim();
+    const newStart = moveMatch[2]!.trim();
+    return isValidIsoDateTime(newStart) ? { kind: "move", eventTitle, newStart } : undefined;
+  }
+
+  const resizeMatch = /^RESIZE:\s*(.+?)\s*\|\s*(.+)$/i.exec(text);
+  if (resizeMatch) {
+    const eventTitle = resizeMatch[1]!.trim();
+    const newEnd = resizeMatch[2]!.trim();
+    return isValidIsoDateTime(newEnd) ? { kind: "resize", eventTitle, newEnd } : undefined;
+  }
+
+  const createMatch = /^CREATE:\s*(.+?)\s*\|\s*(.+?)\s*\|\s*(.+)$/i.exec(text);
+  if (createMatch) {
+    const title = createMatch[1]!.trim();
+    const start = createMatch[2]!.trim();
+    const end = createMatch[3]!.trim();
+    return isValidIsoDateTime(start) && isValidIsoDateTime(end) ? { kind: "create", title, start, end } : undefined;
+  }
+
+  return undefined;
+}
