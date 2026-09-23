@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 08-22-2026 00:00
-last_updated: 09-21-2026 00:00
+last_updated: 09-22-2026 00:00
 project: YohV1
 project_key: NOKEY
 tracking_system: file-system
@@ -77,11 +77,11 @@ development_status:
   5-3-structured-logging-plan-generation-performance-threshold: done
   epic-5-retrospective: optional
 
-  epic-6: in-progress
+  epic-6: done
   6-1-confirm-the-research-vault-s-notion-schema: done
   6-2-propose-inferred-values-for-the-data-completeness-gate: done
   6-3-create-notion-pages-via-chat: done
   6-4-web-search-lookup-via-chat: done
   6-5-file-a-search-result-to-the-research-vault: done
-  6-6-confirm-gated-calendar-editing-beyond-yoh-owned-events: review
+  6-6-confirm-gated-calendar-editing-beyond-yoh-owned-events: done
   epic-6-retrospective: optional
