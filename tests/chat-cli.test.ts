@@ -65,7 +65,7 @@ import {
   DATA_COMPLETENESS_REQUEST_ID,
 } from "../src/rituals/data-completeness.ts";
 import { checkDataCompleteness, type MissingFieldReport } from "../src/core/data-completeness-gate.ts";
-import type { AnthropicMessagesClient } from "../src/adapters/llm-adapter.ts";
+import { CLAUDE_CHAT_MODEL_CAPABLE, CLAUDE_CHAT_MODEL_FAST, type AnthropicMessagesClient } from "../src/adapters/llm-adapter.ts";
 import { resolveToneSystemPrompt } from "../src/core/tone.ts";
 import type Anthropic from "@anthropic-ai/sdk";
 import type {
@@ -1196,6 +1196,38 @@ test("runChatCli: passes core/tone.ts's resolveToneSystemPrompt(line) as the sys
   const sentSystemPrompt = llmClient.calls[1]!.system;
   assert.equal(sentSystemPrompt, resolveToneSystemPrompt("What's the difference between TCP and UDP?"));
   assert.notEqual(sentSystemPrompt, resolveToneSystemPrompt("hey, what's up"));
+  store.close();
+});
+
+// ============================================================================
+// runChatCli — model routing (2026-09-22 revision): the general-qa catch-all
+// defaults to CLAUDE_CHAT_MODEL_FAST (Haiku) and escalates to
+// CLAUDE_CHAT_MODEL_CAPABLE (Sonnet) for a message core/tone.ts's own
+// classifyTone reads as concise-educational (factual/analytical) — reusing
+// that existing classification rather than a second one.
+// ============================================================================
+
+test("runChatCli: an ordinary casual message routes the general-qa answer to CLAUDE_CHAT_MODEL_FAST (Haiku)", async () => {
+  const store = tempStore();
+  const llmClient = makeFakeLlmClient("hey yourself");
+  const io = makeScriptedIo(["hey, what's up"]);
+
+  await runChatCli(store, io, TEST_TIME_ZONE, llmClient);
+
+  assert.equal(llmClient.calls.length, 2);
+  assert.equal(llmClient.calls[1]!.model, CLAUDE_CHAT_MODEL_FAST);
+  store.close();
+});
+
+test("runChatCli: a factual/analytical message escalates the general-qa answer to CLAUDE_CHAT_MODEL_CAPABLE (Sonnet)", async () => {
+  const store = tempStore();
+  const llmClient = makeFakeLlmClient("TCP is connection-oriented; UDP is not.");
+  const io = makeScriptedIo(["What's the difference between TCP and UDP?"]);
+
+  await runChatCli(store, io, TEST_TIME_ZONE, llmClient);
+
+  assert.equal(llmClient.calls.length, 2);
+  assert.equal(llmClient.calls[1]!.model, CLAUDE_CHAT_MODEL_CAPABLE);
   store.close();
 });
 

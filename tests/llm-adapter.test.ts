@@ -20,7 +20,8 @@ import {
   draftNotionPageFields,
   loadLlmAdapterConfigFromEnv,
   suggestFieldValue,
-  CLAUDE_CHAT_MODEL,
+  CLAUDE_CHAT_MODEL_CAPABLE,
+  CLAUDE_CHAT_MODEL_FAST,
   type AnthropicMessagesClient,
 } from "../src/adapters/llm-adapter.ts";
 import type { ChatTurn, FieldValueSuggestion } from "../src/types/domain.ts";
@@ -36,7 +37,7 @@ function textMessage(text: string): Anthropic.Message {
     id: "msg_test",
     container: null,
     content: [{ type: "text", text, citations: null }],
-    model: CLAUDE_CHAT_MODEL,
+    model: CLAUDE_CHAT_MODEL_FAST,
     role: "assistant",
     stop_details: null,
     stop_reason: "end_turn",
@@ -87,16 +88,24 @@ test("answerGeneralQuestion calls the injected client's messages.create and retu
   assert.doesNotMatch(response, /free-text routing arrives in a later task/);
 });
 
-test("answerGeneralQuestion sends the given ChatTurn history verbatim as messages, plus a model/system prompt", async () => {
+test("answerGeneralQuestion sends the given ChatTurn history verbatim as messages, plus a model/system prompt, defaulting to the fast (Haiku) model", async () => {
   const { calls, client } = fakeClient(textMessage("An answer."));
 
   await answerGeneralQuestion(client, oneTurn("what time is it in Tokyo"));
 
   const params = calls[0]!.params;
-  assert.equal(params.model, CLAUDE_CHAT_MODEL);
+  assert.equal(params.model, CLAUDE_CHAT_MODEL_FAST);
   assert.ok(params.max_tokens > 0);
   assert.deepEqual(params.messages, [{ role: "user", content: "what time is it in Tokyo" }]);
   assert.ok(typeof params.system === "string" && params.system.length > 0);
+});
+
+test("answerGeneralQuestion sends the given model override (2026-09-22 revision — situational escalation to Sonnet)", async () => {
+  const { calls, client } = fakeClient(textMessage("An answer."));
+
+  await answerGeneralQuestion(client, oneTurn("what time is it in Tokyo"), undefined, CLAUDE_CHAT_MODEL_CAPABLE);
+
+  assert.equal(calls[0]!.params.model, CLAUDE_CHAT_MODEL_CAPABLE);
 });
 
 test("answerGeneralQuestion sends a multi-turn history as real prior conversation, not just the last line (2026-09-22 revision — the memory fix)", async () => {

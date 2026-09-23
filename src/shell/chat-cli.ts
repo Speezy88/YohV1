@@ -175,6 +175,8 @@ import {
 import {
   answerGeneralQuestion,
   classifyChatIntent,
+  CLAUDE_CHAT_MODEL_CAPABLE,
+  CLAUDE_CHAT_MODEL_FAST,
   createAnthropicMessagesClient,
   draftCalendarEditRequest,
   draftNotionPageFields,
@@ -207,7 +209,7 @@ import { createTokenStore, loadGoogleOAuthConfigFromEnv, type TokenStore } from 
 import type { MissingFieldReport } from "../core/data-completeness-gate.ts";
 import { computeSlipBumpLevel } from "../core/slip-bump.ts";
 import { shapeDeclaredTimeBudget } from "../core/time-budget.ts";
-import { resolveToneSystemPrompt } from "../core/tone.ts";
+import { classifyTone, resolveToneSystemPrompt } from "../core/tone.ts";
 import { DATA_COMPLETENESS_REQUEST_ID, PLANNING_FIELD_LABELS } from "../rituals/data-completeness.ts";
 import { buildBlockerConfirmationLine, runMidDayReflow } from "../rituals/mid-day-reflow.ts";
 import {
@@ -2174,7 +2176,20 @@ export async function runChatCli(
       // iteration (see `withConversationHistory`'s doc comment) — so passing
       // `chatHistory` itself IS "the current question plus everything said
       // or done before it," with no separate `line` argument needed.
-      const response = await answerGeneralQuestion(llmClient, chatHistory, resolveToneSystemPrompt(line));
+      //
+      // Model routing (2026-09-22 revision): reuses `core/tone.ts`'s own
+      // `classifyTone(line)` — already the source of truth for which
+      // register's system prompt to send — as the signal for which model to
+      // send it to. A `"concise-educational"` line (a genuine factual/
+      // analytical question, per `classifyTone`'s own heuristic) escalates
+      // to `CLAUDE_CHAT_MODEL_CAPABLE` (Sonnet); ordinary `"casual-peer"`
+      // chat stays on `CLAUDE_CHAT_MODEL_FAST` (Haiku), `answerGeneralQuestion`'s
+      // own default. See `llm-adapter.ts`'s "Model routing" doc comment
+      // (above `CLAUDE_CHAT_MODEL_FAST`) for why this decision lives here,
+      // in `chat-cli.ts`, rather than in that file — AD-1 forbids
+      // `adapters/*.ts` importing `core/tone.ts`.
+      const chatModel = classifyTone(line) === "concise-educational" ? CLAUDE_CHAT_MODEL_CAPABLE : CLAUDE_CHAT_MODEL_FAST;
+      const response = await answerGeneralQuestion(llmClient, chatHistory, resolveToneSystemPrompt(line), chatModel);
       io.writeLine(renderMarkdownForTerminal(response, shouldUseColor()));
     } catch (err) {
       io.writeLine(`I hit a problem trying to answer that: ${err instanceof Error ? err.message : String(err)}`);

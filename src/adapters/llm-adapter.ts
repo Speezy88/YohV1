@@ -122,8 +122,29 @@ export function loadLlmAdapterConfigFromEnv(
 // (AD-8: may throw on I/O failure)
 // ============================================================================
 
-/** Default Claude model for chat responses (per the `claude-api` skill's current defaults). */
-export const CLAUDE_CHAT_MODEL: Anthropic.Model = "claude-opus-5";
+/**
+ * Model routing (2026-09-22 revision). Every call this file makes used to
+ * share one constant (`CLAUDE_CHAT_MODEL`, pinned to Opus). Two tiers now:
+ *
+ *  - `CLAUDE_CHAT_MODEL_FAST` (Haiku) — the default for EVERY call in this
+ *    file, including `answerGeneralQuestion`. `suggestFieldValue`,
+ *    `draftNotionPageFields`, `classifyChatIntent`, and
+ *    `draftCalendarEditRequest` are narrow, structured-extraction tasks
+ *    (parse a line into a fixed shape, classify into one of two labels) —
+ *    exactly the kind of task a fast/cheap model handles reliably, and none
+ *    of them are exposed for escalation; they always use this constant.
+ *  - `CLAUDE_CHAT_MODEL_CAPABLE` (Sonnet) — used ONLY by
+ *    `answerGeneralQuestion`, and only situationally: `shell/chat-cli.ts`
+ *    picks between the two based on `core/tone.ts`'s existing
+ *    `classifyTone(line)` register (already computed there to choose the
+ *    system prompt) — a `"concise-educational"` factual/analytical question
+ *    routes to Sonnet, ordinary `"casual-peer"` chat stays on Haiku. That
+ *    routing decision lives in `chat-cli.ts`, not here: AD-1 restricts
+ *    `adapters/*.ts` to importing only from `types/`, so this file cannot
+ *    import `core/tone.ts`'s `ToneRegister`/`classifyTone` itself.
+ */
+export const CLAUDE_CHAT_MODEL_FAST: Anthropic.Model = "claude-haiku-4-5-20251001";
+export const CLAUDE_CHAT_MODEL_CAPABLE: Anthropic.Model = "claude-sonnet-5";
 
 /**
  * A short chat-turn cap, not a "full response" budget — Spencer's questions
@@ -176,18 +197,24 @@ export const DEFAULT_GENERAL_QA_SYSTEM_PROMPT =
  * real if empty answer rather than something worth investigating).
  * `shell/chat-cli.ts` is the layer that catches either around its call site
  * so one failed turn doesn't crash the whole REPL session.
+ *
+ * `model` defaults to `CLAUDE_CHAT_MODEL_FAST` (Haiku) — `chat-cli.ts`
+ * overrides it with `CLAUDE_CHAT_MODEL_CAPABLE` (Sonnet) for a message
+ * `core/tone.ts`'s `classifyTone` reads as genuinely factual/analytical; see
+ * this file's "Model routing" doc comment above `CLAUDE_CHAT_MODEL_FAST`.
  */
 export async function answerGeneralQuestion(
   client: AnthropicMessagesClient,
   messages: readonly ChatTurn[],
   systemPrompt: string = DEFAULT_GENERAL_QA_SYSTEM_PROMPT,
+  model: Anthropic.Model = CLAUDE_CHAT_MODEL_FAST,
 ): Promise<string> {
   if (messages.length === 0) {
     throw new Error("llm-adapter: answerGeneralQuestion called with no conversation history at all");
   }
 
   const message = await client.messages.create({
-    model: CLAUDE_CHAT_MODEL,
+    model,
     max_tokens: CLAUDE_CHAT_MAX_TOKENS,
     system: systemPrompt,
     messages: messages.map((turn) => ({ role: turn.role, content: turn.content })),
@@ -306,7 +333,7 @@ export async function suggestFieldValue(
   if (recentMessages.length === 0) return undefined;
 
   const message = await client.messages.create({
-    model: CLAUDE_CHAT_MODEL,
+    model: CLAUDE_CHAT_MODEL_FAST,
     max_tokens: SUGGEST_FIELD_VALUE_MAX_TOKENS,
     system: buildSuggestFieldValueSystemPrompt(taskTitle, field),
     messages: [{ role: "user", content: recentMessages.join("\n") }],
@@ -370,7 +397,7 @@ export async function draftNotionPageFields(
   request: string,
 ): Promise<Record<string, string> | undefined> {
   const message = await client.messages.create({
-    model: CLAUDE_CHAT_MODEL,
+    model: CLAUDE_CHAT_MODEL_FAST,
     max_tokens: DRAFT_NOTION_PAGE_MAX_TOKENS,
     system: buildDraftNotionPageSystemPrompt(database),
     messages: [{ role: "user", content: request }],
@@ -426,7 +453,7 @@ const CLASSIFY_CHAT_INTENT_SYSTEM_PROMPT = [
  */
 export async function classifyChatIntent(client: AnthropicMessagesClient, line: string): Promise<ChatIntent> {
   const message = await client.messages.create({
-    model: CLAUDE_CHAT_MODEL,
+    model: CLAUDE_CHAT_MODEL_FAST,
     max_tokens: CLASSIFY_CHAT_INTENT_MAX_TOKENS,
     system: CLASSIFY_CHAT_INTENT_SYSTEM_PROMPT,
     messages: [{ role: "user", content: line }],
@@ -511,7 +538,7 @@ export async function draftCalendarEditRequest(
   candidateEvents: readonly CalendarEditCandidateEvent[],
 ): Promise<DraftedCalendarEditRequest | undefined> {
   const message = await client.messages.create({
-    model: CLAUDE_CHAT_MODEL,
+    model: CLAUDE_CHAT_MODEL_FAST,
     max_tokens: DRAFT_CALENDAR_EDIT_MAX_TOKENS,
     system: buildDraftCalendarEditSystemPrompt(today, timeZone, candidateEvents),
     messages: [{ role: "user", content: line }],
