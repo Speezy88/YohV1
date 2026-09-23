@@ -133,6 +133,16 @@ test("buildToneSystemPrompt: exhaustively covers every ToneRegister value with a
   }
 });
 
+test("buildToneSystemPrompt: both instructions tell Claude about Yoh's real capabilities, so a capability question or an off-phrasing request isn't answered as a generic, tool-blind assistant", () => {
+  const casual = buildToneSystemPrompt("casual-peer");
+  const factual = buildToneSystemPrompt("concise-educational");
+  for (const instruction of [casual, factual]) {
+    assert.match(instruction, /notion/i);
+    assert.match(instruction, /calendar/i);
+    assert.match(instruction, /search/i);
+  }
+});
+
 // ============================================================================
 // resolveToneSystemPrompt — the chat-cli.ts integration seam: classify, then
 // build, in one call

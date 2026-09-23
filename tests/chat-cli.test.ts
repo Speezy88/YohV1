@@ -636,6 +636,27 @@ test("parseCreateItemCommand returns undefined for ordinary conversational input
   assert.equal(parseCreateItemCommand("what's my plan today"), undefined);
 });
 
+test("parseCreateItemCommand recognizes a Notion-mention request that isn't phrased as 'create a ...'", () => {
+  const result = parseCreateItemCommand("can we input the high priority data to the notion tasks db");
+  assert.deepEqual(result, {
+    database: "Tasks",
+    request: "can we input the high priority data to the notion tasks db",
+  });
+});
+
+test("parseCreateItemCommand recognizes 'put this in the notion research vault'", () => {
+  const result = parseCreateItemCommand("put this in the notion research vault");
+  assert.equal(result?.database, "ResearchVault");
+});
+
+test("parseCreateItemCommand's Notion-mention branch requires a write verb, not just a question about Notion", () => {
+  assert.equal(parseCreateItemCommand("what's in the notion tasks db"), undefined);
+});
+
+test("parseCreateItemCommand's Notion-mention branch requires 'notion' and the database word in the same clause", () => {
+  assert.equal(parseCreateItemCommand("add milk to the list. also check notion tasks later"), undefined);
+});
+
 // ============================================================================
 // Create-item flow, end-to-end via runChatCli (Story 6.3 / FR-26)
 // ============================================================================

@@ -199,8 +199,34 @@ export function classifyTone(message: string): ToneRegister {
  * per this file's own AC that strainCount 0 produces the base instruction
  * with zero elevated-urgency language.
  */
+/**
+ * What Yoh can actually DO, in Spencer's own words, for the general-QA
+ * fallback turn specifically (Task 15's root-cause fix — see this file's
+ * module doc comment's cross-reference from `chat-cli.ts`). Without this,
+ * Claude answers a capability question (or a request phrased outside every
+ * deterministic trigger's exact wording) as a generic model with no
+ * knowledge of Yoh's real tool surface — observed denying it could write to
+ * Notion at all, when `chat-cli.ts`'s create-item path
+ * (`parseCreateItemCommand` -> `handleCreateItemCommand`) does exactly that.
+ * Listed here, not invented per-answer, so the claims stay truthful and in
+ * sync with what `chat-cli.ts` actually wires up; update this list when a
+ * new trigger is added there.
+ */
+const CAPABILITIES_INSTRUCTION =
+  "Yoh (you) can actually do the following, for real, inside this same chat — when Spencer asks what you " +
+  "can do, or asks for something one of these covers, say so accurately and, if his exact phrasing didn't " +
+  "trigger it, tell him plainly how to phrase it rather than claiming you can't do it at all: manage his " +
+  "Time Budget for the day; show today's Plan; re-flow the rest of the day after a Task runs long or a " +
+  "Blocker comes up; explain why a Task is prioritized today; create a new Task, Project, or Research " +
+  "Vault entry directly in Notion (a confirm step shows the drafted fields before anything is written); " +
+  "search the web for a factual/current answer and optionally file the result to the Research Vault; and " +
+  "move, resize, or create Calendar events (each shown for confirmation before it's written, never applied " +
+  "silently). You do NOT have a changelog or release notes about your own recent updates — say so plainly " +
+  "if asked, rather than guessing.";
+
 const SHARED_BASE_INSTRUCTION =
-  "You are Yoh, Spencer's personal daily-planning assistant, now answering a general chat message. " +
+  `${CAPABILITIES_INSTRUCTION} You are Yoh, Spencer's personal daily-planning assistant, now answering a ` +
+  "general chat message. " +
   "Spencer is a high school senior at Seattle Academy of Arts and Sciences (class of 2027) who also runs " +
   "sales and operations at Manatee Aquatic, co-founded the electrolyte beverage brand Obliterade with " +
   "Fred Hutch, founded and leads the SAAS Entrepreneurship Club, and is applying to college with a focus " +

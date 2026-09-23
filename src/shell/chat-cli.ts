@@ -1487,13 +1487,47 @@ function whyPrioritizedCommand(store: MemoryStore, io: ChatCliIo, tasks: readonl
  */
 const CREATE_ITEM_RE = /^(?:create|add|new)\s+(?:a|an)?\s*(task|project|research\s*vault(?:\s+(?:item|entry))?)\b[:\s-]*(.*)$/i;
 
+/**
+ * Second, looser trigger (root-cause fix alongside `core/tone.ts`'s
+ * `CAPABILITIES_INSTRUCTION` — see that constant's doc comment) for a
+ * request that names Notion and a database explicitly but doesn't open with
+ * `CREATE_ITEM_RE`'s exact "create/add/new a ___" shape — e.g. "can we input
+ * the high priority data to the notion tasks db" or "put this in the notion
+ * research vault". Requires BOTH a write-ish verb AND "notion" co-occurring
+ * with a database word IN THE SAME CLAUSE (sentence, split on `.`/`?`/`!`) —
+ * same deliberately-simple, documented starting heuristic every other
+ * trigger recognizer in this file uses (NOT real NLU). Checking per-clause
+ * rather than anywhere-in-the-line matters: without it, an unrelated write
+ * verb earlier in a multi-sentence message ("add milk to the list. also
+ * check notion tasks later") would false-positive on a line that never
+ * actually asked to write anything to Notion.
+ */
+const NOTION_WRITE_VERB_RE = /\b(?:create|add|new|put|input|file|log|enter|record|save|move|sync|export|push|write)\b/i;
+const NOTION_DB_MENTION_RE =
+  /\bnotion\b[^.?!]*\b(task|project|research\s*vault)s?\b|\b(task|project|research\s*vault)s?\b[^.?!]*\bnotion\b/i;
+
 export function parseCreateItemCommand(line: string): { readonly database: NotionDatabaseTarget; readonly request: string } | undefined {
-  const match = CREATE_ITEM_RE.exec(line.trim());
-  if (!match) return undefined;
-  const [, dbWord, rest] = match;
-  const database: NotionDatabaseTarget = /task/i.test(dbWord!) ? "Tasks" : /project/i.test(dbWord!) ? "Projects" : "ResearchVault";
-  const request = rest!.trim().length > 0 ? rest!.trim() : line.trim();
-  return { database, request };
+  const trimmed = line.trim();
+
+  const match = CREATE_ITEM_RE.exec(trimmed);
+  if (match) {
+    const [, dbWord, rest] = match;
+    const database: NotionDatabaseTarget = /task/i.test(dbWord!) ? "Tasks" : /project/i.test(dbWord!) ? "Projects" : "ResearchVault";
+    const request = rest!.trim().length > 0 ? rest!.trim() : trimmed;
+    return { database, request };
+  }
+
+  const clauses = trimmed.split(/[.?!]+/).map((c) => c.trim()).filter((c) => c.length > 0);
+  for (const clause of clauses) {
+    if (!NOTION_WRITE_VERB_RE.test(clause)) continue;
+    const dbMatch = NOTION_DB_MENTION_RE.exec(clause);
+    if (!dbMatch) continue;
+    const dbWord = dbMatch[1] ?? dbMatch[2];
+    const database: NotionDatabaseTarget = /task/i.test(dbWord!) ? "Tasks" : /project/i.test(dbWord!) ? "Projects" : "ResearchVault";
+    return { database, request: trimmed };
+  }
+
+  return undefined;
 }
 
 /**
