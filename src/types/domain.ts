@@ -273,6 +273,26 @@ export type ChatIntent =
   | { readonly kind: "search-trigger"; readonly query: string };
 
 /**
+ * ChatTurn — one turn of `shell/chat-cli.ts`'s running session transcript,
+ * threaded into `llm-adapter.ts`'s `answerGeneralQuestion` as real
+ * conversation history (2026-09-22 revision) so a general-chat answer can
+ * accurately reference what was just said or done earlier in the SAME
+ * session — including by a deterministic flow (a Data-Completeness answer,
+ * a Night Ritual close-out, a Calendar edit, a Notion write) that never
+ * itself calls Claude, not only a prior general-chat exchange. `content` is
+ * plain text — never ANSI-colored (`chat-cli.ts`'s recording wrapper strips
+ * color codes before storing a turn) — since this is sent to Claude, not
+ * rendered to a terminal. Shared in `types/` (not `adapters/` or `shell/`)
+ * because AD-1 restricts `adapters/*.ts` to importing only from `types/`,
+ * and both `llm-adapter.ts` (consumes it) and `chat-cli.ts` (builds it) need
+ * the same shape.
+ */
+export interface ChatTurn {
+  readonly role: "user" | "assistant";
+  readonly content: string;
+}
+
+/**
  * CalendarEditChange — FR-27's `Proposal<T>` payload (AD-3/AD-13). A union
  * of exactly `move`/`resize`/`create` — there is deliberately no `delete`
  * variant, so a non-Yoh event cannot be deleted through this path even by a

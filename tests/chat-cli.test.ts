@@ -1199,6 +1199,56 @@ test("runChatCli: passes core/tone.ts's resolveToneSystemPrompt(line) as the sys
   store.close();
 });
 
+// ============================================================================
+// runChatCli — conversation-history threading (2026-09-22 revision): the
+// root-cause fix for a real observed bug — asking Yoh a general-chat
+// question after it had ALREADY written data to Notion in the same session
+// got a false "no, nothing's been written," because answerGeneralQuestion
+// used to send only the current line, no history at all. See
+// withConversationHistory's and answerGeneralQuestion's own doc comments.
+// ============================================================================
+
+test("runChatCli: a second general-qa turn's history includes the first turn's question and Yoh's own prior reply, not just the current line", async () => {
+  const store = tempStore();
+  const llmClient = makeFakeLlmClient("Two plus two is four.");
+  const io = makeScriptedIo(["what's 2+2", "what did I just ask you"]);
+
+  await runChatCli(store, io, TEST_TIME_ZONE, llmClient);
+
+  // calls: [classify #1, general-qa #1, classify #2, general-qa #2].
+  assert.equal(llmClient.calls.length, 4);
+  const history = llmClient.calls[3]!.messages as Array<{ role: string; content: string }>;
+  assert.deepEqual(history[0], { role: "user", content: "what's 2+2" });
+  assert.equal(history[1]!.role, "assistant");
+  // The assistant turn also folds in the divider/next-prompt text printed
+  // right after Yoh's reply (see withConversationHistory's doc comment on
+  // why it buffers everything up to the next real answer) — assert the
+  // substance is present rather than the exact printed formatting.
+  assert.match(history[1]!.content, /^Two plus two is four\./);
+  assert.deepEqual(history[2], { role: "user", content: "what did I just ask you" });
+  store.close();
+});
+
+test("runChatCli: a deterministic flow's own output (never touching Claude) still appears as prior history in a later general-qa call — the exact shape of the reported bug", async () => {
+  const store = tempStore();
+  const llmClient = makeFakeLlmClient("Yes, I set it.");
+  const io = makeScriptedIo(["time budget 6 hours", "did you set my time budget"]);
+
+  await runChatCli(store, io, TEST_TIME_ZONE, llmClient);
+
+  // "time budget 6 hours" is handled entirely by parseTimeBudgetCommand
+  // (Task 6) — zero Claude calls — so calls[0]/[1] are the SECOND line's
+  // classify + general-qa calls.
+  assert.equal(llmClient.calls.length, 2);
+  const historySent = llmClient.calls[1]!.messages as Array<{ role: string; content: string }>;
+  assert.equal(historySent[0]!.role, "user");
+  assert.equal(historySent[0]!.content, "time budget 6 hours");
+  assert.equal(historySent[1]!.role, "assistant");
+  assert.match(historySent[1]!.content, /Time Budget is set to/);
+  assert.deepEqual(historySent[2], { role: "user", content: "did you set my time budget" });
+  store.close();
+});
+
 test("runChatCli: catches a thrown error from the Claude call and surfaces it as a plain line instead of crashing the session", async () => {
   const store = tempStore();
   const llmClient: AnthropicMessagesClient = {

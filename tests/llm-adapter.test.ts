@@ -23,7 +23,12 @@ import {
   CLAUDE_CHAT_MODEL,
   type AnthropicMessagesClient,
 } from "../src/adapters/llm-adapter.ts";
-import type { FieldValueSuggestion } from "../src/types/domain.ts";
+import type { ChatTurn, FieldValueSuggestion } from "../src/types/domain.ts";
+
+/** A single-turn `ChatTurn[]` history — the shape most `answerGeneralQuestion` tests need, now that it takes real conversation history instead of a bare string. */
+function oneTurn(content: string): ChatTurn[] {
+  return [{ role: "user", content }];
+}
 
 /** A minimal real-shaped `Anthropic.Message` carrying a single text block. */
 function textMessage(text: string): Anthropic.Message {
@@ -75,17 +80,17 @@ function fakeClient(response: Anthropic.Message | (() => Anthropic.Message)): {
 test("answerGeneralQuestion calls the injected client's messages.create and returns Claude's text, not a placeholder", async () => {
   const { calls, client } = fakeClient(textMessage("Paris is the capital of France."));
 
-  const response = await answerGeneralQuestion(client, "what's the capital of France");
+  const response = await answerGeneralQuestion(client, oneTurn("what's the capital of France"));
 
   assert.equal(calls.length, 1, "expected exactly one Claude call");
   assert.equal(response, "Paris is the capital of France.");
   assert.doesNotMatch(response, /free-text routing arrives in a later task/);
 });
 
-test("answerGeneralQuestion sends the input as the user turn and a model/system prompt", async () => {
+test("answerGeneralQuestion sends the given ChatTurn history verbatim as messages, plus a model/system prompt", async () => {
   const { calls, client } = fakeClient(textMessage("An answer."));
 
-  await answerGeneralQuestion(client, "what time is it in Tokyo");
+  await answerGeneralQuestion(client, oneTurn("what time is it in Tokyo"));
 
   const params = calls[0]!.params;
   assert.equal(params.model, CLAUDE_CHAT_MODEL);
@@ -94,10 +99,33 @@ test("answerGeneralQuestion sends the input as the user turn and a model/system 
   assert.ok(typeof params.system === "string" && params.system.length > 0);
 });
 
+test("answerGeneralQuestion sends a multi-turn history as real prior conversation, not just the last line (2026-09-22 revision — the memory fix)", async () => {
+  const { calls, client } = fakeClient(textMessage("Yes, I wrote it."));
+
+  const history: ChatTurn[] = [
+    { role: "user", content: "Quiz 1 — Energy: high" },
+    { role: "assistant", content: "Got it — thanks. I'll factor that in next time I plan." },
+    { role: "user", content: "have you written the data to notion" },
+  ];
+  await answerGeneralQuestion(client, history);
+
+  assert.deepEqual(calls[0]!.params.messages, [
+    { role: "user", content: "Quiz 1 — Energy: high" },
+    { role: "assistant", content: "Got it — thanks. I'll factor that in next time I plan." },
+    { role: "user", content: "have you written the data to notion" },
+  ]);
+});
+
+test("answerGeneralQuestion rejects an empty history — there is always at least the current turn by the time chat-cli.ts calls this", async () => {
+  const { client } = fakeClient(textMessage("An answer."));
+
+  await assert.rejects(() => answerGeneralQuestion(client, []));
+});
+
 test("answerGeneralQuestion accepts an overriding system prompt (Task 14's Tone integration seam)", async () => {
   const { calls, client } = fakeClient(textMessage("An answer."));
 
-  await answerGeneralQuestion(client, "hello", "Custom tone instruction.");
+  await answerGeneralQuestion(client, oneTurn("hello"), "Custom tone instruction.");
 
   assert.equal(calls[0]!.params.system, "Custom tone instruction.");
 });
@@ -105,7 +133,7 @@ test("answerGeneralQuestion accepts an overriding system prompt (Task 14's Tone 
 test("answerGeneralQuestion throws (AD-8) rather than returning an empty string when Claude returns no text content", async () => {
   const { client } = fakeClient(() => ({ ...textMessage(""), content: [] }));
 
-  await assert.rejects(() => answerGeneralQuestion(client, "hello"));
+  await assert.rejects(() => answerGeneralQuestion(client, oneTurn("hello")));
 });
 
 test("answerGeneralQuestion propagates a rejected client call unchanged (AD-8)", async () => {
@@ -117,13 +145,13 @@ test("answerGeneralQuestion propagates a rejected client call unchanged (AD-8)",
     },
   };
 
-  await assert.rejects(() => answerGeneralQuestion(client, "hello"), /simulated network failure/);
+  await assert.rejects(() => answerGeneralQuestion(client, oneTurn("hello")), /simulated network failure/);
 });
 
 test("answerGeneralQuestion still returns a real response for a general/factual question with no matching specific intent (never errors/refuses)", async () => {
   const { client } = fakeClient(textMessage("Water boils at 100°C at sea level."));
 
-  const response = await answerGeneralQuestion(client, "at what temperature does water boil");
+  const response = await answerGeneralQuestion(client, oneTurn("at what temperature does water boil"));
 
   assert.ok(response.length > 0);
 });

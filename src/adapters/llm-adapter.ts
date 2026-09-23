@@ -61,6 +61,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type {
   ChatIntent,
+  ChatTurn,
   Energy,
   ExternalId,
   FieldValueSuggestion,
@@ -143,26 +144,53 @@ export const DEFAULT_GENERAL_QA_SYSTEM_PROMPT =
   "You are Yoh, Spencer's personal daily-planning assistant. Answer naturally and concisely.";
 
 /**
- * Calls Claude once with `input` as the sole user turn and returns its text
- * response. Per AD-8, this throws rather than returning `Result` on any
- * failure: a transport/API-level rejection from the SDK propagates
- * unchanged, and a response that comes back with no text content at all is
- * raised as a thrown `Error` too (never silently returned as `""`, which
- * would read as a real if empty answer rather than something worth
- * investigating). `shell/chat-cli.ts` is the layer that catches either
- * around its call site so one failed turn doesn't crash the whole REPL
- * session.
+ * Calls Claude with `messages` — the session's real running conversation
+ * history (`types/domain.ts`'s `ChatTurn`), ending in the current unanswered
+ * user turn — and returns its text response.
+ *
+ * **Real history, not a single isolated turn (2026-09-22 revision).**
+ * Originally this call sent ONLY `input` as a lone `user` message, with zero
+ * memory of anything said or done earlier in the session — including by
+ * Yoh's OWN prior actions. That caused a real, observed failure: right after
+ * a Data-Completeness answer flow genuinely wrote several Task fields to
+ * Notion, asking "have you written the data to Notion" got a confident "No
+ * ... I don't see any task data" — correct only in the narrow sense that
+ * THAT single isolated API call had no data in it, and useless/misleading to
+ * Spencer, who experienced it as one continuous session. `messages` is built
+ * by `shell/chat-cli.ts`'s recording wrapper around its `ChatCliIo`, which
+ * captures every line written/read across EVERY flow (deterministic commands
+ * included, not just prior general-chat turns) as alternating `user`/
+ * `assistant` turns — see that wrapper's own doc comment for how it
+ * guarantees the strict alternation (and "starts with `user`") the Messages
+ * API requires. This function trusts that invariant rather than
+ * re-validating it structurally on every call; a malformed `messages` array
+ * is a caller bug, not a runtime condition worth guarding against on the
+ * hot path, though an empty array is rejected outright below (there is
+ * always at least the current turn once `chat-cli.ts` reaches this call
+ * site — an empty array signals the wrapper wiring itself is broken).
+ *
+ * Per AD-8, this throws rather than returning `Result` on any failure: a
+ * transport/API-level rejection from the SDK propagates unchanged, and a
+ * response that comes back with no text content at all is raised as a
+ * thrown `Error` too (never silently returned as `""`, which would read as a
+ * real if empty answer rather than something worth investigating).
+ * `shell/chat-cli.ts` is the layer that catches either around its call site
+ * so one failed turn doesn't crash the whole REPL session.
  */
 export async function answerGeneralQuestion(
   client: AnthropicMessagesClient,
-  input: string,
+  messages: readonly ChatTurn[],
   systemPrompt: string = DEFAULT_GENERAL_QA_SYSTEM_PROMPT,
 ): Promise<string> {
+  if (messages.length === 0) {
+    throw new Error("llm-adapter: answerGeneralQuestion called with no conversation history at all");
+  }
+
   const message = await client.messages.create({
     model: CLAUDE_CHAT_MODEL,
     max_tokens: CLAUDE_CHAT_MAX_TOKENS,
     system: systemPrompt,
-    messages: [{ role: "user", content: input }],
+    messages: messages.map((turn) => ({ role: turn.role, content: turn.content })),
   });
 
   const text = message.content

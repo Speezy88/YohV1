@@ -232,6 +232,7 @@ import type {
   CalendarEditChange,
   CalendarEvent,
   ChatIntent,
+  ChatTurn,
   FieldValueSuggestion,
   InteractionRequest,
   IsoDate,
@@ -256,6 +257,90 @@ export interface ChatCliIo {
   /** Waits for one line of input, indefinitely (UX-DR20 — no prompt this file shows ever times out). Returns `null` on EOF/stream close, never rejects on that. */
   readonly readLine: (prompt?: string) => Promise<string | null>;
   readonly writeLine: (line: string) => void;
+}
+
+// ============================================================================
+// Conversation-history recording (2026-09-22 revision) — the root-cause fix
+// for `llm-adapter.ts`'s `answerGeneralQuestion` having no memory of the
+// session, even of Yoh's own prior actions. See that function's own doc
+// comment for the observed failure this fixes.
+// ============================================================================
+
+/** ANSI SGR escape sequences (`paint`/`renderMarkdownForTerminal`'s color codes) — stripped before a line is recorded into `ChatTurn` history, since that history is sent to Claude, never rendered to a terminal. */
+const ANSI_ESCAPE_RE = /\x1b\[[0-9;]*m/g;
+function stripAnsi(text: string): string {
+  return text.replace(ANSI_ESCAPE_RE, "");
+}
+
+/**
+ * The largest number of `ChatTurn`s kept in a session's running history —
+ * an even number so trimming (always removing complete `[user, assistant]`
+ * pairs from the front, see `pushChatTurn`) can never leave the array
+ * starting with an `assistant` turn, which the Messages API rejects. Chosen
+ * to mirror `RECENT_MESSAGES_WINDOW`'s (20) spirit — a bounded window so a
+ * long session's token cost doesn't grow without limit — roughly doubled
+ * since turns alternate rather than being Spencer-only lines.
+ */
+const MAX_CHAT_HISTORY_TURNS = 40;
+
+/** Appends `turn` to `history` (mutating it in place) and trims from the front, two at a time, once over `MAX_CHAT_HISTORY_TURNS` — see that constant's own doc comment for why trimming happens in pairs. */
+function pushChatTurn(history: ChatTurn[], turn: ChatTurn): void {
+  history.push(turn);
+  while (history.length > MAX_CHAT_HISTORY_TURNS) {
+    history.splice(0, 2);
+  }
+}
+
+/**
+ * Wraps `io`, recording everything written/read into `history` (mutated in
+ * place) as a running, strictly-alternating `user`/`assistant` `ChatTurn`
+ * transcript — passed to `llm-adapter.ts`'s `answerGeneralQuestion` so a
+ * general-chat answer can accurately reference what was just said or done,
+ * including by a deterministic flow that never itself calls Claude (a
+ * Data-Completeness answer, a Night Ritual close-out, a Calendar edit, a
+ * Notion write — every one of those already goes through THIS `io`, so
+ * nothing about them needs its own separate recording logic).
+ *
+ * **Buffering, not a turn per call (why this is safe against the Messages
+ * API's strict alternation requirement).** Every `writeLine` call, and every
+ * `readLine` call's own `prompt` string, is appended to an in-flight
+ * `pendingAssistant` buffer rather than immediately becoming a `ChatTurn` —
+ * `chat-cli.ts` routinely issues several prompts/writes in a row with no
+ * intervening REAL answer (a blank-line re-ask per UX-DR20, a multi-Task
+ * close-out loop's back-to-back questions, an invalid-answer re-prompt), and
+ * naively recording each as its own turn would produce consecutive
+ * same-role messages the API rejects. The buffer is flushed as exactly ONE
+ * `assistant` turn only at the moment it is finally paired with a genuine
+ * non-blank answer, immediately followed by that answer as the `user` turn —
+ * so the recorded history alternates by construction, no matter how many
+ * prompts/retries happened in between. A buffer that accumulates content but
+ * is dropped instead of flushed (before `history` has ANY turns yet, i.e.
+ * whatever was printed before Spencer's very first real input of the
+ * session) is the one deliberate exception — the Messages API requires the
+ * first message to be `user`, so there is nothing valid to attach a leading
+ * `assistant` turn to.
+ */
+function withConversationHistory(io: ChatCliIo, history: ChatTurn[]): ChatCliIo {
+  let pendingAssistant: string[] = [];
+
+  return {
+    writeLine: (line) => {
+      pendingAssistant.push(stripAnsi(line));
+      io.writeLine(line);
+    },
+    readLine: async (prompt) => {
+      if (prompt) pendingAssistant.push(stripAnsi(prompt));
+      const answer = await io.readLine(prompt);
+      if (answer !== null && answer.trim().length > 0) {
+        if (pendingAssistant.length > 0 && history.length > 0) {
+          pushChatTurn(history, { role: "assistant", content: pendingAssistant.join("\n") });
+        }
+        pendingAssistant = [];
+        pushChatTurn(history, { role: "user", content: answer.trim() });
+      }
+      return answer;
+    },
+  };
 }
 
 /**
@@ -1925,11 +2010,22 @@ export async function runChatCli(
     throw new Error("chat-cli: no applyCalendarEditFn dependency configured — cannot apply a Calendar edit");
   },
 ): Promise<void> {
+  // The running session transcript (2026-09-22 revision) — see
+  // `withConversationHistory`'s own doc comment. Wrapping `io` here, once,
+  // means every flow below (Data-Completeness answers, Night Ritual
+  // close-out, Calendar edits, Notion creates, search, ordinary chat) is
+  // recorded automatically through its own already-existing `io.writeLine`/
+  // `io.readLine` calls — nothing about any individual handler function
+  // needed to change.
+  const chatHistory: ChatTurn[] = [];
+  io = withConversationHistory(io, chatHistory);
+
   // FR-25 (Story 6.2): a small bounded window of Spencer's own recent
   // (non-blank) chat lines, threaded into `suggestFieldValue`'s inference
   // attempt — never persisted (AD-11's "enrichment happens at display time,
   // every time, not once at write time"), so it's purely an in-memory,
-  // per-session accumulator.
+  // per-session accumulator. Deliberately kept separate from `chatHistory`
+  // above: FR-25 wants only Spencer's OWN lines, not Yoh's replies.
   const recentMessages: string[] = [];
   const RECENT_MESSAGES_WINDOW = 20;
 
@@ -2073,7 +2169,12 @@ export async function runChatCli(
     }
 
     try {
-      const response = await answerGeneralQuestion(llmClient, line, resolveToneSystemPrompt(line));
+      // `chatHistory`'s last turn is already `{role: "user", content: line}`
+      // — pushed by the wrapped `io.readLine` call at the top of this loop
+      // iteration (see `withConversationHistory`'s doc comment) — so passing
+      // `chatHistory` itself IS "the current question plus everything said
+      // or done before it," with no separate `line` argument needed.
+      const response = await answerGeneralQuestion(llmClient, chatHistory, resolveToneSystemPrompt(line));
       io.writeLine(renderMarkdownForTerminal(response, shouldUseColor()));
     } catch (err) {
       io.writeLine(`I hit a problem trying to answer that: ${err instanceof Error ? err.message : String(err)}`);
