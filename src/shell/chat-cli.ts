@@ -2169,21 +2169,22 @@ export async function main(env: Readonly<Record<string, string | undefined>> = p
   // missing config — it returns a `Result` failure (AD-12's own AD-8
   // exception, honored all the way up to this binding).
   //
-  // Only `NOTION_TOKEN` is checked here (Task 19 review fix) — NOT
-  // `NOTION_TASKS_DATA_SOURCE_ID`/`NOTION_PROJECTS_DATA_SOURCE_ID`, which
-  // `notion-adapter.ts`'s `setTaskStatus` never reads (see
-  // `NotionStatusWriteConfig`'s own doc comment): those two ids address a
-  // `dataSources.query` call this write never makes. Checking them here
-  // would let an unrelated missing/misconfigured field block a Status
-  // write that has nothing to do with it.
+  // `NOTION_TASKS_DATA_SOURCE_ID` is now checked here too (revision to the
+  // Task 19 review fix) — `notion-adapter.ts`'s `setTaskStatus` is
+  // schema-checked as of this same revision (see its own doc comment) and
+  // needs the Tasks data source id to resolve a Status option against
+  // Notion's LIVE option list. `NOTION_PROJECTS_DATA_SOURCE_ID` still isn't
+  // checked: nothing about writing a Task's Status ever depends on it.
   const setTaskStatus: SetTaskStatusFn = async (taskId, status) => {
     const notionToken = env["NOTION_TOKEN"];
-    if (!notionToken) {
+    const tasksDataSourceId = env["NOTION_TASKS_DATA_SOURCE_ID"];
+    if (!notionToken || !tasksDataSourceId) {
       return {
         ok: false,
         error: {
           kind: "missing-field",
-          message: "chat-cli: missing required environment variable NOTION_TOKEN — needed to record the Night Ritual close-out",
+          message:
+            "chat-cli: missing required environment variable(s) NOTION_TOKEN / NOTION_TASKS_DATA_SOURCE_ID — needed to record the Night Ritual close-out",
         },
       };
     }
@@ -2191,7 +2192,7 @@ export async function main(env: Readonly<Record<string, string | undefined>> = p
       auth: notionToken,
       ...(env["NOTION_API_VERSION"] ? { notionVersion: env["NOTION_API_VERSION"] } : {}),
     });
-    return notionSetTaskStatus(notionClient, {}, taskId, status);
+    return notionSetTaskStatus(notionClient, { tasksDataSourceId }, taskId, status);
   };
   // Same lazy-construction convention as `setTaskStatus` above (FR-24) — a
   // session that never answers a Data-Completeness prompt must not be

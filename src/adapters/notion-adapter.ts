@@ -236,16 +236,28 @@ export const DEFAULT_PROJECT_PROPERTY_NAMES: NotionProjectPropertyNames = {
 /**
  * The Notion Status-property OPTION NAME each `TaskStatus` value writes back
  * as — the inverse of `normalizeStatus`'s read-side mapping (`"In Progress"`
- * -> `"in-progress"`, trim/lowercase/hyphenate). Title-cased with a literal
- * space, matching the exact option names the Task 3 brief's read-side
- * assumption documents Spencer's workspace as using. Overridable via
+ * -> `"in-progress"`, trim/lowercase/hyphenate). Overridable via
  * `NotionAdapterConfig.statusOptionNames` in case Spencer's real workspace
  * names its Status options differently, without a code change — the same
  * override convention `taskPropertyNames`/`projectPropertyNames` already
  * establish.
+ *
+ * `"not-started"` -> `"Nothing"` reflects Spencer's own 2026-09-22 rename of
+ * his live Status property to a leaner three-option set (nothing / in
+ * progress / completed — no live `"Slipped"` option any more). Getting this
+ * exact string wrong is no longer a silent failure mode the way it would
+ * have been before this same revision: `setTaskStatus` (see its own doc
+ * comment) now resolves this candidate against the LIVE option list via
+ * `notion-select-match.ts`'s `closestOption`, the same fuzzy/case-insensitive
+ * resolution `Area`/`Energy` already used — so a future rename, or a minor
+ * casing difference here, self-corrects rather than requiring another code
+ * change. `"slipped"` stays mapped to `"Slipped"` even though no live option
+ * currently matches it: `closestOption` will correctly fail to resolve it,
+ * surfacing a clear error Spencer can "skip" past (Task 19's close-out escape
+ * hatch) rather than writing something wrong.
  */
 export const DEFAULT_TASK_STATUS_OPTION_NAMES: Record<TaskStatus, string> = {
-  "not-started": "Not Started",
+  "not-started": "Nothing",
   "in-progress": "In Progress",
   completed: "Completed",
   slipped: "Slipped",
@@ -253,30 +265,25 @@ export const DEFAULT_TASK_STATUS_OPTION_NAMES: Record<TaskStatus, string> = {
 
 /**
  * Maps Spencer's real Notion Energy-select option names onto `domain.ts`'s
- * `Energy` enum ("the energy level a Task requires"). Spencer's workspace
- * doesn't use a low/medium/high scale for this property — it uses his own
- * pre-existing personal taxonomy, "🔵 Deep Work" / "⚡ Light Work", which
- * already IS an energy-required distinction and maps directly onto the
- * enum's two ends: Deep Work needs real focus/energy (`"high"`), Light Work
- * doesn't (`"low"`). `"medium"` deliberately has no entry — nothing in
- * Spencer's workspace corresponds to it, and `derived-priority.ts`'s
- * `ENERGY_RANK`/secondary-axis tie-break doesn't require every enum value to
- * be reachable, only that the ones that occur rank consistently (a decision
- * made explicitly in favor of this direct mapping over adding a second,
- * Yoh-only Low/Medium/High property: see the Energy field-mapping
- * conversation this was resolved in — a duplicate property would mean
- * double-tagging every Task with information Spencer's existing taxonomy
- * already carries, for a finer-grained scale that reflects nothing true
- * about the Tasks themselves).
+ * `Energy` enum ("the energy level a Task requires"). Originally Spencer's
+ * workspace used his own two-tier "🔵 Deep Work" / "⚡ Light Work" taxonomy
+ * with no middle option, which is why `"medium"` used to have no entry here
+ * at all. As of 2026-09-22 Spencer renamed his live Energy select options to
+ * a genuine three-tier "Deep" / "medium" / "low" set specifically so Yoh's
+ * own low/medium/high scale has somewhere real to write a `"medium"` value —
+ * every `Energy` value is mapped now.
  *
  * Overridable via `NotionAdapterConfig.energyOptionNames`, the same
  * override convention `taskPropertyNames`/`statusOptionNames` already
  * establish, in case this ever needs to point at different real option
- * names later.
+ * names later. Exact casing here isn't load-bearing either way:
+ * `writeSelectLikeField`'s `closestOption` resolution is case-insensitive
+ * before it ever falls back to edit-distance matching.
  */
 export const DEFAULT_ENERGY_OPTION_NAMES: Partial<Record<Energy, string>> = {
-  high: "🔵 Deep Work",
-  low: "⚡ Light Work",
+  high: "Deep",
+  medium: "medium",
+  low: "low",
 };
 
 /**
@@ -355,23 +362,25 @@ export interface NotionAdapterConfig {
 
 /**
  * The config slice `setTaskStatus` actually reads — `taskPropertyNames`
- * (for its `.status` property-name field only) and `statusOptionNames`.
- * Deliberately narrower than `NotionAdapterConfig` (Task 19 review fix):
- * writing a Task's Status touches neither Tasks-database nor
- * Projects-database DATA SOURCE ids (`tasksDataSourceId`/
- * `projectsDataSourceId` — those address `dataSources.query` calls
- * `setTaskStatus` never makes; it addresses a page directly by `taskId`)
- * nor `projectPropertyNames` (nothing about a Project). Requiring the full
- * `NotionAdapterConfig` here would let an unrelated missing/misconfigured
- * field (e.g. `NOTION_PROJECTS_DATA_SOURCE_ID` unset) block a Status write
- * that has nothing to do with it — which is exactly what
- * `shell/chat-cli.ts`'s close-out binding used to do before this fix, and
- * combined with the close-out answer loop having no escape hatch at the
- * time, made that failure unrecoverable from chat. A real
+ * (for its `.status` property-name field only), `statusOptionNames`, and
+ * `tasksDataSourceId`. Still deliberately narrower than the full
+ * `NotionAdapterConfig` (Task 19 review fix), but no longer excludes
+ * `tasksDataSourceId` the way it originally did: this revision makes
+ * `setTaskStatus` schema-checked (see its own doc comment), which needs
+ * `dataSources.retrieve` on the Tasks data source to resolve a Status option
+ * name against Notion's LIVE option list, the same way Area/Energy writes
+ * already do. `projectsDataSourceId`/`projectPropertyNames` stay excluded —
+ * the original review fix's reasoning still holds for those: nothing about
+ * writing a Task's Status ever legitimately depends on Projects-side config,
+ * so an unrelated missing/misconfigured field there must not block this
+ * write. `tasksDataSourceId` is different: `readNotionTasks`/
+ * `updateTaskField` already require it for the app to be useful at all, so
+ * requiring it here too no longer meaningfully narrows what "a session that
+ * only touches Status" can get away without configuring. A real
  * `NotionAdapterConfig` still satisfies this type structurally (it's a
  * `Pick`), so nothing else in the codebase needs to change.
  */
-export type NotionStatusWriteConfig = Pick<NotionAdapterConfig, "taskPropertyNames" | "statusOptionNames">;
+export type NotionStatusWriteConfig = Pick<NotionAdapterConfig, "tasksDataSourceId" | "taskPropertyNames" | "statusOptionNames">;
 
 /**
  * `updateTaskField`'s config — `NotionStatusWriteConfig`'s two fields (it
@@ -438,12 +447,46 @@ export async function readNotionTasks(
 // ============================================================================
 
 /**
- * Writes `status` to a Task's Notion Status property, and ONLY that
- * property — no other Task field is read, sent, or otherwise touched by
- * this call (AD-12: Status is the only Task field Yoh ever writes back to
- * Notion). This is Task 19/Epic 3's one addition to this file; per its own
- * brief no generic "update Task property" function may exist here alongside
- * it — this is the entire write surface.
+ * Writes `status` to a Task's Notion Status property — the only Task FIELD
+ * this call ever reads, sends, or touches (AD-12: Status is the only Task
+ * field Yoh ever writes back to Notion). This is Task 19/Epic 3's one
+ * addition to this file; per its own brief no generic "update Task property"
+ * function may exist here alongside it — this is the entire field-write
+ * surface. (Completing a Task ALSO moves its page to Trash — see the
+ * "Delete-on-completion" section below; that's a page-level action, not a
+ * second field write, and AD-12's own "no other Task field is touched"
+ * guarantee still holds exactly as documented.)
+ *
+ * **Schema-checked, not a blind write (this revision).** Originally this
+ * function wrote `(config.statusOptionNames ?? DEFAULT_TASK_STATUS_OPTION_NAMES)[status]`
+ * straight to Notion, trusting it to already be a real live option name.
+ * That trust broke in practice: Spencer renamed his live Status options
+ * (dropping `"Not Started"`/`"Slipped"` for a leaner nothing/in-progress/
+ * completed set) and the hardcoded default silently went stale, the same
+ * failure mode `writeSelectLikeField` already exists to prevent for Area and
+ * Energy. `setTaskStatus` now delegates to that same function: the mapped
+ * name is a CANDIDATE, resolved against the Tasks data source's live option
+ * list via `notion-select-match.ts`'s `closestOption` before anything is
+ * written — a rename or minor casing drift self-corrects; an option that
+ * genuinely no longer exists (e.g. `"Slipped"`, now that Spencer's workspace
+ * has none) fails clearly instead of writing garbage, surfacing through the
+ * same `YohError` path `shell/chat-cli.ts`'s "skip" escape hatch (Task 19)
+ * already handles for a permanently-failing Status write.
+ *
+ * **Delete-on-completion (this revision).** Spencer's Tasks database is
+ * meant to reflect only active work, not accumulate every Task he's ever
+ * finished — so once the Status write for `"completed"` succeeds, this
+ * function ALSO moves the Task's page to Notion's Trash (`trashTaskPage`,
+ * below): recoverable, exactly the same "Delete" action Spencer could click
+ * in the Notion UI himself, never a hard/permanent delete (Notion's API has
+ * none). This runs from inside `setTaskStatus` itself, not from a caller,
+ * specifically so it applies uniformly no matter which of the two paths
+ * writes `"completed"` — `answerNightCloseOutRequest`'s direct call, or
+ * `answerDataCompletenessRequest`'s Status answer via `updateTaskField`'s
+ * delegation — rather than needing the same check duplicated in both
+ * `shell/chat-cli.ts` call sites. Any OTHER status (`"not-started"`,
+ * `"in-progress"`, `"slipped"`) only ever writes the Status property, never
+ * touches Trash.
  *
  * **Implementer note on the exact parameter list (a documented choice —
  * the Task 19 brief's "Before You Begin" guidance applies here).** The
@@ -480,17 +523,15 @@ export async function readNotionTasks(
  * happen in `rituals/night-ritual.ts` happens HERE instead — nothing thrown
  * by `client.pages.update` escapes this function.
  *
- * **`config`'s narrower type (Task 19 review fix).** Takes
- * `NotionStatusWriteConfig` — only `taskPropertyNames`/`statusOptionNames`
- * — rather than the full `NotionAdapterConfig` `readNotionTasks` needs. See
- * that type's own doc comment: a Status write addresses a page directly by
- * `taskId` and never queries a data source, so it has no legitimate
- * dependency on `tasksDataSourceId`/`projectsDataSourceId` at all, and
- * requiring them here let an unrelated missing/misconfigured field block a
- * write that had nothing to do with it.
+ * **`config`'s narrower type (Task 19 review fix, revised).** Takes
+ * `NotionStatusWriteConfig` — `taskPropertyNames`/`statusOptionNames`/
+ * `tasksDataSourceId` — rather than the full `NotionAdapterConfig`
+ * `readNotionTasks` needs. See that type's own doc comment for exactly what
+ * stays excluded (`projectsDataSourceId`/`projectPropertyNames`) and why
+ * `tasksDataSourceId` was added back in this revision.
  */
 export async function setTaskStatus(
-  client: NotionWriteClient,
+  client: NotionWriteClient & NotionSchemaClient,
   config: NotionStatusWriteConfig,
   taskId: string,
   status: TaskStatus,
@@ -498,20 +539,33 @@ export async function setTaskStatus(
   const statusPropertyName = (config.taskPropertyNames ?? DEFAULT_TASK_PROPERTY_NAMES).status;
   const optionName = (config.statusOptionNames ?? DEFAULT_TASK_STATUS_OPTION_NAMES)[status];
 
+  const written = await writeSelectLikeField(client, config.tasksDataSourceId, taskId, statusPropertyName, optionName);
+  if (!written.ok) return written;
+
+  return status === "completed" ? trashTaskPage(client, taskId) : written;
+}
+
+/**
+ * Moves Task `taskId`'s Notion page to Trash — Notion's own recoverable
+ * "Delete" (`in_trash: true` on `pages.update`; there is no hard/permanent
+ * delete via this API), called only from `setTaskStatus`, only once its
+ * `"completed"` Status write has already succeeded (see that function's own
+ * "Delete-on-completion" doc comment section for why this lives there rather
+ * than in a caller). Never exposed as a standalone export — AD-12's
+ * enumerated write surface stays `setTaskStatus` + `updateTaskField` +
+ * `createPage`; this is a step inside the first of those, not a fourth
+ * capability.
+ */
+async function trashTaskPage(client: NotionWriteClient, taskId: string): Promise<Result<void, YohError>> {
   try {
-    await client.pages.update({
-      page_id: taskId,
-      properties: {
-        [statusPropertyName]: { status: { name: optionName }, type: "status" },
-      },
-    });
+    await client.pages.update({ page_id: taskId, in_trash: true });
     return { ok: true, value: undefined };
   } catch (err) {
     return {
       ok: false,
       error: {
         kind: "unreachable",
-        message: `notion-adapter: could not write Status for Task ${taskId} — ${
+        message: `notion-adapter: Status was set to Completed for Task ${taskId}, but its page could not be moved to Trash — ${
           err instanceof Error ? err.message : String(err)
         }`,
         detail: err,

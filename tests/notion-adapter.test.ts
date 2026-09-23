@@ -224,11 +224,12 @@ const CONFIG = { tasksDataSourceId: "tasks-ds", projectsDataSourceId: "projects-
 /**
  * `setTaskStatus` takes `NotionStatusWriteConfig`, not the full
  * `NotionAdapterConfig` — deliberately narrower (Task 19 review fix; see
- * that type's own doc comment). An empty object exercises its defaults and
- * proves the write path has no dependency on `CONFIG`'s data-source ids at
- * all.
+ * that type's own doc comment). Now includes `tasksDataSourceId`: as of the
+ * schema-checked-Status revision, `setTaskStatus` resolves its Status option
+ * name against the Tasks data source's LIVE schema the same way Area/Energy
+ * writes already do.
  */
-const STATUS_WRITE_CONFIG: NotionStatusWriteConfig = {};
+const STATUS_WRITE_CONFIG: NotionStatusWriteConfig = { tasksDataSourceId: "tasks-ds" };
 
 // ============================================================================
 // Tests
@@ -357,12 +358,13 @@ test("readNotionTasks pages through every result via start_cursor/has_more rathe
   );
 });
 
-test("readNotionTasks normalizes Spencer's real Energy taxonomy (Deep Work / Light Work) to high/low by default", async () => {
+test("readNotionTasks normalizes Spencer's real Energy taxonomy (Deep / medium / low) to high/medium/low by default", async () => {
   const client = new FakeNotionClient({
     "tasks-ds": [
       [
-        makeTaskPage({ id: "task-deep", title: "Deep focus task", energy: "🔵 Deep Work" }),
-        makeTaskPage({ id: "task-light", title: "Light admin task", energy: "⚡ Light Work" }),
+        makeTaskPage({ id: "task-deep", title: "Deep focus task", energy: "Deep" }),
+        makeTaskPage({ id: "task-medium", title: "Middling task", energy: "medium" }),
+        makeTaskPage({ id: "task-light", title: "Light admin task", energy: "low" }),
       ],
     ],
     "projects-ds": [[]],
@@ -371,6 +373,7 @@ test("readNotionTasks normalizes Spencer's real Energy taxonomy (Deep Work / Lig
   const result = await readNotionTasks(client, CONFIG);
   const byId = new Map(result.tasks.map((t) => [t.id, t]));
   assert.equal(byId.get("task-deep")?.energy, "high");
+  assert.equal(byId.get("task-medium")?.energy, "medium");
   assert.equal(byId.get("task-light")?.energy, "low");
 });
 
@@ -446,95 +449,7 @@ test("loadTaskPropertyNamesFromEnv overrides only .title from NOTION_TASK_TITLE_
 // setTaskStatus (Task 19 / AD-12 — the adapter's ONE write function)
 // ============================================================================
 
-/** A fake write client whose `pages.update` is scripted to succeed or throw, recording every call verbatim. */
-class FakeNotionWriteClient implements NotionWriteClient {
-  readonly calls: UpdatePageParameters[] = [];
-  private readonly shouldThrow: Error | undefined;
-
-  constructor(options: { throwError?: Error } = {}) {
-    this.shouldThrow = options.throwError;
-  }
-
-  pages = {
-    update: async (args: UpdatePageParameters): Promise<UpdatePageResponse> => {
-      this.calls.push(args);
-      if (this.shouldThrow) throw this.shouldThrow;
-      return { object: "page", id: "task-1" } as UpdatePageResponse;
-    },
-  };
-}
-
-test("setTaskStatus writes the Status property to the given page id and returns Result.ok", async () => {
-  const client = new FakeNotionWriteClient();
-  const result = await setTaskStatus(client, STATUS_WRITE_CONFIG, "task-1", "completed");
-
-  assert.equal(result.ok, true);
-  assert.equal(client.calls.length, 1, "expected exactly one Notion write call");
-  const call = client.calls[0]!;
-  assert.equal(call.page_id, "task-1");
-});
-
-test("setTaskStatus writes ONLY the Status property — no other Task field is touched as a side effect", async () => {
-  const client = new FakeNotionWriteClient();
-  await setTaskStatus(client, STATUS_WRITE_CONFIG, "task-1", "slipped");
-
-  const call = client.calls[0]!;
-  const propertyKeys = Object.keys(call.properties ?? {});
-  assert.deepEqual(propertyKeys, ["Status"], "exactly one property key, the Status property, must be sent");
-});
-
-test("setTaskStatus maps every TaskStatus value to a Notion Status option name", async () => {
-  const client = new FakeNotionWriteClient();
-
-  await setTaskStatus(client, STATUS_WRITE_CONFIG, "task-1", "not-started");
-  await setTaskStatus(client, STATUS_WRITE_CONFIG, "task-1", "in-progress");
-  await setTaskStatus(client, STATUS_WRITE_CONFIG, "task-1", "completed");
-  await setTaskStatus(client, STATUS_WRITE_CONFIG, "task-1", "slipped");
-
-  const statusNames = client.calls.map((c) => {
-    const prop = (c.properties as Record<string, { status?: { name?: string } }>)["Status"];
-    return prop?.status?.name;
-  });
-  assert.deepEqual(statusNames, ["Not Started", "In Progress", "Completed", "Slipped"]);
-});
-
-test("setTaskStatus returns a Result failure (not a throw) when the Notion SDK call fails — AD-12's deliberate AD-8 exception", async () => {
-  const client = new FakeNotionWriteClient({ throwError: new Error("notion: 500 internal server error") });
-
-  const result = await setTaskStatus(client, STATUS_WRITE_CONFIG, "task-1", "completed");
-
-  assert.equal(result.ok, false);
-  if (result.ok) return;
-  assert.match(result.error.message, /notion/i);
-  assert.equal(result.error.kind, "unreachable");
-});
-
-test("setTaskStatus honors a custom taskPropertyNames.status override", async () => {
-  const client = new FakeNotionWriteClient();
-  const config = { taskPropertyNames: { ...(await import("../src/adapters/notion-adapter.ts")).DEFAULT_TASK_PROPERTY_NAMES, status: "Task Status" } };
-
-  await setTaskStatus(client, config, "task-1", "completed");
-
-  const call = client.calls[0]!;
-  assert.deepEqual(Object.keys(call.properties ?? {}), ["Task Status"]);
-});
-
-test("AD-12: notion-adapter.ts's write surface is exactly setTaskStatus + updateTaskField + createPage — no generic 'update or create any Notion property/page' function exists", () => {
-  const source = readFileSync(join(import.meta.dirname, "..", "src", "adapters", "notion-adapter.ts"), "utf8");
-  const updateCallSites = source.match(/\.pages\.update\(/g) ?? [];
-  assert.equal(updateCallSites.length, 2, "expected exactly two `client.pages.update(` call sites: setTaskStatus's own, and updateTaskField's single shared writer");
-  const createCallSites = source.match(/\.pages\.create\(/g) ?? [];
-  assert.equal(createCallSites.length, 1, "expected exactly one `client.pages.create(` call site: createPage's own (Story 6.3)");
-  assert.doesNotMatch(source, /\.dataSources\.update\(|\.pages\.move\(/, "no other write/update capability may exist anywhere in this file (AD-12)");
-});
-
-// ============================================================================
-// updateTaskField (FR-24 / AD-12 revised) — the schema-checked write for
-// the other four PlanningFieldNames (Estimated Duration, Area, Due Date,
-// Energy); Status still delegates to setTaskStatus, unchanged.
-// ============================================================================
-
-/** A fake write+schema client: `pages.update` is scripted like `FakeNotionWriteClient`; `dataSources.retrieve` returns a scripted schema and records every data source id it was asked for. */
+/** A fake write+schema client: `pages.update` is scripted to succeed or throw, recording every call verbatim; `dataSources.retrieve` returns a scripted schema and records every data source id it was asked for. Moved above the `setTaskStatus` tests (originally only needed by `updateTaskField`'s) since `setTaskStatus` became schema-checked in the same revision that renamed Spencer's live Status/Energy options. */
 class FakeNotionFieldWriteClient implements NotionWriteClient, NotionSchemaClient {
   readonly updateCalls: UpdatePageParameters[] = [];
   readonly retrieveCalls: string[] = [];
@@ -599,6 +514,151 @@ function makeRichTextSchema(propertyName: string): DataSourceObjectResponse {
   return schema as unknown as DataSourceObjectResponse;
 }
 
+/**
+ * Same shape as `makeSelectSchema`, but typed as Notion's real `status`
+ * property (distinct from `select` — Spencer's real "Status" property is a
+ * `status`-type property, per the module docstring's read-side notes), so
+ * `writeSelectLikeField` takes its `{status: {name}}` write-shape branch
+ * rather than `select`'s. `setTaskStatus`'s tests use this one, not
+ * `makeSelectSchema` — a generic `select` schema would still resolve the
+ * option name correctly but write it under the WRONG property shape,
+ * silently making those tests read `undefined` off the wrong key.
+ */
+function makeStatusSchema(propertyName: string, optionNames: readonly string[]): DataSourceObjectResponse {
+  const schema = makeSelectSchema(propertyName, []) as unknown as { properties: Record<string, unknown> };
+  schema.properties[propertyName] = {
+    id: "prop-1",
+    name: propertyName,
+    description: null,
+    type: "status",
+    status: { options: optionNames.map((name, i) => ({ id: `opt-${i}`, name, color: "default", description: null })), groups: [] },
+  };
+  return schema as unknown as DataSourceObjectResponse;
+}
+
+test("setTaskStatus writes the Status property to the given page id and returns Result.ok", async () => {
+  const client = new FakeNotionFieldWriteClient(makeStatusSchema("Status", ["Nothing", "In Progress", "Completed", "Slipped"]));
+  const result = await setTaskStatus(client, STATUS_WRITE_CONFIG, "task-1", "in-progress");
+
+  assert.equal(result.ok, true);
+  assert.equal(client.updateCalls.length, 1, "expected exactly one Notion write call for a non-completing status");
+  const call = client.updateCalls[0]!;
+  assert.equal(call.page_id, "task-1");
+});
+
+test("setTaskStatus writes ONLY the Status property — no other Task field is touched as a side effect (non-completing status)", async () => {
+  const client = new FakeNotionFieldWriteClient(makeStatusSchema("Status", ["Nothing", "In Progress", "Completed", "Slipped"]));
+  await setTaskStatus(client, STATUS_WRITE_CONFIG, "task-1", "slipped");
+
+  const call = client.updateCalls[0]!;
+  const propertyKeys = Object.keys(call.properties ?? {});
+  assert.deepEqual(propertyKeys, ["Status"], "exactly one property key, the Status property, must be sent");
+});
+
+test("setTaskStatus maps every TaskStatus value to a Notion Status option name, resolved against the live schema", async () => {
+  const client = new FakeNotionFieldWriteClient(makeStatusSchema("Status", ["Nothing", "In Progress", "Completed", "Slipped"]));
+
+  await setTaskStatus(client, STATUS_WRITE_CONFIG, "task-1", "not-started");
+  await setTaskStatus(client, STATUS_WRITE_CONFIG, "task-1", "in-progress");
+  await setTaskStatus(client, STATUS_WRITE_CONFIG, "task-1", "completed");
+  await setTaskStatus(client, STATUS_WRITE_CONFIG, "task-1", "slipped");
+
+  // "completed" also emits a second (Trash) call with no `properties` at all
+  // — filter to only the calls that actually wrote the Status property.
+  const statusNames = client.updateCalls
+    .filter((c) => c.properties !== undefined)
+    .map((c) => (c.properties as Record<string, { status?: { name?: string } }>)["Status"]?.status?.name);
+  assert.deepEqual(statusNames, ["Nothing", "In Progress", "Completed", "Slipped"]);
+});
+
+test("setTaskStatus resolves a live Status option that's been renamed from the hardcoded default — e.g. Spencer's real 'Not Started' -> 'Nothing' rename", async () => {
+  // Spencer's real 2026-09-22 workspace: exactly these three live options, no "Slipped".
+  const client = new FakeNotionFieldWriteClient(makeStatusSchema("Status", ["Nothing", "In Progress", "Completed"]));
+  const result = await setTaskStatus(client, STATUS_WRITE_CONFIG, "task-1", "not-started");
+
+  assert.equal(result.ok, true);
+  const prop = (client.updateCalls[0]!.properties as Record<string, { status?: { name?: string } }>)["Status"];
+  assert.equal(prop?.status?.name, "Nothing");
+});
+
+test("setTaskStatus fails clearly, and writes nothing, when the mapped Status option no longer exists live", async () => {
+  // Same real three-option workspace — "Slipped" has no live match any more.
+  const client = new FakeNotionFieldWriteClient(makeStatusSchema("Status", ["Nothing", "In Progress", "Completed"]));
+  const result = await setTaskStatus(client, STATUS_WRITE_CONFIG, "task-1", "slipped");
+
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.match(result.error.message, /no existing "Status" option is a close enough match/);
+  assert.equal(client.updateCalls.length, 0, "a write that can't be confidently resolved must never reach Notion");
+});
+
+test("setTaskStatus moves the Task's page to Trash once its 'Completed' Status write succeeds", async () => {
+  const client = new FakeNotionFieldWriteClient(makeStatusSchema("Status", ["Nothing", "In Progress", "Completed"]));
+  const result = await setTaskStatus(client, STATUS_WRITE_CONFIG, "task-1", "completed");
+
+  assert.equal(result.ok, true);
+  assert.equal(client.updateCalls.length, 2, "expected the Status write, then a separate Trash write");
+  const [statusCall, trashCall] = client.updateCalls;
+  assert.equal((statusCall!.properties as Record<string, { status?: { name?: string } }>)["Status"]?.status?.name, "Completed");
+  assert.equal(trashCall!.page_id, "task-1");
+  assert.equal((trashCall as unknown as { in_trash?: boolean }).in_trash, true);
+});
+
+test("setTaskStatus does NOT move the page to Trash for any status other than 'completed'", async () => {
+  const client = new FakeNotionFieldWriteClient(makeStatusSchema("Status", ["Nothing", "In Progress", "Completed", "Slipped"]));
+
+  for (const status of ["not-started", "in-progress", "slipped"] as const) {
+    await setTaskStatus(client, STATUS_WRITE_CONFIG, "task-1", status);
+  }
+
+  assert.equal(client.updateCalls.length, 3, "exactly one write per status, never a second Trash call");
+});
+
+test("setTaskStatus returns a Result failure (not a throw) when the Notion SDK call fails — AD-12's deliberate AD-8 exception", async () => {
+  const client = new FakeNotionFieldWriteClient(makeStatusSchema("Status", ["Completed"]), {
+    throwOnUpdate: new Error("notion: 500 internal server error"),
+  });
+
+  const result = await setTaskStatus(client, STATUS_WRITE_CONFIG, "task-1", "completed");
+
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.match(result.error.message, /notion/i);
+  assert.equal(result.error.kind, "unreachable");
+});
+
+test("setTaskStatus honors a custom taskPropertyNames.status override", async () => {
+  const client = new FakeNotionFieldWriteClient(makeStatusSchema("Task Status", ["Completed"]));
+  const config = {
+    tasksDataSourceId: "tasks-ds",
+    taskPropertyNames: { ...(await import("../src/adapters/notion-adapter.ts")).DEFAULT_TASK_PROPERTY_NAMES, status: "Task Status" },
+  };
+
+  await setTaskStatus(client, config, "task-1", "completed");
+
+  const call = client.updateCalls[0]!;
+  assert.deepEqual(Object.keys(call.properties ?? {}), ["Task Status"]);
+});
+
+test("AD-12: notion-adapter.ts's write surface is exactly setTaskStatus + updateTaskField + createPage — no generic 'update or create any Notion property/page' function exists", () => {
+  const source = readFileSync(join(import.meta.dirname, "..", "src", "adapters", "notion-adapter.ts"), "utf8");
+  const updateCallSites = source.match(/\.pages\.update\(/g) ?? [];
+  assert.equal(updateCallSites.length, 2, "expected exactly two `client.pages.update(` call sites: writePageProperty's single shared field-writer, and trashTaskPage's Trash-on-completion call");
+  const createCallSites = source.match(/\.pages\.create\(/g) ?? [];
+  assert.equal(createCallSites.length, 1, "expected exactly one `client.pages.create(` call site: createPage's own (Story 6.3)");
+  assert.doesNotMatch(source, /\.dataSources\.update\(|\.pages\.move\(/, "no other write/update capability may exist anywhere in this file (AD-12)");
+});
+
+// ============================================================================
+// updateTaskField (FR-24 / AD-12 revised) — the schema-checked write for
+// the other four PlanningFieldNames (Estimated Duration, Area, Due Date,
+// Energy); Status still delegates to setTaskStatus, unchanged.
+// ============================================================================
+
+// `FakeNotionFieldWriteClient`/`makeSelectSchema`/`makeRichTextSchema` now
+// live above, right before the `setTaskStatus` tests — moved there once
+// `setTaskStatus` also became schema-checked in the same revision.
+
 const FIELD_WRITE_CONFIG: NotionFieldWriteConfig = { tasksDataSourceId: "tasks-ds" };
 
 test("updateTaskField writes Estimated Duration as a number property", async () => {
@@ -619,12 +679,12 @@ test("updateTaskField writes Due Date as a date property", async () => {
   assert.deepEqual(client.updateCalls[0]!.properties, { "Due Date": { date: { start: "2026-09-20" } } });
 });
 
-test("updateTaskField delegates Status to setTaskStatus's own mapping", async () => {
-  const client = new FakeNotionFieldWriteClient(makeSelectSchema("Status", []));
+test("updateTaskField delegates Status to setTaskStatus's own mapping, which is itself schema-checked", async () => {
+  const client = new FakeNotionFieldWriteClient(makeStatusSchema("Status", ["Completed"]));
   const result = await updateTaskField(client, FIELD_WRITE_CONFIG, "task-1", "status", "completed");
 
   assert.equal(result.ok, true);
-  assert.equal(client.retrieveCalls.length, 0, "Status writes never need a schema lookup — delegates straight to setTaskStatus");
+  assert.equal(client.retrieveCalls.length, 1, "setTaskStatus resolves its option against the live schema, same as Area/Energy");
   const prop = (client.updateCalls[0]!.properties as Record<string, { status?: { name?: string } }>)["Status"];
   assert.equal(prop?.status?.name, "Completed");
 });
@@ -666,12 +726,12 @@ test("updateTaskField fails (not a throw) rather than writing or inventing a new
 });
 
 test("updateTaskField resolves Energy through the configured real-option-name mapping against the live select options", async () => {
-  const client = new FakeNotionFieldWriteClient(makeSelectSchema("Energy", ["🔵 Deep Work", "⚡ Light Work"]));
+  const client = new FakeNotionFieldWriteClient(makeSelectSchema("Energy", ["Deep", "medium", "low"]));
   const result = await updateTaskField(client, FIELD_WRITE_CONFIG, "task-1", "energy", "high");
 
   assert.equal(result.ok, true);
   const prop = (client.updateCalls[0]!.properties as Record<string, { select?: { name?: string } }>)["Energy"];
-  assert.equal(prop?.select?.name, "🔵 Deep Work");
+  assert.equal(prop?.select?.name, "Deep");
 });
 
 test("updateTaskField returns a Result failure (not a throw) when the Notion SDK write call fails", async () => {
