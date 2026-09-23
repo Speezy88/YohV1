@@ -147,6 +147,7 @@
  *    thrown failure per AD-8, not silently mapped to a guessed value.
  */
 import { calendar, type calendar_v3, type GlobalOptions } from "@googleapis/calendar";
+import { isValidIsoDateTime, normalizeIsoDateTime as toUtcIsoDateTime } from "./iso-datetime.ts";
 import type {
   CalendarEditChange,
   CalendarEvent,
@@ -259,15 +260,18 @@ export interface CalendarWriteClient {
 // shares no member, built from the SECOND, broader-scoped OAuth2Client
 // token-store.ts holds (never the narrow one AD-4's automatic path uses).
 // Deliberately has no `delete` member. "Primary only" for this path is
-// enforced by the calendarId === 'primary' checks in shell/chat-cli.ts's own
-// wiring, not by this client's scope (AD-13 — Google's scope catalog has no
+// enforced by `assertPrimaryCalendar` in this file's FR-27 functions (see
+// below), not by this client's scope (AD-13 — Google's scope catalog has no
 // narrower "primary only" grant).
 // ============================================================================
 
 export interface CalendarBroadClient {
   readonly events: {
     readonly get: (params: calendar_v3.Params$Resource$Events$Get) => Promise<{ readonly data: calendar_v3.Schema$Event }>;
-    readonly patch: (params: calendar_v3.Params$Resource$Events$Patch) => Promise<{ readonly data: calendar_v3.Schema$Event }>;
+    readonly patch: (
+      params: calendar_v3.Params$Resource$Events$Patch,
+      options?: { readonly headers?: Record<string, string> },
+    ) => Promise<{ readonly data: calendar_v3.Schema$Event }>;
     readonly insert: (params: calendar_v3.Params$Resource$Events$Insert) => Promise<{ readonly data: calendar_v3.Schema$Event }>;
   };
 }
@@ -504,6 +508,34 @@ export async function writeTodaysPlanToCalendar(
 // ============================================================================
 
 /**
+ * The only calendar FR-27's confirm-gated path may touch (AD-13). Google has
+ * no "primary only" OAuth scope, so `GOOGLE_CALENDAR_BROAD_SCOPE` covers every
+ * calendar Spencer can access — this constant plus `assertPrimaryCalendar`
+ * below is the ONE place that restriction is enforced in code.
+ */
+const PRIMARY_CALENDAR_ID = "primary";
+
+function assertPrimaryCalendar(calendarId: string): void {
+  if (calendarId !== PRIMARY_CALENDAR_ID) {
+    throw new Error(`calendar-adapter: FR-27 calendar edits are limited to the primary calendar, got "${calendarId}"`);
+  }
+}
+
+/**
+ * Parses an LLM/user-supplied datetime into a normalised UTC `IsoDateTime`.
+ * Requires an explicit UTC offset ("Z" or "+hh:mm") and real calendar/clock
+ * field values (see `iso-datetime.ts`) — a date-only, offset-less, or
+ * out-of-range (e.g. Feb 30) string is rejected rather than silently
+ * rolled into a different day.
+ */
+function normalizeIsoDateTime(raw: string, label: string): IsoDateTime {
+  if (!isValidIsoDateTime(raw)) {
+    throw new Error(`calendar-adapter: ${label} "${raw}" is not a full, valid ISO-8601 datetime with a UTC offset`);
+  }
+  return toUtcIsoDateTime(raw);
+}
+
+/**
  * Checks whether `eventId` (on `calendarId`) is a Yoh-created "Yoh Plan"
  * event — the SAME `PLAN_BLOCK_ID_EXTENDED_PROPERTY` tag AD-4's automatic
  * path already stamps every "Yoh Plan" event with. Every FR-27 caller
@@ -517,6 +549,7 @@ export async function resolveCalendarEditRoute(
   calendarId: string,
   eventId: ExternalId,
 ): Promise<{ readonly kind: "owned" } | { readonly kind: "external" }> {
+  assertPrimaryCalendar(calendarId);
   const response = await client.events.get({ calendarId, eventId });
   const isYohOwned = Boolean(response.data.extendedProperties?.private?.[PLAN_BLOCK_ID_EXTENDED_PROPERTY]);
   return isYohOwned ? { kind: "owned" } : { kind: "external" };
@@ -543,25 +576,43 @@ export async function proposeCalendarEdit(
   eventId: ExternalId,
   change: MoveOrResizeChange,
 ): Promise<Proposal<CalendarEditChange>> {
+  assertPrimaryCalendar(calendarId);
   const response = await client.events.get({ calendarId, eventId });
   const event = response.data;
   const summary = event.summary ?? "this event";
 
+  // An all-day event has `date`, not `dateTime`, on start/end — writing
+  // `dateTime` fields onto it would be rejected by Google (or silently
+  // convert it), so it isn't editable through this path.
+  if (!event.start?.dateTime || !event.end?.dateTime) {
+    throw new Error(`calendar-adapter: "${summary}" is an all-day event — only timed events can be moved or resized`);
+  }
+  const liveStartMs = new Date(event.start.dateTime).getTime();
+  const liveEndMs = new Date(event.end.dateTime).getTime();
+
   let suggested: CalendarEditChange;
   let reason: string;
   if (change.kind === "move") {
-    const durationMs = new Date(toIsoDateTime(event.end)).getTime() - new Date(toIsoDateTime(event.start)).getTime();
+    const newStart = normalizeIsoDateTime(change.newStart, "new start");
+    const durationMs = liveEndMs - liveStartMs;
+    if (durationMs <= 0) {
+      throw new Error(`calendar-adapter: "${summary}"'s own end is not after its start — cannot preserve its duration for a move`);
+    }
     suggested = {
       kind: "move",
       eventId,
       calendarId,
-      newStart: change.newStart,
-      newEnd: new Date(new Date(change.newStart).getTime() + durationMs).toISOString(),
+      newStart,
+      newEnd: new Date(new Date(newStart).getTime() + durationMs).toISOString(),
     };
-    reason = `Move "${summary}" to start at ${change.newStart}`;
+    reason = `Move "${summary}" to start at ${newStart}`;
   } else {
-    suggested = { kind: "resize", eventId, calendarId, newEnd: change.newEnd };
-    reason = `Resize "${summary}" to end at ${change.newEnd}`;
+    const newEnd = normalizeIsoDateTime(change.newEnd, "new end");
+    if (new Date(newEnd).getTime() <= liveStartMs) {
+      throw new Error(`calendar-adapter: new end ${newEnd} is not after "${summary}"'s start`);
+    }
+    suggested = { kind: "resize", eventId, calendarId, newEnd };
+    reason = `Resize "${summary}" to end at ${newEnd}`;
   }
 
   return {
@@ -590,13 +641,19 @@ export interface CreateBlockChange {
  * entity exemption under AD-3).
  */
 export function proposeNewCalendarEvent(change: CreateBlockChange): Proposal<CalendarEditChange> {
+  assertPrimaryCalendar(change.calendarId);
+  const start = normalizeIsoDateTime(change.start, "start");
+  const end = normalizeIsoDateTime(change.end, "end");
+  if (new Date(end).getTime() <= new Date(start).getTime()) {
+    throw new Error(`calendar-adapter: end ${end} is not after start ${start}`);
+  }
   return {
     id: `calendar-create-${Date.now()}`,
     kind: "calendar-edit",
     entityId: "new-event",
     entityVersion: "new",
-    suggested: { kind: "create", calendarId: change.calendarId, title: change.title, start: change.start, end: change.end },
-    reason: `Create "${change.title}" from ${change.start} to ${change.end}`,
+    suggested: { kind: "create", calendarId: change.calendarId, title: change.title, start, end },
+    reason: `Create "${change.title}" from ${start} to ${end}`,
     createdAt: new Date().toISOString(),
   };
 }
@@ -619,6 +676,19 @@ export async function applyCalendarEdit(
   proposal: Proposal<CalendarEditChange>,
 ): Promise<Result<{ readonly eventId: string; readonly calendarId: string }, YohError>> {
   const change = proposal.suggested;
+
+  try {
+    assertPrimaryCalendar(change.calendarId);
+  } catch (err) {
+    return {
+      ok: false,
+      error: {
+        kind: "validation",
+        message: err instanceof Error ? err.message : String(err),
+        detail: { calendarId: change.calendarId },
+      },
+    };
+  }
 
   if (change.kind === "create") {
     try {
@@ -673,9 +743,34 @@ export async function applyCalendarEdit(
     change.kind === "move" ? { start: { dateTime: change.newStart }, end: { dateTime: change.newEnd } } : { end: { dateTime: change.newEnd } };
 
   try {
-    await client.events.patch({ calendarId: change.calendarId, eventId: change.eventId, requestBody });
+    // If-Match closes the window between the etag re-read above and this
+    // write: if anyone else changed the event in between, Google answers 412
+    // rather than letting this patch overwrite their change (AD-3). Omitted
+    // (not sent as "*", which would mean "any version" and defeat the
+    // precondition) when the live event has no etag at all — an
+    // Google-Calendar-API case defensive coding accounts for but that hasn't
+    // been observed in practice; the manual etag comparison above remains
+    // the primary staleness guard either way.
+    await client.events.patch(
+      { calendarId: change.calendarId, eventId: change.eventId, requestBody },
+      proposal.entityVersion ? { headers: { "If-Match": proposal.entityVersion } } : undefined,
+    );
     return { ok: true, value: { eventId: change.eventId, calendarId: change.calendarId } };
   } catch (err) {
+    const isPreconditionFailed =
+      typeof err === "object" &&
+      err !== null &&
+      ((err as { code?: unknown }).code === 412 || (err as { status?: unknown }).status === 412);
+    if (isPreconditionFailed) {
+      return {
+        ok: false,
+        error: {
+          kind: "stale-proposal",
+          message: `calendar-adapter: event "${change.eventId}" has changed since this proposal was generated`,
+          detail: { eventId: change.eventId, expectedVersion: proposal.entityVersion },
+        },
+      };
+    }
     return {
       ok: false,
       error: {

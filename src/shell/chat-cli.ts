@@ -1819,9 +1819,22 @@ type ApplyCalendarEditFn = (
   proposal: Proposal<CalendarEditChange>,
 ) => Promise<Result<{ readonly eventId: string; readonly calendarId: string }, YohError>>;
 
-/** `iso` as Spencer's local wall-clock time (e.g. "6:00 PM"), for display only. */
+/**
+ * `iso` as Spencer's local weekday, date, year and wall-clock time (e.g.
+ * "Fri, Sep 18, 2026, 6:00 PM"), for display only. The date AND year are
+ * included on purpose: the drafted datetime is LLM-computed, so a wrong day
+ * — or a wrong year entirely — must be visible at the confirm step.
+ */
 function formatLocalTime(iso: string, timeZone: string): string {
-  return new Intl.DateTimeFormat("en-US", { timeZone, hour: "numeric", minute: "2-digit" }).format(new Date(iso));
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    weekday: "short",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(iso));
 }
 
 /** One line describing `change` to `eventTitle`, in Spencer's local time — used for both the confirm preview and the receipt. */
@@ -1847,6 +1860,10 @@ function describeCalendarEdit(change: CalendarEditChange, eventTitle: string, ti
  * (AD-13). Nothing is written until Spencer confirms the exact change,
  * naming the specific event; the receipt is one line naming the event and
  * what changed.
+ *
+ * Returns `false` — having written nothing — when the message turned out not
+ * to be a calendar edit at all (the draft came back `NONE`), so the caller
+ * can fall through to ordinary chat; `true` once it has handled the line.
  */
 async function handleCalendarEditCommand(
   io: ChatCliIo,
@@ -1858,7 +1875,7 @@ async function handleCalendarEditCommand(
   resolveRoute: ResolveCalendarEditRouteFn,
   proposeEdit: ProposeCalendarEditFn,
   applyEdit: ApplyCalendarEditFn,
-): Promise<void> {
+): Promise<boolean> {
   const events = await readCalendarEventsFn();
 
   let draft: DraftedCalendarEditRequest | undefined;
@@ -1870,14 +1887,12 @@ async function handleCalendarEditCommand(
       timeZone,
       events.map((e) => ({ title: e.title, start: e.start, end: e.end })),
     );
-  } catch {
-    draft = undefined;
+  } catch (err) {
+    io.writeLine(`I couldn't work out that calendar change: ${err instanceof Error ? err.message : String(err)}`);
+    return true;
   }
 
-  if (!draft) {
-    io.writeLine("I couldn't tell what calendar change you want — try naming the event and the new time directly.");
-    return;
-  }
+  if (!draft) return false;
 
   let proposal: Proposal<CalendarEditChange>;
   let eventTitle: string;
@@ -1887,17 +1902,22 @@ async function handleCalendarEditCommand(
     proposal = proposeNewCalendarEvent({ calendarId: "primary", title: draft.title, start: draft.start, end: draft.end });
   } else {
     const requestedTitle = draft.eventTitle.trim().toLowerCase();
-    const matchedEvent = events.find((e) => e.title.trim().toLowerCase() === requestedTitle);
-    if (!matchedEvent) {
+    const matches = events.filter((e) => e.id !== "" && e.title.trim().toLowerCase() === requestedTitle);
+    if (matches.length === 0) {
       io.writeLine(`I couldn't find an event called "${draft.eventTitle}" on today's calendar.`);
-      return;
+      return true;
     }
+    if (matches.length > 1) {
+      io.writeLine(`You have ${matches.length} events called "${draft.eventTitle}" today (${matches.map((e) => formatLocalTime(e.start, timeZone)).join("; ")}) — I won't guess which one. Rename one so I can tell them apart, then try again.`);
+      return true;
+    }
+    const matchedEvent = matches[0]!;
     eventTitle = matchedEvent.title;
 
     const route = await resolveRoute("primary", matchedEvent.id);
     if (route.kind === "owned") {
       io.writeLine("That's one of my own Plan blocks — ask me to re-flow the day to adjust it instead.");
-      return;
+      return true;
     }
 
     proposal = await proposeEdit(
@@ -1909,24 +1929,31 @@ async function handleCalendarEditCommand(
 
   io.writeLine(describeCalendarEdit(proposal.suggested, eventTitle, timeZone, false));
 
-  let confirmAnswer: string | null = null;
-  do {
-    confirmAnswer = await io.readLine("Apply this change? (yes/no): ");
-    if (confirmAnswer === null) return; // EOF — nothing changed.
-  } while (confirmAnswer.trim().length === 0);
+  for (;;) {
+    const confirmAnswer = await io.readLine("Apply this change? (yes/no): ");
+    if (confirmAnswer === null) return true; // EOF — nothing changed.
+    if (confirmAnswer.trim().length === 0) continue; // UX-DR16: silence is never consent.
 
-  if (parseProposalAnswer(confirmAnswer) !== true) {
-    io.writeLine("Okay — I won't make that change.");
-    return;
+    const confirmed = parseProposalAnswer(confirmAnswer);
+    if (confirmed === undefined) {
+      io.writeLine('Please answer "yes" or "no".');
+      continue;
+    }
+    if (!confirmed) {
+      io.writeLine("Okay — I won't make that change.");
+      return true;
+    }
+    break;
   }
 
   const applied = await applyEdit(proposal);
   if (!applied.ok) {
     io.writeLine(`I couldn't apply that: ${applied.error.message}`);
-    return;
+    return true;
   }
 
   io.writeLine(`${describeCalendarEdit(proposal.suggested, eventTitle, timeZone, true)}.`);
+  return true;
 }
 
 /**
@@ -2139,8 +2166,9 @@ export async function runChatCli(
     }
 
     if (isCalendarEditCommand(line)) {
+      let handled = true;
       try {
-        await handleCalendarEditCommand(
+        handled = await handleCalendarEditCommand(
           io,
           llmClient,
           line,
@@ -2154,7 +2182,8 @@ export async function runChatCli(
       } catch (err) {
         io.writeLine(`I hit a problem with that calendar change: ${err instanceof Error ? err.message : String(err)}`);
       }
-      continue;
+      // Not actually a calendar edit ("move on to the next topic") — fall through to ordinary chat.
+      if (handled) continue;
     }
 
     let chatIntent: ChatIntent = { kind: "general-question" };

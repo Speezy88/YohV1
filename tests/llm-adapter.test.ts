@@ -307,8 +307,7 @@ test("draftCalendarEditRequest returns undefined for a NONE response", async () 
 
 test("draftCalendarEditRequest rejects an unparseable/invalid ISO datetime rather than trusting it", async () => {
   const { client } = fakeClient(textMessage("MOVE: Team sync | not a real time"));
-  const result = await draftCalendarEditRequest(client, "move team sync", "2026-09-18", "America/New_York", []);
-  assert.equal(result, undefined);
+  await assert.rejects(draftCalendarEditRequest(client, "move team sync", "2026-09-18", "America/New_York", []), /invalid or out-of-range/);
 });
 
 test("draftCalendarEditRequest gives Claude today's date, timezone, and candidate events in its system prompt", async () => {
@@ -320,4 +319,34 @@ test("draftCalendarEditRequest gives Claude today's date, timezone, and candidat
   assert.match(system, /2026-09-18/);
   assert.match(system, /America\/New_York/);
   assert.match(system, /Standup/);
+});
+
+test("draftCalendarEditRequest rejects date-only and offset-less datetimes", async () => {
+  for (const bad of ["2026-09-18", "2026-09-18T16:00:00"]) {
+    const { client } = fakeClient(textMessage(`MOVE: Team sync | ${bad}`));
+    await assert.rejects(draftCalendarEditRequest(client, "move team sync", "2026-09-18", "America/New_York", []), /invalid or out-of-range/);
+  }
+});
+
+test("draftCalendarEditRequest rejects an out-of-range calendar/clock value (e.g. Feb 30) instead of silently rolling it over", async () => {
+  const { client } = fakeClient(textMessage("MOVE: Team sync | 2026-02-30T10:00:00Z"));
+  await assert.rejects(draftCalendarEditRequest(client, "move team sync", "2026-09-18", "America/New_York", []), /invalid or out-of-range/);
+});
+
+test("draftCalendarEditRequest normalises datetimes to UTC and rejects an inverted CREATE range", async () => {
+  const moved = fakeClient(textMessage("MOVE: Team sync | 2026-09-18T14:00:00-04:00"));
+  assert.deepEqual(await draftCalendarEditRequest(moved.client, "m", "2026-09-18", "America/New_York", []), {
+    kind: "move",
+    eventTitle: "Team sync",
+    newStart: "2026-09-18T18:00:00.000Z",
+  });
+
+  const inverted = fakeClient(textMessage("CREATE: Focus | 2026-09-18T15:00:00.000Z | 2026-09-18T14:00:00.000Z"));
+  await assert.rejects(draftCalendarEditRequest(inverted.client, "c", "2026-09-18", "America/New_York", []), /end not after start/);
+});
+
+test("draftCalendarEditRequest tolerates a preamble and trailing commentary around the answer line", async () => {
+  const { client } = fakeClient(textMessage("Sure, here you go:\nMOVE: Team sync | 2026-09-18T18:00:00.000Z\n(I assumed 6pm Eastern.)"));
+  const result = await draftCalendarEditRequest(client, "move team sync to 6pm", "2026-09-18", "America/New_York", []);
+  assert.deepEqual(result, { kind: "move", eventTitle: "Team sync", newStart: "2026-09-18T18:00:00.000Z" });
 });

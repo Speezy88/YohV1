@@ -2761,12 +2761,64 @@ test("an event named in the request that isn't found among today's events report
   assert.ok(io.written.some((line) => /couldn't find/i.test(line)));
 });
 
-test("a request the LLM can't turn into a structured edit is reported plainly, nothing is proposed or applied", async () => {
-  const { io, propose, apply } = await runCalendarEditSession(["move it somewhere"], "NONE", { events: [TEAM_SYNC] });
+test("a message that only looks like a calendar edit (draft is NONE) falls through to ordinary chat — nothing is proposed or applied", async () => {
+  const { io, propose, apply } = await runCalendarEditSession(["move on to the next topic"], "NONE", { events: [TEAM_SYNC] });
 
   assert.equal(propose.calls.length, 0);
   assert.equal(apply.calls.length, 0);
-  assert.ok(io.written.some((line) => /couldn't tell what calendar change/i.test(line)));
+  assert.ok(!io.written.some((line) => /couldn't tell what calendar change/i.test(line)));
+  assert.ok(io.written.some((line) => /NONE/.test(line)), "expected the ordinary chat path to have answered");
+});
+
+test("a MOVE/RESIZE/CREATE-shaped but malformed draft is reported distinctly, NOT silently sent to ordinary chat like a NONE response", async () => {
+  const { io, propose, apply } = await runCalendarEditSession(["move team sync to 6pm"], "MOVE: Team sync | not a real time", { events: [TEAM_SYNC] });
+
+  assert.equal(propose.calls.length, 0);
+  assert.equal(apply.calls.length, 0);
+  assert.ok(io.written.some((line) => /I couldn't work out that calendar change/i.test(line)), `got: ${io.written.join(" | ")}`);
+});
+
+test("the confirm preview includes the date and year, so a wrong LLM-computed day or year is visible before confirming", async () => {
+  const { io } = await runCalendarEditSession(["move team sync to 6pm", "no"], "MOVE: Team sync | 2026-09-18T18:00:00.000Z", {
+    events: [TEAM_SYNC],
+  });
+
+  assert.ok(io.written.some((line) => /Move "Team sync" to Fri, Sep 18, 2026, 2:00 PM/.test(line)), `got: ${io.written.join(" | ")}`);
+});
+
+test("an ambiguous confirm answer re-prompts instead of ending the flow, and a later 'yes' still applies", async () => {
+  const { io, apply } = await runCalendarEditSession(["move team sync to 6pm", "sure thing", "yes"], "MOVE: Team sync | 2026-09-18T18:00:00.000Z", {
+    events: [TEAM_SYNC],
+  });
+
+  assert.ok(io.written.some((line) => /Please answer "yes" or "no"/.test(line)));
+  assert.equal(apply.calls.length, 1);
+});
+
+test("two events with the same title are not guessed between — nothing is proposed", async () => {
+  const { io, propose, apply } = await runCalendarEditSession(["move standup to 6pm"], "MOVE: Standup | 2026-09-18T18:00:00.000Z", {
+    events: [
+      { id: "a", title: "Standup", start: "2026-09-18T13:00:00.000Z", end: "2026-09-18T13:15:00.000Z" },
+      { id: "b", title: "standup", start: "2026-09-18T20:00:00.000Z", end: "2026-09-18T20:15:00.000Z" },
+    ],
+  });
+
+  assert.equal(propose.calls.length, 0);
+  assert.equal(apply.calls.length, 0);
+  assert.ok(io.written.some((line) => /2 events called "Standup"/.test(line)));
+  assert.ok(
+    io.written.some((line) => /Rename one so I can tell them apart/.test(line)),
+    "the recovery suggestion must not promise unsupported by-time disambiguation",
+  );
+});
+
+test("an event with no id is never matched", async () => {
+  const { io, propose } = await runCalendarEditSession(["move standup to 6pm"], "MOVE: Standup | 2026-09-18T18:00:00.000Z", {
+    events: [{ id: "", title: "Standup", start: "2026-09-18T13:00:00.000Z", end: "2026-09-18T13:15:00.000Z" }],
+  });
+
+  assert.equal(propose.calls.length, 0);
+  assert.ok(io.written.some((line) => /couldn't find/i.test(line)));
 });
 
 test("an apply failure (e.g. a stale proposal) is reported instead of a success receipt", async () => {

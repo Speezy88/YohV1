@@ -59,6 +59,7 @@
  * reserves for `rituals/*.ts`.
  */
 import Anthropic from "@anthropic-ai/sdk";
+import { isValidIsoDateTime, normalizeIsoDateTime } from "./iso-datetime.ts";
 import type {
   ChatIntent,
   ChatTurn,
@@ -506,7 +507,7 @@ function buildDraftCalendarEditSystemPrompt(
       : "  (none)";
   return [
     "You are helping Yoh, Spencer's personal planning assistant, turn a chat request into a structured Calendar edit.",
-    `Today's date is ${today}, Spencer's timezone is ${timeZone}. Resolve any relative time Spencer gives (e.g. "4pm", "in an hour") into a full ISO-8601 UTC datetime (e.g. "2026-09-18T20:00:00.000Z").`,
+    `Today's date is ${today}, Spencer's timezone is ${timeZone}. Resolve any relative time Spencer gives (e.g. "4pm", "in an hour") into a full ISO-8601 UTC datetime with a "Z" suffix (e.g. "2026-09-18T20:00:00.000Z") — always include the date, time and "Z"; never a bare date or a time without an offset.`,
     "Today's known calendar events (for matching an event Spencer refers to by name):",
     eventsList,
     "Respond on ONE line, in exactly one of these forms:",
@@ -518,17 +519,18 @@ function buildDraftCalendarEditSystemPrompt(
   ].join("\n");
 }
 
-function isValidIsoDateTime(raw: string): boolean {
-  return !Number.isNaN(Date.parse(raw));
-}
-
 /**
  * Extracts a structured move/resize/create request from `line`. Returns
- * `undefined` — never throws for "couldn't extract" — when the response
- * doesn't match one of the three recognized forms, or any of its ISO
- * datetime fields fails to parse (never trusted blindly). A genuine
- * API/transport failure still propagates as a thrown error (AD-8);
- * `chat-cli.ts` treats that the same as "couldn't draft."
+ * `undefined` ONLY when Claude confidently answered `NONE` or the response
+ * contained no recognized `MOVE:`/`RESIZE:`/`CREATE:` line at all — i.e. it
+ * genuinely isn't a calendar edit, so `chat-cli.ts` falls through to
+ * ordinary chat. If a `MOVE:`/`RESIZE:`/`CREATE:` line IS present but fails
+ * to parse (a malformed line, or an invalid/out-of-range ISO datetime, never
+ * trusted blindly), this throws instead — that's a drafting failure, not
+ * "not a calendar edit," and `chat-cli.ts` reports it distinctly rather than
+ * silently answering the line as general chat. A genuine API/transport
+ * failure also propagates as a thrown error (AD-8); `chat-cli.ts` treats
+ * both throw cases the same way.
  */
 export async function draftCalendarEditRequest(
   client: AnthropicMessagesClient,
@@ -544,24 +546,37 @@ export async function draftCalendarEditRequest(
     messages: [{ role: "user", content: line }],
   });
 
-  const text = message.content
+  const fullText = message.content
     .filter((block): block is Anthropic.TextBlock => block.type === "text")
     .map((block) => block.text)
     .join("\n")
     .trim();
 
+  // Tolerate a preamble or trailing commentary: use the first line that
+  // starts with one of the recognized keywords, ignoring everything else.
+  // No such line at all means Claude said NONE (or something unparseable
+  // with no keyword) — genuinely not a calendar edit.
+  const text = fullText.split("\n").map((l) => l.trim()).find((l) => /^(MOVE|RESIZE|CREATE):/i.test(l));
+  if (text === undefined) return undefined;
+
   const moveMatch = /^MOVE:\s*(.+?)\s*\|\s*(.+)$/i.exec(text);
   if (moveMatch) {
     const eventTitle = moveMatch[1]!.trim();
     const newStart = moveMatch[2]!.trim();
-    return isValidIsoDateTime(newStart) ? { kind: "move", eventTitle, newStart } : undefined;
+    if (!isValidIsoDateTime(newStart)) {
+      throw new Error(`llm-adapter: MOVE response has an invalid or out-of-range datetime: "${newStart}"`);
+    }
+    return { kind: "move", eventTitle, newStart: normalizeIsoDateTime(newStart) };
   }
 
   const resizeMatch = /^RESIZE:\s*(.+?)\s*\|\s*(.+)$/i.exec(text);
   if (resizeMatch) {
     const eventTitle = resizeMatch[1]!.trim();
     const newEnd = resizeMatch[2]!.trim();
-    return isValidIsoDateTime(newEnd) ? { kind: "resize", eventTitle, newEnd } : undefined;
+    if (!isValidIsoDateTime(newEnd)) {
+      throw new Error(`llm-adapter: RESIZE response has an invalid or out-of-range datetime: "${newEnd}"`);
+    }
+    return { kind: "resize", eventTitle, newEnd: normalizeIsoDateTime(newEnd) };
   }
 
   const createMatch = /^CREATE:\s*(.+?)\s*\|\s*(.+?)\s*\|\s*(.+)$/i.exec(text);
@@ -569,8 +584,18 @@ export async function draftCalendarEditRequest(
     const title = createMatch[1]!.trim();
     const start = createMatch[2]!.trim();
     const end = createMatch[3]!.trim();
-    return isValidIsoDateTime(start) && isValidIsoDateTime(end) ? { kind: "create", title, start, end } : undefined;
+    if (!isValidIsoDateTime(start) || !isValidIsoDateTime(end)) {
+      throw new Error(`llm-adapter: CREATE response has an invalid or out-of-range datetime: start="${start}" end="${end}"`);
+    }
+    const normalizedStart = normalizeIsoDateTime(start);
+    const normalizedEnd = normalizeIsoDateTime(end);
+    // An inverted or zero-length range is never a sensible create.
+    if (normalizedEnd <= normalizedStart) {
+      throw new Error(`llm-adapter: CREATE response has an end not after start: start="${normalizedStart}" end="${normalizedEnd}"`);
+    }
+    return { kind: "create", title, start: normalizedStart, end: normalizedEnd };
   }
 
-  return undefined;
+  // Matched a recognized keyword prefix but neither sub-pattern parsed the rest of the line — malformed, not "not a calendar edit."
+  throw new Error(`llm-adapter: unrecognized calendar-edit response: "${text}"`);
 }

@@ -55,7 +55,7 @@ import {
   type CalendarBroadClient,
   type CalendarIdStore,
 } from "../src/adapters/calendar-adapter.ts";
-import type { PlanBlock } from "../src/types/domain.ts";
+import type { CalendarEditChange, PlanBlock } from "../src/types/domain.ts";
 
 // ============================================================================
 // Fake client
@@ -760,7 +760,7 @@ test("resolveCalendarEditRoute reports 'owned' for an event stamped with PLAN_BL
   const client = fakeBroadClient({
     getResult: { id: "evt-1", extendedProperties: { private: { [PLAN_BLOCK_ID_EXTENDED_PROPERTY]: "block-1" } } },
   });
-  const route = await resolveCalendarEditRoute(client, "yoh-plan-id", "evt-1");
+  const route = await resolveCalendarEditRoute(client, "primary", "evt-1");
   assert.deepEqual(route, { kind: "owned" });
 });
 
@@ -878,4 +878,123 @@ test("CalendarEditChange has no delete variant — structurally impossible to co
   // 'delete' kind for CalendarEditChange.
   const source = readFileSync(join(import.meta.dirname, "..", "src", "adapters", "calendar-adapter.ts"), "utf8");
   assert.doesNotMatch(source, /kind:\s*["']delete["']/, "no delete variant may ever be constructed for CalendarEditChange (AD-13)");
+});
+
+// ---- Review fixes: primary-only guard, datetime validation, all-day, If-Match ----
+
+test("FR-27 functions reject any calendarId other than 'primary' (AD-13's primary-only guarantee is enforced in code)", async () => {
+  const client = fakeBroadClient();
+  await assert.rejects(resolveCalendarEditRoute(client, "yoh-plan-id", "evt-1"), /primary calendar/);
+  await assert.rejects(
+    proposeCalendarEdit(client, "other-calendar", "evt-1", { kind: "move", newStart: "2026-09-18T18:00:00.000Z" }),
+    /primary calendar/,
+  );
+  assert.throws(
+    () => proposeNewCalendarEvent({ calendarId: "other-calendar", title: "x", start: "2026-09-18T14:00:00.000Z", end: "2026-09-18T15:00:00.000Z" }),
+    /primary calendar/,
+  );
+  assert.equal(client.getCalls.length, 0, "a rejected calendarId must never reach the API");
+
+  // applyCalendarEdit trusts nothing in the proposal: a hand-built non-primary proposal is refused too.
+  const forged = { ...proposeNewCalendarEvent({ calendarId: "primary", title: "x", start: "2026-09-18T14:00:00.000Z", end: "2026-09-18T15:00:00.000Z" }) };
+  const result = await applyCalendarEdit(client, { ...forged, suggested: { ...(forged.suggested as { kind: "create"; title: string; start: string; end: string }), calendarId: "other-calendar" } });
+  assert.equal(result.ok, false);
+  assert.equal(client.insertCalls.length, 0);
+});
+
+test("proposeCalendarEdit / proposeNewCalendarEvent reject date-only and offset-less datetimes", async () => {
+  const client = fakeBroadClient();
+  for (const bad of ["2026-09-18", "2026-09-18T16:00:00", "tomorrow"]) {
+    await assert.rejects(proposeCalendarEdit(client, "primary", "evt-1", { kind: "move", newStart: bad }), /ISO-8601/);
+    await assert.rejects(proposeCalendarEdit(client, "primary", "evt-1", { kind: "resize", newEnd: bad }), /ISO-8601/);
+    assert.throws(() => proposeNewCalendarEvent({ calendarId: "primary", title: "x", start: bad, end: "2026-09-18T15:00:00.000Z" }), /ISO-8601/);
+  }
+});
+
+test("datetimes with a non-UTC offset are normalised to UTC before being proposed", async () => {
+  const proposal = await proposeCalendarEdit(fakeBroadClient(), "primary", "evt-1", { kind: "move", newStart: "2026-09-18T14:00:00-04:00" });
+  assert.equal(proposal.suggested.kind === "move" && proposal.suggested.newStart, "2026-09-18T18:00:00.000Z");
+});
+
+test("a resize whose end is not after the live start, and a create with end <= start, are rejected", async () => {
+  await assert.rejects(
+    proposeCalendarEdit(fakeBroadClient(), "primary", "evt-1", { kind: "resize", newEnd: "2026-09-18T14:00:00.000Z" }),
+    /not after/,
+  );
+  assert.throws(
+    () => proposeNewCalendarEvent({ calendarId: "primary", title: "x", start: "2026-09-18T15:00:00.000Z", end: "2026-09-18T14:00:00.000Z" }),
+    /not after/,
+  );
+});
+
+test("proposeCalendarEdit refuses an all-day event (start/end are `date`, not `dateTime`)", async () => {
+  const client = fakeBroadClient({ getResult: { id: "evt-1", etag: '"e"', summary: "Holiday", start: { date: "2026-09-18" }, end: { date: "2026-09-19" } } });
+  await assert.rejects(proposeCalendarEdit(client, "primary", "evt-1", { kind: "resize", newEnd: "2026-09-18T20:00:00.000Z" }), /all-day/);
+});
+
+test("applyCalendarEdit patches with an If-Match header carrying the proposal's etag, and maps a 412 to stale-proposal", async () => {
+  const seenOptions: unknown[] = [];
+  const base = fakeBroadClient();
+  const proposal = await proposeCalendarEdit(base, "primary", "evt-1", { kind: "move", newStart: "2026-09-18T18:00:00.000Z" });
+
+  const client: CalendarBroadClient = {
+    events: {
+      ...base.events,
+      patch: async (_params, options) => {
+        seenOptions.push(options);
+        throw Object.assign(new Error("Precondition Failed"), { code: 412 });
+      },
+    },
+  };
+  const result = await applyCalendarEdit(client, proposal);
+
+  assert.deepEqual(seenOptions, [{ headers: { "If-Match": '"etag-1"' } }]);
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.error.kind, "stale-proposal");
+});
+
+// ---- Second review pass: range-checked datetimes, move-duration guard, non-object throw safety ----
+
+test("proposeCalendarEdit / proposeNewCalendarEvent reject a shape-valid but out-of-range datetime (e.g. Feb 30, hour 24) instead of silently rolling it over", async () => {
+  const client = fakeBroadClient();
+  for (const bad of ["2026-02-30T10:00:00Z", "2026-01-01T24:00:00Z", "2026-04-31T10:00:00Z"]) {
+    await assert.rejects(proposeCalendarEdit(client, "primary", "evt-1", { kind: "move", newStart: bad }), /ISO-8601/);
+    assert.throws(() => proposeNewCalendarEvent({ calendarId: "primary", title: "x", start: bad, end: "2026-09-18T15:00:00.000Z" }), /ISO-8601/);
+  }
+});
+
+test("proposeCalendarEdit (move) rejects when the live event's own end is not after its start, rather than silently preserving a zero/negative duration", async () => {
+  const client = fakeBroadClient({
+    getResult: { id: "evt-1", etag: '"e"', summary: "Bad event", start: { dateTime: "2026-09-18T15:00:00.000Z" }, end: { dateTime: "2026-09-18T15:00:00.000Z" } },
+  });
+  await assert.rejects(proposeCalendarEdit(client, "primary", "evt-1", { kind: "move", newStart: "2026-09-18T18:00:00.000Z" }), /not after/);
+});
+
+test("applyCalendarEdit's non-primary guard also refuses a forged move/resize proposal (not just create)", async () => {
+  const client = fakeBroadClient();
+  const proposal = await proposeCalendarEdit(client, "primary", "evt-1", { kind: "move", newStart: "2026-09-18T18:00:00.000Z" });
+  const forged = { ...proposal, suggested: { ...proposal.suggested, calendarId: "other-calendar" } as CalendarEditChange };
+
+  const result = await applyCalendarEdit(client, forged);
+
+  assert.equal(result.ok, false);
+  assert.equal(client.patchCalls.length, 0);
+});
+
+test("applyCalendarEdit's 412 detection doesn't itself throw when the patch call rejects with a non-object value", async () => {
+  const base = fakeBroadClient();
+  const proposal = await proposeCalendarEdit(base, "primary", "evt-1", { kind: "move", newStart: "2026-09-18T18:00:00.000Z" });
+
+  const client: CalendarBroadClient = {
+    events: {
+      ...base.events,
+      patch: async () => {
+        throw "boom"; // a non-object throw — the Result contract must still hold
+      },
+    },
+  };
+
+  const result = await applyCalendarEdit(client, proposal);
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.error.kind, "unreachable");
 });

@@ -72,8 +72,8 @@ export const GOOGLE_OAUTH_SCOPES = [
  * Broader read/write access across all of Spencer's accessible Google
  * Calendars (AD-13, FR-27) — Google's scope catalog has no narrower
  * "primary only" grant. "Primary only" for FR-27's confirm-gated path is
- * enforced entirely by `calendar-adapter.ts` checking `calendarId ===
- * 'primary'` in code, not by this grant itself (AD-13, confirmed by
+ * enforced entirely by `calendar-adapter.ts`'s `assertPrimaryCalendar`
+ * (`calendarId === 'primary'`) in code, not by this grant itself (AD-13, confirmed by
  * Spencer 2026-09-18). This client is NEVER handed to AD-4's automatic
  * "Yoh Plan" path — only `calendar-adapter.ts`'s own
  * `proposeCalendarEdit`/`proposeNewCalendarEvent`/`applyCalendarEdit` use
@@ -214,7 +214,9 @@ export class TokenStore {
     const broadRefreshToken = stored?.broadRefreshToken ?? config.broadInitialRefreshToken;
     if (broadRefreshToken) {
       this.broadClient.setCredentials({ refresh_token: broadRefreshToken });
-      if (!stored?.broadRefreshToken) {
+      // `writeStoredToken` needs a narrow refresh token to exist first; a
+      // broad-only config just keeps the broad token in memory until one does.
+      if (!stored?.broadRefreshToken && refreshToken) {
         this.writeStoredToken({ broadRefreshToken });
       }
     }
@@ -225,8 +227,15 @@ export class TokenStore {
       }
     });
     this.broadClient.on("tokens", (tokens: Credentials) => {
-      if (tokens.refresh_token) {
+      if (!tokens.refresh_token) return;
+      try {
         this.writeStoredToken({ broadRefreshToken: tokens.refresh_token });
+      } catch {
+        // No narrow refresh token exists yet (see the broad-only branch
+        // above) — `writeStoredToken` can't persist without one. Keep the
+        // refreshed broad token in the client's own in-memory credentials
+        // (already set by `setCredentials`/this event) rather than crashing
+        // this listener; it persists once a narrow token exists.
       }
     });
   }

@@ -307,3 +307,43 @@ test("AD-10: no file other than token-store.ts imports google-auth-library", () 
   walk(join(import.meta.dirname, "..", "src"));
   assert.deepEqual(offenders, []);
 });
+
+test("a broad-only config (no narrow refresh token anywhere) constructs without throwing and keeps the broad token in memory", () => {
+  const tokenFilePath = tempTokenFilePath();
+  const store = createTokenStore({
+    clientId: "fake-client-id",
+    clientSecret: "fake-client-secret",
+    redirectUri: "http://localhost:3000/oauth2callback",
+    tokenFilePath,
+    broadInitialRefreshToken: "broad-seed",
+  });
+
+  assert.equal(store.getBroadOAuth2Client().credentials.refresh_token, "broad-seed");
+});
+
+test("a broad-only config's later broad-client token refresh does not crash the process when no narrow refresh token exists yet", () => {
+  const tokenFilePath = tempTokenFilePath();
+  const store = createTokenStore({
+    clientId: "fake-client-id",
+    clientSecret: "fake-client-secret",
+    redirectUri: "http://localhost:3000/oauth2callback",
+    tokenFilePath,
+    broadInitialRefreshToken: "broad-seed",
+  });
+
+  // Previously this construction path didn't exist (a broad-only config threw
+  // immediately at construction); now that it's allowed, a later refresh of
+  // the broad client must not throw uncaught from inside its 'tokens'
+  // listener just because writeStoredToken still has no narrow token to
+  // anchor a write to.
+  assert.doesNotThrow(() => {
+    store.getBroadOAuth2Client().emit("tokens", { refresh_token: "broad-refreshed" });
+  });
+
+  // Once a narrow token DOES exist, a subsequent broad refresh persists normally.
+  store.getOAuth2Client().emit("tokens", { refresh_token: "narrow-seed" });
+  store.getBroadOAuth2Client().emit("tokens", { refresh_token: "broad-refreshed-again" });
+  const onDisk = JSON.parse(readFileSync(tokenFilePath, "utf8")) as { refreshToken: string; broadRefreshToken?: string };
+  assert.equal(onDisk.refreshToken, "narrow-seed");
+  assert.equal(onDisk.broadRefreshToken, "broad-refreshed-again");
+});
