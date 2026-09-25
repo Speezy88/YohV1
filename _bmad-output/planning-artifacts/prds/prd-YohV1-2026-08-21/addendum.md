@@ -1,7 +1,7 @@
 ---
 title: PRD Addendum: Yoh
 created: 2026-08-22
-updated: 2026-09-17
+updated: 2026-09-25
 status: final
 ---
 
@@ -36,7 +36,7 @@ Carried forward from reconciliation against the brief's addendum and the technic
 
 ## Canvas API Integration (parked, pending access)
 
-Captured 2026-09-16 while parking the Canvas LMS assignment sync in `prd.md` §9.3/§11 — quick research done up front so this is ready to pick up once school API access is granted, not a specified design yet.
+Captured 2026-09-16 while parking the Canvas LMS assignment sync in `prd.md` §9.4/§11 — quick research done up front so this is ready to pick up once school API access is granted, not a specified design yet.
 
 - **What the API offers.** Canvas's REST API exposes assignment data two ways: an `assignments` endpoint, and a `calendar_events` endpoint that can return assignments as calendar-style events with due dates in an `all_day_date` field. Either is usable for "read assignment due dates"; the calendar_events shape also carries assignment-override data (which students/sections an assignment applies to) that Spencer's personal-use case doesn't need.
 - **Auth is the actual blocker.** Canvas uses OAuth2 (RFC-6749) via a Developer Key (client ID/secret pair) that must be registered in the school's Canvas instance — for a hosted school instance, that requires the school's Canvas admin to issue it. That approval step, not any technical complexity, is what's currently pending. Once issued, tokens expire in ~1 hour and require the standard refresh-token flow — the same maintenance class as the Google OAuth integration already in Yoh (§6 Observability's "auth expired" failure mode applies here too, once built).
@@ -60,6 +60,24 @@ Sourced from `_bmad-output/brainstorming/brainstorm-chat-cli-live-integrations-2
 - **FR-27 confirmation flow.** Distinct from FR-22's silent ownership check: FR-27 needs Yoh to (1) read the target event via `CalendarReadClient`, (2) show Spencer what specifically would change (not just "confirm?"), (3) only then call `editCalendarBlock`. The `PLAN_BLOCK_ID_EXTENDED_PROPERTY` tagging FR-22 already uses to recognize Yoh-owned events is the same mechanism that tells FR-27 an event is *not* Yoh-owned and therefore needs this confirmation path rather than FR-22's automatic one.
 - **FR-28/FR-29 search provider.** `prd.md` §7 already named Perplexity as the anticipated provider back when Research Vault was Phase 5-scoped; no new research contradicts that choice, so it remains the working assumption for Phase 1.5 — confirm current API pricing/terms before build, since the cost guardrail (§7) depends on it staying low for single-user, on-demand volume.
 - **Provenance/receipt mechanism.** The one-line chat receipts required by FR-26–FR-29 and the Data-integrity NFR (§6) are a chat-cli output concern only — no new storage. Source+timestamp tagging for FR-29's saved pages is a Notion page property, not a new subsystem.
+
+## Phase 2: Web App — Technical Notes
+
+Sourced from `_bmad-output/brainstorming/brainstorm-phase2-web-app-ui-2026-09-24/` (`brainstorm-intent.md`, `.memlog.md`). Capability contract is `prd.md` §5.9–§5.13; this section holds the how-leaning detail Spencer supplied, for `bmad-ux` and `bmad-architecture` to confirm or replace.
+
+- **UI stack direction (from the brainstorm, not yet an architecture decision).** Tailwind CSS with a custom config for the neumorphic palette and shadows; neumorphism.io as the shadow-CSS generator; shadcn/ui as the headless component base (Chakra and Material 3 were considered as alternatives); Framer Motion / Motion (or GSAP) for motion.
+- **Animation set.** transitions.dev free set: matrix-loader, thinking-states, shimmer-text, streaming-text, page-side-by-side, panel-reveal, tabs-sliding, reasoning-stream, skeleton-reveal; checkbox-check / dissolve for FR-41's check-off fade. transitions.dev's "Image generation placeholder" is the closest match to the Screensaver dot field but is Pro-only — **the Screensaver (FR-45) must be custom-built.**
+- **Charts.** `@bklitui/ui/charts` for the Desk usage heatmap (HeatmapChart, Cells, XAxis, YAxis, Tooltip, Legend; fluid layout; week columns × 7 day rows). The Task Completed widget is modeled on Meta Muse's "Task Completed" feature.
+- **Wordmark.** "Yoh Meeseek," bold Montserrat.
+- **Architecture impacts to raise in `bmad-architecture`** (the spine is deliberately untouched by this PRD update):
+  - **AD-3 / AD-5** name `chat-cli.ts` as the only place a `Proposal` is applied. FR-48 requires a surface-agnostic confirm path so the Web App's Approve button (FR-32) and Chat confirmations resolve Proposals through the same rules, including the stale-proposal check.
+  - **AD-12** is titled and scoped "CLI-only"; FR-41 (check-off Status write), FR-38 (/sandbox via `updateTaskField`), and FR-51 (/research filing) need the same enumerated, schema-checked write surface reachable from the Web App — still never from a cron-triggered ritual run.
+  - **Reshuffle writes (FR-32)** touch only the "Yoh Plan" calendar, so they fit AD-13's narrow client / AD-4's API-layer isolation rather than FR-27's broader client — worth confirming explicitly.
+  - **Completion/Activity Log (FR-47)** is new durable storage — likely `memory-store.ts` territory (SQLite), needing an owner under AD-9.
+  - **Routines (FR-35)** are new durable storage plus a daily placement step in the Morning Ritual.
+  - **In-App Notifications (FR-49)** need a server-to-browser delivery path (push/stream) and a persisted unread state; `/research` (FR-51) needs a background job that survives the browser tab closing.
+  - **Public feeds (FR-44)** add three outbound integrations; each must fail independently (no shared failure path with Notion/Calendar), with caching to stay inside free-tier rate limits.
+- **Deferred implementation parameters (Phase 2).** Starting values, to tune in use: Reshuffle Preview begins animating ≤ ~2 s after drag-release; check-off undo window ~5 s; idle timeout before the Screensaver ~5 min; feed refresh ~5 min for crypto, ~30 min for weather, ~60 min for news (adjust down if a free tier's rate limit requires).
 
 ## Notes
 
