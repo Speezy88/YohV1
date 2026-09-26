@@ -1,0 +1,771 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Yoh — Color &amp; Material Themes</title>
+<style>
+/* ============================================================================
+   YOH — COLOR THEME EXPLORATION (5 register variations)
+   Static, inline-CSS-only, no JS, no network. Wordmark font requested as
+   Montserrat but loaded from NOWHERE (no network allowed) — declared as
+   `font-family: Montserrat, system-ui, sans-serif` so it falls back to the
+   system UI font on this page; note left visible in the header.
+
+   All contrast ratios below were computed with the standard WCAG 2.2
+   relative-luminance formula (sRGB -> linear -> 0.2126R+0.7152G+0.0722B,
+   ratio = (L1+0.05)/(L2+0.05)) via a small script, not eyeballed. Verdicts:
+   normal text needs >=4.5:1, non-text UI boundaries need >=3:1 (WCAG 1.4.11).
+
+   ==========================================================================
+   VARIATION 1 — Neumorphism-forward (warm off-white)
+   bg/surface   #E7E1D7
+   body text    #262220  -> 12.12:1 vs surface   PASS (>=4.5)
+   muted text   #6A645A  -> 4.51:1  vs surface   PASS (>=4.5)
+   border/rim   #807C72  -> 3.20:1  vs surface   PASS (>=3.0, non-text)
+   accent       #98682D  -> 3.71:1  vs surface   PASS (>=3.0, non-text)
+   accent-text  #FAF7F2  -> 4.51:1  vs accent    PASS (>=4.5, label on filled btn)
+   shadow-light rgba(255,255,255,.70)  shadow-dark rgba(163,150,130,.45)
+   Boundary problem: the soft extruded shadow alone measures ~1.2:1 (not
+   printed as a pass/fail row because it is not the shipped boundary — the
+   1.5px solid hairline rim #807C72 is what actually carries the 3:1 case).
+   Dark counterpart (exploratory, swatch strip only):
+   bg #201C17  surface #241F19  text #EDE7DC  muted #A69C8C
+   border #6E675B  accent #C68A45
+
+   ==========================================================================
+   VARIATION 2 — Glass-forward (cooler off-white, blurred backdrop)
+   backdrop     linear-gradient(135deg, #E3E7EA, #EDEFF1)
+   panel        rgba(255,255,255,.55) + backdrop-filter: blur(16px) saturate(140%)
+                composited/effective color used for contrast math: #EEF1F3
+                (worst-case = panel over its own lightest backdrop stop)
+   body text    #1B1F22  -> 14.63:1 vs panel     PASS (>=4.5)
+   muted text   #5B6368  -> 5.40:1  vs panel     PASS (>=4.5)
+   border/edge  #82868A  -> 3.23:1  vs panel     PASS (>=3.0, non-text)
+   accent       #2C6C8C  -> 5.10:1  vs panel     PASS (>=3.0, non-text)
+   accent-text  #FAFBFC  -> 5.58:1  vs accent    PASS (>=4.5)
+   shadow-light rgba(255,255,255,.60)  shadow-dark rgba(150,160,168,.35)
+   Boundary problem: blur + translucency alone gives near-zero edge contrast
+   (content behind the glass changes it unpredictably) — solved with a 1px
+   solid glass-edge stroke (#82868A) plus a brighter inner top highlight.
+   Dark counterpart (exploratory):
+   backdrop #14171A -> #1B1E22  panel #22262A  text #EDEFF1  muted #9AA3A8
+   border #565C61  accent #4FA0C9
+
+   ==========================================================================
+   VARIATION 3 — Monochrome strict (zero accent)
+   bg/surface   #EFEFEC
+   body text    #111111  -> 16.39:1 vs surface   PASS (>=4.5)
+   muted text   #6A6A69  -> 4.70:1  vs surface   PASS (>=4.5)
+                (= rgba(17,17,17,.60) over #EFEFEC, printed as its solid
+                equivalent since that's what actually renders)
+   border/rim   #5B5B5A  -> 5.90:1  vs surface   PASS (>=3.0, non-text)
+                (= rgba(0,0,0,.62) over #EFEFEC, solid equivalent)
+   accent       none — state is carried by weight (regular/bold/solid-fill),
+                opacity, and inset-vs-outset shadow direction only.
+   shadow-light rgba(255,255,255,.80)  shadow-dark rgba(0,0,0,.10) — flatter
+   than V1 on purpose: this register leans on the hairline + weight, not
+   heavy extrusion, to prove state without color.
+   Boundary problem: with nothing to lean on but neutrals, the shadow reads
+   under 1.5:1 alone. Every interactive edge gets the same solid 1px
+   rgba(0,0,0,.62) hairline — deliberately closer to a "drawn" line than a
+   soft neumorphic edge, which is the honest cost of zero accent + AA.
+   Dark counterpart (exploratory):
+   bg/surface #161615  text #F1F1EE  muted #A0A09E  border #85857F
+
+   ==========================================================================
+   VARIATION 4 — Monochrome + one quiet accent
+   Same neutrals as V3 (bg/surface #EFEFEC, text #111111 16.39:1, muted
+   #6A6A69 4.70:1, border #5B5B5A 5.90:1— all PASS as above).
+   accent       #3454B4 (muted indigo)  -> 5.93:1 vs surface  PASS (>=3.0)
+   accent-text  #FFFFFF -> 6.83:1 vs accent               PASS (>=4.5)
+   Why indigo: it reads as "trustworthy/confirm" without borrowing Apple's
+   exact system blue, stays low-saturation enough to not break the
+   monochrome discipline, and is never confusable with a destructive/error
+   color. Used ONLY on: focus rings, the active-drag ghost outline, and the
+   Approve button fill — nowhere else, so the accent still means one thing.
+   Dark counterpart (exploratory):
+   Same dark neutrals as V3's strip, accent brightened to #6E85E0 for
+   sufficient luminance against a near-black surface.
+
+   ==========================================================================
+   VARIATION 5 — Inverted/dark (exploratory — dark mode is UNDECIDED)
+   bg           #16171A
+   surface      #1E2024
+   body text    #EDEDEC  -> 13.93:1 vs surface   PASS (>=4.5)
+   muted text   #909192  -> 5.17:1  vs surface   PASS (>=4.5)
+   border/rim   #707070  -> 3.29:1  vs surface   PASS (>=3.0, non-text)
+   accent       #6E85E0  -> 4.73:1  vs surface   PASS (>=3.0, non-text)
+   accent-text  #14161A  -> 5.26:1  vs accent    PASS (>=4.5)
+   shadow-light rgba(255,255,255,.05)  shadow-dark rgba(0,0,0,.55)
+   glass (chat) rgba(255,255,255,.05) + backdrop-filter: blur(20px), edge
+                rgba(255,255,255,.12)
+   Boundary problem — THE honest finding of this set: a *soft* dark
+   neumorphic rim at rgba(255,255,255,.12) measures under 2:1. Reaching
+   3:1 needs a rim close to solid mid-gray (#707070), which reads as a
+   visible stroke, not a soft neumorphic edge — directly in tension with
+   the "soft dark neumorphism" brief. Flagging this as the clearest
+   soft-shadow-boundary failure mode in the whole set, and the strongest
+   argument for treating dark mode as a later, separate pass.
+   ========================================================================== */
+
+:root{
+  color-scheme: dark;
+}
+*{ box-sizing:border-box; }
+html,body{
+  margin:0; padding:0;
+  background:#121316;
+  color:#E6E6E3;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+}
+body{ padding: 28px 20px 60px; }
+
+.shell-header{ max-width:1180px; margin:0 auto 32px; }
+.shell-header h1{
+  font-family: Montserrat, system-ui, sans-serif; /* requested wordmark font — no network load, falls back to system-ui here */
+  font-weight:700; font-size:26px; margin:0 0 6px;
+  letter-spacing:-0.01em;
+}
+.shell-header p{ margin:4px 0; color:#ABABA8; font-size:13.5px; line-height:1.55; max-width:920px; }
+.shell-header .note{ color:#83837F; font-size:12.5px; }
+.legend{
+  margin-top:14px; padding:12px 14px; border:1px solid #2A2B2F; border-radius:10px;
+  background:#17181B; font-size:12.5px; color:#B7B7B3; line-height:1.6;
+}
+.legend b{ color:#E6E6E3; }
+
+main{ max-width:1180px; margin:0 auto; display:flex; flex-direction:column; gap:44px; }
+
+.variation{
+  border:1px solid #24252A; border-radius:16px; padding:22px 22px 26px;
+  background:#17181B;
+}
+.v-head h2{
+  font-family: Montserrat, system-ui, sans-serif;
+  font-size:19px; margin:0 0 4px; font-weight:700; color:#F1F1EE;
+}
+.v-head .register{ display:block; font-family:-apple-system,system-ui,sans-serif; font-weight:400; font-size:13px; color:#9C9C98; margin-top:3px; }
+
+.tokens{ display:flex; flex-wrap:wrap; gap:8px; margin:14px 0 16px; }
+.chip{ display:flex; align-items:center; gap:7px; padding:5px 10px 5px 6px; border:1px solid #2A2B2F; border-radius:999px; background:#1D1E22; font-size:11.5px; color:#C9C9C5; }
+.chip .sw{ width:16px; height:16px; border-radius:5px; border:1px solid rgba(255,255,255,.15); flex:none; }
+.chip code{ font-family: "SF Mono", Menlo, Consolas, monospace; font-size:11px; color:#E2E2DE; }
+
+table.contrast{ width:100%; border-collapse:collapse; margin:10px 0 16px; font-size:12.5px; }
+table.contrast caption{ text-align:left; font-size:11.5px; color:#8C8C88; margin-bottom:6px; }
+table.contrast th, table.contrast td{ text-align:left; padding:6px 10px; border-bottom:1px solid #232428; }
+table.contrast th{ color:#8C8C88; font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:.03em; }
+table.contrast td{ color:#D9D9D5; }
+.tag{ display:inline-block; padding:2px 8px; border-radius:999px; font-size:10.5px; font-weight:700; letter-spacing:.03em; }
+.tag.pass{ background:rgba(84,181,120,.16); color:#79D89E; border:1px solid rgba(121,216,158,.35); }
+.tag.na{ background:rgba(255,255,255,.06); color:#9C9C98; border:1px solid rgba(255,255,255,.12); }
+
+.boundary-note{ font-size:12.5px; color:#B7B7B3; line-height:1.55; margin:0 0 18px; padding:10px 12px; border-left:2px solid #3A3B40; background:#1B1C20; border-radius:0 8px 8px 0; }
+.boundary-note b{ color:#E6E6E3; }
+
+/* ---------- shared Home-snippet component (colors driven by CSS vars per .vN wrapper) ---------- */
+
+.home-snippet{
+  position:relative;
+  background: var(--snippet-bg, var(--surface));
+  border-radius: var(--radius, 16px);
+  padding:16px;
+  display:grid;
+  grid-template-columns: 1.05fr .95fr;
+  grid-template-areas: "checklist calendar" "bottom bottom";
+  gap:12px;
+  isolation:isolate;
+}
+.v2 .home-snippet{ background-image: linear-gradient(135deg, var(--bg), var(--bg2)); }
+.v5 .home-snippet{ background: var(--bg); }
+
+.snippet-wordmark{
+  position:absolute; top:10px; right:14px;
+  font-family: Montserrat, system-ui, sans-serif; font-weight:700; font-size:11px;
+  color: var(--muted); letter-spacing:.02em; opacity:.8;
+}
+
+.panel{
+  background: var(--surface);
+  border-radius: calc(var(--radius, 16px) - 4px);
+  padding:12px 12px 14px;
+  box-shadow: 7px 7px 14px var(--shadow-d), -7px -7px 14px var(--shadow-l);
+}
+.v2 .panel{
+  background: var(--panel-rgba);
+  -webkit-backdrop-filter: blur(var(--blur,16px)) saturate(140%);
+  backdrop-filter: blur(var(--blur,16px)) saturate(140%);
+  border-top:1px solid rgba(255,255,255,.7);
+  border-left:1px solid rgba(255,255,255,.45);
+  box-shadow: 0 8px 22px rgba(60,70,80,.14);
+}
+.v3 .panel, .v4 .panel{
+  box-shadow: 3px 3px 8px var(--shadow-d), -3px -3px 8px var(--shadow-l);
+}
+.v5 .panel{
+  box-shadow: 7px 7px 16px var(--shadow-d), -3px -3px 10px var(--shadow-l);
+}
+
+.panel-title{ font-size:10.5px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color: var(--muted); margin:0 0 9px; }
+
+.checklist-panel{ grid-area:checklist; }
+.checklist{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:7px; }
+.task{
+  display:flex; align-items:center; gap:8px;
+  padding:7px 9px;
+  border-radius:9px;
+  background: var(--surface);
+  position:relative;
+}
+.checkbox{
+  width:16px; height:16px; flex:none; border-radius:5px;
+  border:1.6px solid var(--border);
+  background: var(--surface);
+  display:flex; align-items:center; justify-content:center;
+  box-shadow: inset 1px 1px 3px var(--shadow-d);
+}
+.task.checked .checkbox{
+  background: var(--check-fill);
+  border-color: var(--check-fill);
+}
+.task.checked .checkbox::after{
+  content:"\2713"; font-size:11px; line-height:1; color: var(--check-mark);
+  font-weight:700;
+}
+.task-label{ font-size:12.5px; color: var(--text); flex:1; }
+.task.checked .task-label{ opacity:.55; text-decoration:line-through; }
+.task-time{ display:none; }
+.pin-tag{
+  font-size:9.5px; font-weight:700; letter-spacing:.04em; text-transform:uppercase;
+  color: var(--muted); border:1px solid var(--border); border-radius:5px; padding:2px 5px;
+}
+
+.calendar-panel{ grid-area:calendar; }
+.cal-track{ display:flex; gap:8px; height:172px; }
+.cal-hours{ display:flex; flex-direction:column; justify-content:space-between; font-size:9.5px; color:var(--muted); padding:2px 0; }
+.cal-rail{ position:relative; flex:1; border-left:1px solid var(--border); opacity:1; }
+.cal-rail::before{
+  content:""; position:absolute; inset:0;
+  background-image: repeating-linear-gradient(to bottom, transparent, transparent calc(172px/6 - 1px), var(--border) calc(172px/6 - 1px), var(--border) calc(172px/6));
+  opacity:.35; pointer-events:none;
+}
+.cal-event{
+  position:absolute; left:4px; right:2px;
+  border-radius:7px; padding:5px 7px; font-size:10.5px; line-height:1.35;
+  color: var(--text);
+}
+.cal-event.fixed{
+  top:75%; height:25%;
+  background: repeating-linear-gradient(45deg, var(--fixed-a), var(--fixed-a) 4px, var(--fixed-b) 4px, var(--fixed-b) 8px);
+  border:1px solid var(--border);
+  color: var(--fixed-text);
+  display:flex; align-items:center;
+}
+.cal-event.yoh{
+  top:33.3%; height:25%;
+  background: var(--surface);
+  box-shadow: 4px 4px 9px var(--shadow-d), -4px -4px 9px var(--shadow-l);
+  border:1px solid transparent;
+}
+.cal-event.yoh.dragging{
+  border:1.5px dashed var(--accent-or-text);
+  background: var(--surface);
+  box-shadow: none;
+}
+.cal-event.small{ top:60.5%; height:11%; font-size:9.5px; padding:3px 6px; background:var(--surface); box-shadow: 3px 3px 7px var(--shadow-d), -3px -3px 7px var(--shadow-l); }
+
+.reshuffle-card{
+  margin-top:10px; padding:9px 10px; border-radius:9px;
+  background: var(--surface);
+  border:1px solid var(--border);
+  box-shadow: 4px 4px 10px var(--shadow-d), -4px -4px 10px var(--shadow-l);
+}
+.v2 .reshuffle-card{ background:var(--panel-rgba); -webkit-backdrop-filter:blur(var(--blur,16px)); backdrop-filter:blur(var(--blur,16px)); }
+.reshuffle-card .rc-label{ font-size:10.5px; color:var(--text); margin:0 0 7px; font-weight:600; }
+.rc-actions{ display:flex; gap:8px; }
+.btn{
+  font-size:11px; font-weight:700; padding:6px 12px; border-radius:8px; cursor:default;
+  border:1.4px solid transparent; letter-spacing:.01em;
+}
+.btn-approve{ background: var(--accent-or-text); color: var(--accent-text-or-bg); border-color: var(--accent-or-text); }
+.btn-discard{ background:transparent; color: var(--text); border-color: var(--border); }
+
+.bottom-row{ grid-area:bottom; display:flex; flex-direction:column; gap:8px; margin-top:2px; }
+.toast{
+  display:flex; align-items:flex-start; gap:8px;
+  padding:9px 11px; border-radius:10px;
+  background: var(--surface);
+  border-left:3px solid var(--accent-or-text);
+  box-shadow: 4px 4px 10px var(--shadow-d), -4px -4px 10px var(--shadow-l);
+  font-size:11.5px; color: var(--text);
+}
+.v2 .toast{ background:var(--panel-rgba); -webkit-backdrop-filter:blur(var(--blur,16px)); backdrop-filter:blur(var(--blur,16px)); }
+.toast .dot{ width:6px; height:6px; border-radius:50%; background:var(--accent-or-text); margin-top:4px; flex:none; }
+
+.chat-bar{
+  display:flex; align-items:center; gap:8px;
+  padding:9px 13px; border-radius:999px;
+  background: var(--chat-bg, var(--surface));
+  border:1.4px solid var(--border);
+  box-shadow: 4px 4px 10px var(--shadow-d), -4px -4px 10px var(--shadow-l);
+}
+.v1 .chat-bar, .v5 .chat-bar{
+  background: var(--panel-rgba, var(--surface));
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+}
+.chat-slash{
+  width:18px; height:18px; border-radius:6px; flex:none;
+  display:flex; align-items:center; justify-content:center;
+  background: var(--surface); border:1px solid var(--border);
+  font-size:10px; font-weight:700; color: var(--muted);
+}
+.chat-placeholder{ font-size:11.5px; color: var(--muted); }
+
+/* ---------- dark-mode counterpart swatch strips ---------- */
+.dark-strip{ margin-top:16px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.dark-strip .dlabel{ font-size:10.5px; color:#8C8C88; text-transform:uppercase; letter-spacing:.05em; font-weight:700; margin-right:2px; }
+.dswatch-row{ display:flex; gap:6px; }
+.dswatch{ width:26px; height:26px; border-radius:7px; border:1px solid rgba(255,255,255,.12); position:relative; }
+.dswatch span{ position:absolute; bottom:-16px; left:50%; transform:translateX(-50%); font-size:8.5px; color:#7C7C78; white-space:nowrap; }
+
+/* ---------- per-variation token bindings ---------- */
+
+.v1{
+  --bg:#E7E1D7; --surface:#E7E1D7; --text:#262220; --muted:#6A645A; --border:#807C72;
+  --accent:#98682D; --accent-text:#FAF7F2;
+  --check-fill:#98682D; --check-mark:#FAF7F2;
+  --accent-or-text:#98682D; --accent-text-or-bg:#FAF7F2;
+  --shadow-l: rgba(255,255,255,.70); --shadow-d: rgba(163,150,130,.45);
+  --fixed-a:#DCD4C4; --fixed-b:#D2C8B4; --fixed-text:#4A4235;
+  --panel-rgba: rgba(255,255,255,.55);
+  --radius:16px;
+}
+.v2{
+  --bg:#E3E7EA; --bg2:#EDEFF1; --surface:#EEF1F3; --panel-rgba: rgba(255,255,255,.55);
+  --text:#1B1F22; --muted:#5B6368; --border:#82868A;
+  --accent:#2C6C8C; --accent-text:#FAFBFC;
+  --check-fill:#2C6C8C; --check-mark:#FAFBFC;
+  --accent-or-text:#2C6C8C; --accent-text-or-bg:#FAFBFC;
+  --shadow-l: rgba(255,255,255,.60); --shadow-d: rgba(150,160,168,.35);
+  --fixed-a:#DCE1E4; --fixed-b:#CFD6DA; --fixed-text:#3C4448;
+  --blur:16px; --radius:16px;
+}
+.v3{
+  --bg:#EFEFEC; --surface:#EFEFEC; --text:#111111; --muted:#6A6A69; --border:#5B5B5A;
+  --accent:transparent; --accent-text:#111111;
+  --check-fill:#111111; --check-mark:#EFEFEC;
+  --accent-or-text:#111111; --accent-text-or-bg:#EFEFEC;
+  --shadow-l: rgba(255,255,255,.80); --shadow-d: rgba(0,0,0,.10);
+  --fixed-a:#E2E2DF; --fixed-b:#D6D6D2; --fixed-text:#111111;
+  --panel-rgba: rgba(255,255,255,.6);
+  --radius:12px;
+}
+.v4{
+  --bg:#EFEFEC; --surface:#EFEFEC; --text:#111111; --muted:#6A6A69; --border:#5B5B5A;
+  --accent:#3454B4; --accent-text:#FFFFFF;
+  --check-fill:#3454B4; --check-mark:#FFFFFF;
+  --accent-or-text:#3454B4; --accent-text-or-bg:#FFFFFF;
+  --shadow-l: rgba(255,255,255,.80); --shadow-d: rgba(0,0,0,.10);
+  --fixed-a:#E2E2DF; --fixed-b:#D6D6D2; --fixed-text:#111111;
+  --panel-rgba: rgba(255,255,255,.6);
+  --radius:12px;
+}
+.v5{
+  --bg:#16171A; --surface:#1E2024; --text:#EDEDEC; --muted:#909192; --border:#707070;
+  --accent:#6E85E0; --accent-text:#14161A;
+  --check-fill:#6E85E0; --check-mark:#14161A;
+  --accent-or-text:#6E85E0; --accent-text-or-bg:#14161A;
+  --shadow-l: rgba(255,255,255,.05); --shadow-d: rgba(0,0,0,.55);
+  --fixed-a:#2A2C31; --fixed-b:#222327; --fixed-text:#C7C7C5;
+  --panel-rgba: rgba(255,255,255,.05);
+  --blur:20px; --radius:16px;
+}
+
+/* ---------- restrained motion, gated behind prefers-reduced-motion ---------- */
+@media (prefers-reduced-motion: no-preference){
+  @keyframes dissolveIn{ from{ opacity:1; } to{ opacity:.55; } }
+  .task.checked .task-label{ animation: dissolveIn 1.3s ease-out; }
+
+  @keyframes driftPulse{
+    0%,100%{ transform:translateY(0); }
+    50%{ transform:translateY(-1.5px); }
+  }
+  .cal-event.yoh.dragging{ animation: driftPulse 2.6s ease-in-out infinite; }
+
+  @keyframes toastIn{ from{ opacity:0; transform:translateY(-5px);} to{ opacity:1; transform:translateY(0);} }
+  .toast{ animation: toastIn .55s ease-out; }
+
+  @keyframes dotPulse{ 0%,100%{ opacity:1;} 50%{ opacity:.35;} }
+  .toast .dot{ animation: dotPulse 2.2s ease-in-out infinite; }
+}
+
+@media (max-width: 720px){
+  .home-snippet{ grid-template-columns:1fr; grid-template-areas:"checklist" "calendar" "bottom"; }
+}
+</style>
+</head>
+<body>
+
+<header class="shell-header">
+  <h1>Yoh — Color &amp; Material Theme Exploration</h1>
+  <p>Five register variations for the Phase 2 web app Home page, built from the PRD-fixed constraints (off-white + black base, neumorphic surfaces) plus the session's added direction: a mix of neumorphism and glass/translucency, inspired by Meta's Muse and Apple's translucent material language, targeting "high-tech but minimalistic" and "miles better than any other AI product." No emoji anywhere. Each variation differs in <em>register</em>, not hue — and each prints real WCAG 2.2 contrast numbers so the open question ("can off-white neumorphism pass AA?") has an honest answer per variation.</p>
+  <p class="note">Wordmark note: "Yoh Meeseek" is requested in bold Montserrat. This page loads nothing from the network, so it declares <code>font-family: Montserrat, system-ui, sans-serif</code> — it will render in the system UI font here unless Montserrat happens to already be installed locally.</p>
+  <div class="legend">
+    <b>Non-color cues used throughout (per WCAG 1.4.1 — never color alone):</b>
+    a checkmark glyph + strikethrough + reduced opacity marks "done" (not just a color swap); "Pinned" is a text tag, not a color dot; the fixed calendar event is both cross-hatched <i>and</i> labeled "(fixed)"; the in-drag block gets a dashed outline <i>and</i> is labeled "(dragging)"; Approve is always solid-filled, Discard is always outline-only — the shape difference carries the meaning even for a variation with zero accent color.
+  </div>
+</header>
+
+<main>
+
+<!-- ========================= VARIATION 1 ========================= -->
+<section class="variation v1">
+  <div class="v-head">
+    <h2>1 &middot; Neumorphism-forward
+      <span class="register">warm off-white, soft extruded cards; glass is reserved for the one floating surface — the chat bubble</span>
+    </h2>
+  </div>
+  <div class="tokens">
+    <div class="chip"><span class="sw" style="background:#E7E1D7"></span><code>#E7E1D7</code> bg/surface</div>
+    <div class="chip"><span class="sw" style="background:#262220"></span><code>#262220</code> body text</div>
+    <div class="chip"><span class="sw" style="background:#6A645A"></span><code>#6A645A</code> muted text</div>
+    <div class="chip"><span class="sw" style="background:#807C72"></span><code>#807C72</code> border/rim</div>
+    <div class="chip"><span class="sw" style="background:#98682D"></span><code>#98682D</code> accent</div>
+  </div>
+  <table class="contrast">
+    <caption>Computed WCAG 2.2 contrast (relative-luminance method)</caption>
+    <thead><tr><th>Pair</th><th>Ratio</th><th>Threshold</th><th>Verdict</th></tr></thead>
+    <tbody>
+      <tr><td>Body text on surface</td><td>12.12:1</td><td>&ge;4.5:1</td><td><span class="tag pass">PASS</span></td></tr>
+      <tr><td>Muted text on surface</td><td>4.51:1</td><td>&ge;4.5:1</td><td><span class="tag pass">PASS</span></td></tr>
+      <tr><td>Control boundary (hairline rim) vs surface</td><td>3.20:1</td><td>&ge;3:1</td><td><span class="tag pass">PASS</span></td></tr>
+      <tr><td>Accent vs surface (non-text)</td><td>3.71:1</td><td>&ge;3:1</td><td><span class="tag pass">PASS</span></td></tr>
+      <tr><td>Accent-text on accent fill (Approve label)</td><td>4.51:1</td><td>&ge;4.5:1</td><td><span class="tag pass">PASS</span></td></tr>
+    </tbody>
+  </table>
+  <p class="boundary-note"><b>Boundary solution:</b> the soft shadow alone reads at roughly 1.2:1 — nowhere near AA. A 1.5px solid hairline rim (<code>#807C72</code>) traced just inside every extruded edge is what actually clears 3:1; the shadow stays purely decorative.</p>
+
+  <div class="home-snippet">
+    <span class="snippet-wordmark">Yoh Meeseek</span>
+    <div class="panel checklist-panel">
+      <p class="panel-title">Today</p>
+      <ul class="checklist">
+        <li class="task checked"><span class="checkbox"></span><span class="task-label">Chem problem set — 45m</span></li>
+        <li class="task"><span class="checkbox"></span><span class="task-label">Study block: AP Bio ch. 7 — 2:00–3:30</span></li>
+        <li class="task"><span class="checkbox"></span><span class="task-label">Break — 15m</span><span class="pin-tag">Pinned</span></li>
+        <li class="task"><span class="checkbox"></span><span class="task-label">Email Mr. Alvarez about the lab</span></li>
+      </ul>
+    </div>
+    <div class="panel calendar-panel">
+      <p class="panel-title">Today &middot; 12–6</p>
+      <div class="cal-track">
+        <div class="cal-hours"><span>12p</span><span>2p</span><span>4p</span><span>6p</span></div>
+        <div class="cal-rail">
+          <div class="cal-event yoh dragging">Study block: AP Bio ch. 7 (dragging)</div>
+          <div class="cal-event small">Break — 15m</div>
+          <div class="cal-event fixed">Soccer practice — 4:30–6:00 (fixed)</div>
+        </div>
+      </div>
+      <div class="reshuffle-card">
+        <p class="rc-label">Reshuffle preview: Study block → 2:15–3:45</p>
+        <div class="rc-actions"><span class="btn btn-approve">Approve</span><span class="btn btn-discard">Discard</span></div>
+      </div>
+    </div>
+    <div class="bottom-row">
+      <div class="toast"><span class="dot"></span>Research ready: photosynthesis light reactions — open in Tasks</div>
+      <div class="chat-bar"><span class="chat-slash">/</span><span class="chat-placeholder">Ask Yoh, or type / for commands</span></div>
+    </div>
+  </div>
+
+  <div class="dark-strip">
+    <span class="dlabel">Dark counterpart (exploratory)</span>
+    <div class="dswatch-row">
+      <div class="dswatch" style="background:#201C17"><span>bg</span></div>
+      <div class="dswatch" style="background:#241F19"><span>surf</span></div>
+      <div class="dswatch" style="background:#EDE7DC"><span>text</span></div>
+      <div class="dswatch" style="background:#A69C8C"><span>muted</span></div>
+      <div class="dswatch" style="background:#6E675B"><span>border</span></div>
+      <div class="dswatch" style="background:#C68A45"><span>accent</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ========================= VARIATION 2 ========================= -->
+<section class="variation v2">
+  <div class="v-head">
+    <h2>2 &middot; Glass-forward
+      <span class="register">cooler off-white, subtle blurred gradient backdrop, frosted panels; neumorphism moves down to just the controls</span>
+    </h2>
+  </div>
+  <div class="tokens">
+    <div class="chip"><span class="sw" style="background:#E3E7EA"></span><code>#E3E7EA→#EDEFF1</code> backdrop</div>
+    <div class="chip"><span class="sw" style="background:#EEF1F3"></span><code>#EEF1F3</code> panel (effective)</div>
+    <div class="chip"><span class="sw" style="background:#1B1F22"></span><code>#1B1F22</code> body text</div>
+    <div class="chip"><span class="sw" style="background:#5B6368"></span><code>#5B6368</code> muted text</div>
+    <div class="chip"><span class="sw" style="background:#82868A"></span><code>#82868A</code> border/edge</div>
+    <div class="chip"><span class="sw" style="background:#2C6C8C"></span><code>#2C6C8C</code> accent</div>
+  </div>
+  <table class="contrast">
+    <caption>Computed against the panel's worst-case composited tone (#EEF1F3), since translucency shifts with whatever is behind it</caption>
+    <thead><tr><th>Pair</th><th>Ratio</th><th>Threshold</th><th>Verdict</th></tr></thead>
+    <tbody>
+      <tr><td>Body text on panel</td><td>14.63:1</td><td>&ge;4.5:1</td><td><span class="tag pass">PASS</span></td></tr>
+      <tr><td>Muted text on panel</td><td>5.40:1</td><td>&ge;4.5:1</td><td><span class="tag pass">PASS</span></td></tr>
+      <tr><td>Control boundary (glass edge) vs panel</td><td>3.23:1</td><td>&ge;3:1</td><td><span class="tag pass">PASS</span></td></tr>
+      <tr><td>Accent vs panel (non-text)</td><td>5.10:1</td><td>&ge;3:1</td><td><span class="tag pass">PASS</span></td></tr>
+      <tr><td>Accent-text on accent fill</td><td>5.58:1</td><td>&ge;4.5:1</td><td><span class="tag pass">PASS</span></td></tr>
+    </tbody>
+  </table>
+  <p class="boundary-note"><b>Boundary solution:</b> blur + translucency alone gives almost no measurable edge (it depends on what's behind the glass). A solid 1px glass-edge stroke (<code>#82868A</code>) plus a brighter inner top highlight is what carries AA — the blur stays atmospheric, not load-bearing.</p>
+
+  <div class="home-snippet">
+    <span class="snippet-wordmark">Yoh Meeseek</span>
+    <div class="panel checklist-panel">
+      <p class="panel-title">Today</p>
+      <ul class="checklist">
+        <li class="task checked"><span class="checkbox"></span><span class="task-label">Chem problem set — 45m</span></li>
+        <li class="task"><span class="checkbox"></span><span class="task-label">Study block: AP Bio ch. 7 — 2:00–3:30</span></li>
+        <li class="task"><span class="checkbox"></span><span class="task-label">Break — 15m</span><span class="pin-tag">Pinned</span></li>
+        <li class="task"><span class="checkbox"></span><span class="task-label">Email Mr. Alvarez about the lab</span></li>
+      </ul>
+    </div>
+    <div class="panel calendar-panel">
+      <p class="panel-title">Today &middot; 12–6</p>
+      <div class="cal-track">
+        <div class="cal-hours"><span>12p</span><span>2p</span><span>4p</span><span>6p</span></div>
+        <div class="cal-rail">
+          <div class="cal-event yoh dragging">Study block: AP Bio ch. 7 (dragging)</div>
+          <div class="cal-event small">Break — 15m</div>
+          <div class="cal-event fixed">Soccer practice — 4:30–6:00 (fixed)</div>
+        </div>
+      </div>
+      <div class="reshuffle-card">
+        <p class="rc-label">Reshuffle preview: Study block → 2:15–3:45</p>
+        <div class="rc-actions"><span class="btn btn-approve">Approve</span><span class="btn btn-discard">Discard</span></div>
+      </div>
+    </div>
+    <div class="bottom-row">
+      <div class="toast"><span class="dot"></span>Research ready: photosynthesis light reactions — open in Tasks</div>
+      <div class="chat-bar"><span class="chat-slash">/</span><span class="chat-placeholder">Ask Yoh, or type / for commands</span></div>
+    </div>
+  </div>
+
+  <div class="dark-strip">
+    <span class="dlabel">Dark counterpart (exploratory)</span>
+    <div class="dswatch-row">
+      <div class="dswatch" style="background:#14171A"><span>bg</span></div>
+      <div class="dswatch" style="background:#22262A"><span>panel</span></div>
+      <div class="dswatch" style="background:#EDEFF1"><span>text</span></div>
+      <div class="dswatch" style="background:#9AA3A8"><span>muted</span></div>
+      <div class="dswatch" style="background:#565C61"><span>border</span></div>
+      <div class="dswatch" style="background:#4FA0C9"><span>accent</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ========================= VARIATION 3 ========================= -->
+<section class="variation v3">
+  <div class="v-head">
+    <h2>3 &middot; Monochrome strict
+      <span class="register">pure off-white/black, zero accent color — every state is weight, opacity, or inset direction</span>
+    </h2>
+  </div>
+  <div class="tokens">
+    <div class="chip"><span class="sw" style="background:#EFEFEC"></span><code>#EFEFEC</code> bg/surface</div>
+    <div class="chip"><span class="sw" style="background:#111111"></span><code>#111111</code> body text</div>
+    <div class="chip"><span class="sw" style="background:#6A6A69"></span><code>#6A6A69</code> muted text</div>
+    <div class="chip"><span class="sw" style="background:#5B5B5A"></span><code>#5B5B5A</code> border/rim</div>
+    <div class="chip"><span class="sw" style="background:transparent;border-color:#5B5B5A"></span><code>none</code> accent</div>
+  </div>
+  <table class="contrast">
+    <caption>Computed WCAG 2.2 contrast (relative-luminance method)</caption>
+    <thead><tr><th>Pair</th><th>Ratio</th><th>Threshold</th><th>Verdict</th></tr></thead>
+    <tbody>
+      <tr><td>Body text on surface</td><td>16.39:1</td><td>&ge;4.5:1</td><td><span class="tag pass">PASS</span></td></tr>
+      <tr><td>Muted text on surface (rgba(17,17,17,.60) equiv.)</td><td>4.70:1</td><td>&ge;4.5:1</td><td><span class="tag pass">PASS</span></td></tr>
+      <tr><td>Control boundary (hairline) vs surface</td><td>5.90:1</td><td>&ge;3:1</td><td><span class="tag pass">PASS</span></td></tr>
+      <tr><td>Accent vs surface</td><td>—</td><td>n/a</td><td><span class="tag na">N/A — no accent</span></td></tr>
+    </tbody>
+  </table>
+  <p class="boundary-note"><b>Boundary solution:</b> with no color or heavy shadow to lean on, the shadow alone reads under 1.5:1. Every interactive edge gets the same solid <code>rgba(0,0,0,.62)</code> hairline — visually closer to a drawn line than a soft neumorphic edge, which is the honest cost of zero accent + AA in this register. State otherwise reads through weight (regular vs. bold), opacity, and inset-vs-outset shadow direction only.</p>
+
+  <div class="home-snippet">
+    <span class="snippet-wordmark">Yoh Meeseek</span>
+    <div class="panel checklist-panel">
+      <p class="panel-title">Today</p>
+      <ul class="checklist">
+        <li class="task checked"><span class="checkbox"></span><span class="task-label">Chem problem set — 45m</span></li>
+        <li class="task"><span class="checkbox"></span><span class="task-label">Study block: AP Bio ch. 7 — 2:00–3:30</span></li>
+        <li class="task"><span class="checkbox"></span><span class="task-label">Break — 15m</span><span class="pin-tag">Pinned</span></li>
+        <li class="task"><span class="checkbox"></span><span class="task-label">Email Mr. Alvarez about the lab</span></li>
+      </ul>
+    </div>
+    <div class="panel calendar-panel">
+      <p class="panel-title">Today &middot; 12–6</p>
+      <div class="cal-track">
+        <div class="cal-hours"><span>12p</span><span>2p</span><span>4p</span><span>6p</span></div>
+        <div class="cal-rail">
+          <div class="cal-event yoh dragging">Study block: AP Bio ch. 7 (dragging)</div>
+          <div class="cal-event small">Break — 15m</div>
+          <div class="cal-event fixed">Soccer practice — 4:30–6:00 (fixed)</div>
+        </div>
+      </div>
+      <div class="reshuffle-card">
+        <p class="rc-label">Reshuffle preview: Study block → 2:15–3:45</p>
+        <div class="rc-actions"><span class="btn btn-approve">Approve</span><span class="btn btn-discard">Discard</span></div>
+      </div>
+    </div>
+    <div class="bottom-row">
+      <div class="toast"><span class="dot"></span>Research ready: photosynthesis light reactions — open in Tasks</div>
+      <div class="chat-bar"><span class="chat-slash">/</span><span class="chat-placeholder">Ask Yoh, or type / for commands</span></div>
+    </div>
+  </div>
+
+  <div class="dark-strip">
+    <span class="dlabel">Dark counterpart (exploratory)</span>
+    <div class="dswatch-row">
+      <div class="dswatch" style="background:#161615"><span>bg/surf</span></div>
+      <div class="dswatch" style="background:#F1F1EE"><span>text</span></div>
+      <div class="dswatch" style="background:#A0A09E"><span>muted</span></div>
+      <div class="dswatch" style="background:#85857F"><span>border</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ========================= VARIATION 4 ========================= -->
+<section class="variation v4">
+  <div class="v-head">
+    <h2>4 &middot; Monochrome + one quiet accent
+      <span class="register">same restraint as #3, plus a single muted indigo reserved for focus, active-drag, and Approve only</span>
+    </h2>
+  </div>
+  <div class="tokens">
+    <div class="chip"><span class="sw" style="background:#EFEFEC"></span><code>#EFEFEC</code> bg/surface</div>
+    <div class="chip"><span class="sw" style="background:#111111"></span><code>#111111</code> body text</div>
+    <div class="chip"><span class="sw" style="background:#6A6A69"></span><code>#6A6A69</code> muted text</div>
+    <div class="chip"><span class="sw" style="background:#5B5B5A"></span><code>#5B5B5A</code> border/rim</div>
+    <div class="chip"><span class="sw" style="background:#3454B4"></span><code>#3454B4</code> accent</div>
+  </div>
+  <table class="contrast">
+    <caption>Computed WCAG 2.2 contrast (relative-luminance method)</caption>
+    <thead><tr><th>Pair</th><th>Ratio</th><th>Threshold</th><th>Verdict</th></tr></thead>
+    <tbody>
+      <tr><td>Body text on surface</td><td>16.39:1</td><td>&ge;4.5:1</td><td><span class="tag pass">PASS</span></td></tr>
+      <tr><td>Muted text on surface</td><td>4.70:1</td><td>&ge;4.5:1</td><td><span class="tag pass">PASS</span></td></tr>
+      <tr><td>Control boundary (hairline) vs surface</td><td>5.90:1</td><td>&ge;3:1</td><td><span class="tag pass">PASS</span></td></tr>
+      <tr><td>Accent vs surface (non-text)</td><td>5.93:1</td><td>&ge;3:1</td><td><span class="tag pass">PASS</span></td></tr>
+      <tr><td>Accent-text on accent fill (Approve label)</td><td>6.83:1</td><td>&ge;4.5:1</td><td><span class="tag pass">PASS</span></td></tr>
+    </tbody>
+  </table>
+  <p class="boundary-note"><b>Boundary solution:</b> same neutral hairline as #3 (<code>#5B5B5A</code>, 5.90:1) for default/rest state. The one difference: when a control becomes interactive (focus, active-drag, Approve) the border swaps entirely to the accent, so color adds a <i>second</i>, non-shadow signal on top of shape/weight rather than being the only cue. <b>Why indigo:</b> reads as "confirm/trustworthy" without copying Apple's exact system blue, stays low-saturation enough to not break monochrome discipline, and can't be confused with a destructive-red state.</p>
+
+  <div class="home-snippet">
+    <span class="snippet-wordmark">Yoh Meeseek</span>
+    <div class="panel checklist-panel">
+      <p class="panel-title">Today</p>
+      <ul class="checklist">
+        <li class="task checked"><span class="checkbox"></span><span class="task-label">Chem problem set — 45m</span></li>
+        <li class="task"><span class="checkbox"></span><span class="task-label">Study block: AP Bio ch. 7 — 2:00–3:30</span></li>
+        <li class="task"><span class="checkbox"></span><span class="task-label">Break — 15m</span><span class="pin-tag">Pinned</span></li>
+        <li class="task"><span class="checkbox"></span><span class="task-label">Email Mr. Alvarez about the lab</span></li>
+      </ul>
+    </div>
+    <div class="panel calendar-panel">
+      <p class="panel-title">Today &middot; 12–6</p>
+      <div class="cal-track">
+        <div class="cal-hours"><span>12p</span><span>2p</span><span>4p</span><span>6p</span></div>
+        <div class="cal-rail">
+          <div class="cal-event yoh dragging">Study block: AP Bio ch. 7 (dragging)</div>
+          <div class="cal-event small">Break — 15m</div>
+          <div class="cal-event fixed">Soccer practice — 4:30–6:00 (fixed)</div>
+        </div>
+      </div>
+      <div class="reshuffle-card">
+        <p class="rc-label">Reshuffle preview: Study block → 2:15–3:45</p>
+        <div class="rc-actions"><span class="btn btn-approve">Approve</span><span class="btn btn-discard">Discard</span></div>
+      </div>
+    </div>
+    <div class="bottom-row">
+      <div class="toast"><span class="dot"></span>Research ready: photosynthesis light reactions — open in Tasks</div>
+      <div class="chat-bar"><span class="chat-slash">/</span><span class="chat-placeholder">Ask Yoh, or type / for commands</span></div>
+    </div>
+  </div>
+
+  <div class="dark-strip">
+    <span class="dlabel">Dark counterpart (exploratory)</span>
+    <div class="dswatch-row">
+      <div class="dswatch" style="background:#161615"><span>bg/surf</span></div>
+      <div class="dswatch" style="background:#F1F1EE"><span>text</span></div>
+      <div class="dswatch" style="background:#A0A09E"><span>muted</span></div>
+      <div class="dswatch" style="background:#85857F"><span>border</span></div>
+      <div class="dswatch" style="background:#6E85E0"><span>accent</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ========================= VARIATION 5 ========================= -->
+<section class="variation v5">
+  <div class="v-head">
+    <h2>5 &middot; Inverted / dark <em>(exploratory — dark mode is currently UNDECIDED)</em>
+      <span class="register">near-black glass + soft dark neumorphism, so this pass can judge whether dark mode belongs in scope at all</span>
+    </h2>
+  </div>
+  <div class="tokens">
+    <div class="chip"><span class="sw" style="background:#16171A"></span><code>#16171A</code> bg</div>
+    <div class="chip"><span class="sw" style="background:#1E2024"></span><code>#1E2024</code> surface</div>
+    <div class="chip"><span class="sw" style="background:#EDEDEC"></span><code>#EDEDEC</code> body text</div>
+    <div class="chip"><span class="sw" style="background:#909192"></span><code>#909192</code> muted text</div>
+    <div class="chip"><span class="sw" style="background:#707070"></span><code>#707070</code> border/rim</div>
+    <div class="chip"><span class="sw" style="background:#6E85E0"></span><code>#6E85E0</code> accent</div>
+  </div>
+  <table class="contrast">
+    <caption>Computed WCAG 2.2 contrast (relative-luminance method)</caption>
+    <thead><tr><th>Pair</th><th>Ratio</th><th>Threshold</th><th>Verdict</th></tr></thead>
+    <tbody>
+      <tr><td>Body text on surface</td><td>13.93:1</td><td>&ge;4.5:1</td><td><span class="tag pass">PASS</span></td></tr>
+      <tr><td>Muted text on surface</td><td>5.17:1</td><td>&ge;4.5:1</td><td><span class="tag pass">PASS</span></td></tr>
+      <tr><td>Control boundary (rim) vs surface</td><td>3.29:1</td><td>&ge;3:1</td><td><span class="tag pass">PASS</span></td></tr>
+      <tr><td>Accent vs surface (non-text)</td><td>4.73:1</td><td>&ge;3:1</td><td><span class="tag pass">PASS</span></td></tr>
+      <tr><td>Accent-text on accent fill</td><td>5.26:1</td><td>&ge;4.5:1</td><td><span class="tag pass">PASS</span></td></tr>
+    </tbody>
+  </table>
+  <p class="boundary-note"><b>Boundary solution — the honest finding of this whole set:</b> a genuinely <i>soft</i> dark rim (<code>rgba(255,255,255,.12)</code>, closer to the "soft dark neumorphism" brief) measures under 2:1. Reaching 3:1 needed a near-solid mid-gray rim (<code>#707070</code>) — that reads as a visible stroke, not a subtle neumorphic edge, which directly fights the softness the brief asked for. Of all five variations, this is the one where the soft-shadow-boundary problem is worst and the supplemental cue is most visually assertive.</p>
+
+  <div class="home-snippet">
+    <span class="snippet-wordmark">Yoh Meeseek</span>
+    <div class="panel checklist-panel">
+      <p class="panel-title">Today</p>
+      <ul class="checklist">
+        <li class="task checked"><span class="checkbox"></span><span class="task-label">Chem problem set — 45m</span></li>
+        <li class="task"><span class="checkbox"></span><span class="task-label">Study block: AP Bio ch. 7 — 2:00–3:30</span></li>
+        <li class="task"><span class="checkbox"></span><span class="task-label">Break — 15m</span><span class="pin-tag">Pinned</span></li>
+        <li class="task"><span class="checkbox"></span><span class="task-label">Email Mr. Alvarez about the lab</span></li>
+      </ul>
+    </div>
+    <div class="panel calendar-panel">
+      <p class="panel-title">Today &middot; 12–6</p>
+      <div class="cal-track">
+        <div class="cal-hours"><span>12p</span><span>2p</span><span>4p</span><span>6p</span></div>
+        <div class="cal-rail">
+          <div class="cal-event yoh dragging">Study block: AP Bio ch. 7 (dragging)</div>
+          <div class="cal-event small">Break — 15m</div>
+          <div class="cal-event fixed">Soccer practice — 4:30–6:00 (fixed)</div>
+        </div>
+      </div>
+      <div class="reshuffle-card">
+        <p class="rc-label">Reshuffle preview: Study block → 2:15–3:45</p>
+        <div class="rc-actions"><span class="btn btn-approve">Approve</span><span class="btn btn-discard">Discard</span></div>
+      </div>
+    </div>
+    <div class="bottom-row">
+      <div class="toast"><span class="dot"></span>Research ready: photosynthesis light reactions — open in Tasks</div>
+      <div class="chat-bar"><span class="chat-slash">/</span><span class="chat-placeholder">Ask Yoh, or type / for commands</span></div>
+    </div>
+  </div>
+</section>
+
+</main>
+</body>
+</html>
