@@ -1,0 +1,157 @@
+/**
+ * web/src/tokens.css
+ *
+ * Story 7.5 — the ONE design-token source (FR-46, UX-DR22, UX-DR24, UX-DR25,
+ * UX-DR26). Every DESIGN.md color/spacing/radius/elevation/rim/focus token
+ * exists here exactly once, wrapped in Tailwind v4's `@theme` block so the
+ * utility generator picks up `--color-*`/`--radius-*`/`--spacing-*`/`--font-*`
+ * as first-class utilities (`bg-surface-raised`, `rounded-md`, `font-body`,
+ * …). No component in web/ hard-codes a hex, radius, shadow, or duration —
+ * it reaches for the matching utility class instead.
+ *
+ * Light and dark values live on one declaration via the CSS `light-dark()`
+ * function (Baseline 2024), switched by `color-scheme`: `:root` defaults to
+ * `light dark` (follow the OS), and an explicit `[data-theme]` (Task 5's
+ * Theme Toggle, UX-DR27) overrides it per device.
+ *
+ * `tests/token-contrast.test.ts` parses this file as text — a single regex
+ * over the `--color-x: light-dark(A, B);` shape below — and recomputes
+ * DESIGN.md's own Measured Contrast table in both themes. Keep every color
+ * token on its own single line in that exact shape.
+ */
+@import "tailwindcss";
+
+@theme {
+  /* Colors — DESIGN.md `colors` / "Colors" table. */
+  --color-surface-base: light-dark(#e7e1d7, #201c17);
+  --color-surface-raised: light-dark(#e7e1d7, #241f19);
+  --color-surface-sunken: light-dark(#ddd6c9, #1b1712);
+  --color-ink-primary: light-dark(#262220, #ede7dc);
+  --color-ink-secondary: light-dark(#6a645a, #a69c8c);
+  --color-rim-interactive: light-dark(#807c72, #7a7367);
+  --color-rim-structural: light-dark(#807c72, #6e675b);
+  --color-rim-highlight: light-dark(rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.06));
+  --color-shadow-light: light-dark(rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0.05));
+  --color-shadow-dark: light-dark(rgba(163, 150, 130, 0.45), rgba(0, 0, 0, 0.55));
+  --color-glass-fill: light-dark(rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.06));
+  --color-accent-gradient-start: light-dark(#7fc1f5, #8fcbfa);
+  --color-accent-gradient-end: light-dark(#1e6fd9, #3e8cf0);
+  --color-accent-solid: light-dark(#1e6fd9, #3e8cf0);
+  --color-on-accent-solid: light-dark(#ffffff, #14120f);
+  --color-accent-glow: light-dark(rgba(30, 111, 217, 0.35), rgba(62, 140, 240, 0.35));
+  --color-event-fixed-stripe-a: light-dark(#dcd4c4, #2e2820);
+  --color-event-fixed-stripe-b: light-dark(#d2c8b4, #282219);
+  --color-event-fixed-ink: light-dark(#4a4235, #c9bda8);
+
+  /* Radii — DESIGN.md `rounded`. */
+  --radius-xs: 5px;
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+  --radius-full: 9999px;
+
+  /* Spacing — DESIGN.md `spacing` (4px base, [ASSUMPTION] per DESIGN.md). */
+  --spacing-1: 4px;
+  --spacing-2: 8px;
+  --spacing-3: 12px;
+  --spacing-4: 16px;
+  --spacing-5: 24px;
+  --spacing-6: 32px;
+  --rim-width: 1.5px;
+  --focus-ring-width: 2px;
+
+  /* Fonts — self-hosted; NEVER system-ui anywhere (UX-DR23). */
+  --font-body: "Figtree", "Figtree Fallback", sans-serif;
+  --font-wordmark: "Montserrat", "Figtree Fallback", sans-serif;
+
+  /* Elevation — DESIGN.md "Elevation & Depth" (UX-DR24). Light source
+     top-left, 135°, built entirely from the --color-shadow-* tokens above
+     (no new hard-coded color). Inset's offsets are identical between
+     themes — only the shadow color changes — so it's one light-dark()
+     declaration. Extruded-sm/md/lg differ in offset AND blur radius
+     between themes (DESIGN.md's own table), which light-dark() cannot
+     express (it resolves only a <color>, never a whole box-shadow), so
+     their dark values are an explicit override below, keyed off
+     [data-theme="dark"] and the OS default, mirroring the color-scheme
+     switch above. */
+  --shadow-inset: inset 1px 1px 3px light-dark(var(--color-shadow-dark), rgba(0, 0, 0, 0.5));
+  --shadow-extruded-sm: 3px 3px 7px var(--color-shadow-dark), -3px -3px 7px var(--color-shadow-light);
+  --shadow-extruded-md: 4px 4px 10px var(--color-shadow-dark), -4px -4px 10px var(--color-shadow-light);
+  --shadow-extruded-lg: 7px 7px 14px var(--color-shadow-dark), -7px -7px 14px var(--color-shadow-light);
+
+  /* Glass — DESIGN.md "Elevation & Depth" Glass row: floating elements
+     only (Chat Bubble, Chat Input, Undo Toast, In-App Notification,
+     Command Palette), never a page or card. backdrop blur 14-18px range;
+     16px is the table's own representative value (component-specific
+     14/16/18px variants are a later story's concern once a glass
+     component exists). Saturate is the one constant DESIGN.md gives for
+     every glass surface in both themes. */
+  --blur-glass: 16px;
+  --glass-saturate: 140%;
+}
+
+:root {
+  color-scheme: light dark;
+}
+/* First launch follows the OS (the `color-scheme: light dark` default
+   above lets each `light-dark()` value pick the OS's current appearance).
+   After Spencer clicks the Theme Toggle (Task 5), an explicit [data-theme]
+   wins regardless of the OS setting. */
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --shadow-extruded-sm: 3px 3px 8px var(--color-shadow-dark), -2px -2px 6px var(--color-shadow-light);
+  --shadow-extruded-md: 4px 4px 12px var(--color-shadow-dark), -2px -2px 8px var(--color-shadow-light);
+  --shadow-extruded-lg: 7px 7px 16px var(--color-shadow-dark), -3px -3px 10px var(--color-shadow-light);
+  --blur-glass: 18px;
+}
+/* No explicit [data-theme] yet (first launch, before the Theme Toggle is
+   ever clicked, UX-DR27): follow the OS the same way the colors above do. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --shadow-extruded-sm: 3px 3px 8px var(--color-shadow-dark), -2px -2px 6px var(--color-shadow-light);
+    --shadow-extruded-md: 4px 4px 12px var(--color-shadow-dark), -2px -2px 8px var(--color-shadow-light);
+    --shadow-extruded-lg: 7px 7px 16px var(--color-shadow-dark), -3px -3px 10px var(--color-shadow-light);
+    --blur-glass: 18px;
+  }
+}
+
+/* Self-hosted fonts (Task 3 copies the two weight files these @font-face
+   rules name out of node_modules/@fontsource/* into web/public/fonts/).
+   Figtree is preloaded (index.html); Montserrat is not (wordmark-only, off
+   the critical path). The fallback face is metric-adjusted so the swap
+   causes no visible layout shift (UX-DR23). */
+@font-face {
+  font-family: "Figtree";
+  src: url("/fonts/figtree-500.woff2") format("woff2");
+  font-weight: 500;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Figtree";
+  src: url("/fonts/figtree-700.woff2") format("woff2");
+  font-weight: 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Montserrat";
+  src: url("/fonts/montserrat-700.woff2") format("woff2");
+  font-weight: 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Figtree Fallback";
+  src: local("Arial");
+  size-adjust: 106%;
+  ascent-override: 96%;
+  descent-override: 26%;
+  line-gap-override: 0%;
+}
+
+body {
+  background-color: var(--color-surface-base);
+  color: var(--color-ink-primary);
+}

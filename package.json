@@ -9,8 +9,11 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --test",
-    "check": "npm run typecheck && npm run test",
+    "typecheck:web": "tsc -p web/tsconfig.json --noEmit",
+    "test": "node --test 'tests/**/*.test.ts'",
+    "build:web": "npm run build --prefix web",
+    "test:web": "npm run test --prefix web -- run",
+    "check": "npm run typecheck && npm run typecheck:web && npm run build:web && npm run test && npm run test:web",
     "build": "npm run typecheck"
   },
   "dependencies": {

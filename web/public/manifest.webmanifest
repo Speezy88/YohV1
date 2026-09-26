@@ -1,0 +1,10 @@
+{
+  "name": "Yoh",
+  "short_name": "Yoh",
+  "description": "Yoh — a personal daily-planning assistant.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#E7E1D7",
+  "theme_color": "#1E6FD9",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}

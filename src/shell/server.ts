@@ -34,6 +34,7 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { serve } from "@hono/node-server";
+import { serveStatic } from "@hono/node-server/serve-static";
 import { writeStructuredLog, type LogEntry } from "../adapters/logger.ts";
 import { openSqliteConnection, type SqliteConnection } from "../adapters/sqlite.ts";
 import {
@@ -218,6 +219,14 @@ export function createApp(deps: ServerDeps) {
 
   return (
     new Hono()
+      // Story 7.5, AD-17: on every response, not just /api/* — so the built
+      // web/ bundle, its static assets, and every API response alike can
+      // never call a third party or load a third-party script/font. First
+      // in the chain so it still applies to a 404 (no route matched).
+      .use("*", async (c, next) => {
+        await next();
+        c.header("Content-Security-Policy", "default-src 'self'");
+      })
       // Consistency Conventions (Performance): the server logs duration per API request.
       // For GET /api/events this is time-to-headers, not the stream's lifetime.
       .use("/api/*", async (c, next) => {
@@ -264,6 +273,9 @@ export function createApp(deps: ServerDeps) {
         const result = wire(await markNotificationRead(notificationsDeps, { id: c.req.param("id") }));
         return c.json(result, httpStatus(result));
       })
+      // Story 7.5, AD-15/AD-17: the built web/ SPA, mounted after every
+      // /api/* route so nothing here can ever shadow the API.
+      .use("/*", serveStatic({ root: "./web/dist" }))
   );
 }
 

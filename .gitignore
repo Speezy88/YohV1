@@ -9,3 +9,9 @@ data/
 *.sqlite
 *.sqlite3
 .DS_Store
+
+# web/ (Story 7.5): build output and Playwright artifacts, never committed.
+web/dist/
+web/test-results/
+web/playwright-report/
+web/blob-report/
