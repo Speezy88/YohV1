@@ -197,6 +197,7 @@ import {
 } from "../adapters/memory-store.ts";
 import type { LogEntry } from "../adapters/logger.ts";
 import { PUSHOVER_MESSAGE_LIMIT, PUSHOVER_TITLE_LIMIT } from "../adapters/notification-adapter.ts";
+import { appendOutboxInTx } from "../adapters/notification-store.ts";
 import type { DataCompletenessGateResult } from "../core/data-completeness-gate.ts";
 import { orderByDerivedPriority } from "../core/derived-priority.ts";
 import { generatePlanReasoning } from "../core/plan-reasoning.ts";
@@ -869,7 +870,11 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
   // --- 12a. Persist the generated Plan --------------------------------------
   // Before the send, so a delivery failure never loses the Plan itself.
   try {
-    putPlan(deps.store, plan);
+    // Story 7.8, Ruling R4: appends a Plan-change outbox hint in the SAME
+    // writeTx as this Plan write, so the web client's SSE stream (AD-18)
+    // announces it atomically — never a separate transaction that could
+    // commit the Plan but lose the hint (or vice versa).
+    putPlan(deps.store, plan, (db) => appendOutboxInTx(db, { topic: "plan", entityId: plan.date }));
   } catch (err) {
     log({ level: "error", event: "morning-ritual.persist-failed", detail: describeError(err) });
     return failure("conflict", `morning-ritual: could not persist today's Plan — ${describeError(err)}`, err);

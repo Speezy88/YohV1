@@ -232,6 +232,7 @@
  * proactive trigger path" structural check for how that's verified.
  */
 import { getCurrentTimeBudget, getPlan, putPlan, type MemoryStore } from "../adapters/memory-store.ts";
+import { appendOutboxInTx } from "../adapters/notification-store.ts";
 import type { LogEntry } from "../adapters/logger.ts";
 import type { DataCompletenessGateResult } from "../core/data-completeness-gate.ts";
 import { orderByDerivedPriority } from "../core/derived-priority.ts";
@@ -651,7 +652,9 @@ export async function runMidDayReflow(deps: MidDayReflowDeps): Promise<Result<Mi
 
   // --- Persist -----------------------------------------------------------------
   try {
-    putPlan(deps.store, plan);
+    // Story 7.8, Ruling R4: same atomic Plan-change outbox hint as
+    // morning-ritual.ts's own putPlan call — see that call site's comment.
+    putPlan(deps.store, plan, (db) => appendOutboxInTx(db, { topic: "plan", entityId: plan.date }));
   } catch (err) {
     log({ level: "error", event: "mid-day-reflow.persist-failed", detail: describeError(err) });
     return failure("conflict", `mid-day-reflow: could not persist the updated Plan — ${describeError(err)}`, err);

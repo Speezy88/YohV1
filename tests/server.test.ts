@@ -14,6 +14,7 @@ import { hc } from "hono/client";
 import type { LogEntry } from "../src/adapters/logger.ts";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { createNotification, initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
+import { createMemoryStore, putPlan } from "../src/adapters/memory-store.ts";
 import type { AppType, HealthResponse } from "../src/types/api.ts";
 import { createApp, startServer, type ServeOptions, type ServerDeps } from "../src/shell/server.ts";
 
@@ -193,6 +194,118 @@ test("GET on the mark-read route is not allowed — reading must never change re
   const res = await app.request(`/api/notifications/${id}/read`);
   assert.equal(res.status, 404);
   assert.equal(((await (await app.request("/api/notifications")).json()) as { value: { notifications: unknown[] } }).value.notifications.length, 1);
+  connection.close();
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/home (Story 7.8)
+// ---------------------------------------------------------------------------
+
+test("GET /api/home returns the home view when homeView deps are configured", async () => {
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db);
+  const app = createApp({
+    connection,
+    homeView: {
+      store: createMemoryStore(connection),
+      readCalendarEvents: async () => [],
+      readTasks: async () => ({ tasks: [] }),
+      timeZone: "UTC",
+      now: () => new Date("2026-09-25T12:00:00.000Z"),
+    },
+  });
+  const res = await app.request("/api/home");
+  assert.equal(res.status, 200);
+  const body = (await res.json()) as { ok: boolean; value: { today: string } };
+  assert.equal(body.ok, true);
+  assert.equal(body.value.today, "2026-09-25");
+  connection.close();
+});
+
+test("GET /api/home reflects today's stored Plan and calendar", async () => {
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db);
+  const store = createMemoryStore(connection);
+  putPlan(store, {
+    id: "plan-2026-09-25",
+    date: "2026-09-25",
+    blocks: [{ id: "b1", kind: "work", start: "2026-09-25T13:00:00.000Z", end: "2026-09-25T14:00:00.000Z", taskId: "t1", label: "Draft the memo" }],
+    reasoning: "",
+    version: 1,
+    createdAt: "2026-09-25T00:00:00.000Z",
+    updatedAt: "2026-09-25T00:00:00.000Z",
+  });
+  const app = createApp({
+    connection,
+    homeView: {
+      store,
+      readCalendarEvents: async () => [],
+      readTasks: async () => ({ tasks: [] }),
+      timeZone: "UTC",
+      now: () => new Date("2026-09-25T12:00:00.000Z"),
+    },
+  });
+  const res = await app.request("/api/home");
+  const body = (await res.json()) as { ok: boolean; value: { plan: { rows: Array<{ taskId: string }> } } };
+  assert.equal(body.ok, true);
+  assert.deepEqual(body.value.plan.rows.map((r) => r.taskId), ["t1"]);
+  connection.close();
+});
+
+test("GET /api/home returns a clear error when homeView deps are not configured", async () => {
+  const { app, connection } = tempApp();
+  const res = await app.request("/api/home");
+  assert.equal(res.status, 503);
+  const body = (await res.json()) as { ok: boolean; error: { kind: string } };
+  assert.equal(body.ok, false);
+  assert.equal(body.error.kind, "unreachable");
+  connection.close();
+});
+
+test("Fix round 1 (finding #1): GET /api/home degrades gracefully on a calendar-read failure — 200 ok:true, never a thrown 500 or a blanked view", async () => {
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db);
+  const app = createApp({
+    connection,
+    homeView: {
+      store: createMemoryStore(connection),
+      readCalendarEvents: async () => {
+        throw new Error("calendar down");
+      },
+      readTasks: async () => ({ tasks: [] }),
+      timeZone: "UTC",
+      now: () => new Date("2026-09-25T12:00:00.000Z"),
+    },
+  });
+  const res = await app.request("/api/home");
+  assert.equal(res.status, 200);
+  const body = (await res.json()) as { ok: boolean; value: { today: string; calendar: { blocks: unknown[] } } };
+  assert.equal(body.ok, true);
+  assert.equal(body.value.today, "2026-09-25");
+  assert.deepEqual(body.value.calendar.blocks, [], "falls back to an empty calendar rather than failing the whole request");
+  connection.close();
+});
+
+test("Fix round 1 (finding #2): a home-view Calendar-read failure logs through the same structured logger every /api route uses", async () => {
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db);
+  const entries: LogEntry[] = [];
+  const app = createApp({
+    connection,
+    log: (e) => entries.push(e),
+    homeView: {
+      store: createMemoryStore(connection),
+      readCalendarEvents: async () => {
+        throw new Error("calendar down");
+      },
+      readTasks: async () => ({ tasks: [] }),
+      timeZone: "UTC",
+    },
+  });
+  await app.request("/api/home");
+  const errorEntry = entries.find((e) => e.event === "home-view.read-calendar-failed");
+  assert.ok(errorEntry, "expected a home-view.read-calendar-failed log line");
+  assert.equal(errorEntry!.level, "error");
   connection.close();
 });
 

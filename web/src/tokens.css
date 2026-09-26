@@ -65,6 +65,18 @@
   --font-body: "Figtree", "Figtree Fallback", sans-serif;
   --font-wordmark: "Montserrat", "Figtree Fallback", sans-serif;
 
+  /* Type sizes — DESIGN.md "Typography" table. Story 7.8 is the first page
+     that needs a real caption/body size distinction (Calendar Day View's
+     hour labels vs. Plan Row text), so these are added here rather than
+     each component reaching for an arbitrary Tailwind size. Weight/
+     letterspacing/case are plain Tailwind utilities (font-bold, uppercase,
+     tracking-wide), composed at each call site, since Tailwind v4's
+     `--text-*` theme key carries only font-size. This also gives
+     `NotificationOverlay.tsx`'s existing `text-body` class (Story 7.7) a
+     real size for the first time — it was previously an undefined utility. */
+  --text-caption: 10.6px;
+  --text-body: 13.5px;
+
   /* Elevation — DESIGN.md "Elevation & Depth" (UX-DR24). Light source
      top-left, 135°, built entirely from the --color-shadow-* tokens above
      (no new hard-coded color). Inset's offsets are identical between
@@ -109,6 +121,16 @@
      durations above. */
   --duration-notification-enter: 550ms;
   --duration-notification-pulse: 2200ms;
+
+  /* Story 7.8, DESIGN.md `Birthday Confetti`, UX-DR46: one short burst.
+     Fix round 1 (reviewer finding #5): the ONE defining place for the
+     per-piece fall duration — `Confetti.tsx` reads it via `var(...)` in its
+     inline `animationDuration` (the same pattern `PageShell.tsx` already
+     uses for `--duration-page-transition`), and no longer keeps a second,
+     independently-tuned JS timer number that could drift out of sync with
+     it — the component now removes itself on the LAST piece's real
+     `animationend`, not a `setTimeout` guess. */
+  --duration-confetti: 1400ms;
 }
 
 :root {
@@ -257,5 +279,17 @@ body {
   }
   50% {
     opacity: 0.35;
+  }
+}
+
+/* Story 7.8, DESIGN.md `Birthday Confetti`, UX-DR46: a one-shot burst, read
+   only when `useReducedMotion` is false (`Confetti.tsx` never renders the
+   element at all under reduced motion, so this keyframe simply never runs
+   rather than needing its own media-query guard, mirroring the Screensaver
+   drift convention above). */
+@keyframes confetti-fall {
+  to {
+    transform: translateY(110vh) rotate(360deg);
+    opacity: 0;
   }
 }

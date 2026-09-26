@@ -3,10 +3,14 @@
  *
  * Story 7.7: the notification list `NotificationOverlay` renders — a
  * `useSyncExternalStore` store (same convention as `readiness.ts`, Story
- * 7.6), fed by `connectEventStream` (`events.ts`). A `topic: "notification"`
- * hint re-fetches `GET /api/notifications`; every other topic is ignored
- * here (Story 7.8's Home listens for `topic: "plan"` on its own). Also
- * accepts one purely client-side synthetic record for "host unreachable" —
+ * 7.6). Story 7.8 refactored this to subscribe to `eventBus.ts`'s shared
+ * `onHint`/`onUnreachable` instead of calling `events.ts`'s
+ * `connectEventStream` directly — Home is now the SSE stream's second real
+ * consumer, and AD-18 allows only one `EventSource` per client. A
+ * `topic: "notification"` hint re-fetches `GET /api/notifications`; every
+ * other topic is ignored here (Story 7.8's Home listens for `topic: "plan"`
+ * on its own). Also accepts one purely client-side synthetic record for
+ * "host unreachable" —
  * never sent to or read from the server, marked `kind: "operational"` (a
  * real closed-union member, AD-18) with `deepLink: null` (the LOCKED wire
  * type's required-but-nullable field, never an absent key).
@@ -19,7 +23,7 @@
  * auto-dismissed unseen").
  */
 import { useSyncExternalStore } from "react";
-import { connectEventStream } from "./events.ts";
+import { onHint, onUnreachable } from "./eventBus.ts";
 import { apiClient } from "./apiClient.ts";
 import type { NotificationRecord } from "../../../src/types/api.ts";
 
@@ -148,21 +152,23 @@ function revert(record: NotificationRecord): void {
 }
 
 /**
- * Starts the SSE subscription driving this store. Call once, near the app
- * root (`PageShell`); returns a stop function.
+ * Starts this store's subscription to the shared event bus (`eventBus.ts`,
+ * Story 7.8). Call once, near the app root (`PageShell`); returns a stop
+ * function.
  */
 export function startNotificationStream(): () => void {
   void refetch(); // pick up anything already unread on first load
-  return connectEventStream({
-    onHint: (hint) => {
-      if (hint.topic === "notification") void refetch();
-    },
-    onUnreachable: addLocalUnreachable,
-    // A reconnect never dismisses the synthetic "unreachable" card on its
-    // own — it stays until Spencer clicks or closes it (AC: "a failure is
-    // never auto-dismissed unseen").
-    onReachable: () => {},
+  const offHint = onHint((hint) => {
+    if (hint.topic === "notification") void refetch();
   });
+  // A reconnect never dismisses the synthetic "unreachable" card on its own
+  // — it stays until Spencer clicks or closes it (AC: "a failure is never
+  // auto-dismissed unseen"), so this store never subscribes to onReachable.
+  const offUnreachable = onUnreachable(addLocalUnreachable);
+  return () => {
+    offHint();
+    offUnreachable();
+  };
 }
 
 /** Test-only: clears all module-level singleton state between tests. Never called from production code. */

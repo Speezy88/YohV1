@@ -179,6 +179,15 @@ export class MemoryStore {
     id: string,
     expectedVersion: number | undefined,
     modify: (current: StoredRecord<T> | undefined) => T,
+    /**
+     * Story 7.8, Ruling R4: when given, runs INSIDE this same `writeTx`,
+     * immediately after the write above, with the raw `better-sqlite3`
+     * handle — so a caller (`putPlan` below) can append another owner's
+     * `...InTx` row (e.g. `notification-store.ts`'s `appendOutboxInTx`) in
+     * the SAME transaction as this record's write, without this file ever
+     * importing that owner's module (AD-10).
+     */
+    onCommit?: (db: Database.Database) => void,
   ): StoredRecord<T> {
     return this.connection.writeTx((db): StoredRecord<T> => {
       const row = this.selectRow(kind, id);
@@ -206,7 +215,9 @@ export class MemoryStore {
         )
         .run({ kind, id, data: JSON.stringify(nextData), version: nextVersion, updatedAt });
 
-      return { kind, id, data: nextData, version: nextVersion, updatedAt };
+      const result: StoredRecord<T> = { kind, id, data: nextData, version: nextVersion, updatedAt };
+      onCommit?.(db);
+      return result;
     });
   }
 
@@ -575,9 +586,24 @@ export function getPlan(store: MemoryStore, date: IsoDate): StoredRecord<Plan> |
  * storage primitive rather than a second, hidden versioning mechanism
  * competing with `StoredRecord.version`.
  */
-export function putPlan(store: MemoryStore, plan: Plan): StoredRecord<Plan> {
+export function putPlan(
+  store: MemoryStore,
+  plan: Plan,
+  /**
+   * Story 7.8, Ruling R4: runs inside the SAME `writeTx` as this Plan write,
+   * right before it commits. `rituals/morning-ritual.ts` and
+   * `rituals/mid-day-reflow.ts` pass `(db) => appendOutboxInTx(db, {topic:
+   * "plan", entityId: plan.date})` so a Plan-change hint reaches the web
+   * client's SSE stream atomically with the write it announces — without
+   * this file ever importing `notification-store.ts` (AD-10: the other
+   * owner's own `...InTx` function is what runs inside the caller's
+   * transaction, never reached into directly here). Omitted, `putPlan`
+   * behaves exactly as before this story.
+   */
+  onCommit?: (db: Database.Database) => void,
+): StoredRecord<Plan> {
   const current = store.getRecord<Plan>(PLAN_KIND, plan.date);
-  return store.readModifyWrite<Plan>(PLAN_KIND, plan.date, current?.version, () => plan);
+  return store.readModifyWrite<Plan>(PLAN_KIND, plan.date, current?.version, () => plan, onCommit);
 }
 
 // ============================================================================

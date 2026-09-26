@@ -16,7 +16,8 @@ import {
   putTimeBudget,
   type MemoryStore,
 } from "../src/adapters/memory-store.ts";
-import { openSqliteConnection } from "../src/adapters/sqlite.ts";
+import { openSqliteConnection, type SqliteConnection } from "../src/adapters/sqlite.ts";
+import { initNotificationStoreSchema, tailOutboxSince } from "../src/adapters/notification-store.ts";
 import { runMidDayReflow, type MidDayReflowDeps } from "../src/rituals/mid-day-reflow.ts";
 import type { Plan, PlanBlock, Task } from "../src/types/domain.ts";
 
@@ -29,7 +30,13 @@ const TODAY = "2026-08-22";
 const NOW_ISO = "2026-08-22T11:00:00.000Z";
 
 function tempStore(): MemoryStore {
-  return createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
+  // Story 7.8, Ruling R4: runMidDayReflow's putPlan call site now always
+  // appends a Plan-change outbox hint in the same writeTx, so every test's
+  // store needs the notification-store schema initialized on the same
+  // connection, or that write throws "no such table: outbox".
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db);
+  return createMemoryStore(connection);
 }
 
 function makeTask(id: string, title: string, overrides: Partial<Task> = {}): Task {
@@ -123,6 +130,19 @@ const DEFAULT_TASKS: readonly Task[] = [
 // ============================================================================
 // Behavior 1: only not-yet-elapsed blocks are recomputed
 // ============================================================================
+
+test("a successful re-flow appends a Plan-change outbox hint in the same writeTx as the Plan write (Story 7.8, Ruling R4)", async () => {
+  const connection: SqliteConnection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db);
+  const store = createMemoryStore(connection);
+  const { deps } = harness({ tasks: DEFAULT_TASKS, store });
+
+  const result = await runMidDayReflow(deps);
+  assert.equal(result.ok, true);
+
+  const hints = tailOutboxSince(connection, 0);
+  assert.ok(hints.some((hint) => hint.topic === "plan" && hint.entityId === TODAY));
+});
 
 test("runMidDayReflow: past blocks are byte-identical before and after re-flow", async () => {
   const { deps, store } = harness({ tasks: DEFAULT_TASKS });

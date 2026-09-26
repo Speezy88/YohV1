@@ -24,7 +24,8 @@ import {
   putUncheckedDay,
   type MemoryStore,
 } from "../src/adapters/memory-store.ts";
-import { openSqliteConnection } from "../src/adapters/sqlite.ts";
+import { openSqliteConnection, type SqliteConnection } from "../src/adapters/sqlite.ts";
+import { initNotificationStoreSchema, tailOutboxSince } from "../src/adapters/notification-store.ts";
 import {
   MORNING_RITUAL_ID,
   PLAN_GENERATION_DEGRADED_THRESHOLD_MS,
@@ -57,7 +58,13 @@ const NOW_ISO = "2026-08-22T13:00:00.000Z";
 const TODAY = "2026-08-22";
 
 function tempStore(): MemoryStore {
-  return createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
+  // Story 7.8, Ruling R4: putPlan's call site here now always appends a
+  // Plan-change outbox hint in the same writeTx, so every test's store
+  // needs the notification-store schema initialized on the same
+  // connection, or that write throws "no such table: outbox".
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db);
+  return createMemoryStore(connection);
 }
 
 function makeTask(id: string, title: string, overrides: Partial<Task> = {}): Task {
@@ -250,6 +257,19 @@ test("happy path: sends exactly one notification containing the ordered Plan and
   assert.ok(result.value.status === "delivered");
   assert.ok(sent.message.includes(result.value.plan.reasoning), "the notification body carries the reasoning line");
   assert.doesNotMatch(sent.message, /\x1b\[/, "a push notification never carries ANSI escapes");
+});
+
+test("a successful Morning Ritual run appends a Plan-change outbox hint in the same writeTx as the Plan write (Story 7.8, Ruling R4)", async () => {
+  const connection: SqliteConnection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db);
+  const store = createMemoryStore(connection);
+  const h = harness({ store, tasks: [makeTask("t1", "Draft the memo", { estimatedDurationMinutes: 60 })] });
+
+  const result = await runMorningRitual(h.deps);
+  assert.ok(result.ok && result.value.status === "delivered");
+
+  const hints = tailOutboxSince(connection, 0);
+  assert.ok(hints.some((hint) => hint.topic === "plan" && hint.entityId === TODAY));
 });
 
 test("fixed Calendar events land in the Plan as calendar-anchor blocks with their times reproduced verbatim", async () => {

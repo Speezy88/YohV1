@@ -120,6 +120,48 @@ export interface MarkNotificationReadResponse {
 }
 
 // ============================================================================
+// Home view (Story 7.8) — today's Plan checklist + Calendar Day View,
+// computed server-side (AD-17). New shapes only — nothing above is touched.
+// ============================================================================
+
+/** One row of Home's Plan checklist — a `"work"` PlanBlock, in the stored Plan's own order. */
+export interface HomePlanRow {
+  readonly blockId: string;
+  readonly taskId: string;
+  readonly label: string;
+  readonly start: string;
+  readonly end: string;
+  /** The Task's CURRENT completion status (a live Notion read), never the Plan's own generation-time snapshot. */
+  readonly completed: boolean;
+  /** `true` once `end` has already passed "now" (server-computed, AD-17) — the client renders this read-only. */
+  readonly past: boolean;
+}
+
+/**
+ * One block of Home's Calendar Day View. `"work"`/`"break"` are Yoh-owned
+ * (from the stored Plan); `"fixed"` is a live-read primary-calendar event
+ * Yoh did not create (never a stored Plan's own `"calendar-anchor"`
+ * snapshot — see `app/home-view.ts`'s doc comment for why).
+ */
+export interface HomeCalendarBlock {
+  readonly id: string;
+  readonly kind: "work" | "break" | "fixed";
+  readonly label: string;
+  readonly start: string;
+  readonly end: string;
+  readonly completed: boolean;
+  readonly past: boolean;
+}
+
+export interface HomeViewResponse {
+  /** The host-timezone date this response is "today" for (Consistency Conventions: never the browser's date) — also what the client's Feb-19 confetti check reads, never `new Date()`. */
+  readonly today: string;
+  /** `undefined` when no Plan has been generated yet today. */
+  readonly plan: { readonly rows: readonly HomePlanRow[] } | undefined;
+  readonly calendar: { readonly blocks: readonly HomeCalendarBlock[] };
+}
+
+// ============================================================================
 // Server route type (Ruling R2, AD-17)
 // ============================================================================
 

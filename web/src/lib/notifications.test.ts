@@ -1,10 +1,18 @@
 /**
  * web/src/lib/notifications.test.ts
  *
- * Story 7.7: the `useSyncExternalStore` notification store — the SSE
+ * Story 7.7: the `useSyncExternalStore` notification store — a
  * `topic: "notification"` hint re-fetches `GET /api/notifications`; every
  * other topic is ignored (Story 7.8's Home owns `topic: "plan"`). Also
  * covers the purely client-side synthetic "server unreachable" record.
+ *
+ * Story 7.8: this store now subscribes to `eventBus.ts`'s shared
+ * `onHint`/`onUnreachable` rather than calling `events.ts`'s
+ * `connectEventStream` directly (AD-18: one SSE stream per client, and Home
+ * is now the second real consumer) — this file mocks `eventBus.ts`
+ * accordingly, driving the store's handlers through the mocked
+ * `onHint`/`onUnreachable` registration functions instead of a captured
+ * `EventStreamHandlers` object.
  *
  * `deepLink` is a REQUIRED key with a nullable value on `NotificationRecord`
  * (`types/api.ts`, controller Ruling R11) — every fixture below sets it
@@ -13,7 +21,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
-import * as eventsModule from "./events.ts";
+import * as eventBus from "./eventBus.ts";
 import { apiClient } from "./apiClient.ts";
 import { __resetNotificationsForTests, dismissNotification, startNotificationStream, useNotifications } from "./notifications.ts";
 import type { NotificationRecord } from "../../../src/types/api.ts";
@@ -34,13 +42,23 @@ function record(overrides: Partial<NotificationRecord> & Pick<NotificationRecord
 }
 
 describe("notification store", () => {
-  let hintHandlers: eventsModule.EventStreamHandlers;
+  let hintCb: (hint: eventBus.EventBusHint) => void;
+  let unreachableCb: () => void;
   let stop: () => void;
+
+  const hintHandlers = {
+    onHint: (hint: eventBus.EventBusHint) => hintCb(hint),
+    onUnreachable: () => unreachableCb(),
+  };
 
   beforeEach(() => {
     __resetNotificationsForTests();
-    vi.spyOn(eventsModule, "connectEventStream").mockImplementation((handlers) => {
-      hintHandlers = handlers;
+    vi.spyOn(eventBus, "onHint").mockImplementation((cb) => {
+      hintCb = cb;
+      return () => {};
+    });
+    vi.spyOn(eventBus, "onUnreachable").mockImplementation((cb) => {
+      unreachableCb = cb;
       return () => {};
     });
     (apiClient.api.notifications.$get as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -101,11 +119,12 @@ describe("notification store", () => {
     stop();
   });
 
-  it("onReachable does not dismiss a still-showing synthetic unreachable record (a failure is never auto-dismissed unseen)", () => {
+  it("never subscribes to onReachable — a failure is never auto-dismissed unseen, so reconnecting has nothing to react to here", () => {
+    const onReachableSpy = vi.spyOn(eventBus, "onReachable");
     stop = startNotificationStream();
     const { result } = renderHook(() => useNotifications());
     act(() => hintHandlers.onUnreachable());
-    act(() => hintHandlers.onReachable());
+    expect(onReachableSpy).not.toHaveBeenCalled();
     expect(result.current).toHaveLength(1);
     stop();
   });

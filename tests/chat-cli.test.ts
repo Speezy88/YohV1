@@ -33,6 +33,7 @@ import { NIGHT_CLOSE_OUT_REQUEST_ID, runNightEscalateRitual, runNightPromptRitua
 import { runSelfCheckRitual, SELF_CHECK_REQUEST_ID } from "../src/rituals/self-check.ts";
 import type { MemoryStore } from "../src/adapters/memory-store.ts";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
+import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
 import {
   surfaceOpenInteractionRequests,
   runChatCli,
@@ -87,7 +88,14 @@ import type {
 } from "../src/types/domain.ts";
 
 function tempStore(): MemoryStore {
-  return createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
+  // Story 7.8, Ruling R4: mid-day-reflow.ts's putPlan call site (reached
+  // via chat-cli.ts's Mid-Day Re-Flow/Blocker triggers) now always appends
+  // a Plan-change outbox hint in the same writeTx, so this store's
+  // connection needs the notification-store schema initialized too, or
+  // that write throws "no such table: outbox".
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db);
+  return createMemoryStore(connection);
 }
 
 /**

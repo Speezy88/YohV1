@@ -41,6 +41,7 @@ import {
   clearUncheckedDay,
   getSelfCheckState,
   putSelfCheckState,
+  getPlan,
   putPlan,
   putRitualRun,
   readHotMemory,
@@ -925,6 +926,34 @@ function makePlan(overrides: Partial<Plan> = {}): Plan {
     ...overrides,
   };
 }
+
+// ============================================================================
+// putPlan's onCommit hook (Story 7.8, Ruling R4)
+// ============================================================================
+
+test("putPlan's onCommit hook runs inside the same writeTx, given the raw db handle", () => {
+  const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
+  const calls: string[] = [];
+  const plan = makePlan();
+
+  putPlan(store, plan, (db) => {
+    calls.push("onCommit ran");
+    db.prepare("CREATE TABLE IF NOT EXISTS onc_marker (id INTEGER)").run();
+    db.prepare("INSERT INTO onc_marker (id) VALUES (1)").run();
+  });
+
+  assert.deepEqual(calls, ["onCommit ran"]);
+  assert.equal(getPlan(store, plan.date)?.data.version, 1);
+  store.close();
+});
+
+test("putPlan works exactly as before when onCommit is omitted", () => {
+  const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
+  const plan = makePlan();
+  putPlan(store, plan);
+  assert.equal(getPlan(store, plan.date)?.data.version, 1);
+  store.close();
+});
 
 test("HOT_MEMORY_WINDOW_DAYS/COLD_MEMORY_DEFAULT_LOOKBACK_DAYS are documented positive-day constants, and cold's default lookback is strictly wider than the hot window", () => {
   assert.equal(typeof HOT_MEMORY_WINDOW_DAYS, "number");

@@ -14,6 +14,8 @@ import type {
   ApiResult,
   EventHint,
   HealthResponse,
+  HomeCalendarBlock,
+  HomeViewResponse,
   MarkNotificationReadRequest,
   MarkNotificationReadResponse,
   NotificationKind,
@@ -101,6 +103,22 @@ test("NotificationRecord matches AD-18's {id, kind, title, body, deepLink, creat
   assert.ok("deepLink" in operational);
   assert.equal(operational.readAt, undefined);
   assert.ok(missingDeepLink && undefinedDeepLink);
+});
+
+test("Story 7.8 HomeViewResponse: plan is undefined when no Plan exists; calendar block kind is the closed work/break/fixed union", () => {
+  const noPlanYet: HomeViewResponse = { today: "2026-09-25", plan: undefined, calendar: { blocks: [] } };
+  const withPlan: HomeViewResponse = {
+    today: "2026-09-25",
+    plan: { rows: [{ blockId: "b1", taskId: "t1", label: "Draft the memo", start: "x", end: "y", completed: false, past: false }] },
+    calendar: { blocks: [{ id: "b1", kind: "work", label: "Draft the memo", start: "x", end: "y", completed: false, past: false }] },
+  };
+  const fixed: HomeCalendarBlock = { id: "e1", kind: "fixed", label: "Soccer practice", start: "x", end: "y", completed: false, past: false };
+  // @ts-expect-error — HomeCalendarBlock.kind is closed to work/break/fixed; a raw Calendar-anchor label never leaks onto the wire.
+  const badKind: HomeCalendarBlock = { ...fixed, kind: "calendar-anchor" };
+  assert.equal(noPlanYet.plan, undefined);
+  assert.equal(withPlan.plan?.rows.length, 1);
+  assert.equal(fixed.kind, "fixed");
+  assert.ok(badKind);
 });
 
 test("Story 7.3 notification route shapes: NotificationList, MarkNotificationReadRequest/Response", () => {

@@ -35,6 +35,7 @@ import { streamSSE } from "hono/streaming";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
+import { Client } from "@notionhq/client";
 import { writeStructuredLog, type LogEntry } from "../adapters/logger.ts";
 import { openSqliteConnection, type SqliteConnection } from "../adapters/sqlite.ts";
 import {
@@ -44,7 +45,12 @@ import {
   tailOutboxSince,
 } from "../adapters/notification-store.ts";
 import { HEARTBEAT_INTERVAL_MS, initPlanStateStoreSchema, writeHeartbeat } from "../adapters/plan-state-store.ts";
+import { createMemoryStore } from "../adapters/memory-store.ts";
+import { createTokenStore, loadGoogleOAuthConfigFromEnv } from "../adapters/token-store.ts";
+import { createCalendarReadClient, readCalendarEvents } from "../adapters/calendar-adapter.ts";
+import { loadTaskPropertyNamesFromEnv, readNotionTasks } from "../adapters/notion-adapter.ts";
 import { listNotifications, markNotificationRead } from "../app/notifications.ts";
+import { getHomeView, type HomeViewDeps } from "../app/home-view.ts";
 import type { ApiResult, EventHint, HealthResponse } from "../types/api.ts";
 import type { YohErrorKind } from "../types/domain.ts";
 
@@ -190,6 +196,13 @@ export interface ServerDeps {
   readonly clock?: () => Date;
   /** Test seam for `GET /api/events`'s poll interval and sleep. */
   readonly eventStream?: Pick<RunEventStreamOptions, "pollIntervalMs" | "sleep">;
+  /**
+   * Story 7.8: `GET /api/home`'s dependencies. Optional so every prior
+   * story's `createApp({connection})` call site keeps compiling unchanged
+   * — absent (e.g. Notion/Google not yet configured), the route reports a
+   * clear configuration error rather than crashing the whole server.
+   */
+  readonly homeView?: Omit<HomeViewDeps, "now"> & { readonly now?: () => Date };
 }
 
 /** HTTP status for a serialized `Result` — the body is always the envelope; the status just makes logs and devtools honest. */
@@ -279,6 +292,21 @@ export function createApp(deps: ServerDeps) {
         const result = wire(await markNotificationRead(notificationsDeps, { id: c.req.param("id") }));
         return c.json(result, httpStatus(result));
       })
+      // Story 7.8: today's Plan checklist + Calendar Day View, computed
+      // server-side (AD-17). `deps.homeView` is absent until Notion/Google
+      // are configured (see `buildHomeViewDeps` below) — reported as a
+      // clear `unreachable` error rather than a 500.
+      .get("/api/home", async (c) => {
+        if (!deps.homeView) {
+          const result: ApiResult<never> = { ok: false, error: { kind: "unreachable", message: "server: home-view dependencies not configured" } };
+          return c.json(result, httpStatus(result));
+        }
+        // Fix round 1 (finding #2): a Calendar/Notion read failure inside
+        // getHomeView logs through the SAME structured logger every other
+        // route already uses (`log`, bound above), not a separate/ad-hoc one.
+        const result = wire(await getHomeView({ ...deps.homeView, now: deps.homeView.now ?? (() => new Date()), log }, {}));
+        return c.json(result, httpStatus(result));
+      })
       // Story 7.5, AD-15/AD-17: the built web/ SPA, mounted after every
       // /api/* route so nothing here can ever shadow the API.
       .use("/*", serveStatic({ root: "./web/dist" }))
@@ -321,10 +349,67 @@ export function startServer(
   connection: SqliteConnection,
   env: Readonly<Record<string, string | undefined>> = process.env,
   serveFn: ServeFn = (options) => serve({ ...options }),
+  /** Story 7.8, threaded through the same way `connection` already is. */
+  homeView?: ServerDeps["homeView"],
 ): ServerHandle {
   const port = parsePort(env["YOH_SERVER_PORT"]);
-  const app = createApp({ connection });
+  const app = createApp({ connection, ...(homeView ? { homeView } : {}) });
   return serveFn({ fetch: app.fetch, hostname: LOOPBACK_HOST, port });
+}
+
+/**
+ * Story 7.8: builds `GET /api/home`'s real dependencies, mirroring
+ * `shell/ritual-cli.ts`'s `createMorningRitualDeps` construction exactly
+ * (same env vars, same client constructors) — the Notion/Calendar clients
+ * are otherwise built only inside `rituals/`'s one-shot deps builders, never
+ * shared as an importable helper (AD-1 keeps `rituals/` and `shell/server.ts`
+ * from depending on each other), so this is its own small copy, not a
+ * refactor of that one.
+ *
+ * Returns `undefined` — logging why, once, at startup — rather than
+ * throwing, whenever a required env var is missing OR the Google OAuth
+ * client can't be constructed (`loadGoogleOAuthConfigFromEnv` throws on a
+ * missing `GOOGLE_CLIENT_ID`/`SECRET`/`REDIRECT_URI`): unlike
+ * `ritual-cli.ts` (a one-shot CLI where a thrown config error is the whole
+ * run failing anyway), this runs inside the long-lived server's own startup
+ * — a misconfigured Home feature must degrade `GET /api/home` to a clear
+ * `unreachable` error, never take down `/api/health`, the notification
+ * routes, or the built web app with it.
+ */
+function buildHomeViewDeps(connection: SqliteConnection, env: Readonly<Record<string, string | undefined>>): ServerDeps["homeView"] {
+  const timeZone = env["YOH_TIMEZONE"];
+  const notionToken = env["NOTION_TOKEN"];
+  const tasksDataSourceId = env["NOTION_TASKS_DATA_SOURCE_ID"];
+  const projectsDataSourceId = env["NOTION_PROJECTS_DATA_SOURCE_ID"];
+  if (!timeZone || !notionToken || !tasksDataSourceId || !projectsDataSourceId) {
+    writeStructuredLog({
+      level: "warn",
+      event: "server.home-view-not-configured",
+      detail: { message: "missing required environment variable(s) YOH_TIMEZONE / NOTION_TOKEN / NOTION_TASKS_DATA_SOURCE_ID / NOTION_PROJECTS_DATA_SOURCE_ID — GET /api/home will report an error until set" },
+    });
+    return undefined;
+  }
+  try {
+    const store = createMemoryStore(connection);
+    const notionClient = new Client({ auth: notionToken, ...(env["NOTION_API_VERSION"] ? { notionVersion: env["NOTION_API_VERSION"] } : {}) });
+    const taskPropertyNames = loadTaskPropertyNamesFromEnv(env);
+    const tokenStore = createTokenStore(loadGoogleOAuthConfigFromEnv(env));
+    const calendarClient = createCalendarReadClient(tokenStore.getOAuth2Client() as unknown as Parameters<typeof createCalendarReadClient>[0]);
+
+    return {
+      store,
+      readCalendarEvents: () => readCalendarEvents(calendarClient, { timeZone }),
+      readTasks: async () => await readNotionTasks(notionClient, { tasksDataSourceId, projectsDataSourceId, taskPropertyNames }),
+      timeZone,
+    };
+  } catch (err) {
+    writeStructuredLog({
+      level: "warn",
+      event: "server.home-view-not-configured",
+      detail: { message: err instanceof Error ? err.message : String(err) },
+    });
+    return undefined;
+  }
 }
 
 if (import.meta.main) {
@@ -336,7 +421,8 @@ if (import.meta.main) {
   // Story 7.4, AD-7: writes the heartbeat `ritual-cli.ts morning` checks on
   // start; stopped alongside the server on shutdown, below.
   const heartbeat = startHeartbeatWriter(connection);
-  const handle = startServer(connection);
+  const homeView = buildHomeViewDeps(connection, process.env);
+  const handle = startServer(connection, process.env, undefined, homeView);
   writeStructuredLog({
     level: "info",
     event: "server.listening",

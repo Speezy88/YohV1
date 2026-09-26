@@ -37,6 +37,7 @@ import { useSwipeNavigation } from "../lib/swipe.ts";
 import { PageNavigationContext } from "../lib/navigationContext.tsx";
 import { NotificationOverlay } from "./NotificationOverlay.tsx";
 import { startNotificationStream } from "../lib/notifications.ts";
+import { startEventBus } from "../lib/eventBus.ts";
 
 const PAGE_COMPONENTS = { home: HomePage, chat: ChatPage, tasks: TasksPage, desk: DeskPage } as const;
 
@@ -82,9 +83,12 @@ export function PageShell(): React.JSX.Element {
 
   useSwipeNavigation(rootRef, (direction) => (direction > 0 ? nav.next() : nav.prev()));
 
-  // Story 7.7, AD-18: the one SSE subscription driving the notification
-  // store, started once for the app's lifetime and torn down (closing the
-  // EventSource, cancelling its timers) on unmount.
+  // Story 7.8, AD-18: the one shared SSE connection, started once for the
+  // app's lifetime (multiple subscribers, e.g. Home's own `homeView.ts`
+  // store, multiplex over this single `EventSource`) and torn down on
+  // unmount.
+  useEffect(() => startEventBus(), []);
+  // Story 7.7: the notification store's own subscription to that shared bus.
   useEffect(() => startNotificationStream(), []);
 
   useEffect(() => {
