@@ -203,7 +203,8 @@
 import { createMemoryStore, getRitualInvocation, listSlipHistories, putRitualInvocation, type MemoryStore } from "../adapters/memory-store.ts";
 import { openSqliteConnection, type SqliteConnection } from "../adapters/sqlite.ts";
 import { initCompletionLogSchema, listCompletedTaskIdsOnDate } from "../adapters/completion-log.ts";
-import { initNotificationStoreSchema } from "../adapters/notification-store.ts";
+import { createNotification, initNotificationStoreSchema } from "../adapters/notification-store.ts";
+import { getLastHeartbeatAt, initPlanStateStoreSchema, isHeartbeatStale } from "../adapters/plan-state-store.ts";
 import {
   createCalendarReadClient,
   createCalendarWriteClient,
@@ -328,6 +329,25 @@ export interface RitualCliDeps {
    * letting it prevent `handleResult`'s own exit-code logic from running.
    */
   readonly recordInvocation: () => void;
+  /**
+   * Story 7.4, AD-7: raises an `operational` in-app notification
+   * (`notification-store.ts`) alongside every Pushover alert this file
+   * sends — Pushover remains the channel that doesn't depend on the server
+   * being up; this is the "also visible in the Web App if it's open" half.
+   * `withFailureAlert` calls this from all four alert paths (failed,
+   * missed-run, degraded, stale-heartbeat) through the one shared
+   * `sendPushoverAlertSafely` primitive, per AD-9.
+   */
+  readonly notifyOperational: (title: string, message: string) => void;
+  /**
+   * Story 7.4, AD-7: is the server's heartbeat stale? `morning`-only, like
+   * `checkDegraded` — the other three subcommands have no equivalent
+   * concept of "the interactive server is down" worth checking on their
+   * own schedule (the server's own liveness is `morning`'s job to
+   * surface, once a day, per the AC). May throw (a live store read);
+   * `withFailureAlert` wraps it the same way it wraps `checkMissedRun`.
+   */
+  readonly checkServerHeartbeatStale?: () => boolean;
 }
 
 /** AD-5's full subcommand set — all four are now built. */
@@ -373,20 +393,22 @@ export async function runRitualCli(argv: readonly string[], deps: RitualCliDeps)
       deps.sendFailureAlert,
       deps.checkMissedRun,
       deps.recordInvocation,
+      deps.notifyOperational,
       checkMorningPlanGenerationDegraded,
+      deps.checkServerHeartbeatStale,
     );
   }
 
   if (subcommand === "night-prompt") {
-    return withFailureAlert("night-prompt", deps.runNightPrompt, handleNightPromptResult, deps.io, deps.sendFailureAlert, deps.checkMissedRun, deps.recordInvocation);
+    return withFailureAlert("night-prompt", deps.runNightPrompt, handleNightPromptResult, deps.io, deps.sendFailureAlert, deps.checkMissedRun, deps.recordInvocation, deps.notifyOperational);
   }
 
   if (subcommand === "night-escalate") {
-    return withFailureAlert("night-escalate", deps.runNightEscalate, handleNightEscalateResult, deps.io, deps.sendFailureAlert, deps.checkMissedRun, deps.recordInvocation);
+    return withFailureAlert("night-escalate", deps.runNightEscalate, handleNightEscalateResult, deps.io, deps.sendFailureAlert, deps.checkMissedRun, deps.recordInvocation, deps.notifyOperational);
   }
 
   if (subcommand === "self-check") {
-    return withFailureAlert("self-check", deps.runSelfCheck, handleSelfCheckResult, deps.io, deps.sendFailureAlert, deps.checkMissedRun, deps.recordInvocation);
+    return withFailureAlert("self-check", deps.runSelfCheck, handleSelfCheckResult, deps.io, deps.sendFailureAlert, deps.checkMissedRun, deps.recordInvocation, deps.notifyOperational);
   }
 
   const planned = Object.hasOwn(SUBCOMMANDS, subcommand)
@@ -475,11 +497,17 @@ async function withFailureAlert<T>(
   sendFailureAlert: (notification: PlanNotification) => Promise<void>,
   checkMissedRun: () => MissedRunCheckResult,
   recordInvocation: () => void,
+  notifyOperational: (title: string, message: string) => void,
   checkDegraded?: (value: T) => DegradedCheckResult,
+  checkServerHeartbeatStale?: () => boolean,
 ): Promise<number> {
   const missedRunCheck = safeCheckMissedRun(checkMissedRun, subcommand, io);
   if (missedRunCheck.missed) {
-    await sendMissedRunAlertSafely(subcommand, missedRunCheck.detail ?? "no further detail available", io, sendFailureAlert);
+    await sendMissedRunAlertSafely(subcommand, missedRunCheck.detail ?? "no further detail available", io, sendFailureAlert, notifyOperational);
+  }
+
+  if (checkServerHeartbeatStale && safeCheckServerHeartbeatStale(checkServerHeartbeatStale, subcommand, io)) {
+    await sendHeartbeatStaleAlertSafely(subcommand, io, sendFailureAlert, notifyOperational);
   }
 
   let result: Result<T, YohError>;
@@ -488,7 +516,7 @@ async function withFailureAlert<T>(
   } catch (err) {
     safeRecordInvocation(recordInvocation, subcommand, io);
     const message = err instanceof Error ? err.message : String(err);
-    await sendAlertSafely(subcommand, `thrown error — ${message}`, io, sendFailureAlert);
+    await sendAlertSafely(subcommand, `thrown error — ${message}`, io, sendFailureAlert, notifyOperational);
     io.writeError(
       JSON.stringify({
         level: "error",
@@ -503,15 +531,32 @@ async function withFailureAlert<T>(
   safeRecordInvocation(recordInvocation, subcommand, io);
 
   if (!result.ok) {
-    await sendAlertSafely(subcommand, `${result.error.kind} — ${result.error.message}`, io, sendFailureAlert);
+    await sendAlertSafely(subcommand, `${result.error.kind} — ${result.error.message}`, io, sendFailureAlert, notifyOperational);
   } else if (checkDegraded) {
     const degradedCheck = checkDegraded(result.value);
     if (degradedCheck.degraded) {
-      await sendDegradedAlertSafely(subcommand, degradedCheck.detail ?? "no further detail available", io, sendFailureAlert);
+      await sendDegradedAlertSafely(subcommand, degradedCheck.detail ?? "no further detail available", io, sendFailureAlert, notifyOperational);
     }
   }
 
   return handleResult(result, io);
+}
+
+/** Mirrors `safeCheckMissedRun`'s try/catch-and-log-false convention — a throwing heartbeat read must never block `runSubcommand` or crash `withFailureAlert`. */
+function safeCheckServerHeartbeatStale(checkServerHeartbeatStale: () => boolean, subcommand: string, io: RitualCliIo): boolean {
+  try {
+    return checkServerHeartbeatStale();
+  } catch (err) {
+    io.writeError(
+      JSON.stringify({
+        level: "error",
+        event: "ritual-cli.heartbeat-check-failed",
+        subcommand,
+        message: err instanceof Error ? err.message : String(err),
+      }),
+    );
+    return false;
+  }
 }
 
 /**
@@ -592,6 +637,7 @@ async function sendPushoverAlertSafely(
   subcommand: string,
   io: RitualCliIo,
   sendFailureAlert: (notification: PlanNotification) => Promise<void>,
+  notifyOperational: (title: string, message: string) => void,
 ): Promise<void> {
   try {
     await sendFailureAlert({ title, message });
@@ -600,6 +646,22 @@ async function sendPushoverAlertSafely(
       JSON.stringify({
         level: "error",
         event,
+        subcommand,
+        message: err instanceof Error ? err.message : String(err),
+      }),
+    );
+  }
+  // Story 7.4, AD-7: every alert condition also raises an `operational`
+  // in-app notification — a failure here (a bad DB write) must never
+  // suppress the Pushover alert above, which has already been attempted by
+  // this point regardless of what happens next.
+  try {
+    notifyOperational(title, message);
+  } catch (err) {
+    io.writeError(
+      JSON.stringify({
+        level: "error",
+        event: "ritual-cli.operational-notification-failed",
         subcommand,
         message: err instanceof Error ? err.message : String(err),
       }),
@@ -619,6 +681,7 @@ async function sendAlertSafely(
   detail: string,
   io: RitualCliIo,
   sendFailureAlert: (notification: PlanNotification) => Promise<void>,
+  notifyOperational: (title: string, message: string) => void,
 ): Promise<void> {
   return sendPushoverAlertSafely(
     "ritual-cli.failure-alert-send-failed",
@@ -627,6 +690,7 @@ async function sendAlertSafely(
     subcommand,
     io,
     sendFailureAlert,
+    notifyOperational,
   );
 }
 
@@ -646,6 +710,7 @@ async function sendMissedRunAlertSafely(
   detail: string,
   io: RitualCliIo,
   sendFailureAlert: (notification: PlanNotification) => Promise<void>,
+  notifyOperational: (title: string, message: string) => void,
 ): Promise<void> {
   return sendPushoverAlertSafely(
     "ritual-cli.missed-run-alert-send-failed",
@@ -654,6 +719,7 @@ async function sendMissedRunAlertSafely(
     subcommand,
     io,
     sendFailureAlert,
+    notifyOperational,
   );
 }
 
@@ -674,6 +740,7 @@ async function sendDegradedAlertSafely(
   detail: string,
   io: RitualCliIo,
   sendFailureAlert: (notification: PlanNotification) => Promise<void>,
+  notifyOperational: (title: string, message: string) => void,
 ): Promise<void> {
   return sendPushoverAlertSafely(
     "ritual-cli.degraded-alert-send-failed",
@@ -682,6 +749,25 @@ async function sendDegradedAlertSafely(
     subcommand,
     io,
     sendFailureAlert,
+    notifyOperational,
+  );
+}
+
+/** Worded distinctly from `sendAlertSafely`'s "failed", `sendMissedRunAlertSafely`'s "missed a run", and `sendDegradedAlertSafely`'s "running slow" — this run neither failed nor was skipped; a DIFFERENT process (the server) appears down. */
+async function sendHeartbeatStaleAlertSafely(
+  subcommand: string,
+  io: RitualCliIo,
+  sendFailureAlert: (notification: PlanNotification) => Promise<void>,
+  notifyOperational: (title: string, message: string) => void,
+): Promise<void> {
+  return sendPushoverAlertSafely(
+    "ritual-cli.heartbeat-alert-send-failed",
+    "Yoh: server is down",
+    "The Yoh server's heartbeat is stale — it hasn't checked in recently and may be down. This does not block your Morning Plan.",
+    subcommand,
+    io,
+    sendFailureAlert,
+    notifyOperational,
   );
 }
 
@@ -1225,6 +1311,22 @@ function createFailureAlertSender(
 }
 
 /**
+ * Builds `RitualCliDeps.notifyOperational` (Story 7.4, AD-7/FR-49): binds
+ * `notification-store.ts`'s `createNotification` to the process's own shared
+ * `SqliteConnection` (AD-10). `deepLink: null` per `CreateNotificationInput`'s
+ * own doc comment (Ruling R11) — an `operational` notification is
+ * message-only, unlike `needs-data`'s Task deep link. Exported so
+ * `tests/ritual-cli.test.ts` can prove the real binding writes a genuine
+ * `operational` row, separately from `withFailureAlert`'s own tests (which
+ * only prove the SEAM is called, via a fake).
+ */
+export function createOperationalNotifier(connection: SqliteConnection): (title: string, message: string) => void {
+  return (title, message) => {
+    createNotification(connection, { kind: "operational", title, body: message, deepLink: null, createdAt: new Date().toISOString() });
+  };
+}
+
+/**
  * Real entrypoint: opens the `MemoryStore` (per `MEMORY_DB_PATH`, defaulting
  * to `./data/yoh-memory.db` — the same default `.env.example` documents and
  * `chat-cli.ts` uses), wires ONLY the real adapters the requested subcommand
@@ -1264,6 +1366,13 @@ export async function main(
   // notification (needs-data, operational; Story 7.7), so the store's tables
   // exist before any subcommand runs, even if the server never has.
   initNotificationStoreSchema(connection.db);
+  // Story 7.4 (AD-7/AD-10): the heartbeat table `checkServerHeartbeatStale`,
+  // below, reads — created idempotently the same way, even though only
+  // `morning` actually reads it (the server, a separate process, is what
+  // writes it).
+  initPlanStateStoreSchema(connection.db);
+  const notifyOperational = createOperationalNotifier(connection);
+  const checkServerHeartbeatStale = (): boolean => isHeartbeatStale(getLastHeartbeatAt(connection), new Date());
   try {
     if (argv[0] === "night-prompt") {
       let deps: NightPromptRitualDeps;
@@ -1284,6 +1393,7 @@ export async function main(
         sendFailureAlert,
         checkMissedRun: () => checkDailyRitualMissedRun(store, "night-prompt", () => new Date()),
         recordInvocation: () => putRitualInvocation(store, "night-prompt", { at: new Date().toISOString() }),
+        notifyOperational,
       });
     }
 
@@ -1306,6 +1416,7 @@ export async function main(
         sendFailureAlert,
         checkMissedRun: () => checkDailyRitualMissedRun(store, "night-escalate", () => new Date()),
         recordInvocation: () => putRitualInvocation(store, "night-escalate", { at: new Date().toISOString() }),
+        notifyOperational,
       });
     }
 
@@ -1328,6 +1439,7 @@ export async function main(
         sendFailureAlert,
         checkMissedRun: () => checkSelfCheckMissedRun(store, () => new Date()),
         recordInvocation: () => putRitualInvocation(store, "self-check", { at: new Date().toISOString() }),
+        notifyOperational,
       });
     }
 
@@ -1349,6 +1461,8 @@ export async function main(
       sendFailureAlert,
       checkMissedRun: () => checkDailyRitualMissedRun(store, "morning", () => new Date()),
       recordInvocation: () => putRitualInvocation(store, "morning", { at: new Date().toISOString() }),
+      notifyOperational,
+      checkServerHeartbeatStale,
     });
   } finally {
     connection.close();

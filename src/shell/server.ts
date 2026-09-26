@@ -42,6 +42,7 @@ import {
   OUTBOX_POLL_INTERVAL_MS,
   tailOutboxSince,
 } from "../adapters/notification-store.ts";
+import { HEARTBEAT_INTERVAL_MS, initPlanStateStoreSchema, writeHeartbeat } from "../adapters/plan-state-store.ts";
 import { listNotifications, markNotificationRead } from "../app/notifications.ts";
 import type { ApiResult, EventHint, HealthResponse } from "../types/api.ts";
 import type { YohErrorKind } from "../types/domain.ts";
@@ -133,6 +134,44 @@ export async function runEventStream(
     }
     await stream.write(KEEP_ALIVE_COMMENT);
   }
+}
+
+// ============================================================================
+// Heartbeat writer (Story 7.4, AD-7) — the server side of the dead-man's
+// switch `ritual-cli.ts morning` checks on start.
+// ============================================================================
+
+export interface HeartbeatWriterOptions {
+  readonly intervalMs?: number;
+  readonly now?: () => Date;
+  readonly setIntervalFn?: typeof setInterval;
+  readonly clearIntervalFn?: typeof clearInterval;
+}
+
+export interface HeartbeatWriterHandle {
+  stop(): void;
+}
+
+/**
+ * Writes a heartbeat immediately, then on every `intervalMs` tick (AD-7).
+ * `setIntervalFn`/`clearIntervalFn`/`now` are injectable, mirroring
+ * `runEventStream`'s (Story 7.3) DI convention — a test never waits on a
+ * real interval.
+ */
+export function startHeartbeatWriter(connection: SqliteConnection, options: HeartbeatWriterOptions = {}): HeartbeatWriterHandle {
+  const intervalMs = options.intervalMs ?? HEARTBEAT_INTERVAL_MS;
+  const now = options.now ?? (() => new Date());
+  const setIntervalFn = options.setIntervalFn ?? setInterval;
+  const clearIntervalFn = options.clearIntervalFn ?? clearInterval;
+
+  writeHeartbeat(connection, now().toISOString());
+  const handle = setIntervalFn(() => writeHeartbeat(connection, now().toISOString()), intervalMs);
+
+  return {
+    stop(): void {
+      clearIntervalFn(handle);
+    },
+  };
 }
 
 // ============================================================================
@@ -275,6 +314,10 @@ if (import.meta.main) {
   const connection = openSqliteConnection({ databasePath: process.env["MEMORY_DB_PATH"] || "./data/yoh-memory.db" });
   // AD-10: each owner creates its dedicated tables idempotently on startup.
   initNotificationStoreSchema(connection.db);
+  initPlanStateStoreSchema(connection.db);
+  // Story 7.4, AD-7: writes the heartbeat `ritual-cli.ts morning` checks on
+  // start; stopped alongside the server on shutdown, below.
+  const heartbeat = startHeartbeatWriter(connection);
   const handle = startServer(connection);
   writeStructuredLog({
     level: "info",
@@ -287,6 +330,7 @@ if (import.meta.main) {
   // Clients reconnect with Last-Event-ID and miss nothing.
   const shutdown = (signal: string) => {
     writeStructuredLog({ level: "info", event: "server.stopping", detail: { signal } });
+    heartbeat.stop();
     handle.close();
     setTimeout(() => {
       connection.close();

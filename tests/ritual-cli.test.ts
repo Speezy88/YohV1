@@ -13,6 +13,7 @@ import { createMemoryStore, getRitualInvocation, putRitualInvocation, putSelfChe
 import { recordSlip } from "../src/adapters/memory-store.ts";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { initCompletionLogSchema, recordCompletion } from "../src/adapters/completion-log.ts";
+import { initNotificationStoreSchema, listUnreadNotifications } from "../src/adapters/notification-store.ts";
 import { computeSlipBumpLevels } from "../src/core/slip-bump.ts";
 import {
   checkDailyRitualMissedRun,
@@ -21,6 +22,7 @@ import {
   createMorningRitualDeps,
   createNightEscalateRitualDeps,
   createNightPromptRitualDeps,
+  createOperationalNotifier,
   createSelfCheckRitualDeps,
   runRitualCli,
   DAILY_RITUAL_MISSED_RUN_GRACE_HOURS,
@@ -39,6 +41,8 @@ import type { Plan, Result, YohError } from "../src/types/domain.ts";
 const NOT_MISSED: () => MissedRunCheckResult = () => ({ missed: false });
 /** Default no-op invocation recorder — most existing dispatch tests use a fake `MemoryStore`-less `RitualCliDeps` and don't care about the Task 26 review-fix `RitualInvocation` marker at all. */
 const NOOP_RECORD_INVOCATION: () => void = () => {};
+/** Default no-op operational-notification sink — most existing dispatch tests don't assert on `notification-store.ts` writes at all. */
+const NOOP_NOTIFY_OPERATIONAL: (title: string, message: string) => void = () => {};
 
 const TODAY = "2026-08-22";
 
@@ -91,6 +95,7 @@ function deps(
     },
     checkMissedRun,
     recordInvocation,
+    notifyOperational: NOOP_NOTIFY_OPERATIONAL,
   };
 }
 
@@ -124,6 +129,7 @@ function nightPromptDeps(
     },
     checkMissedRun,
     recordInvocation,
+    notifyOperational: NOOP_NOTIFY_OPERATIONAL,
   };
 }
 
@@ -157,6 +163,7 @@ function nightEscalateDeps(
     },
     checkMissedRun,
     recordInvocation,
+    notifyOperational: NOOP_NOTIFY_OPERATIONAL,
   };
 }
 
@@ -190,6 +197,7 @@ function selfCheckDeps(
     },
     checkMissedRun,
     recordInvocation,
+    notifyOperational: NOOP_NOTIFY_OPERATIONAL,
   };
 }
 
@@ -516,6 +524,7 @@ function throwingDeps(which: "runMorning" | "runNightPrompt" | "runNightEscalate
     },
     checkMissedRun: NOT_MISSED,
     recordInvocation: NOOP_RECORD_INVOCATION,
+    notifyOperational: NOOP_NOTIFY_OPERATIONAL,
   };
   return { ...base, [which]: async () => { throw err; } };
 }
@@ -1214,6 +1223,7 @@ test("SELF-HEALING: after a missed-run alert fires for `morning`, the ritual sti
     sendFailureAlert: async (notification) => {
       s.alerts.push(notification);
     },
+    notifyOperational: NOOP_NOTIFY_OPERATIONAL,
   };
 
   const code = await runRitualCli(["morning"], testDeps);
@@ -1488,4 +1498,143 @@ test("the degraded-performance check is `morning`-only — night-prompt/night-es
   const sSelfCheck = sink();
   await runRitualCli(["self-check"], selfCheckDeps({ ok: true, value: { status: "prompted", date: TODAY } }, sSelfCheck));
   assert.deepEqual(sSelfCheck.alerts, []);
+});
+
+// ============================================================================
+// notifyOperational — every AD-7 alert condition also raises an
+// `operational` in-app notification (Story 7.4)
+// ============================================================================
+
+test("a failed morning run sends a Pushover alert AND calls notifyOperational", async () => {
+  const s = sink();
+  const notified: Array<{ title: string; message: string }> = [];
+  const testDeps: RitualCliDeps = {
+    ...deps({ ok: false, error: { kind: "unreachable", message: "notion down" } }, s),
+    notifyOperational: (title, message) => notified.push({ title, message }),
+  };
+
+  await runRitualCli(["morning"], testDeps);
+
+  assert.equal(s.alerts.length, 1);
+  assert.equal(notified.length, 1);
+  assert.equal(notified[0]!.title, s.alerts[0]!.title);
+  assert.equal(notified[0]!.message, s.alerts[0]!.message);
+});
+
+test("a missed-run alert for night-prompt also calls notifyOperational, matching the Pushover alert's wording", async () => {
+  const s = sink();
+  const notified: Array<{ title: string; message: string }> = [];
+  const testDeps: RitualCliDeps = {
+    ...nightPromptDeps({ ok: true, value: { status: "already-ran", date: TODAY } }, s, undefined, () => ({ missed: true, detail: "3 days" })),
+    notifyOperational: (title, message) => notified.push({ title, message }),
+  };
+
+  await runRitualCli(["night-prompt"], testDeps);
+
+  assert.equal(s.alerts.length, 1);
+  assert.match(s.alerts[0]!.title, /missed/i);
+  assert.deepEqual(notified, [{ title: s.alerts[0]!.title, message: s.alerts[0]!.message }]);
+});
+
+test("a thrown error still calls notifyOperational alongside the Pushover alert", async () => {
+  const s = sink();
+  const notified: Array<{ title: string; message: string }> = [];
+  const testDeps: RitualCliDeps = {
+    ...throwingDeps("runMorning", new Error("morning-ritual: unexpected crash"), s),
+    notifyOperational: (title, message) => notified.push({ title, message }),
+  };
+
+  await runRitualCli(["morning"], testDeps);
+
+  assert.equal(s.alerts.length, 1);
+  assert.deepEqual(notified, [{ title: s.alerts[0]!.title, message: s.alerts[0]!.message }]);
+});
+
+// ============================================================================
+// Stale-heartbeat alert (Story 7.4, AD-7) — morning-only, additive, never
+// blocks the Morning Plan
+// ============================================================================
+
+test("morning sends a distinctly-worded alert when checkServerHeartbeatStale reports stale, without blocking the Plan", async () => {
+  const s = sink();
+  let planRan = false;
+  const testDeps: RitualCliDeps = {
+    ...deps({ ok: true, value: { status: "already-ran", date: TODAY, planId: `plan-${TODAY}` } }, s, () => {
+      planRan = true;
+    }),
+    notifyOperational: NOOP_NOTIFY_OPERATIONAL,
+    checkServerHeartbeatStale: () => true,
+  };
+
+  const code = await runRitualCli(["morning"], testDeps);
+
+  assert.equal(code, 0, "a stale heartbeat must never turn a successful morning run into a failure exit code");
+  assert.equal(planRan, true);
+  assert.equal(s.alerts.length, 1);
+  assert.match(s.alerts[0]!.title, /down/i);
+  assert.doesNotMatch(s.alerts[0]!.title, /failed|missed a run|running slow/i, "worded distinctly from the other three AD-7 alerts");
+});
+
+test("morning sends no stale-heartbeat alert when checkServerHeartbeatStale reports fresh", async () => {
+  const s = sink();
+  const testDeps: RitualCliDeps = {
+    ...deps({ ok: true, value: { status: "already-ran", date: TODAY, planId: `plan-${TODAY}` } }, s),
+    notifyOperational: NOOP_NOTIFY_OPERATIONAL,
+    checkServerHeartbeatStale: () => false,
+  };
+
+  await runRitualCli(["morning"], testDeps);
+  assert.equal(s.alerts.length, 0);
+});
+
+test("a throwing checkServerHeartbeatStale is logged and treated as fresh — it never blocks the Plan or crashes the dispatch", async () => {
+  const s = sink();
+  let planRan = false;
+  const testDeps: RitualCliDeps = {
+    ...deps({ ok: true, value: { status: "already-ran", date: TODAY, planId: `plan-${TODAY}` } }, s, () => {
+      planRan = true;
+    }),
+    notifyOperational: NOOP_NOTIFY_OPERATIONAL,
+    checkServerHeartbeatStale: () => {
+      throw new Error("SQLITE_BUSY");
+    },
+  };
+
+  const code = await runRitualCli(["morning"], testDeps);
+
+  assert.equal(code, 0);
+  assert.equal(planRan, true);
+  assert.equal(s.alerts.length, 0);
+  assert.ok(s.err.some((line) => /heartbeat-check-failed/.test(line)));
+});
+
+test("night-prompt/night-escalate/self-check never receive a checkServerHeartbeatStale check (morning-only, like checkDegraded)", async () => {
+  const s = sink();
+  // nightPromptDeps et al. simply never set checkServerHeartbeatStale — this test documents that omitting it is the norm and nothing crashes.
+  await runRitualCli(["night-prompt"], {
+    ...nightPromptDeps({ ok: true, value: { status: "already-ran", date: TODAY } }, s),
+    notifyOperational: NOOP_NOTIFY_OPERATIONAL,
+  });
+  assert.equal(s.alerts.length, 0);
+});
+
+// ============================================================================
+// createOperationalNotifier — the real `main()` binding to
+// `notification-store.ts` (Story 7.4, FR-49)
+// ============================================================================
+
+test("createOperationalNotifier writes a real `operational` in-app notification with no deep link", () => {
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db);
+  const notifyOperational = createOperationalNotifier(connection);
+
+  notifyOperational("Yoh: server is down", "The Yoh server's heartbeat is stale.");
+
+  const unread = listUnreadNotifications(connection);
+  assert.equal(unread.length, 1);
+  assert.equal(unread[0]!.kind, "operational");
+  assert.equal(unread[0]!.title, "Yoh: server is down");
+  assert.equal(unread[0]!.body, "The Yoh server's heartbeat is stale.");
+  assert.equal(unread[0]!.deepLink, null);
+  connection.close();
 });
