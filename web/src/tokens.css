@@ -89,6 +89,19 @@
      every glass surface in both themes. */
   --blur-glass: 16px;
   --glass-saturate: 140%;
+
+  /* Motion durations — Story 7.6 fix round 1 (controller ruling R14 #3).
+     DESIGN.md's motion table gives no concrete number for the page-slide
+     transition or the launch splash's exit fade, so these are tuned by eye
+     — the same "tuned by eye" latitude the Screensaver's own dot-speed/
+     wordmark-size JS constants use, just expressed as CSS custom
+     properties (since these two values are consumed purely by components
+     as CSS `transition-duration`s, not read by any JS logic) so the "no
+     component hard-codes a duration" rule holds: `PageShell.tsx` reaches
+     for `var(--duration-page-transition)`/`var(--duration-splash-fade)`
+     instead of a JS number. */
+  --duration-page-transition: 300ms;
+  --duration-splash-fade: 300ms;
 }
 
 :root {
@@ -154,4 +167,22 @@
 body {
   background-color: var(--color-surface-base);
   color: var(--color-ink-primary);
+  /* Story 7.6, UX-DR28: belt-and-suspenders alongside PageShell's own
+     inline `overscroll-behavior-x: none` — in some browsers the root
+     scroller that would otherwise trigger the back/forward swipe gesture
+     is `<html>`/`<body>`, not the page-shell `div`. */
+  overscroll-behavior-x: none;
+}
+
+/* Story 7.6, DESIGN.md "Screensaver drift": the Screensaver's dot field
+   drift, read only when `useReducedMotion` is false (Screensaver.tsx sets
+   `animation: none` directly under reduced motion, so this keyframe simply
+   never runs rather than needing its own media-query guard). */
+@keyframes screensaver-drift {
+  from {
+    transform: translate(0, 0);
+  }
+  to {
+    transform: translate(12px, -12px);
+  }
 }
