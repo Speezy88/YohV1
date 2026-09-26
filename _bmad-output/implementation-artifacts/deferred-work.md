@@ -11,3 +11,30 @@
 ## Deferred from: Story 7.2 (2026-09-25) — Epic 8
 
 - **`shell/chat-cli.ts` is allowlisted in `tests/layering-rules.test.ts`'s AD-16 write-surface check (Ruling R1).** It still calls `setTaskStatus`/`updateTaskField`/`createPage`/`applyCalendarEdit` directly: Phase 1 logic that Epic 8 moves into `app/` (AD-16). Every other shell file, including `shell/server.ts`, is checked now. **Epic 8 item:** once `chat-cli.ts` is transport over `app/` (or is deleted, FR-50), remove `"chat-cli.ts"` from `SHELL_WRITE_ALLOWLIST` in the same change. The test's "allowlist entry still names a real file" check fails if `chat-cli.ts` is deleted while the entry remains.
+
+## Deferred from: Epic 7 (Phase 2) SDD run — per-story reviews and final whole-branch review (2026-09-26)
+
+The final whole-branch review triaged every item below as "defer": none blocks merge.
+
+### Tracked follow-ups
+- **No outbox pruning (7.3).** `notification-store.ts`'s event outbox has no retention, so it grows forever. SSE replay only needs rows newer than the oldest connected client's `Last-Event-ID`. Add a retention sweep (e.g. keep 7 days or the last N rows) in the server's outbox poll.
+- **No backup retention or rotation (7.4).** `backup-cli.ts` writes nightly copies to `YOH_BACKUP_PATH` and never prunes them. Add keep-last-N once the real target (a USB drive) is chosen.
+- **Check-off vs close-out window (7.10 × 7.9).** A check-off reaches the Completion Log only when the commit sweep runs, about 5 s after the click (longer if held). If `night-prompt`'s close-out runs inside that window, it can still ask about the Task just checked off. Consider having close-out also exclude `plan-state-store`'s uncommitted pending check-offs.
+- **`App.tsx` has no `<main>` landmark (7.6).** A small a11y follow-up.
+- **Undo is lost on reload (7.10).** Reloading during the undo window shows the row unchecked with no Undo. Checking it again reuses the same pending record, so nothing is completed twice. Hold/release request failures are also silent: the toast falls back to its own timer, and the server caps holds at 10 min.
+- **Manual in-browser checks:** WCAG contrast of the Calendar Day View's cross-hatch/`event-fixed-ink` and raised-block shadow in both themes (7.8). Screen-reader pass on the notification overlay's single `aria-live` region (7.7).
+- **`ritual-cli.ts` is ~1500 lines.** Split it when Epic 8 restructures the shells.
+
+### Minors
+- 7.1: `writeTx` re-wraps `db.transaction` per call (perf nit). No test distinguishes BEGIN IMMEDIATE from deferred locking.
+- 7.2: hono/@hono/node-server are exact-pinned while other deps use carets. The spine's Stack row for @hono/node-server is stale. `EventHint`/`NotificationRecord` have no negative-case lock tests.
+- 7.3: the `/api/events` duration log measures time-to-headers, not stream lifetime.
+- 7.4: the notification-store invariant test doesn't list `backup-cli.ts`. The unwritable-target path isn't asserted through `main()`. The runEntry comment's ritual-cli analogy is loose.
+- 7.5: CSP tests don't cover static files or SSE (the middleware is global, verified). vitest reports EBADENGINE on Node 25 (the deploy host is Node 24 LTS). The web-import-rule regex misses dynamic `import()` and `export … from`. `--glass-saturate` isn't in Tailwind's `--saturate-*` namespace.
+- 7.6: the Screensaver's per-dot stagger isn't tokenized. The PageIndicator gradient is 90°, DESIGN.md says 135°. The keydown effect re-binds on every page change. Some tests assert class-name strings. With more than one launch gate, a later-registering gate could trip the one-way splash latch early, so keep "home-data" the only one.
+- 7.7: `resolveDeepLinkIndex` handles only a bare id or "/id". `dismissedIds` grows for the whole session. Reconnect uses a fixed ~20 s cadence, not exponential backoff.
+- 7.8: Confetti removal relies only on `animationend`, with no time backstop (the overlay is pointer-events-none). `STAGGER_MS` is a JS constant. The Home skeleton row count is a literal. `buildHomeViewDeps`'s real Notion/Google wiring is only fake-tested.
+- 7.9: `getCompletedTaskIdsToday` uses its own `new Date()` rather than `deps.now` (midnight edge). The snapshot `area` is typed `string | null`, not `Area | null`.
+- 7.10: the `completion-log.ts` header comment is stale (the Task lookup now happens at commit time). `addLocalFailureNotice` has no dedup. `retryAt` calls `deps.now()` twice per sweep pass.
+- Epic 6 retro: `updateTaskField`'s rich_text (Area) path is unchunked. There's no guard for Notion's ~100-segment rich_text cap.
+- Tests: a few server/ritual tests still write real structured log lines to stderr, so test output isn't pristine.
