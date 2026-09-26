@@ -27,3 +27,24 @@ if (typeof window !== "undefined" && !window.matchMedia) {
       dispatchEvent: () => false,
     }) as MediaQueryList;
 }
+
+// jsdom (27.0.0) has no EventSource at all (confirmed: `"EventSource" in
+// new JSDOM(...).window` is false). Story 7.7's `events.ts` (via
+// `notifications.ts`'s `startNotificationStream`) constructs one
+// unconditionally on mount, including from components (`PageShell`) whose
+// own tests never exercise SSE behavior — a bare `ReferenceError` there
+// would fail every one of those tests. This inert default (never opens,
+// never fires) is a no-op stand-in; `events.test.ts` replaces it per-test
+// with a real fake via `vi.stubGlobal`/`vi.unstubAllGlobals` (which restores
+// THIS stub afterward, not `undefined`).
+if (typeof globalThis.EventSource === "undefined") {
+  class InertEventSource {
+    onopen: (() => void) | null = null;
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    onerror: (() => void) | null = null;
+    constructor(public readonly url: string) {}
+    close(): void {}
+  }
+  // @ts-expect-error — a minimal stand-in, not a spec-complete EventSource.
+  globalThis.EventSource = InertEventSource;
+}

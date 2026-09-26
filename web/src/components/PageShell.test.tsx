@@ -233,7 +233,13 @@ describe("PageShell", () => {
   it("the idle Screensaver overlays without navigating away or unmounting the current page", () => {
     vi.useFakeTimers();
     render(<PageShell />);
-    act(() => vi.runAllTimers()); // resolve the launch splash first
+    // Story 7.7: PageShell now also starts the SSE notification stream,
+    // which arms its own (deliberately perpetual, once truly unreachable)
+    // reconnect timer — `vi.runAllTimers()` would spin that forever and hit
+    // the "possible infinite loop" guard. `advanceTimersByTime(0)` still
+    // flushes any zero-delay effect timers to resolve the launch splash,
+    // without also draining a timer that is meant to keep recurring.
+    act(() => vi.advanceTimersByTime(0)); // resolve the launch splash first
     fireEvent.keyDown(document, { key: "ArrowRight" }); // move to Chat
     act(() => vi.advanceTimersByTime(SCREENSAVER_IDLE_MS));
     expect(screen.getByRole("dialog", { name: /idle/i })).toBeInTheDocument();

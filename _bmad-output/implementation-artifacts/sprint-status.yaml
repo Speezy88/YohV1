@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 08-22-2026 00:00
-last_updated: 09-26-2026 14:32
+last_updated: 09-26-2026 14:58
 project: YohV1
 project_key: NOKEY
 tracking_system: file-system
@@ -93,7 +93,7 @@ development_status:
   7-4-server-liveness-alerting-and-nightly-backup: done
   7-5-web-client-foundation-design-tokens-fonts-themes-installable: done
   7-6-page-shell-navigation-and-screensaver: done
-  7-7-in-app-notification-overlay: backlog
+  7-7-in-app-notification-overlay: done
   7-8-home-today-s-plan-and-calendar: backlog
   7-9-completion-log-and-status-only-completion-writes: done
   7-10-check-off-a-task-with-undo: backlog

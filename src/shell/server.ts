@@ -250,14 +250,20 @@ export function createApp(deps: ServerDeps) {
       })
       // Liveness probe — the one route that is not an ApiResult envelope (see HealthResponse).
       .get("/api/health", (c) => c.json({ ok: true } satisfies HealthResponse))
-      // AD-18: one hint stream per open client.
+      // AD-18: one hint stream per open client. `Last-Event-ID` is the
+      // browser's OWN automatic resend on ITS OWN transient reconnect (same
+      // `EventSource` object) — no client code needed for that case. Story
+      // 7.7's client additionally falls back to a `?lastEventId=` query
+      // parameter when it gives up on a dead `EventSource` and opens a
+      // brand-new one (which has no memory of the header), so this route
+      // reads the query string whenever the header is absent.
       .get("/api/events", (c) =>
         streamSSE(
           c,
           (stream) =>
             runEventStream(stream, deps.connection, {
               ...deps.eventStream,
-              lastEventId: c.req.header("Last-Event-ID"),
+              lastEventId: c.req.header("Last-Event-ID") ?? c.req.query("lastEventId"),
             }),
           async (err) => {
             // The client's EventSource reconnects with Last-Event-ID, so no hint is lost.

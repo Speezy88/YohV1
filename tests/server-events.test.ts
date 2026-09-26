@@ -298,6 +298,30 @@ test("GET /api/events honours the Last-Event-ID request header", { timeout: 5_00
   assert.match(text, /id: 2\n[\s\S]*id: 3\n/);
 });
 
+test("GET /api/events falls back to a `lastEventId` query parameter when the Last-Event-ID header is absent (hard-drop reconnect, Story 7.7)", { timeout: 5_000 }, async (t) => {
+  const connection = tempStore();
+  append(connection, "a", "b", "c");
+  const app = createApp({ connection, log: () => {}, eventStream: { pollIntervalMs: 5 } });
+  const res = await app.request("/api/events?lastEventId=1");
+  const reader = res.body!.getReader();
+  cleanupAfter(t, connection, () => reader.cancel());
+  const text = await readUntil(reader, /id: 3\n/);
+  assert.doesNotMatch(text, /id: 1\n/);
+  assert.match(text, /id: 2\n[\s\S]*id: 3\n/);
+});
+
+test("GET /api/events prefers the Last-Event-ID header over the lastEventId query parameter when both are present", { timeout: 5_000 }, async (t) => {
+  const connection = tempStore();
+  append(connection, "a", "b", "c");
+  const app = createApp({ connection, log: () => {}, eventStream: { pollIntervalMs: 5 } });
+  const res = await app.request("/api/events?lastEventId=500", { headers: { "Last-Event-ID": "1" } });
+  const reader = res.body!.getReader();
+  cleanupAfter(t, connection, () => reader.cancel());
+  const text = await readUntil(reader, /id: 3\n/);
+  assert.doesNotMatch(text, /id: 1\n/);
+  assert.match(text, /id: 2\n[\s\S]*id: 3\n/);
+});
+
 test("over a real loopback socket, a client disconnect ends the server's tail loop", { timeout: 5_000 }, async (t) => {
   const connection = tempStore();
   const ticker = countingSleep();

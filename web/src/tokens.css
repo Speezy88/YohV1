@@ -102,6 +102,13 @@
      instead of a JS number. */
   --duration-page-transition: 300ms;
   --duration-splash-fade: 300ms;
+
+  /* Story 7.7, DESIGN.md State-tied motion "Toast enter" row: "0.55s
+     ease-out, 5px drop + fade; dot pulse 2.2s". Both concrete numbers get
+     their own token (not a JS/CSS literal) per the same rule as the two
+     durations above. */
+  --duration-notification-enter: 550ms;
+  --duration-notification-pulse: 2200ms;
 }
 
 :root {
@@ -184,5 +191,71 @@ body {
   }
   to {
     transform: translate(12px, -12px);
+  }
+}
+
+/* Story 7.7, DESIGN.md `in-app-notification` / UX-DR45. Glass, floating
+   (Elevation & Depth's "Glass" row): opaque `surface-raised` + the same
+   neutral rim by default, so the boundary never disappears; the
+   `@supports` block layers the real glass fill + blur on top only where
+   `backdrop-filter` is supported (verified manually on Windows
+   Chromium/Edge and macOS per the story's manual checklist — this is the
+   automatable half: `tests/notification-glass-fallback.test.ts` parses this
+   file as text to prove the fallback rule exists, is unconditional, and the
+   rim/border never lives only inside the `@supports` block). Reuses the
+   existing `--blur-glass`/`--glass-saturate` tokens (Story 7.5) rather than
+   a new hard-coded blur/saturate value. */
+.notification-glass {
+  background: var(--color-surface-raised);
+  border: var(--rim-width) solid var(--color-rim-interactive);
+}
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  .notification-glass {
+    background: var(--color-glass-fill);
+    backdrop-filter: blur(var(--blur-glass)) saturate(var(--glass-saturate));
+    -webkit-backdrop-filter: blur(var(--blur-glass)) saturate(var(--glass-saturate));
+  }
+}
+
+/* Story 7.7, "Toast enter": 0.55s ease-out, 5px drop + fade normally;
+   fade-only (no drop) and no dot pulse under reduced motion — the
+   component picks the entry class, both keyframes read the same duration
+   token so reduced motion simplifies the motion rather than removing it
+   (PageShell's own reduced-motion cross-fade uses the same "same duration,
+   fewer moving parts" convention). */
+.notification-card {
+  animation: notification-enter var(--duration-notification-enter) ease-out;
+}
+.notification-card--reduced-motion {
+  animation: notification-enter-reduced var(--duration-notification-enter) ease-out;
+}
+.notification-dot {
+  animation: notification-pulse var(--duration-notification-pulse) ease-in-out infinite;
+}
+@keyframes notification-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes notification-enter-reduced {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes notification-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
   }
 }

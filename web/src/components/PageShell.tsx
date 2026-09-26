@@ -34,6 +34,9 @@ import { Screensaver } from "./Screensaver.tsx";
 import { useLaunchSplash } from "../lib/readiness.ts";
 import { useIdleScreensaver } from "../lib/idle.ts";
 import { useSwipeNavigation } from "../lib/swipe.ts";
+import { PageNavigationContext } from "../lib/navigationContext.tsx";
+import { NotificationOverlay } from "./NotificationOverlay.tsx";
+import { startNotificationStream } from "../lib/notifications.ts";
 
 const PAGE_COMPONENTS = { home: HomePage, chat: ChatPage, tasks: TasksPage, desk: DeskPage } as const;
 
@@ -79,6 +82,11 @@ export function PageShell(): React.JSX.Element {
 
   useSwipeNavigation(rootRef, (direction) => (direction > 0 ? nav.next() : nav.prev()));
 
+  // Story 7.7, AD-18: the one SSE subscription driving the notification
+  // store, started once for the app's lifetime and torn down (closing the
+  // EventSource, cancelling its timers) on unmount.
+  useEffect(() => startNotificationStream(), []);
+
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent): void => {
       if (isTextFieldFocused(document.activeElement)) return;
@@ -103,59 +111,62 @@ export function PageShell(): React.JSX.Element {
   }, []);
 
   return (
-    <div ref={rootRef} className="relative h-dvh overflow-hidden" style={{ overscrollBehaviorX: "none" }}>
-      <div
-        className={reducedMotion ? "relative h-full" : "flex h-full ease-out"}
-        style={{
-          transitionProperty: reducedMotion ? undefined : "transform",
-          transitionDuration: reducedMotion ? undefined : "var(--duration-page-transition)",
-          ...(reducedMotion
-            ? {}
-            : { width: `${PAGES.length * 100}%`, transform: `translateX(-${(nav.index * 100) / PAGES.length}%)` }),
-        }}
-      >
-        {PAGES.map((page, i) => {
-          const Component = PAGE_COMPONENTS[page.id];
-          const isActive = i === nav.index;
-          return (
-            <div
-              key={page.id}
-              data-testid={`page-${page.id}`}
-              aria-hidden={isActive ? undefined : true}
-              inert={isActive ? undefined : true}
-              className={
-                reducedMotion
-                  ? `absolute inset-0 h-full ease-out ${isActive ? "opacity-100" : "pointer-events-none opacity-0"}`
-                  : `h-full shrink-0 ${isActive ? "" : "pointer-events-none"}`
-              }
-              style={{
-                transitionProperty: reducedMotion ? "opacity" : undefined,
-                transitionDuration: reducedMotion ? "var(--duration-page-transition)" : undefined,
-                ...(reducedMotion ? {} : { width: `${100 / PAGES.length}%` }),
-              }}
-            >
-              <Component />
-            </div>
-          );
-        })}
-      </div>
-      <PageIndicator index={nav.index} goTo={nav.goTo} />
-      {splashVisible && (
+    <PageNavigationContext.Provider value={nav}>
+      <div ref={rootRef} className="relative h-dvh overflow-hidden" style={{ overscrollBehaviorX: "none" }}>
         <div
-          data-testid="launch-splash"
-          className={`absolute inset-0 z-50 transition-opacity ${splashFadingOut ? "opacity-0" : "opacity-100"}`}
-          style={{ transitionDuration: "var(--duration-splash-fade)" }}
-          // `e.target === e.currentTarget` guards against a bubbled
-          // transitionend from some future descendant animation — only this
-          // wrapper's own opacity transition should ever unmount the splash.
-          onTransitionEnd={(e) => {
-            if (e.target === e.currentTarget) setSplashVisible(false);
+          className={reducedMotion ? "relative h-full" : "flex h-full ease-out"}
+          style={{
+            transitionProperty: reducedMotion ? undefined : "transform",
+            transitionDuration: reducedMotion ? undefined : "var(--duration-page-transition)",
+            ...(reducedMotion
+              ? {}
+              : { width: `${PAGES.length * 100}%`, transform: `translateX(-${(nav.index * 100) / PAGES.length}%)` }),
           }}
         >
-          <Screensaver variant="splash" />
+          {PAGES.map((page, i) => {
+            const Component = PAGE_COMPONENTS[page.id];
+            const isActive = i === nav.index;
+            return (
+              <div
+                key={page.id}
+                data-testid={`page-${page.id}`}
+                aria-hidden={isActive ? undefined : true}
+                inert={isActive ? undefined : true}
+                className={
+                  reducedMotion
+                    ? `absolute inset-0 h-full ease-out ${isActive ? "opacity-100" : "pointer-events-none opacity-0"}`
+                    : `h-full shrink-0 ${isActive ? "" : "pointer-events-none"}`
+                }
+                style={{
+                  transitionProperty: reducedMotion ? "opacity" : undefined,
+                  transitionDuration: reducedMotion ? "var(--duration-page-transition)" : undefined,
+                  ...(reducedMotion ? {} : { width: `${100 / PAGES.length}%` }),
+                }}
+              >
+                <Component />
+              </div>
+            );
+          })}
         </div>
-      )}
-      {idle && <Screensaver variant="idle" />}
-    </div>
+        <PageIndicator index={nav.index} goTo={nav.goTo} />
+        {splashVisible && (
+          <div
+            data-testid="launch-splash"
+            className={`absolute inset-0 z-50 transition-opacity ${splashFadingOut ? "opacity-0" : "opacity-100"}`}
+            style={{ transitionDuration: "var(--duration-splash-fade)" }}
+            // `e.target === e.currentTarget` guards against a bubbled
+            // transitionend from some future descendant animation — only this
+            // wrapper's own opacity transition should ever unmount the splash.
+            onTransitionEnd={(e) => {
+              if (e.target === e.currentTarget) setSplashVisible(false);
+            }}
+          >
+            <Screensaver variant="splash" />
+          </div>
+        )}
+        {idle && <Screensaver variant="idle" />}
+      </div>
+      <NotificationOverlay />
+    </PageNavigationContext.Provider>
   );
 }
