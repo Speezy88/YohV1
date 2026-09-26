@@ -1657,14 +1657,18 @@ export function parseCreateItemCommand(line: string): { readonly database: Notio
 }
 
 /**
- * Recognizes "save/file that/this [to the (research) vault]" — the same
- * deliberately-simple starting heuristic every other trigger recognizer in
- * this file uses (Story 6.5 / FR-29). Deliberately does NOT match "save my
- * progress" or similar — the trigger word must be immediately followed by
- * "that"/"this" (optionally then "to the vault"/"to the research vault"),
- * not an arbitrary object.
+ * Recognizes "save/file that/this [to the/my (notion) (research) vault]" —
+ * the same deliberately-simple starting heuristic every other trigger
+ * recognizer in this file uses (Story 6.5 / FR-29). Deliberately does NOT
+ * match "save my progress" or similar — the trigger word must be
+ * immediately followed by "that"/"this" (optionally then a "to the/my
+ * ... vault" tail), not an arbitrary object. The tail's "notion" segment
+ * (F6, Epic 6 retro) matters because this is checked before
+ * `parseCreateItemCommand`'s own looser Notion-mention trigger — without
+ * it, "save that to my notion research vault" would match neither trigger
+ * exactly and fall through to the wrong one.
  */
-const SAVE_SEARCH_RESULT_RE = /^(?:save|file)\s+(?:that|this)(?:\s+to\s+the\s+(?:research\s+)?vault)?\.?$/i;
+const SAVE_SEARCH_RESULT_RE = /^(?:save|file)\s+(?:that|this)(?:\s+to\s+(?:the|my)\s+(?:notion\s+)?(?:research\s+)?vault)?\.?$/i;
 
 export function isSaveSearchResultCommand(line: string): boolean {
   return SAVE_SEARCH_RESULT_RE.test(line.trim());
@@ -2196,6 +2200,16 @@ export async function runChatCli(
       continue;
     }
 
+    // Checked BEFORE parseCreateItemCommand (F6, Epic 6 retro): its own
+    // looser Notion-mention trigger also matches "save"/"file" verbs, so a
+    // natural "save that to my notion research vault" would otherwise be
+    // taken over by the FR-26 create-item draft path instead of filing the
+    // actual search result (FR-29).
+    if (isSaveSearchResultCommand(line)) {
+      await handleSaveSearchResultCommand(io, lastSearchAnswer, currentIsoDate(timeZone, now), createNotionPage);
+      continue;
+    }
+
     const createItemCommand = parseCreateItemCommand(line);
     if (createItemCommand) {
       await handleCreateItemCommand(
@@ -2206,11 +2220,6 @@ export async function runChatCli(
         createNotionPage,
         validateNotionPageDraft,
       );
-      continue;
-    }
-
-    if (isSaveSearchResultCommand(line)) {
-      await handleSaveSearchResultCommand(io, lastSearchAnswer, currentIsoDate(timeZone, now), createNotionPage);
       continue;
     }
 
@@ -2244,7 +2253,18 @@ export async function runChatCli(
 
     if (chatIntent.kind === "search-trigger") {
       const answer = await handleSearchCommand(io, chatIntent.query, searchFn);
-      if (answer) lastSearchAnswer = { query: chatIntent.query, answer };
+      // F5 (Epic 6 retro, Ruling R20): `answer === undefined` means the
+      // search itself failed (handleSearchCommand already reported it); a
+      // truthy `answer` with no content means it searched fine but found
+      // nothing. Both must CLEAR any earlier result, not just skip setting
+      // a new one — 6.5 AC3 requires "an actual search result in play"
+      // before "save that" can file anything, and a still-set earlier
+      // answer is exactly as stale as one left over from a failure.
+      if (answer === undefined || (answer.answer.length === 0 && answer.citations.length === 0)) {
+        lastSearchAnswer = undefined;
+      } else {
+        lastSearchAnswer = { query: chatIntent.query, answer };
+      }
       continue;
     }
 

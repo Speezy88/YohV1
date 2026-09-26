@@ -860,6 +860,98 @@ test("a search failure (YohError) is reported plainly, not thrown", async () => 
   store.close();
 });
 
+test("F5 regression: a search returning an empty answer does not set lastSearchAnswer — 'save that' afterward reports no recent result, not a blank page", async () => {
+  const store = tempStore();
+  const llmClient = makeFakeLlmClient("SEARCH: an obscure query");
+  const createPageFn = makeFakeCreatePage();
+  const searchFn = makeFakeSearch({ ok: true, value: { answer: "", citations: [] } });
+  const io = makeScriptedIo(["search for an obscure query", "save that"]);
+
+  await runChatCli(
+    store,
+    io,
+    TEST_TIME_ZONE,
+    llmClient,
+    () => new Date(NOW),
+    async () => [],
+    undefined,
+    undefined,
+    createPageFn,
+    undefined,
+    searchFn,
+  );
+
+  assert.equal(createPageFn.calls.length, 0, "an empty search answer must never be filed to the Research Vault");
+  assert.ok(io.written.some((line) => /don't have|no recent/i.test(line)));
+  store.close();
+});
+
+test("F5 regression: a search failure clears lastSearchAnswer — 'save that' afterward does not file the earlier, now-stale result", async () => {
+  const store = tempStore();
+  const llmClient = makeFakeLlmClient("SEARCH: best hiking boots under $150");
+  const createPageFn = makeFakeCreatePage();
+  let call = 0;
+  const searchFn = async (_query: string): Promise<Result<SearchAnswer, YohError>> => {
+    call += 1;
+    if (call === 1) return { ok: true, value: { answer: "Salomon and Merrell test well.", citations: ["https://example.com/a"] } };
+    return { ok: false, error: { kind: "unreachable", message: "search-adapter: Perplexity returned HTTP 500" } };
+  };
+  const io = makeScriptedIo(["search for the best hiking boots under $150", "search again", "save that"]);
+
+  await runChatCli(
+    store,
+    io,
+    TEST_TIME_ZONE,
+    llmClient,
+    () => new Date(NOW),
+    async () => [],
+    undefined,
+    undefined,
+    createPageFn,
+    undefined,
+    searchFn,
+  );
+
+  assert.equal(createPageFn.calls.length, 0, "a failed search must clear the earlier result, not leave it filable");
+  assert.ok(io.written.some((line) => /don't have|no recent/i.test(line)));
+  store.close();
+});
+
+test("F5 (Ruling R20) regression: a valid search followed by an EMPTY search clears lastSearchAnswer — 'save that' afterward files nothing and reports no recent result, not the earlier answer", async () => {
+  const store = tempStore();
+  const llmClient = makeFakeLlmClient("SEARCH: best hiking boots under $150");
+  const createPageFn = makeFakeCreatePage();
+  let call = 0;
+  const searchFn = async (_query: string): Promise<Result<SearchAnswer, YohError>> => {
+    call += 1;
+    if (call === 1) return { ok: true, value: { answer: "Salomon and Merrell test well.", citations: ["https://example.com/a"] } };
+    return { ok: true, value: { answer: "", citations: [] } };
+  };
+  const io = makeScriptedIo(["search for the best hiking boots under $150", "search for an obscure query", "save that"]);
+
+  await runChatCli(
+    store,
+    io,
+    TEST_TIME_ZONE,
+    llmClient,
+    () => new Date(NOW),
+    async () => [],
+    undefined,
+    undefined,
+    createPageFn,
+    undefined,
+    searchFn,
+  );
+
+  assert.equal(
+    createPageFn.calls.length,
+    0,
+    "an empty search must clear the earlier valid result too (Ruling R20) — 6.5 AC3 requires an actual search result in play, not a stale one",
+  );
+  assert.ok(io.written.some((line) => /don't have|no recent/i.test(line)));
+  store.close();
+});
+
 // ============================================================================
 // isSaveSearchResultCommand — pure trigger recognition (Story 6.5 / FR-29)
 // ============================================================================
@@ -930,6 +1022,34 @@ test("'save that' with no recent search result in the session does not fabricate
 
   assert.equal(createPageFn.calls.length, 0);
   assert.ok(io.written.some((line) => /don't have|no recent|nothing to save/i.test(line)));
+  store.close();
+});
+
+test("F6 regression: 'save that to my notion research vault' routes to the FR-29 save-search path, not the FR-26 create-item draft path", async () => {
+  const store = tempStore();
+  const llmClient = makeFakeLlmClient("SEARCH: best hiking boots under $150");
+  const createPageFn = makeFakeCreatePage();
+  const searchFn = makeFakeSearch({ ok: true, value: { answer: "Salomon and Merrell test well.", citations: ["https://example.com/a"] } });
+  const io = makeScriptedIo(["search for the best hiking boots under $150", "save that to my notion research vault"]);
+
+  await runChatCli(
+    store,
+    io,
+    TEST_TIME_ZONE,
+    llmClient,
+    () => new Date(NOW),
+    async () => [],
+    undefined,
+    undefined,
+    createPageFn,
+    undefined,
+    searchFn,
+  );
+
+  assert.equal(createPageFn.calls.length, 1, "must file the search result directly (FR-29), not open a create-item draft (FR-26)");
+  assert.equal(createPageFn.calls[0]!.database, "ResearchVault");
+  assert.equal(createPageFn.calls[0]!.properties["keyFindings"], "Salomon and Merrell test well.");
+  assert.ok(io.written.some((line) => /filed/i.test(line)));
   store.close();
 });
 

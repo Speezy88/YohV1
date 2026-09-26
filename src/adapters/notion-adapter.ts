@@ -85,7 +85,7 @@
  *    pair is read.
  */
 
-import { isFullDataSource, isFullPage, type Client } from "@notionhq/client";
+import { APIResponseError, isFullDataSource, isFullPage, type Client } from "@notionhq/client";
 import type {
   CreatePageParameters,
   CreatePageResponse,
@@ -711,69 +711,6 @@ function capitalizeFirst(raw: string): string {
 }
 
 // ============================================================================
-// toResearchVaultPageProperties (Story 6.1) — maps Yoh's internal Research
-// Vault field names to Spencer's real, confirmed Notion property names/
-// types (DEFAULT_RESEARCH_VAULT_PROPERTY_NAMES). Pure and does no I/O: it
-// only builds the `properties` payload Story 6.3's createPage will pass to
-// `client.pages.create`. It does NOT write to Notion, and does not resolve
-// select-backed properties (status/area/confidence) — those aren't among
-// the fields FR-29's automated "save that" path ever sets, and Story 6.3's
-// general create-from-chat path is responsible for routing any
-// select-backed value it accepts through the same closestOption/
-// live-schema-retrieve mechanism writeSelectLikeField already establishes.
-// ============================================================================
-
-/**
- * Yoh's internal shape for a Research Vault entry, independent of Notion's
- * property names — `toResearchVaultPageProperties` is the only place that
- * translates between the two. `query` is optional: Story 6.5's automated
- * file-a-search-result path always has one (the question Spencer asked),
- * but Story 6.3's manual "create a Research Vault item" path may not.
- */
-export interface ResearchVaultEntryFields {
-  readonly title: string;
-  readonly keyFindings: string;
-  readonly query?: string;
-  readonly searchDate: IsoDate;
-  readonly sourceUrls: readonly string[];
-}
-
-/**
- * Maps `fields` onto Spencer's confirmed real Research Vault Notion
- * property names (`names`, defaulting to `DEFAULT_RESEARCH_VAULT_PROPERTY_
- * NAMES`) and Notion's own property-value wire shapes — one-to-one, no
- * silent renaming or guessing (Story 6.1 AC2). `sourceUrls` (citations) are
- * joined with `\n` into `Sources`, since that property is `rich_text` in
- * Spencer's live workspace, not a dedicated URL-type property. `query` is
- * omitted from the returned properties object entirely when absent, rather
- * than written as an empty string — an absent property is simply not part
- * of the create-page request, so Notion leaves that property unset on the
- * new page (its own default), which is the correct "nothing to say here"
- * representation for an optional field.
- */
-export function toResearchVaultPageProperties(
-  fields: ResearchVaultEntryFields,
-  names: NotionResearchVaultPropertyNames = DEFAULT_RESEARCH_VAULT_PROPERTY_NAMES,
-): NonNullable<CreatePageParameters["properties"]> {
-  const properties: NonNullable<CreatePageParameters["properties"]> = {
-    [names.title]: { title: [{ type: "text", text: { content: fields.title } }] },
-    [names.keyFindings]: { rich_text: [{ type: "text", text: { content: fields.keyFindings } }] },
-    [names.date]: { date: { start: fields.searchDate } },
-    [names.sources]: {
-      rich_text: fields.sourceUrls.length > 0
-        ? [{ type: "text", text: { content: fields.sourceUrls.join("\n") } }]
-        : [],
-    },
-  };
-
-  if (fields.query !== undefined) {
-    properties[names.query] = { rich_text: [{ type: "text", text: { content: fields.query } }] };
-  }
-
-  return properties;
-}
-
-// ============================================================================
 // createPage (Story 6.3 / FR-26, FR-29, AD-12) — the adapter's THIRD and
 // final write function. resolveNotionPageDraftProperties is the shared,
 // no-write schema-resolution core both createPage (write time) and
@@ -838,12 +775,38 @@ function createPageDataSourceId(database: NotionDatabaseTarget, config: NotionCr
 }
 
 /**
+ * Notion rejects a single `rich_text` `text.content` longer than 2,000
+ * characters, but accepts up to 100 segments per property (F4, Epic 6
+ * retro: `epic-6-retro-2026-09-24.md`). Filing a search answer over 2,000
+ * characters — Sonar answers with citations routinely run past that —
+ * used to fail closed with a raw Notion 400.
+ */
+const NOTION_RICH_TEXT_SEGMENT_MAX_LENGTH = 2000;
+
+/**
+ * Splits `value` into `NOTION_RICH_TEXT_SEGMENT_MAX_LENGTH`-char-or-fewer
+ * `text` segments for a `rich_text` property (F4). An empty string still
+ * yields one (empty) segment, matching a plain `[{ type: "text", text: {
+ * content: rawValue } }]` for any value under the limit — so this is a
+ * drop-in replacement, not a special case only for long values.
+ */
+function chunkRichText(value: string): NonNullable<CreatePageParameters["properties"]>[string] {
+  const segments: Array<{ type: "text"; text: { content: string } }> = [];
+  for (let i = 0; i < value.length; i += NOTION_RICH_TEXT_SEGMENT_MAX_LENGTH) {
+    segments.push({ type: "text", text: { content: value.slice(i, i + NOTION_RICH_TEXT_SEGMENT_MAX_LENGTH) } });
+  }
+  if (segments.length === 0) segments.push({ type: "text", text: { content: "" } });
+  return { rich_text: segments };
+}
+
+/**
  * Resolves ONE already-retrieved live property definition + a raw string
  * value into a `CreatePageParameters["properties"]` entry, or a failure
- * reason. `title`/`rich_text` are written directly; `number`/`date` are
- * coerced; `select`/`status` are resolved via `closestOption` against the
- * property's REAL live options (never raw/invented text — AD-12). Any other
- * live property type fails.
+ * reason. `title` is written directly; `rich_text` is chunked into
+ * `NOTION_RICH_TEXT_SEGMENT_MAX_LENGTH`-char segments (F4); `number`/`date`
+ * are coerced; `select`/`status` are resolved via `closestOption` against
+ * the property's REAL live options (never raw/invented text — AD-12). Any
+ * other live property type fails.
  */
 function resolveCreatePageProperty(
   propertyName: string,
@@ -857,7 +820,7 @@ function resolveCreatePageProperty(
     case "title":
       return { ok: true, value: { title: [{ type: "text", text: { content: rawValue } }] } };
     case "rich_text":
-      return { ok: true, value: { rich_text: [{ type: "text", text: { content: rawValue } }] } };
+      return { ok: true, value: chunkRichText(rawValue) };
     case "number": {
       const n = Number(rawValue);
       if (!Number.isFinite(n)) return { ok: false, message: `"${propertyName}" expects a number, got "${rawValue}"` };
@@ -974,10 +937,15 @@ export async function createPage(
       properties: resolved.value,
     });
   } catch (err) {
+    // F4 (Epic 6 retro): a Notion HTTP 400 means the request itself was
+    // malformed (e.g. a still-too-long value, an unexpected property shape)
+    // — that's a validation failure, not an unreachable/network one, even
+    // though it's only detected here at write time.
+    const isValidationFailure = err instanceof APIResponseError && err.status === 400;
     return {
       ok: false,
       error: {
-        kind: "unreachable",
+        kind: isValidationFailure ? "validation" : "unreachable",
         message: `notion-adapter: could not create the "${database}" page — ${err instanceof Error ? err.message : String(err)}`,
         detail: err,
       },

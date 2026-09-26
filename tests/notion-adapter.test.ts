@@ -23,6 +23,7 @@ import type {
   QueryDataSourceParameters,
   QueryDataSourceResponse,
 } from "@notionhq/client";
+import { APIErrorCode, APIResponseError } from "@notionhq/client";
 import {
   createPage,
   DEFAULT_PROJECT_PROPERTY_NAMES,
@@ -32,17 +33,14 @@ import {
   readNotionTasks,
   resolveNotionPageDraftProperties,
   setTaskStatus,
-  toResearchVaultPageProperties,
   updateTaskField,
   type NotionCreatePageClient,
   type NotionCreatePageConfig,
   type NotionDataSourceClient,
   type NotionFieldWriteConfig,
-  type NotionResearchVaultPropertyNames,
   type NotionSchemaClient,
   type NotionStatusWriteConfig,
   type NotionWriteClient,
-  type ResearchVaultEntryFields,
 } from "../src/adapters/notion-adapter.ts";
 import type { DataSourceObjectResponse, UpdatePageParameters, UpdatePageResponse } from "@notionhq/client";
 
@@ -765,68 +763,6 @@ test("DEFAULT_RESEARCH_VAULT_PROPERTY_NAMES matches Spencer's confirmed live Res
   });
 });
 
-test("toResearchVaultPageProperties maps Yoh's internal fields to Research Vault's real Notion property names/types", () => {
-  const fields: ResearchVaultEntryFields = {
-    title: "Best noise-canceling earbuds under $150",
-    keyFindings: "The Sony LinkBuds S and Anker Soundcore Liberty 4 both test well; Sony edges out on ANC depth.",
-    query: "best noise canceling earbuds under $150",
-    searchDate: "2026-09-18",
-    sourceUrls: ["https://example.com/review-a", "https://example.com/review-b"],
-  };
-
-  const properties = toResearchVaultPageProperties(fields);
-
-  assert.deepEqual(properties, {
-    "Research Title": {
-      title: [{ type: "text", text: { content: fields.title } }],
-    },
-    "Key Findings": {
-      rich_text: [{ type: "text", text: { content: fields.keyFindings } }],
-    },
-    Query: {
-      rich_text: [{ type: "text", text: { content: fields.query! } }],
-    },
-    Date: {
-      date: { start: fields.searchDate },
-    },
-    Sources: {
-      rich_text: [
-        { type: "text", text: { content: "https://example.com/review-a\nhttps://example.com/review-b" } },
-      ],
-    },
-  } satisfies CreatePageParameters["properties"]);
-});
-
-test("toResearchVaultPageProperties omits Query when not provided (FR-26's manual-create path may not have an original search query)", () => {
-  const fields: ResearchVaultEntryFields = {
-    title: "Manually noted finding",
-    keyFindings: "Spencer typed this directly, no search involved.",
-    searchDate: "2026-09-18",
-    sourceUrls: [],
-  };
-
-  const properties = toResearchVaultPageProperties(fields);
-
-  assert.equal("Query" in properties!, false);
-  assert.deepEqual((properties as Record<string, unknown>)["Sources"], { rich_text: [] });
-});
-
-test("toResearchVaultPageProperties honors a custom NotionResearchVaultPropertyNames override", () => {
-  const customNames: NotionResearchVaultPropertyNames = {
-    ...DEFAULT_RESEARCH_VAULT_PROPERTY_NAMES,
-    title: "Title",
-    keyFindings: "Summary",
-  };
-
-  const properties = toResearchVaultPageProperties(
-    { title: "X", keyFindings: "Y", searchDate: "2026-09-18", sourceUrls: [] },
-    customNames,
-  );
-
-  assert.ok("Title" in properties!);
-  assert.ok("Summary" in properties!);
-});
-
 // ============================================================================
 // resolveNotionPageDraftProperties / createPage (Story 6.3 / FR-26, AD-12)
 // ============================================================================
@@ -1011,4 +947,44 @@ test("createPage propagates a pages.create failure as a Result failure, not a th
   const result = await createPage(client, CREATE_PAGE_CONFIG, "Projects", { title: "New initiative" });
   assert.equal(result.ok, false);
   if (!result.ok) assert.equal(result.error.kind, "unreachable");
+});
+
+test("F4 regression: a 5,000-character search answer is chunked into <=2,000-char rich_text segments instead of failing (Notion rejects a single text.content over 2,000 chars)", async () => {
+  const client = fakeCreatePageClient(ALL_CREATE_PAGE_SCHEMAS);
+  const longAnswer = "a".repeat(5000);
+
+  const result = await createPage(client, CREATE_PAGE_CONFIG, "ResearchVault", {
+    title: "Best hiking boots",
+    keyFindings: longAnswer,
+    searchDate: "2026-09-18",
+    sources: "",
+  });
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  const props = client.createCalls[0]!.properties as Record<string, { rich_text: Array<{ text: { content: string } }> }>;
+  const segments = props["Key Findings"]!.rich_text;
+  assert.ok(segments.length >= 3, `expected at least 3 <=2,000-char segments for 5,000 chars, got ${segments.length}`);
+  for (const segment of segments) {
+    assert.ok(segment.text.content.length <= 2000, `segment of ${segment.text.content.length} chars exceeds Notion's 2,000-char limit`);
+  }
+  assert.equal(segments.map((s) => s.text.content).join(""), longAnswer, "chunking must not lose, reorder, or duplicate any content");
+});
+
+test("F4 regression: createPage classifies a Notion 400 (validation_error) API response as YohError.kind 'validation', not 'unreachable'", async () => {
+  const notion400 = new APIResponseError({
+    code: APIErrorCode.ValidationError,
+    status: 400,
+    message: "body.properties.Key Findings.rich_text[0].text.content.length should be ≤ 2000, instead was 5000.",
+    headers: {},
+    rawBodyText: "",
+    additional_data: undefined,
+    request_id: undefined,
+  });
+  const client = fakeCreatePageClient(ALL_CREATE_PAGE_SCHEMAS, { throwOnCreate: notion400 });
+
+  const result = await createPage(client, CREATE_PAGE_CONFIG, "Projects", { title: "New initiative" });
+
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.error.kind, "validation");
 });
