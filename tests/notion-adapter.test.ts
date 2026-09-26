@@ -592,26 +592,26 @@ test("setTaskStatus fails clearly, and writes nothing, when the mapped Status op
   assert.equal(client.updateCalls.length, 0, "a write that can't be confidently resolved must never reach Notion");
 });
 
-test("setTaskStatus moves the Task's page to Trash once its 'Completed' Status write succeeds", async () => {
+test("setTaskStatus writes the Status property only and never sets in_trash, for a 'completed' confirmation (AD-12, reverted 2026-09-25)", async () => {
   const client = new FakeNotionFieldWriteClient(makeStatusSchema("Status", ["Nothing", "In Progress", "Completed"]));
   const result = await setTaskStatus(client, STATUS_WRITE_CONFIG, "task-1", "completed");
 
   assert.equal(result.ok, true);
-  assert.equal(client.updateCalls.length, 2, "expected the Status write, then a separate Trash write");
-  const [statusCall, trashCall] = client.updateCalls;
-  assert.equal((statusCall!.properties as Record<string, { status?: { name?: string } }>)["Status"]?.status?.name, "Completed");
-  assert.equal(trashCall!.page_id, "task-1");
-  assert.equal((trashCall as unknown as { in_trash?: boolean }).in_trash, true);
+  assert.equal(client.updateCalls.length, 1, "exactly one write: the Status property — no second Trash write, from any trigger");
+  const call = client.updateCalls[0]!;
+  assert.equal((call as unknown as { in_trash?: boolean }).in_trash, undefined);
+  assert.equal((call.properties as Record<string, { status?: { name?: string } }>)["Status"]?.status?.name, "Completed");
 });
 
-test("setTaskStatus does NOT move the page to Trash for any status other than 'completed'", async () => {
+test("setTaskStatus never sets in_trash for any status, from any trigger", async () => {
   const client = new FakeNotionFieldWriteClient(makeStatusSchema("Status", ["Nothing", "In Progress", "Completed", "Slipped"]));
-
-  for (const status of ["not-started", "in-progress", "slipped"] as const) {
+  for (const status of ["not-started", "in-progress", "completed", "slipped"] as const) {
     await setTaskStatus(client, STATUS_WRITE_CONFIG, "task-1", status);
   }
-
-  assert.equal(client.updateCalls.length, 3, "exactly one write per status, never a second Trash call");
+  assert.equal(client.updateCalls.length, 4, "exactly one write per status call, never a second Trash call for any of them");
+  for (const call of client.updateCalls) {
+    assert.equal((call as unknown as { in_trash?: boolean }).in_trash, undefined);
+  }
 });
 
 test("setTaskStatus returns a Result failure (not a throw) when the Notion SDK call fails — AD-12's deliberate AD-8 exception", async () => {
@@ -643,10 +643,11 @@ test("setTaskStatus honors a custom taskPropertyNames.status override", async ()
 test("AD-12: notion-adapter.ts's write surface is exactly setTaskStatus + updateTaskField + createPage — no generic 'update or create any Notion property/page' function exists", () => {
   const source = readFileSync(join(import.meta.dirname, "..", "src", "adapters", "notion-adapter.ts"), "utf8");
   const updateCallSites = source.match(/\.pages\.update\(/g) ?? [];
-  assert.equal(updateCallSites.length, 2, "expected exactly two `client.pages.update(` call sites: writePageProperty's single shared field-writer, and trashTaskPage's Trash-on-completion call");
+  assert.equal(updateCallSites.length, 1, "expected exactly one `client.pages.update(` call site: writePageProperty's single shared field-writer — setTaskStatus no longer trashes on completion (AD-12, reverted 2026-09-25)");
   const createCallSites = source.match(/\.pages\.create\(/g) ?? [];
   assert.equal(createCallSites.length, 1, "expected exactly one `client.pages.create(` call site: createPage's own (Story 6.3)");
   assert.doesNotMatch(source, /\.dataSources\.update\(|\.pages\.move\(/, "no other write/update capability may exist anywhere in this file (AD-12)");
+  assert.doesNotMatch(source, /in_trash/, "AD-12 (reverted 2026-09-25): no Phase 2 capability deletes anything from Notion — in_trash is never sent from any trigger");
 });
 
 // ============================================================================

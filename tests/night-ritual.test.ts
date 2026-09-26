@@ -33,6 +33,7 @@ import {
 } from "../src/adapters/memory-store.ts";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { computeSlipBumpLevel } from "../src/core/slip-bump.ts";
+import type { RecordCompletionInput } from "../src/adapters/completion-log.ts";
 import {
   applyNightCloseOutConfirmation,
   buildNightCloseOutPromptText,
@@ -44,12 +45,13 @@ import {
   renderNightEscalateNotice,
   runNightEscalateRitual,
   runNightPromptRitual,
+  type NightCloseOutApplyDeps,
   type NightCloseOutRequestDetail,
   type NightEscalateRitualDeps,
   type NightPromptRitualDeps,
 } from "../src/rituals/night-ritual.ts";
 import { ATTENTION } from "../src/rituals/ritual-shared.ts";
-import type { Plan, PlanBlock, Result, TaskStatus, YohError } from "../src/types/domain.ts";
+import type { ExternalId, Plan, PlanBlock, Result, Task, TaskStatus, YohError } from "../src/types/domain.ts";
 
 const NOW_ISO = "2026-08-22T22:00:00.000Z"; // "tonight"
 const TODAY = "2026-08-22";
@@ -80,6 +82,7 @@ function deps(store: MemoryStore, overrides: Partial<NightPromptRitualDeps> = {}
     sendNotification: async () => {},
     now: () => new Date(NOW_ISO),
     timeZone: "UTC",
+    getCompletedTaskIdsToday: () => new Set(),
     ...overrides,
   };
 }
@@ -280,6 +283,46 @@ test("AD-8: when the push notification fails, runNightPromptRitual converts it t
 });
 
 // ============================================================================
+// Story 7.9 (FR-41/AD-20): excluding Tasks completion-log.ts shows completed
+// today from tonight's close-out questions.
+// ============================================================================
+
+test("runNightPromptRitual excludes a Task that completion-log.ts shows completed today, even though its work block is in today's Plan", async () => {
+  const store = tempStore();
+  putPlan(
+    store,
+    samplePlan([
+      block({ id: "work-0", kind: "work", start: "2026-08-22T13:00:00.000Z", end: "2026-08-22T14:00:00.000Z", label: "Draft the memo", taskId: "t1" }),
+      block({ id: "work-1", kind: "work", start: "2026-08-22T14:00:00.000Z", end: "2026-08-22T15:00:00.000Z", label: "Call the dentist", taskId: "t2" }),
+    ]),
+  );
+
+  const result = await runNightPromptRitual(deps(store, { getCompletedTaskIdsToday: () => new Set(["t1"]) }));
+
+  assert.equal(result.ok, true);
+  if (result.ok && result.value.status === "prompted") {
+    assert.deepEqual(result.value.tasks.map((t) => t.taskId), ["t2"]);
+  } else {
+    assert.fail(`expected status "prompted", got ${result.ok ? result.value.status : "error"}`);
+  }
+  store.close();
+});
+
+test("runNightPromptRitual reports 'nothing-to-confirm' when EVERY work-block Task was already completed today", async () => {
+  const store = tempStore();
+  putPlan(
+    store,
+    samplePlan([
+      block({ id: "work-0", kind: "work", start: "2026-08-22T13:00:00.000Z", end: "2026-08-22T14:00:00.000Z", label: "Draft the memo", taskId: "t1" }),
+    ]),
+  );
+
+  const result = await runNightPromptRitual(deps(store, { getCompletedTaskIdsToday: () => new Set(["t1"]) }));
+  assert.ok(result.ok && result.value.status === "nothing-to-confirm", `expected nothing-to-confirm, got ${JSON.stringify(result)}`);
+  store.close();
+});
+
+// ============================================================================
 // buildNightCloseOutPromptText — pure formatting
 // ============================================================================
 
@@ -303,9 +346,19 @@ function applyDeps(
     ok: true,
     value: undefined,
   }),
-) {
-  return { store, setTaskStatus };
+  overrides: Partial<Pick<NightCloseOutApplyDeps, "recordCompletion" | "lookupTask" | "log">> = {},
+): NightCloseOutApplyDeps {
+  return {
+    store,
+    setTaskStatus,
+    recordCompletion: overrides.recordCompletion ?? ((): void => {}),
+    lookupTask: overrides.lookupTask ?? ((): Promise<Task | undefined> => Promise.resolve(undefined)),
+    ...(overrides.log ? { log: overrides.log } : {}),
+  };
 }
+
+/** The completedAt instant most tests in this section pass through — its exact value is irrelevant to Slip-Bump behavior, only to the (separately tested) completion record. */
+const APPLY_COMPLETED_AT = "2026-08-22T22:00:00.000Z";
 
 test("a confirmed 'completed' Task writes Status to Notion via the injected setTaskStatus", async () => {
   const store = tempStore();
@@ -315,7 +368,14 @@ test("a confirmed 'completed' Task writes Status to Notion via the injected setT
     return { ok: true, value: undefined };
   };
 
-  const result = await applyNightCloseOutConfirmation(applyDeps(store, setTaskStatus), "t1", "completed", TODAY);
+  const result = await applyNightCloseOutConfirmation(
+    applyDeps(store, setTaskStatus),
+    "t1",
+    "Draft the memo",
+    "completed",
+    TODAY,
+    APPLY_COMPLETED_AT,
+  );
   assert.ok(result.ok, `expected success, got ${JSON.stringify(result)}`);
   assert.deepEqual(calls, [{ taskId: "t1", status: "completed" }]);
 });
@@ -324,7 +384,7 @@ test("a confirmed 'slipped' Task gets a REAL Slip-Bump via recordSlip — genuin
   const store = tempStore();
   assert.equal(getSlipHistory(store, "t1"), undefined, "sanity: no prior slip history");
 
-  const result = await applyNightCloseOutConfirmation(applyDeps(store), "t1", "slipped", TODAY);
+  const result = await applyNightCloseOutConfirmation(applyDeps(store), "t1", "Draft the memo", "slipped", TODAY, APPLY_COMPLETED_AT);
   assert.ok(result.ok);
 
   const history = getSlipHistory(store, "t1");
@@ -342,8 +402,8 @@ test("a confirmed 'slipped' Task gets a REAL Slip-Bump via recordSlip — genuin
 
 test("two consecutive slipped confirmations (across two nights) escalate the REAL Slip-Bump level exactly as a mid-day-reported slip would", async () => {
   const store = tempStore();
-  await applyNightCloseOutConfirmation(applyDeps(store), "t1", "slipped", "2026-08-21");
-  await applyNightCloseOutConfirmation(applyDeps(store), "t1", "slipped", "2026-08-22");
+  await applyNightCloseOutConfirmation(applyDeps(store), "t1", "Draft the memo", "slipped", "2026-08-21", "2026-08-21T22:00:00.000Z");
+  await applyNightCloseOutConfirmation(applyDeps(store), "t1", "Draft the memo", "slipped", "2026-08-22", APPLY_COMPLETED_AT);
 
   const history = getSlipHistory(store, "t1");
   assert.equal(history?.data.consecutiveSlipCount, 2);
@@ -358,11 +418,11 @@ test("a resumed/re-answered close-out for the same Task on the same night does n
   // — re-answering 'slipped' must NOT count as a second slip for the same
   // night.
   const store = tempStore();
-  const first = await applyNightCloseOutConfirmation(applyDeps(store), "t1", "slipped", TODAY);
+  const first = await applyNightCloseOutConfirmation(applyDeps(store), "t1", "Draft the memo", "slipped", TODAY, APPLY_COMPLETED_AT);
   assert.ok(first.ok);
   assert.equal(getSlipHistory(store, "t1")?.data.consecutiveSlipCount, 1);
 
-  const resumed = await applyNightCloseOutConfirmation(applyDeps(store), "t1", "slipped", TODAY);
+  const resumed = await applyNightCloseOutConfirmation(applyDeps(store), "t1", "Draft the memo", "slipped", TODAY, APPLY_COMPLETED_AT);
   assert.ok(resumed.ok);
   assert.equal(
     getSlipHistory(store, "t1")?.data.consecutiveSlipCount,
@@ -377,14 +437,14 @@ test("a confirmed 'completed' Task with prior slip history gets clearSlip'd — 
   recordSlip(store, "t1", "2026-08-21");
   assert.ok(getSlipHistory(store, "t1"));
 
-  const result = await applyNightCloseOutConfirmation(applyDeps(store), "t1", "completed", TODAY);
+  const result = await applyNightCloseOutConfirmation(applyDeps(store), "t1", "Draft the memo", "completed", TODAY, APPLY_COMPLETED_AT);
   assert.ok(result.ok);
   assert.equal(getSlipHistory(store, "t1"), undefined, "the Slip-Bump must be cleared entirely, not merely reset in place");
 });
 
 test("a confirmed 'completed' Task with NO prior slip history is a harmless no-op for Slip-Bump", async () => {
   const store = tempStore();
-  const result = await applyNightCloseOutConfirmation(applyDeps(store), "t1", "completed", TODAY);
+  const result = await applyNightCloseOutConfirmation(applyDeps(store), "t1", "Draft the memo", "completed", TODAY, APPLY_COMPLETED_AT);
   assert.ok(result.ok);
   assert.equal(getSlipHistory(store, "t1"), undefined);
 });
@@ -398,13 +458,200 @@ test("when setTaskStatus fails, no SlipHistory is written or cleared — the Not
     error: { kind: "unreachable", message: "notion: 500" },
   });
 
-  const slippedResult = await applyNightCloseOutConfirmation(applyDeps(store, failingSetTaskStatus), "t2", "slipped", TODAY);
+  const slippedResult = await applyNightCloseOutConfirmation(applyDeps(store, failingSetTaskStatus), "t2", "Book the flights", "slipped", TODAY, APPLY_COMPLETED_AT);
   assert.equal(slippedResult.ok, false);
   assert.equal(getSlipHistory(store, "t2"), undefined, "no SlipHistory should be written when the Notion write failed");
 
-  const completedResult = await applyNightCloseOutConfirmation(applyDeps(store, failingSetTaskStatus), "t1", "completed", TODAY);
+  const completedResult = await applyNightCloseOutConfirmation(applyDeps(store, failingSetTaskStatus), "t1", "Draft the memo", "completed", TODAY, APPLY_COMPLETED_AT);
   assert.equal(completedResult.ok, false);
   assert.ok(getSlipHistory(store, "t1"), "the pre-existing SlipHistory must survive a failed write, not be cleared");
+});
+
+// ============================================================================
+// Story 7.9 (AD-20/AD-23, Controller ruling R7): recording close-out
+// completions via completion-log.ts, snapshotted from an injected live-Task
+// lookup dep — never from the sparse NightCloseOutTaskDetail alone.
+// ============================================================================
+
+/** A minimal but real `Task` for `lookupTask` fakes below — only the fields `applyNightCloseOutConfirmation`'s snapshot step actually reads. */
+function fakeTask(over: Partial<Task> = {}): Task {
+  return {
+    id: "t1",
+    title: "Draft the memo",
+    area: "Work",
+    dueDate: "2026-09-25",
+    estimatedDurationMinutes: 30,
+    createdAt: "2026-08-01T00:00:00.000Z",
+    updatedAt: "2026-08-01T00:00:00.000Z",
+    ...over,
+  };
+}
+
+test("applyNightCloseOutConfirmation records a completion (source: 'close-out') when status is 'completed', snapshotting area/dueDate/estimatedMinutes from the injected live-Task lookup, after the Notion write, before Slip-Bump", async () => {
+  const store = tempStore();
+  const completions: RecordCompletionInput[] = [];
+
+  const result = await applyNightCloseOutConfirmation(
+    applyDeps(store, undefined, {
+      recordCompletion: (input) => completions.push(input),
+      lookupTask: () => Promise.resolve(fakeTask()),
+    }),
+    "t1",
+    "Draft the memo",
+    "completed",
+    TODAY,
+    APPLY_COMPLETED_AT,
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(completions.length, 1);
+  assert.deepEqual(completions[0], {
+    taskId: "t1",
+    taskName: "Draft the memo",
+    area: "Work",
+    dueDate: "2026-09-25",
+    estimatedMinutes: 30,
+    completedAt: APPLY_COMPLETED_AT,
+    source: "close-out",
+  });
+  store.close();
+});
+
+test("R7: a Task the live lookup shows missing area/dueDate/estimatedDurationMinutes records null for each, not undefined/omitted", async () => {
+  const store = tempStore();
+  const completions: RecordCompletionInput[] = [];
+
+  const taskMissingPlanningFields: Task = {
+    id: "t1",
+    title: "Call the dentist",
+    createdAt: "2026-08-01T00:00:00.000Z",
+    updatedAt: "2026-08-01T00:00:00.000Z",
+  };
+
+  await applyNightCloseOutConfirmation(
+    applyDeps(store, undefined, {
+      recordCompletion: (input) => completions.push(input),
+      lookupTask: () => Promise.resolve(taskMissingPlanningFields),
+    }),
+    "t1",
+    "Call the dentist",
+    "completed",
+    TODAY,
+    APPLY_COMPLETED_AT,
+  );
+
+  assert.equal(completions.length, 1);
+  assert.equal(completions[0]!.area, null);
+  assert.equal(completions[0]!.dueDate, null);
+  assert.equal(completions[0]!.estimatedMinutes, null);
+  store.close();
+});
+
+test("R7: the Task not being found at all (lookupTask resolves undefined) records null for all three fields — never blocks the completion or the Status write", async () => {
+  const store = tempStore();
+  const completions: RecordCompletionInput[] = [];
+
+  const result = await applyNightCloseOutConfirmation(
+    applyDeps(store, undefined, {
+      recordCompletion: (input) => completions.push(input),
+      lookupTask: () => Promise.resolve(undefined),
+    }),
+    "t1",
+    "Archived Task",
+    "completed",
+    TODAY,
+    APPLY_COMPLETED_AT,
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(completions.length, 1);
+  assert.equal(completions[0]!.area, null);
+  assert.equal(completions[0]!.dueDate, null);
+  assert.equal(completions[0]!.estimatedMinutes, null);
+  store.close();
+});
+
+test("R7: a lookup that THROWS never blocks recording the completion or the Status write — records null for all three, logs the failure", async () => {
+  const store = tempStore();
+  const completions: RecordCompletionInput[] = [];
+  const statusCalls: string[] = [];
+  const logEntries: Array<{ level: string; event: string }> = [];
+
+  const result = await applyNightCloseOutConfirmation(
+    applyDeps(
+      store,
+      async (taskId) => {
+        statusCalls.push(taskId);
+        return { ok: true, value: undefined };
+      },
+      {
+        recordCompletion: (input) => completions.push(input),
+        lookupTask: () => Promise.reject(new Error("notion: 404 page not found")),
+        log: (entry) => logEntries.push({ level: entry.level, event: entry.event }),
+      },
+    ),
+    "t1",
+    "Draft the memo",
+    "completed",
+    TODAY,
+    APPLY_COMPLETED_AT,
+  );
+
+  assert.equal(result.ok, true, "a lookup failure must never block the Status write");
+  assert.equal(statusCalls.length, 1, "the Status write still happens");
+  assert.equal(completions.length, 1, "the completion is still recorded");
+  assert.equal(completions[0]!.area, null);
+  assert.equal(completions[0]!.dueDate, null);
+  assert.equal(completions[0]!.estimatedMinutes, null);
+  assert.ok(logEntries.some((e) => e.level === "error"), "the lookup failure is logged");
+  store.close();
+});
+
+test("applyNightCloseOutConfirmation does NOT record a completion for a 'slipped' confirmation, and does not even bother with the live-Task lookup", async () => {
+  const store = tempStore();
+  const completions: RecordCompletionInput[] = [];
+  let lookupCalls = 0;
+
+  await applyNightCloseOutConfirmation(
+    applyDeps(store, undefined, {
+      recordCompletion: (input) => completions.push(input),
+      lookupTask: () => {
+        lookupCalls += 1;
+        return Promise.resolve(fakeTask());
+      },
+    }),
+    "t1",
+    "Draft the memo",
+    "slipped",
+    TODAY,
+    APPLY_COMPLETED_AT,
+  );
+
+  assert.equal(completions.length, 0);
+  assert.equal(lookupCalls, 0, "the live-Task lookup is only needed to snapshot a completion — a 'slipped' confirmation never records one");
+  store.close();
+});
+
+test("applyNightCloseOutConfirmation does NOT record a completion if the Notion Status write fails", async () => {
+  const store = tempStore();
+  const completions: RecordCompletionInput[] = [];
+
+  const result = await applyNightCloseOutConfirmation(
+    applyDeps(
+      store,
+      async () => ({ ok: false, error: { kind: "unreachable", message: "notion down" } }),
+      { recordCompletion: (input) => completions.push(input), lookupTask: () => Promise.resolve(fakeTask()) },
+    ),
+    "t1",
+    "Draft the memo",
+    "completed",
+    TODAY,
+    APPLY_COMPLETED_AT,
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(completions.length, 0);
+  store.close();
 });
 
 // ============================================================================
@@ -730,10 +977,12 @@ test("Spencer answering the original close-out request, after the night was alre
   // succeed exactly as it always has, completely unaffected by the
   // unchecked-day recording.
   const applied = await applyNightCloseOutConfirmation(
-    { store, setTaskStatus: async () => ({ ok: true, value: undefined }) },
+    { store, setTaskStatus: async () => ({ ok: true, value: undefined }), recordCompletion: (): void => {}, lookupTask: (): Promise<Task | undefined> => Promise.resolve(undefined) },
     "t1",
+    "Draft the memo",
     "completed",
     TODAY,
+    APPLY_COMPLETED_AT,
   );
   assert.ok(applied.ok, `expected the late answer to still apply successfully, got ${JSON.stringify(applied)}`);
 
@@ -773,10 +1022,12 @@ test("clearNightCloseOutRequestIfOpen resolves the matching UncheckedDay record 
   // must resolve the EARLIER_NIGHT record, not "today"'s (there is no
   // "today" record at all in this test).
   await applyNightCloseOutConfirmation(
-    { store, setTaskStatus: async () => ({ ok: true, value: undefined }) },
+    { store, setTaskStatus: async () => ({ ok: true, value: undefined }), recordCompletion: (): void => {}, lookupTask: (): Promise<Task | undefined> => Promise.resolve(undefined) },
     "t1",
+    "Draft the memo",
     "completed",
     EARLIER_NIGHT,
+    "2026-08-19T22:00:00.000Z",
   );
   clearNightCloseOutRequestIfOpen(store, { resolveUncheckedDay: true });
 
@@ -791,10 +1042,12 @@ test("clearNightCloseOutRequestIfOpen is a harmless no-op for the UncheckedDay p
   assert.equal(getUncheckedDay(store, TODAY), undefined, "sanity: never recorded");
 
   await applyNightCloseOutConfirmation(
-    { store, setTaskStatus: async () => ({ ok: true, value: undefined }) },
+    { store, setTaskStatus: async () => ({ ok: true, value: undefined }), recordCompletion: (): void => {}, lookupTask: (): Promise<Task | undefined> => Promise.resolve(undefined) },
     "t1",
+    "Draft the memo",
     "completed",
     TODAY,
+    APPLY_COMPLETED_AT,
   );
   // Must not throw, and must not fabricate a row.
   assert.doesNotThrow(() => clearNightCloseOutRequestIfOpen(store, { resolveUncheckedDay: true }));

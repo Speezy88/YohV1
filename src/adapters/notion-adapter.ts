@@ -452,10 +452,8 @@ export async function readNotionTasks(
  * field Yoh ever writes back to Notion). This is Task 19/Epic 3's one
  * addition to this file; per its own brief no generic "update Task property"
  * function may exist here alongside it — this is the entire field-write
- * surface. (Completing a Task ALSO moves its page to Trash — see the
- * "Delete-on-completion" section below; that's a page-level action, not a
- * second field write, and AD-12's own "no other Task field is touched"
- * guarantee still holds exactly as documented.)
+ * surface. (A completed Task's page is never trashed or otherwise
+ * deleted — see the "Reverted 2026-09-25" note below, Story 7.9/AD-12.)
  *
  * **Schema-checked, not a blind write (this revision).** Originally this
  * function wrote `(config.statusOptionNames ?? DEFAULT_TASK_STATUS_OPTION_NAMES)[status]`
@@ -473,20 +471,12 @@ export async function readNotionTasks(
  * same `YohError` path `shell/chat-cli.ts`'s "skip" escape hatch (Task 19)
  * already handles for a permanently-failing Status write.
  *
- * **Delete-on-completion (this revision).** Spencer's Tasks database is
- * meant to reflect only active work, not accumulate every Task he's ever
- * finished — so once the Status write for `"completed"` succeeds, this
- * function ALSO moves the Task's page to Notion's Trash (`trashTaskPage`,
- * below): recoverable, exactly the same "Delete" action Spencer could click
- * in the Notion UI himself, never a hard/permanent delete (Notion's API has
- * none). This runs from inside `setTaskStatus` itself, not from a caller,
- * specifically so it applies uniformly no matter which of the two paths
- * writes `"completed"` — `answerNightCloseOutRequest`'s direct call, or
- * `answerDataCompletenessRequest`'s Status answer via `updateTaskField`'s
- * delegation — rather than needing the same check duplicated in both
- * `shell/chat-cli.ts` call sites. Any OTHER status (`"not-started"`,
- * `"in-progress"`, `"slipped"`) only ever writes the Status property, never
- * touches Trash.
+ * **Reverted 2026-09-25 (Spencer, AD-12).** `setTaskStatus` writes the
+ * Status property only and never trashes, from any trigger (Night
+ * close-out or a Web App check-off, FR-41/FR-43). Completion history is
+ * Yoh's own Completion Log (`completion-log.ts`, FR-47/AD-23), not
+ * Notion's — Tasks stays fully populated and browsable in Tasks page (§9.4:
+ * check-off never deletes).
  *
  * **Implementer note on the exact parameter list (a documented choice —
  * the Task 19 brief's "Before You Begin" guidance applies here).** The
@@ -539,39 +529,7 @@ export async function setTaskStatus(
   const statusPropertyName = (config.taskPropertyNames ?? DEFAULT_TASK_PROPERTY_NAMES).status;
   const optionName = (config.statusOptionNames ?? DEFAULT_TASK_STATUS_OPTION_NAMES)[status];
 
-  const written = await writeSelectLikeField(client, config.tasksDataSourceId, taskId, statusPropertyName, optionName);
-  if (!written.ok) return written;
-
-  return status === "completed" ? trashTaskPage(client, taskId) : written;
-}
-
-/**
- * Moves Task `taskId`'s Notion page to Trash — Notion's own recoverable
- * "Delete" (`in_trash: true` on `pages.update`; there is no hard/permanent
- * delete via this API), called only from `setTaskStatus`, only once its
- * `"completed"` Status write has already succeeded (see that function's own
- * "Delete-on-completion" doc comment section for why this lives there rather
- * than in a caller). Never exposed as a standalone export — AD-12's
- * enumerated write surface stays `setTaskStatus` + `updateTaskField` +
- * `createPage`; this is a step inside the first of those, not a fourth
- * capability.
- */
-async function trashTaskPage(client: NotionWriteClient, taskId: string): Promise<Result<void, YohError>> {
-  try {
-    await client.pages.update({ page_id: taskId, in_trash: true });
-    return { ok: true, value: undefined };
-  } catch (err) {
-    return {
-      ok: false,
-      error: {
-        kind: "unreachable",
-        message: `notion-adapter: Status was set to Completed for Task ${taskId}, but its page could not be moved to Trash — ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-        detail: err,
-      },
-    };
-  }
+  return writeSelectLikeField(client, config.tasksDataSourceId, taskId, statusPropertyName, optionName);
 }
 
 // ============================================================================

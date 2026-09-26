@@ -181,6 +181,7 @@ import {
   type MemoryStore,
 } from "../adapters/memory-store.ts";
 import type { LogEntry } from "../adapters/logger.ts";
+import type { RecordCompletionInput } from "../adapters/completion-log.ts";
 import { ATTENTION, localIsoDate, RESET, shouldUseColor } from "./ritual-shared.ts";
 import type { PlanNotification } from "./ritual-shared.ts";
 import type { EmailMessage } from "../adapters/email-adapter.ts";
@@ -188,7 +189,9 @@ import type {
   ExternalId,
   InteractionRequest,
   IsoDate,
+  IsoDateTime,
   Result,
+  Task,
   TaskStatus,
   YohError,
 } from "../types/domain.ts";
@@ -270,6 +273,13 @@ export interface NightPromptRitualDeps {
   /** Spencer's IANA timezone, defining "today" — the same Plan-date key `morning-ritual.ts`/`mid-day-reflow.ts` use. */
   readonly timeZone: string;
   readonly log?: (entry: LogEntry) => void;
+  /**
+   * Story 7.9, FR-41: Tasks `completion-log.ts` shows completed on TODAY's
+   * local date are excluded from tonight's close-out questions — asking
+   * again about a Task already recorded done (e.g. via a Web App check-off,
+   * Story 7.10) would be redundant and confusing.
+   */
+  readonly getCompletedTaskIdsToday: () => ReadonlySet<ExternalId>;
 }
 
 /** What one `night-prompt` run did. Discriminated on `status`, mirroring `MorningRitualOutcome`'s/`MidDayReflowOutcome`'s shape. */
@@ -338,11 +348,15 @@ export async function runNightPromptRitual(
   }
 
   // --- Collect every DISTINCT Task a work block names (dedupe by taskId) ----
+  // Story 7.9 (FR-41): a Task completion-log.ts already shows completed
+  // today is skipped entirely — never even added to `seen`/`tasks`.
+  const completedToday = deps.getCompletedTaskIdsToday();
   const seen = new Set<ExternalId>();
   const tasks: NightCloseOutTaskDetail[] = [];
   for (const b of plan.data.blocks) {
     if (b.kind !== "work" || b.taskId === undefined) continue;
     if (seen.has(b.taskId)) continue;
+    if (completedToday.has(b.taskId)) continue;
     seen.add(b.taskId);
     tasks.push({ taskId: b.taskId, taskTitle: b.label });
   }
@@ -434,12 +448,42 @@ export type NightCloseOutStatus = Extract<TaskStatus, "completed" | "slipped">;
 export interface NightCloseOutApplyDeps {
   readonly store: MemoryStore;
   readonly setTaskStatus: (taskId: ExternalId, status: TaskStatus) => Promise<Result<void, YohError>>;
+  /** Story 7.9, AD-23: `completion-log.ts`'s `recordCompletion`, pre-bound to the shared `SqliteConnection`. Called ONLY for a `"completed"` confirmation, with `source: 'close-out'`, immediately after the Notion write succeeds and before any Slip-Bump state change. */
+  readonly recordCompletion: (input: RecordCompletionInput) => void;
+  /**
+   * Controller ruling R7: a live-Task lookup used ONLY to snapshot
+   * `area`/`dueDate`/`estimatedMinutes` onto the completion record for a
+   * `"completed"` confirmation — run BEFORE the Status write (see this
+   * function's own body). `chat-cli.ts` binds this to `readNotionTasks`
+   * filtered by id; tests use a fake. A rejection is caught and logged; it
+   * never blocks either the completion record (recorded with `null` for all
+   * three fields) or the Status write itself. `undefined` (Task not found,
+   * or genuinely missing a field) also produces `null` for that field. Never
+   * called for a `"slipped"` confirmation — nothing about a slip snapshots
+   * anything into the Completion Log.
+   */
+  readonly lookupTask: (taskId: ExternalId) => Promise<Task | undefined>;
+  readonly log?: (entry: LogEntry) => void;
 }
 
 /**
  * Applies ONE confirmed Task status: writes it to Notion, then updates
- * Slip-Bump state to match. See the module docstring's "Two halves" section
- * for the full design and why Notion is written first.
+ * Slip-Bump state to match, and — for a `"completed"` confirmation —
+ * records a completion in Yoh's own Completion Log (Story 7.9, AD-23). See
+ * the module docstring's "Two halves" section for the full design and why
+ * Notion is written first.
+ *
+ * **Story 7.9 / Controller ruling R7 — the completion snapshot.** Before the
+ * Status write, if `status === "completed"`, this function calls the
+ * injected `lookupTask` to read the Task live and snapshot
+ * `area`/`dueDate`/`estimatedMinutes` (falling back to `null` for a field
+ * the Task lacks). A `lookupTask` rejection is caught and logged; the
+ * snapshot then stays all-`null` rather than blocking anything — neither the
+ * completion record nor the Status write ever depends on this lookup
+ * succeeding. The snapshot itself is deliberately independent of whether the
+ * Status write below goes on to succeed or fail: it is cheap (a read), and
+ * computing it first keeps the actual `recordCompletion` call (after a
+ * successful Status write) a single, uninterrupted step.
  *
  * - `"slipped"`: calls `memory-store.ts`'s `recordSlip(store, taskId,
  *   closeOutDate)` — Task 17's AUTHORITATIVE Slip-Bump trigger, the exact
@@ -447,39 +491,79 @@ export interface NightCloseOutApplyDeps {
  *   resulting `SlipHistory`/bump level is genuinely computed by
  *   `core/slip-bump.ts`'s `computeSlipBumpLevel` (which itself delegates to
  *   `core/escalate-under-strain.ts`'s `computeEscalation`, AD-6) — nothing
- *   in this function fabricates or shortcuts that number.
- * - `"completed"`: calls `clearSlip(store, taskId)` ONLY if a `SlipHistory`
- *   row currently exists — a harmless no-op otherwise (Task 17's own AC:
- *   the bump is cleared, not carried indefinitely, but a Task that never
- *   slipped has nothing to clear).
+ *   in this function fabricates or shortcuts that number. No completion is
+ *   recorded, and `lookupTask` is never even called.
+ * - `"completed"`: records the completion (see above), then calls
+ *   `clearSlip(store, taskId)` ONLY if a `SlipHistory` row currently exists
+ *   — a harmless no-op otherwise (Task 17's own AC: the bump is cleared, not
+ *   carried indefinitely, but a Task that never slipped has nothing to
+ *   clear).
  *
  * Per AD-8, this is one of the layers allowed to catch an adapter's throw:
  * `recordSlip`/`clearSlip` (which can throw `ConflictError` under AD-10
  * concurrency) are wrapped and converted into a `Result` failure. If the
  * Notion write itself fails, this function returns that failure immediately
- * and touches NO local Slip-Bump state at all — see the module docstring's
- * ordering note.
+ * and touches NO local Slip-Bump/Completion Log state at all — see the
+ * module docstring's ordering note.
  */
 export async function applyNightCloseOutConfirmation(
   deps: NightCloseOutApplyDeps,
   taskId: ExternalId,
+  taskName: string,
   status: NightCloseOutStatus,
   closeOutDate: IsoDate,
+  completedAt: IsoDateTime,
 ): Promise<Result<void, YohError>> {
+  const log = deps.log ?? ((): void => {});
+
+  let snapshot: { area: string | null; dueDate: IsoDate | null; estimatedMinutes: number | null } = {
+    area: null,
+    dueDate: null,
+    estimatedMinutes: null,
+  };
+  if (status === "completed") {
+    try {
+      const task = await deps.lookupTask(taskId);
+      snapshot = {
+        area: task?.area ?? null,
+        dueDate: task?.dueDate ?? null,
+        estimatedMinutes: task?.estimatedDurationMinutes ?? null,
+      };
+    } catch (err) {
+      // Controller ruling R7: a lookup failure never blocks anything below —
+      // the snapshot simply stays all-null and this is logged for
+      // visibility.
+      log({
+        level: "error",
+        event: "night-ritual.completion-snapshot-lookup-failed",
+        detail: { taskId, message: describeError(err) },
+      });
+    }
+  }
+
   const written = await deps.setTaskStatus(taskId, status);
   if (!written.ok) return written;
 
   try {
-    if (status === "slipped") {
-      recordSlip(deps.store, taskId, closeOutDate);
-    } else {
+    if (status === "completed") {
+      deps.recordCompletion({
+        taskId,
+        taskName,
+        area: snapshot.area,
+        dueDate: snapshot.dueDate,
+        estimatedMinutes: snapshot.estimatedMinutes,
+        completedAt,
+        source: "close-out",
+      });
       const existing = getSlipHistory(deps.store, taskId);
       if (existing) clearSlip(deps.store, taskId);
+    } else {
+      recordSlip(deps.store, taskId, closeOutDate);
     }
   } catch (err) {
     return failure(
       "conflict",
-      `night-ritual: Notion Status was written for Task ${taskId}, but its Slip-Bump history could not be updated — ${describeError(err)}`,
+      `night-ritual: Notion Status was written for Task ${taskId}, but its Completion Log/Slip-Bump state could not be updated — ${describeError(err)}`,
       err,
     );
   }

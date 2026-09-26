@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { createMemoryStore, getRitualInvocation, putRitualInvocation, putSelfCheckState } from "../src/adapters/memory-store.ts";
 import { recordSlip } from "../src/adapters/memory-store.ts";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
+import { initCompletionLogSchema, recordCompletion } from "../src/adapters/completion-log.ts";
 import { computeSlipBumpLevels } from "../src/core/slip-bump.ts";
 import {
   checkDailyRitualMissedRun,
@@ -1272,8 +1273,13 @@ test("createMorningRitualDeps.log delegates to the shared structured-log writer 
 });
 
 test("createNightPromptRitualDeps.log delegates to the shared structured-log writer", () => {
-  const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
-  const deps = createNightPromptRitualDeps(store, { YOH_TIMEZONE: "America/New_York", PUSHOVER_APP_TOKEN: "x", PUSHOVER_USER_KEY: "y" });
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  const store = createMemoryStore(connection);
+  const deps = createNightPromptRitualDeps(connection, store, {
+    YOH_TIMEZONE: "America/New_York",
+    PUSHOVER_APP_TOKEN: "x",
+    PUSHOVER_USER_KEY: "y",
+  });
   const capture = captureStderr();
   try {
     deps.log?.({ level: "warn", event: "night-ritual.no-time-budget" });
@@ -1282,6 +1288,33 @@ test("createNightPromptRitualDeps.log delegates to the shared structured-log wri
   }
   assert.equal(capture.chunks.length, 1);
   assert.deepEqual(JSON.parse(capture.chunks[0]!), { level: "warn", event: "night-ritual.no-time-budget" });
+  store.close();
+});
+
+test("createNightPromptRitualDeps.getCompletedTaskIdsToday reads through completion-log.ts on the shared connection, scoped to today's local date", () => {
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initCompletionLogSchema(connection.db);
+  const store = createMemoryStore(connection);
+  const timeZone = "America/New_York";
+  const deps = createNightPromptRitualDeps(connection, store, {
+    YOH_TIMEZONE: timeZone,
+    PUSHOVER_APP_TOKEN: "x",
+    PUSHOVER_USER_KEY: "y",
+  });
+
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone }).format(new Date()); // en-CA formats as YYYY-MM-DD
+  recordCompletion(connection, {
+    taskId: "t1",
+    taskName: "Draft the memo",
+    area: null,
+    dueDate: null,
+    estimatedMinutes: null,
+    completedAt: new Date().toISOString(),
+    source: "check-off",
+  });
+
+  const completedToday = deps.getCompletedTaskIdsToday();
+  assert.ok(completedToday.has("t1"), `expected t1 to be reported completed today (${today}), got ${JSON.stringify([...completedToday])}`);
   store.close();
 });
 

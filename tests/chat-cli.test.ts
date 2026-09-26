@@ -1909,11 +1909,23 @@ function closeOutPlan(date: IsoDate): Plan {
 
 const NIGHT_NOW = new Date("2026-08-22T22:00:00.000Z");
 
+/**
+ * Story 7.9 (AD-23/R7): every `runChatCli` call below that exercises the
+ * Night Ritual close-out flow with a "completed" answer reaches
+ * `applyNightCloseOutConfirmation`'s `recordCompletion`/`lookupTask` deps —
+ * these harmless no-ops stand in for the real `completion-log.ts`/live-Task
+ * bindings `main()` wires in production, so these Slip-Bump-focused tests
+ * don't need to also assert on completion recording (that's covered
+ * end-to-end by `tests/night-ritual.test.ts`).
+ */
+const noOpRecordCompletion = (): void => {};
+const noOpLookupTask = (): Promise<Task | undefined> => Promise.resolve(undefined);
+
 test("runChatCli surfaces the Night Ritual close-out prompt first and accepts per-block completed/slipped answers", async () => {
   const store = tempStore();
   const today = localIsoDate(NIGHT_NOW, TEST_TIME_ZONE);
   putPlan(store, closeOutPlan(today));
-  const promptRun = await runNightPromptRitual({ store, sendNotification: async () => {}, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE });
+  const promptRun = await runNightPromptRitual({ store, sendNotification: async () => {}, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE, getCompletedTaskIdsToday: () => new Set() });
   assert.ok(promptRun.ok && promptRun.value.status === "prompted");
   assert.ok(getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID));
 
@@ -1921,7 +1933,7 @@ test("runChatCli surfaces the Night Ritual close-out prompt first and accepts pe
   const io = makeScriptedIo(["completed", "slipped"]);
   const llmClient = makeFakeLlmClient();
 
-  await runChatCli(store, io, TEST_TIME_ZONE, llmClient, () => NIGHT_NOW, async () => [], setTaskStatus);
+  await runChatCli(store, io, TEST_TIME_ZONE, llmClient, () => NIGHT_NOW, async () => [], setTaskStatus, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, noOpRecordCompletion, noOpLookupTask);
 
   assert.ok(io.written.some((l) => l.includes("Draft the memo")), "expected the combined close-out prompt to be printed");
   assert.deepEqual(setTaskStatus.calls, [
@@ -1941,10 +1953,10 @@ test("runChatCli: a confirmed 'slipped' Task records a real Slip-Bump via the ni
   const store = tempStore();
   const today = localIsoDate(NIGHT_NOW, TEST_TIME_ZONE);
   putPlan(store, closeOutPlan(today));
-  await runNightPromptRitual({ store, sendNotification: async () => {}, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE });
+  await runNightPromptRitual({ store, sendNotification: async () => {}, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE, getCompletedTaskIdsToday: () => new Set() });
 
   const io = makeScriptedIo(["slipped", "completed"]);
-  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => NIGHT_NOW, async () => [], makeFakeSetTaskStatus());
+  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => NIGHT_NOW, async () => [], makeFakeSetTaskStatus(), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, noOpRecordCompletion, noOpLookupTask);
 
   const history = getSlipHistory(store, "t1");
   assert.ok(history, "expected a real SlipHistory row for the Task confirmed slipped");
@@ -1961,10 +1973,10 @@ test("runChatCli: a confirmed 'completed' Task with prior slip history gets it c
 
   const today = localIsoDate(NIGHT_NOW, TEST_TIME_ZONE);
   putPlan(store, closeOutPlan(today));
-  await runNightPromptRitual({ store, sendNotification: async () => {}, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE });
+  await runNightPromptRitual({ store, sendNotification: async () => {}, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE, getCompletedTaskIdsToday: () => new Set() });
 
   const io = makeScriptedIo(["completed", "completed"]);
-  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => NIGHT_NOW, async () => [], makeFakeSetTaskStatus());
+  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => NIGHT_NOW, async () => [], makeFakeSetTaskStatus(), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, noOpRecordCompletion, noOpLookupTask);
 
   assert.equal(getSlipHistory(store, "t1"), undefined, "the Slip-Bump must be cleared, not carried indefinitely");
   store.close();
@@ -1974,11 +1986,11 @@ test("runChatCli: an unrecognized close-out answer re-prompts the SAME Task rath
   const store = tempStore();
   const today = localIsoDate(NIGHT_NOW, TEST_TIME_ZONE);
   putPlan(store, closeOutPlan(today));
-  await runNightPromptRitual({ store, sendNotification: async () => {}, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE });
+  await runNightPromptRitual({ store, sendNotification: async () => {}, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE, getCompletedTaskIdsToday: () => new Set() });
 
   const setTaskStatus = makeFakeSetTaskStatus();
   const io = makeScriptedIo(["huh?", "completed", "slipped"]);
-  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => NIGHT_NOW, async () => [], setTaskStatus);
+  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => NIGHT_NOW, async () => [], setTaskStatus, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, noOpRecordCompletion, noOpLookupTask);
 
   assert.deepEqual(setTaskStatus.calls, [
     { taskId: "t1", status: "completed" },
@@ -1992,7 +2004,7 @@ test("runChatCli: a Notion write failure re-prompts the same Task rather than si
   const store = tempStore();
   const today = localIsoDate(NIGHT_NOW, TEST_TIME_ZONE);
   putPlan(store, closeOutPlan(today));
-  await runNightPromptRitual({ store, sendNotification: async () => {}, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE });
+  await runNightPromptRitual({ store, sendNotification: async () => {}, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE, getCompletedTaskIdsToday: () => new Set() });
 
   let attempt = 0;
   const flakySetTaskStatus = async (taskId: string, status: TaskStatus): Promise<Result<void, YohError>> => {
@@ -2002,7 +2014,7 @@ test("runChatCli: a Notion write failure re-prompts the same Task rather than si
   };
 
   const io = makeScriptedIo(["completed", "completed", "slipped"]);
-  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => NIGHT_NOW, async () => [], flakySetTaskStatus);
+  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => NIGHT_NOW, async () => [], flakySetTaskStatus, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, noOpRecordCompletion, noOpLookupTask);
 
   assert.ok(io.written.some((l) => /notion|couldn'?t/i.test(l)), "expected the failure to be surfaced, not swallowed");
   assert.equal(getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID), undefined, "eventually resolved once the retry succeeds");
@@ -2013,7 +2025,7 @@ test("runChatCli: a PERMANENTLY-failing Notion write can be skipped, unblocking 
   const store = tempStore();
   const today = localIsoDate(NIGHT_NOW, TEST_TIME_ZONE);
   putPlan(store, closeOutPlan(today));
-  await runNightPromptRitual({ store, sendNotification: async () => {}, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE });
+  await runNightPromptRitual({ store, sendNotification: async () => {}, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE, getCompletedTaskIdsToday: () => new Set() });
 
   // t1 fails on EVERY attempt (simulates a Task archived/deleted in Notion
   // between Plan generation and close-out — a permanent 404, not a
@@ -2027,7 +2039,7 @@ test("runChatCli: a PERMANENTLY-failing Notion write can be skipped, unblocking 
   };
 
   const io = makeScriptedIo(["completed", "skip", "slipped"]);
-  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => NIGHT_NOW, async () => [], perTaskFailingSetTaskStatus);
+  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => NIGHT_NOW, async () => [], perTaskFailingSetTaskStatus, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, noOpRecordCompletion, noOpLookupTask);
 
   assert.ok(io.written.some((l) => /skip/i.test(l)), "expected the skip to be acknowledged");
   assert.equal(
@@ -2055,7 +2067,7 @@ test("runChatCli: a night that was escalated and then answered with AT LEAST ONE
   const store = tempStore();
   const today = localIsoDate(NIGHT_NOW, TEST_TIME_ZONE);
   putPlan(store, closeOutPlan(today));
-  const promptRun = await runNightPromptRitual({ store, sendNotification: async () => {}, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE });
+  const promptRun = await runNightPromptRitual({ store, sendNotification: async () => {}, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE, getCompletedTaskIdsToday: () => new Set() });
   assert.ok(promptRun.ok && promptRun.value.status === "prompted");
 
   // Both close-out attempts spent, still unanswered — recorded as unchecked
@@ -2073,7 +2085,7 @@ test("runChatCli: a night that was escalated and then answered with AT LEAST ONE
   // Spencer finally opens chat — but SKIPS one of the two named Tasks
   // (t1 is answered genuinely; t2 is skipped).
   const io = makeScriptedIo(["completed", "skip"]);
-  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => NIGHT_NOW, async () => [], makeFakeSetTaskStatus());
+  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => NIGHT_NOW, async () => [], makeFakeSetTaskStatus(), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, noOpRecordCompletion, noOpLookupTask);
 
   assert.equal(
     getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID),
@@ -2090,7 +2102,7 @@ test("runChatCli: a night that was escalated and then answered with EVERY Task s
   const store = tempStore();
   const today = localIsoDate(NIGHT_NOW, TEST_TIME_ZONE);
   putPlan(store, closeOutPlan(today));
-  await runNightPromptRitual({ store, sendNotification: async () => {}, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE });
+  await runNightPromptRitual({ store, sendNotification: async () => {}, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE, getCompletedTaskIdsToday: () => new Set() });
 
   const escalated = await runNightEscalateRitual({
     store,
@@ -2103,7 +2115,7 @@ test("runChatCli: a night that was escalated and then answered with EVERY Task s
 
   // Both named Tasks are skipped — nothing genuinely confirmed at all.
   const io = makeScriptedIo(["skip", "skip"]);
-  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => NIGHT_NOW, async () => [], makeFakeSetTaskStatus());
+  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => NIGHT_NOW, async () => [], makeFakeSetTaskStatus(), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, noOpRecordCompletion, noOpLookupTask);
 
   assert.equal(getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID), undefined, "the request still clears — skip unblocks the session");
   assert.ok(
@@ -2116,7 +2128,7 @@ test("runChatCli: a night that was escalated and then answered with EVERY Task g
   const store = tempStore();
   const today = localIsoDate(NIGHT_NOW, TEST_TIME_ZONE);
   putPlan(store, closeOutPlan(today));
-  await runNightPromptRitual({ store, sendNotification: async () => {}, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE });
+  await runNightPromptRitual({ store, sendNotification: async () => {}, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE, getCompletedTaskIdsToday: () => new Set() });
 
   const escalated = await runNightEscalateRitual({
     store,
@@ -2129,7 +2141,7 @@ test("runChatCli: a night that was escalated and then answered with EVERY Task g
 
   // Spencer answers EVERY named Task genuinely — no skip at all.
   const io = makeScriptedIo(["completed", "slipped"]);
-  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => NIGHT_NOW, async () => [], makeFakeSetTaskStatus());
+  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => NIGHT_NOW, async () => [], makeFakeSetTaskStatus(), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, noOpRecordCompletion, noOpLookupTask);
 
   assert.equal(getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID), undefined);
   assert.equal(
@@ -2143,7 +2155,7 @@ test("runChatCli: a close-out answered the NEXT MORNING records the Slip-Bump ag
   const store = tempStore();
   const planDate = localIsoDate(NIGHT_NOW, TEST_TIME_ZONE);
   putPlan(store, closeOutPlan(planDate));
-  await runNightPromptRitual({ store, sendNotification: async () => {}, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE });
+  await runNightPromptRitual({ store, sendNotification: async () => {}, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE, getCompletedTaskIdsToday: () => new Set() });
 
   // Spencer doesn't open chat until the NEXT day.
   const NEXT_MORNING = new Date(NIGHT_NOW.getTime() + 12 * 60 * 60_000);
@@ -2151,7 +2163,7 @@ test("runChatCli: a close-out answered the NEXT MORNING records the Slip-Bump ag
   assert.notEqual(nextMorningLocalDate, planDate, "test setup sanity: the answer genuinely lands on a different local day");
 
   const io = makeScriptedIo(["slipped", "completed"]);
-  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => NEXT_MORNING, async () => [], makeFakeSetTaskStatus());
+  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => NEXT_MORNING, async () => [], makeFakeSetTaskStatus(), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, noOpRecordCompletion, noOpLookupTask);
 
   const history = getSlipHistory(store, "t1");
   assert.ok(history);

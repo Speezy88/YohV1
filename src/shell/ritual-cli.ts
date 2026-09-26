@@ -201,7 +201,8 @@
  * configuration).
  */
 import { createMemoryStore, getRitualInvocation, listSlipHistories, putRitualInvocation, type MemoryStore } from "../adapters/memory-store.ts";
-import { openSqliteConnection } from "../adapters/sqlite.ts";
+import { openSqliteConnection, type SqliteConnection } from "../adapters/sqlite.ts";
+import { initCompletionLogSchema, listCompletedTaskIdsOnDate } from "../adapters/completion-log.ts";
 import {
   createCalendarReadClient,
   createCalendarWriteClient,
@@ -220,6 +221,7 @@ import {
   type MorningRitualDeps,
   type MorningRitualOutcome,
 } from "../rituals/morning-ritual.ts";
+import { localIsoDate } from "../rituals/ritual-shared.ts";
 import type { PlanNotification } from "../rituals/ritual-shared.ts";
 import {
   renderNightEscalateNotice,
@@ -1092,6 +1094,7 @@ export function createMorningRitualDeps(
  * credentials ARE required now, same as `morning`.
  */
 export function createNightPromptRitualDeps(
+  connection: SqliteConnection,
   store: MemoryStore,
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): NightPromptRitualDeps {
@@ -1111,6 +1114,9 @@ export function createNightPromptRitualDeps(
     // (all four `create*RitualDeps` functions used to have their own
     // byte-identical copy of it).
     log: (entry) => writeStructuredLog(entry),
+    // Story 7.9 (FR-41): completion-log.ts's own read, scoped to TODAY's
+    // local date in the same `timeZone` this ritual already uses.
+    getCompletedTaskIdsToday: () => listCompletedTaskIdsOnDate(connection, localIsoDate(new Date(), timeZone), timeZone),
   };
 }
 
@@ -1249,12 +1255,16 @@ export async function main(
 
   const connection = openSqliteConnection({ databasePath: env["MEMORY_DB_PATH"] || "./data/yoh-memory.db" });
   const store = createMemoryStore(connection);
+  // Story 7.9 (AD-10/AD-23): completion-log.ts's own dedicated table,
+  // created idempotently alongside memory-store.ts's, before any subcommand
+  // reads or writes it.
+  initCompletionLogSchema(connection.db);
   try {
     if (argv[0] === "night-prompt") {
       let deps: NightPromptRitualDeps;
       let sendFailureAlert: (notification: PlanNotification) => Promise<void>;
       try {
-        deps = createNightPromptRitualDeps(store, env);
+        deps = createNightPromptRitualDeps(connection, store, env);
         sendFailureAlert = createFailureAlertSender(env);
       } catch (err) {
         io.writeError(`ritual-cli: ${err instanceof Error ? err.message : String(err)}`);

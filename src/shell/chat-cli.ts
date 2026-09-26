@@ -205,6 +205,11 @@ import {
   setTaskStatus as notionSetTaskStatus,
   updateTaskField as notionUpdateTaskField,
 } from "../adapters/notion-adapter.ts";
+import {
+  initCompletionLogSchema,
+  recordCompletion as completionLogRecordCompletion,
+  type RecordCompletionInput,
+} from "../adapters/completion-log.ts";
 import { search as runSearch, type SearchAdapterConfig } from "../adapters/search-adapter.ts";
 import { createTokenStore, loadGoogleOAuthConfigFromEnv, type TokenStore } from "../adapters/token-store.ts";
 import type { MissingFieldReport } from "../core/data-completeness-gate.ts";
@@ -236,6 +241,7 @@ import type {
   CalendarEvent,
   ChatIntent,
   ChatTurn,
+  ExternalId,
   FieldValueSuggestion,
   InteractionRequest,
   IsoDate,
@@ -565,6 +571,19 @@ async function answerDataCompletenessRequest(
 /** The shape `runChatCli`/`surfaceOpenInteractionRequests` thread through to `rituals/night-ritual.ts`'s `applyNightCloseOutConfirmation` — `notion-adapter.ts`'s `setTaskStatus`, pre-bound to its client/config (see that function's own doc comment for the binding-convention note). */
 type SetTaskStatusFn = (taskId: string, status: TaskStatus) => Promise<Result<void, YohError>>;
 
+/** Story 7.9 (AD-23): `completion-log.ts`'s `recordCompletion`, pre-bound to the shared `SqliteConnection` — threaded into `applyNightCloseOutConfirmation`'s `NightCloseOutApplyDeps.recordCompletion`. */
+type RecordCompletionFn = (input: RecordCompletionInput) => void;
+
+/**
+ * Story 7.9 (Controller ruling R7): a live-Task lookup, used ONLY by the
+ * Night Ritual close-out path to snapshot `area`/`dueDate`/`estimatedMinutes`
+ * onto a completion record before it's written — `main()` binds this to
+ * `readNotionTasks`, filtered down to the one Task by id. Threaded into
+ * `applyNightCloseOutConfirmation`'s `NightCloseOutApplyDeps.lookupTask`,
+ * which already tolerates (and logs) a rejection without blocking anything.
+ */
+type LookupTaskFn = (taskId: ExternalId) => Promise<Task | undefined>;
+
 /**
  * Parses a raw close-out answer into `"completed"` or `"slipped"` — the same
  * deliberately-simple, clearly-documented pattern-matching convention every
@@ -653,6 +672,12 @@ async function answerNightCloseOutRequest(
   record: StoredRecord<InteractionRequest>,
   setTaskStatus: SetTaskStatusFn,
   fallbackDate: IsoDate,
+  recordCompletion: RecordCompletionFn = () => {
+    throw new Error("chat-cli: no recordCompletion dependency configured — cannot record a Night Ritual close-out completion");
+  },
+  lookupTask: LookupTaskFn = async () => {
+    throw new Error("chat-cli: no lookupTask dependency configured — cannot snapshot a close-out completion's Task fields");
+  },
 ): Promise<boolean> {
   const detail = record.data.detail as NightCloseOutRequestDetail | undefined;
   const tasks = detail?.tasks ?? [];
@@ -689,7 +714,14 @@ async function answerNightCloseOutRequest(
         continue; // re-ask the SAME question — an unparseable answer is not an answer.
       }
 
-      const applied = await applyNightCloseOutConfirmation({ store, setTaskStatus }, t.taskId, parsed, closeOutDate);
+      const applied = await applyNightCloseOutConfirmation(
+        { store, setTaskStatus, recordCompletion, lookupTask },
+        t.taskId,
+        t.taskTitle,
+        parsed,
+        closeOutDate,
+        new Date().toISOString(),
+      );
       if (!applied.ok) {
         io.writeLine(
           `I couldn't record that in Notion: ${applied.error.message} — try again, or type "skip" to leave it for now and move on.`,
@@ -1132,6 +1164,12 @@ export async function surfaceOpenInteractionRequests(
   },
   llmClient?: AnthropicMessagesClient,
   recentMessages: readonly string[] = [],
+  recordCompletion: RecordCompletionFn = () => {
+    throw new Error("chat-cli: no recordCompletion dependency configured — cannot record a Night Ritual close-out completion");
+  },
+  lookupTask: LookupTaskFn = async () => {
+    throw new Error("chat-cli: no lookupTask dependency configured — cannot snapshot a close-out completion's Task fields");
+  },
 ): Promise<void> {
   for (;;) {
     const open = listOpenInteractionRequests(store);
@@ -1145,7 +1183,7 @@ export async function surfaceOpenInteractionRequests(
     }
 
     if (next.id === NIGHT_CLOSE_OUT_REQUEST_ID && next.data.requestKind === "night-close-out") {
-      const resolved = await answerNightCloseOutRequest(store, io, next, setTaskStatus, fallbackDate);
+      const resolved = await answerNightCloseOutRequest(store, io, next, setTaskStatus, fallbackDate, recordCompletion, lookupTask);
       if (!resolved) return; // EOF mid-answer.
       continue;
     }
@@ -2039,6 +2077,12 @@ export async function runChatCli(
   applyCalendarEditFn: ApplyCalendarEditFn = async () => {
     throw new Error("chat-cli: no applyCalendarEditFn dependency configured — cannot apply a Calendar edit");
   },
+  recordCompletion: RecordCompletionFn = () => {
+    throw new Error("chat-cli: no recordCompletion dependency configured — cannot record a Night Ritual close-out completion");
+  },
+  lookupTask: LookupTaskFn = async () => {
+    throw new Error("chat-cli: no lookupTask dependency configured — cannot snapshot a close-out completion's Task fields");
+  },
 ): Promise<void> {
   // The running session transcript (2026-09-22 revision) — see
   // `withConversationHistory`'s own doc comment. Wrapping `io` here, once,
@@ -2073,6 +2117,8 @@ export async function runChatCli(
     updateTaskField,
     llmClient,
     recentMessages,
+    recordCompletion,
+    lookupTask,
   );
 
   // Set once the first real (non-blank) line has been handled, so a
@@ -2110,6 +2156,8 @@ export async function runChatCli(
       updateTaskField,
       llmClient,
       recentMessages,
+      recordCompletion,
+      lookupTask,
     );
 
     if (line.trim().length === 0) continue;
@@ -2291,6 +2339,10 @@ export async function main(env: Readonly<Record<string, string | undefined>> = p
   }
   const connection = openSqliteConnection({ databasePath });
   const store = createMemoryStore(connection);
+  // Story 7.9 (AD-10/AD-23): completion-log.ts's own dedicated table, created
+  // idempotently alongside memory-store.ts's, before either is used.
+  initCompletionLogSchema(connection.db);
+  const recordCompletion: RecordCompletionFn = (input) => completionLogRecordCompletion(connection, input);
   const llmClient = createAnthropicMessagesClient(loadLlmAdapterConfigFromEnv(env));
   const io = createNodeIo();
   const readTasks = async (): Promise<readonly Task[]> => {
@@ -2309,6 +2361,13 @@ export async function main(env: Readonly<Record<string, string | undefined>> = p
     const taskPropertyNames = loadTaskPropertyNamesFromEnv(env);
     return (await readNotionTasks(notionClient, { tasksDataSourceId, projectsDataSourceId, taskPropertyNames })).tasks;
   };
+  // Story 7.9 (Controller ruling R7): the Night Ritual close-out
+  // completion-snapshot lookup — reuses `readTasks` above (the same live
+  // Notion read Mid-Day Re-Flow already uses) and filters to the one Task by
+  // id. A rejection (missing config, a Notion failure) propagates to
+  // `applyNightCloseOutConfirmation`'s own try/catch, which logs it and
+  // never lets it block the completion record or the Status write.
+  const lookupTask: LookupTaskFn = async (taskId) => (await readTasks()).find((t) => t.id === taskId);
   // Same "lazily constructed, no unrelated startup requirement" convention
   // as `readTasks` above (Task 19) — a session that never answers a Night
   // Ritual close-out prompt must not be unable to start just because Notion
@@ -2480,6 +2539,8 @@ export async function main(env: Readonly<Record<string, string | undefined>> = p
       resolveCalendarEditRouteFn,
       proposeCalendarEditFn,
       applyCalendarEditFn,
+      recordCompletion,
+      lookupTask,
     );
   } finally {
     connection.close();

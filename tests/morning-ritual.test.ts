@@ -854,10 +854,17 @@ test("end-to-end: a night Spencer answers AFTER escalation does NOT get falsely 
   //     SECOND attempt reaching him and working, later that same night (or
   //     any time before the request is overwritten by a later night).
   const applied = await applyNightCloseOutConfirmation(
-    { store, setTaskStatus: async () => ({ ok: true, value: undefined }) },
+    {
+      store,
+      setTaskStatus: async () => ({ ok: true, value: undefined }),
+      recordCompletion: (): void => {},
+      lookupTask: (): Promise<Task | undefined> => Promise.resolve(undefined),
+    },
     "t1",
+    "Draft the memo",
     "completed",
     PRIOR_NIGHT,
+    `${PRIOR_NIGHT}T22:00:00.000Z`,
   );
   assert.ok(applied.ok, `expected the answer to apply successfully, got ${JSON.stringify(applied)}`);
   // The same call chat-cli.ts makes once every named Task is answered — no
