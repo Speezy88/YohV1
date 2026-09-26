@@ -1,0 +1,28 @@
+# systemd unit for the Yoh server (Story 7.2, AD-15).
+#
+# Install: see deploy/DEPLOY.md. Adjust User, WorkingDirectory,
+# EnvironmentFile, and the node path (`command -v node`) to the host before
+# copying this to /etc/systemd/system/yoh-server.service.
+#
+# The server binds 127.0.0.1 only and is reached exclusively through
+# `tailscale serve` HTTPS. It schedules no ritual: the four cron one-shots
+# (ritual-cli.ts morning / night-prompt / night-escalate / self-check) stay
+# in the crontab, unchanged.
+
+[Unit]
+Description=Yoh server (Hono API + web bundle, loopback only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=spencer
+WorkingDirectory=/home/spencer/yoh
+EnvironmentFile=/home/spencer/yoh/.env
+ExecStart=/usr/bin/node src/shell/server.ts
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

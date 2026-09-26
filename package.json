@@ -10,14 +10,17 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --test",
-    "check": "npm run typecheck && npm run test"
+    "check": "npm run typecheck && npm run test",
+    "build": "npm run typecheck"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.120.0",
     "@googleapis/calendar": "^16.0.0",
+    "@hono/node-server": "1.19.17",
     "@notionhq/client": "^5.22.0",
     "better-sqlite3": "^13.0.3",
     "google-auth-library": "^11.0.2",
+    "hono": "4.13.9",
     "nodemailer": "^9.0.5"
   },
   "devDependencies": {
