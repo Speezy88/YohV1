@@ -4,16 +4,18 @@ type: architecture-spine
 purpose: build-substrate
 altitude: initiative
 paradigm: Functional Core / Imperative Shell
-scope: Phase 1 MVP plus Phase 1.5 — the Morning/Night Ritual loop, Notion + Google Calendar integration, memory/learning, tone, terminal/CLI surface, and (Phase 1.5) live Notion page/DB creation, confirm-gated Calendar time-block editing, and web search. Governs FR-1–FR-29 and their NFRs; still does not govern Phase 2+ proper (web app, hardware voice pipeline, iOS, the fuller Research Vault vision beyond FR-28/FR-29's first slice).
+scope: Phase 1 MVP, Phase 1.5, and Phase 2. Covers the Morning/Night Ritual loop, Notion + Google Calendar integration, memory/learning, tone, live Notion/Calendar writes and web search (Phase 1.5), and the Phase 2 Web App (Drag-to-Reshuffle, /sandbox, the four pages, in-app notifications, Completion Log, async /research, CLI retirement). Governs FR-1–FR-51 and their NFRs. Does not govern Phase 3+ (hardware voice pipeline, iOS, Voice Packs, self-calibration).
 status: final
 created: '2026-08-22'
-updated: '2026-09-18'
+updated: '2026-09-25'
 binds:
-  - FR-1..FR-29
+  - FR-1..FR-51
   - NFR-Reliability
   - NFR-DataIntegrity
   - NFR-Latency
   - NFR-Observability
+  - NFR-Accessibility
+  - NFR-CaptureSpeed
 sources:
   - _bmad-output/planning-artifacts/prds/prd-YohV1-2026-08-21/prd.md
   - _bmad-output/planning-artifacts/prds/prd-YohV1-2026-08-21/addendum.md
@@ -31,17 +33,28 @@ companions: []
 
 This directly satisfies the PRD addendum's own architecture guidance ("keep planning/ritual logic decoupled from the CLI presentation layer, so Phase 2+ surfaces can call the same core logic instead of forking it") and the build-time constraint this spine was commissioned under: implementation tasks must be independent, file-owned, and expressed as explicit Consumes/Produces signatures rather than shared mutable state.
 
-**Ritual output is never a blocking question.** Every ritual runs unattended and to completion, then exits. If it needs an answer from Spencer (a missing Task field, a close-out confirmation, a Self-Check score), it persists that need as an **open interaction request** and exits — it never holds the process open waiting. `chat-cli.ts` is the only place an open interaction request gets resolved, whenever Spencer next opens a session. This is the one addition the review pass forced into this section, because it changes what "ritual" means architecturally: a ritual is a state transition plus, optionally, a durable question — never a wait.
+**Ritual output is never a blocking question.** Every ritual runs unattended and to completion, then exits. If it needs an answer from Spencer (a missing Task field, a close-out confirmation, a Self-Check score), it persists that need as an **open interaction request** and exits — it never holds the process open waiting. An interactive surface is the only place an open interaction request gets resolved, whenever Spencer next opens one: `chat-cli.ts` through Phase 1.5, and the Web App through `app/` from Phase 2 (AD-16). This is the one addition the review pass forced into this section, because it changes what "ritual" means architecturally: a ritual is a state transition plus, optionally, a durable question — never a wait.
+
+**Phase 2: one core, many surfaces, one interaction layer.** The Web App is a new shell, not a new system. Every interactive capability (confirming a `Proposal`, checking off a Task, a /sandbox card, a drag-reshuffle, a chat turn) is a function in a surface-agnostic `app/` layer. Shells only translate transport (HTTP, or terminal text until the CLI retires) into `app/` calls. The browser client (`web/`) is a pure view over the server API: it renders what the server computed and never plans anything itself. Two processes share one SQLite file on one always-on host. The OS-scheduled ritual one-shots stay exactly as they were, and a new supervised server process handles everything interactive.
 
 ## Invariants & Rules
 
 ```mermaid
 graph TD
-    shell["shell/ (ritual-cli, chat-cli)"] --> rituals["rituals/ (orchestration)"]
-    rituals --> core["core/ (pure functions)"]
-    rituals --> adapters["adapters/ (I/O)"]
-    adapters --> types["types/domain.ts"]
-    core --> types
+    web["web/ (React SPA — browser)"] -. "HTTP + SSE only" .-> server
+    subgraph Host["one host, one SQLite file"]
+        server["shell/server.ts (Hono)"] --> app["app/ (interaction use-cases)"]
+        chatcli["shell/chat-cli.ts (until FR-50)"] --> app
+        ritualcli["shell/ritual-cli.ts (cron)"] --> rituals
+        app --> rituals["rituals/ (orchestration)"]
+        app --> core["core/ (pure functions)"]
+        app --> adapters["adapters/ (I/O)"]
+        rituals --> core
+        rituals --> adapters
+        adapters --> types["types/"]
+        core --> types
+    end
+    web -. "import type only" .-> types
 ```
 
 ### AD-1 — Functional Core / Imperative Shell layering
@@ -49,6 +62,7 @@ graph TD
 - **Binds:** all
 - **Prevents:** planning/ritual business logic entangling with I/O, or getting reimplemented per surface (CLI now, web/hardware/iOS later)
 - **Rule:** dependency direction is strictly `shell → rituals → {core, adapters}`; `adapters → types` only. Files under `core/` may import only from `types/` and other `core/` files — never from `adapters/`, `rituals/`, or `shell/`. `[ADOPTED]`
+  - **Phase 2:** an `app/` layer sits between the interactive shells and everything below: `shell/{server,chat-cli}.ts → app → {rituals, core, adapters}`. `shell/ritual-cli.ts` keeps calling `rituals/` directly and **never imports `app/`**. `rituals/` never imports `app/` either. `web/` is outside this graph: it reaches the system only over HTTP/SSE (AD-17) and imports only types (`import type` from `types/`). `[ADOPTED, revised for Phase 2]`
 
 ### AD-2 — No shared mutable state across core functions
 
@@ -58,10 +72,11 @@ graph TD
 
 ### AD-3 — Propose-Don't-Impose modeled as durable, versioned data
 
-- **Binds:** FR-16 (learned pattern), FR-5 (Time Budget change suggestion), FR-25 (Data-Completeness Gate inferred field-value suggestion), FR-26 (Notion page/DB draft), FR-27 (Calendar time-block edit proposal — see AD-13 for the calendar-specific mechanics layered on top of this)
+- **Binds:** FR-16 (learned pattern), FR-5 (Time Budget change suggestion), FR-25 (Data-Completeness Gate inferred field-value suggestion), FR-26 (Notion page/DB draft), FR-27 (Calendar time-block edit proposal — see AD-13 for the calendar-specific mechanics layered on top of this), FR-32 (Reshuffle Preview, AD-19), FR-48 (surface-agnostic confirmation)
 - **Does not bind:** FR-10. Rescheduling around a reported Blocker is unconditional and automatic — FR-10's own consequence text is explicit that Yoh "does not generate suggestions for resolving the underlying obstacle." The Glossary's Propose-Don't-Impose entry names "a Blocker resolution" as a confirmation-gated case, but Phase 1 has no code path that ever produces a Blocker-resolution suggestion to confirm — that clause describes a boundary that stays permanently unreached in this scope, not a gate FR-10's mechanical reschedule must pass through. **Also does not bind:** FR-29 (file search result to Research Vault) — see AD-12; FR-29 is modeled as direct-write, the same shape as FR-24, not a Proposal.
 - **Prevents:** a learned pattern, suggested Time Budget change, or Phase 1.5 draft/proposal silently taking effect because "propose" and "apply" share one code path; a stale proposal being applied against state that has since moved on; a proposal generated during an unattended ritual run having no path back to Spencer.
-- **Rule:** any function that would suggest a behavior or budget change, or draft a Notion item, calendar edit, or field value for Spencer's review, returns a `Proposal<T>` value (the suggested change, its reason, and a snapshot/version of the entity it would change) instead of performing it. `memory-store.ts` persists every open `Proposal` as an open interaction request. Only `chat-cli.ts`, after an explicit yes/no from Spencer, may act on it.
+- **Rule:** any function that would suggest a behavior or budget change, or draft a Notion item, calendar edit, or field value for Spencer's review, returns a `Proposal<T>` value (the suggested change, its reason, and a snapshot/version of the entity it would change) instead of performing it. `memory-store.ts` persists every open `Proposal` as an open interaction request. Only an `app/*` function, called from an interactive shell after an explicit yes/no from Spencer, may act on it. Through Phase 1.5 `chat-cli.ts` was the only such shell. **Phase 2 (FR-48):** Web App controls (the Reshuffle Preview's Approve, a Chat confirm button, a Structured Question option) and a typed "yes" are equally valid confirmations, because each surface calls the same `app/` confirm function with the same staleness check. No surface has its own apply path. Where the sub-bullets below say "`chat-cli.ts` calls/extracts", read it as "the `app/` function calls/extracts" once the logic has migrated (AD-16).
+  - **Phase 2 instantiation:** Drag-to-Reshuffle produces a `Proposal<ReshufflePreview>` (FR-32, AD-19). Its snapshot is a version of today's calendar, and a stale Approve recomputes and returns a fresh preview instead of just rejecting.
   - **`apply(proposal)` is a pattern name, not one literal shared signature.** Each concrete write function has its own calling convention, and `chat-cli.ts` calls each one directly — there is no single generic `apply(proposal: Proposal<unknown>)` dispatcher every write function conforms to. For FR-16/FR-5 (learned pattern, Time Budget) and FR-27 (`applyCalendarEdit`, AD-13), the function takes the `Proposal` itself, re-reads the live entity, and rejects with `YohError.kind: 'stale-proposal'` if its version no longer matches the snapshot. For FR-25/FR-26, `chat-cli.ts` extracts the confirmed `Proposal`'s payload (the suggested field value; the `NotionPageDraft`'s `database`/`properties`) and calls the adapter's plain write function directly (`updateTaskField`, `createPage`) — these functions take unwrapped arguments, are not named `apply*`, and pre-date this AD.
   - **The stale-proposal re-read does not apply to a `Proposal<T>` that creates a new entity rather than modifying an existing one** — currently, `Proposal<NotionPageDraft>` (FR-26) and `Proposal<CalendarEditChange>`'s `create` variant (FR-27, AD-13). There is no live entity to re-read before something exists. AD-12's draft-time/write-time schema re-resolution is the substitute integrity guarantee for `NotionPageDraft`; AD-13's `applyCalendarEdit` simply skips the re-read for its `create` variant.
   - **FR-29 is a direct write, never routed through this Proposal/confirm machinery** — it calls `createPage` the same way FR-24 calls `updateTaskField`, on Spencer's explicit "save that" request, with no draft-then-confirm step. A shared confirm-gating helper must not swallow FR-29's `createPage` call the way it would FR-26's — the two are distinguished by which caller invokes `createPage`, not by anything in `createPage`'s own signature, so `chat-cli.ts`'s FR-26 handling and its FR-29 handling stay two separate call sites, never a shared "confirm then createPage" helper both funnel through.
@@ -82,9 +97,10 @@ graph TD
 - **Rule:**
   - `ritual-cli.ts` exposes four independently OS-scheduled one-shot subcommands, each cron/systemd-timer/launchd-triggered at its own time and none of them blocking for input: `morning` (FR-1–FR-4), `night-prompt` (FR-12, sends the first close-out prompt), `night-escalate` (FR-13–FR-14, scheduled some hours after `night-prompt`; checks `memory-store.ts` for whether that night's close-out was already answered, and if not, sends the capped second attempt via email and marks the day unchecked), and `self-check` (FR-17, scheduled daily at a randomized time computed from the last check-in; a no-op if today isn't due).
   - Any of these that needs an answer — a missing Task field (FR-4), a close-out confirmation (FR-12), a Self-Check score+reason (FR-17) — persists it in `memory-store.ts` as an open interaction request, then exits. It does not wait.
-  - `chat-cli.ts` is the single on-demand REPL entry point and the only place an open interaction request or open `Proposal` gets resolved. On start, and before accepting an unrelated command, it surfaces any open interaction requests — matching the UX requirement that an open confirmation blocks the chat flow rather than queuing silently alongside something else. `chat-cli.ts` also handles: on-demand Plan viewing, Mid-Day Re-Flow triggers (FR-9), Blocker reports (FR-10 — reschedules immediately, no confirmation per AD-3), Time Budget changes, and any other free-text input, routed and answered via `llm-adapter.ts`.
+  - *(Phase 1/1.5 wording; generalized to `app/` by the Phase 2 bullet below.)* `chat-cli.ts` is the single on-demand REPL entry point and the only place an open interaction request or open `Proposal` gets resolved. On start, and before accepting an unrelated command, it surfaces any open interaction requests — matching the UX requirement that an open confirmation blocks the chat flow rather than queuing silently alongside something else. `chat-cli.ts` also handles: on-demand Plan viewing, Mid-Day Re-Flow triggers (FR-9), Blocker reports (FR-10 — reschedules immediately, no confirmation per AD-3), Time Budget changes, and any other free-text input, routed and answered via `llm-adapter.ts`.
   - **Phase 1.5:** every successful write `chat-cli.ts` triggers or applies — a confirmed `Proposal` (AD-3: FR-25/26/27) or a direct write (AD-12: FR-24/29) — is echoed back to Spencer in that same chat session as a one-line receipt naming what changed, per NFR-DataIntegrity's chat-receipt requirement. This is a `chat-cli.ts` output responsibility, not new storage or a new adapter — the write functions themselves (`updateTaskField`, `createPage`, `applyCalendarEdit`) return enough detail in their success value for `chat-cli.ts` to compose the one-line receipt from, rather than needing to re-query.
   - Neither shell file contains ritual or core logic itself — both call into `rituals/*`. `[ADOPTED]`
+  - **Phase 2 (FR-42, FR-48, FR-50):** `ritual-cli.ts` and its four cron subcommands are unchanged. Every `chat-cli.ts` responsibility above (surfacing open interaction requests first, resolving `Proposal`s, Plan viewing, Re-Flow, Blockers, Time Budget, free-text routing, receipts) moves into `app/` (AD-16), and both `shell/server.ts` and `chat-cli.ts` call it. On the Web App, open interaction requests and `Proposal`s render at the top of Chat. An open item blocks only writes that conflict with it (e.g. another answer to the same Task field, or a second reshuffle while one is open), never unrelated chat. `/morning` reads today's stored Plan and open items and never regenerates or re-pushes. `/night` records the close-out through the same `memory-store.ts` record `night-escalate` already checks. `night-prompt` gains the same check and is a no-op if tonight's close-out is already recorded, so an early `/night` cancels both the prompt and the escalation and the day is never marked unchecked. `chat-cli.ts` is deleted once FR-42's parity list passes against the Web App. Deleting it removes no logic, because the logic already lives in `app/`. A ritual's open close-out or Self-Check surfaces as an open item in Chat, plus its existing Pushover/email channel. It raises **no** in-app notification, which keeps FR-49's no-proactive-nudge rule. The only ritual-raised in-app notifications are `needs-data` (FR-34, the result of a planning run) and `operational` (AD-7).
 
 ### AD-6 — Escalate-Under-Strain: one shared curve, three consumers, one pinned signature
 
@@ -100,6 +116,7 @@ graph TD
   - Every `ritual-cli.ts` subcommand wraps its entire invocation in one top-level handler; any thrown error or `Result` failure triggers a Pushover alert (via `notification-adapter.ts`) worded distinctly from a normal Plan/close-out/Self-Check notification, before the process exits non-zero.
   - Every `ritual-cli.ts` subcommand also checks, on start, that `memory-store.ts` recorded a successful run of its own previous scheduled occurrence; a missing prior run is itself treated as a failure and alerted. This is a self-referential dead-man's switch, not an external one — a total host or scheduler outage spanning every future invocation has no detection inside Yoh itself (see Deferred).
   - The Google OAuth "In production" consent-screen setting (Deferred, below) is a precondition of this AD holding at all for FR-20/FR-21/FR-23: a Testing-mode 7-day silent token expiry would produce exactly the unnoticed-failure mode this AD exists to prevent. `[ADOPTED]`
+  - **Phase 2:** the server process (AD-15) is covered by the same dead-man's switch. It writes a heartbeat record on a fixed interval, and `ritual-cli.ts morning` checks it on start and sends a Pushover alert if it's stale. A dead server therefore surfaces by the next morning at the latest, even though nobody may open the browser. Every alert condition also appends an in-app notification (FR-49, AD-18) so it's visible if the Web App is open. Pushover remains the channel that doesn't depend on the server being up. `[ADOPTED, revised for Phase 2]`
 
 ### AD-8 — Result types across the core/adapter boundary
 
@@ -115,6 +132,7 @@ graph TD
   - Every behavior in the Structural Seed's source tree has exactly one file as its home. A new capability that doesn't fit an existing file gets a new file — never an addition bolted onto a file owned by a different capability.
   - `types/domain.ts` is authored and reviewed as its own prerequisite task before any file that imports from it is dispatched. No file may locally redeclare, widen, or shadow a type `domain.ts` already exports.
   - `PlanBlock` carries a stable `id`. Every reference to a `PlanBlock` — lookup, update, reorder, in `slip-bump.ts`, `night-ritual.ts`, or `mid-day-reflow.ts` alike — addresses it by `id`, never by array position. `[ADOPTED]`
+  - **Phase 2:** the browser-server contract is locked the same way. `types/api.ts` (request/response/event shapes, `ChatMessage` including the Structured Question variant, `NotificationKind`, `ReshufflePreview`'s wire shape) is authored and locked before any `app/`, `shell/server.ts`, or `web/` file that uses it. The drag UI addresses blocks and Tasks by `PlanBlock.id` / Notion Task id, never by screen position or list index. `[ADOPTED, revised for Phase 2]`
 
 ### AD-10 — Storage split by concern; single owner for the OAuth client; transactional writes
 
@@ -125,23 +143,26 @@ graph TD
   - **Phase 1.5 (AD-13):** `token-store.ts` constructs and holds **two separately-scoped Calendar clients**, not one — a narrow client (`calendar.events.readonly` on primary, write scope on "Yoh Plan" only) that AD-4's automatic path exclusively uses, and a second, broader client (`calendar.events` — read/write across accessible calendars) that only AD-13's `proposeCalendarEdit`/`applyCalendarEdit` pair uses. This is why AD-4's "fails at the API layer, not just at review" guarantee survives AD-13's arrival unweakened: the automatic path's credential still physically cannot write the primary calendar, because it was never handed the broader-scoped client. A single shared client with the union of both scopes was considered and rejected — it would make AD-4's API-layer defense literally false the moment AD-13's scope widening landed, silently downgrading it to a code-review-only guarantee, which is exactly what AD-4 states it doesn't want to rely on.
   - Static secrets (Notion token, Google OAuth client id/secret, Pushover key, SMTP credentials, Claude API key, Perplexity API key — AD-14) load once from environment variables at process start; only the Google refresh token(s) are persisted, mutable secrets, and each has exactly one owner (above, AD-13's second client included).
   - Every multi-step read-modify-write sequence in `memory-store.ts` runs inside a single SQLite transaction with optimistic concurrency (a version/`updated_at` column checked on write). `ritual-cli.ts` and `chat-cli.ts` are allowed to run concurrently; the storage layer, not its callers, is responsible for detecting a conflicting write and surfacing it as `YohError.kind: 'conflict'` rather than silently applying last-write-wins. `[ADOPTED]`
+  - **Phase 2:** the long-running server (AD-15) and the cron one-shots share one SQLite file (WAL mode, already on). The concurrency rule above covers them unchanged. No process holds a read transaction open across an `await` or longer than one request or ritual step, so WAL checkpoints are never starved by the long-running server. If WAL growth is ever observed, `PRAGMA wal_checkpoint(TRUNCATE)` in the nightly backup job is the fallback. **One connection helper.** `adapters/sqlite.ts` is the only file that opens the SQLite file. It opens one connection per process with WAL, a `busy_timeout`, and `foreign_keys` on, and it exports `writeTx(fn)`, which runs `fn` inside `BEGIN IMMEDIATE`. Every store file, including `memory-store.ts` (refactored to take the shared handle, one story), receives that handle and does all multi-step writes through `writeTx`. No store opens its own connection. A change that spans owners (for example, job done + notification + outbox row, AD-18/AD-21) runs inside one `writeTx`, calling each owner's exported `…InTx(tx, …)` function, so atomicity doesn't require any owner to touch another's tables. New Phase 2 owners get **dedicated SQL tables** (ordered/indexed columns: the outbox `seq`, job status + `claimed_at`, completion dates) rather than `memory-store.ts`'s generic `(kind, id)` blob table, and each creates its own tables idempotently on startup. New durable data gets new owner files, each owning its own record kinds in that file: `completion-log.ts` (Task completions + activity days, FR-47), `routine-store.ts` (FR-35), `plan-state-store.ts` (today's Pins, pending check-offs, the open reshuffle proposal pointer, and the server heartbeat), `notification-store.ts` (in-app notifications, read state, and the event outbox, AD-18), and `job-store.ts` (/research jobs, AD-21). **Each record kind has exactly one owning file. No file reads or writes another file's kinds directly; it calls that file's exports.** `memory-store.ts` keeps its existing kinds and takes on none of these. `[ADOPTED, revised for Phase 2]`
 
 ### AD-11 — Data-Completeness Gate enforced at the type level
 
-- **Binds:** FR-4, FR-25 (inferred-value proposal, layered on the same gate), Non-Goal §8 ("will not silently default or drop Tasks with missing required fields")
+- **Binds:** FR-4 (two-tier as of Phase 2), FR-25 (inferred-value proposal, layered on the same gate), FR-34, FR-36, Non-Goal §8 ("will not silently default or drop Tasks with missing required fields")
 - **Prevents:** a future Plan-assembly code path bypassing the gate and including a Task with a missing field, defaulted or not
 - **Rule:** `data-completeness-gate.ts` is the only function that produces a `CompleteTask` value from a raw `Task`. Every function downstream of the gate — `derived-priority.ts`, `work-break-fit.ts`, `plan-reasoning.ts` — accepts `CompleteTask`, never `Task`, in its signature. A Task with a missing required field cannot type-check its way into Plan assembly; it can only ever produce an open interaction request (AD-5) asking for the missing field.
   - **FR-25 suggestion generation is lazy, at `chat-cli.ts` display time — never eager, at ritual time.** `data-completeness-gate.ts` is `core/*` (AD-1: imports only from `types/`, never `adapters/`) and so cannot call `llm-adapter.ts` itself; the gate only ever produces the plain `{kind: 'missing-field', taskId, field}` placeholder request, persisted as-is by `memory-store.ts`. `rituals/morning-ritual.ts` does not call `llm-adapter.ts` either — "chat context" (FR-25's own trigger condition) is typically sparse or nonexistent at an unattended 6am ritual run, before Spencer has said anything that day. Instead, `chat-cli.ts`, at the moment it's about to surface that stored placeholder to Spencer (AD-5's "surfaces any open interaction requests" step), calls `llm-adapter.ts` on demand to attempt an inference from recent chat context, and only then constructs the `Proposal<FieldValueSuggestion>` (AD-3) to show instead of a blind ask. `memory-store.ts` never stores a pre-built `Proposal` for this case — the stored record is always the bare placeholder; enrichment happens at display time, every time, not once at write time. `[ASSUMPTION: lazy/display-time generation, not eager/ritual-time]`
   - Either way, the gate itself is unchanged: only a confirmed answer (typed directly, or a confirmed `Proposal`) ever produces a `CompleteTask`, and the confirmed value flows through the existing `updateTaskField` write path (AD-12) FR-24 already established — FR-25 changes how the value is arrived at, never the write mechanism. `[ADOPTED, revised for FR-25]`
+  - **Phase 2 — two tiers (FR-4 amended).** `CompleteTask` now requires only the **Required Fields** (Due Date, Estimated Duration) to be present. The **Refining Fields** (Area, Energy) are typed as an explicit `Refining<T> = {kind: 'set', value: T} | {kind: 'missing'}` union, never `T | undefined` and never a defaulted `T`. `derived-priority.ts` maps `'missing'` to its neutral score internally, and that neutral value exists only inside the scoring computation. It is never stored, sent to the client as a real value, or written to Notion. The Plan and `ReshufflePreview` carry each placed Task's missing-Refining list so the UI can mark it (FR-4). A Task missing a Required Field still cannot become a `CompleteTask`, so it cannot be placed. It produces the existing `missing-field` placeholder request plus a needs-data in-app notification (FR-34, AD-18).
+  - **The /sandbox queue (FR-36) is computed, not stored.** One function, `app/sandbox-queue.ts`, derives the queue from the live Notion Tasks by running the gate: Tasks missing a Required Field, ordered soonest-due first `[ASSUMPTION: FR-36 ordering]`. The live counter (FR-37), the needs-data indicator, and the needs-data notification's count all read this one function. None of them keeps its own count. `[ADOPTED, revised for Phase 2]`
 
-### AD-12 — Notion write surface is enumerated, schema-checked, and CLI-only
+### AD-12 — Notion write surface is enumerated, schema-checked, and interactive-only
 
-- **Binds:** FR-23, FR-24, FR-26, FR-29, NFR-DataIntegrity
+- **Binds:** FR-23, FR-24, FR-26, FR-29, FR-38, FR-41, FR-51, NFR-DataIntegrity
 - **Prevents:** a Night Ritual close-out write touching any Task field other than Status; an attempt to write a rollup or formula property, which Notion documents as not updatable; a `select`-backed property being written a value that doesn't already exist as a real option (Notion silently creates a new option for an unrecognized `select` write, corrupting Spencer's taxonomy); a created page landing outside the three Notion databases Yoh is allowed to touch; or any of this being reachable from a cron-triggered `ritual-cli.ts` subcommand
 - **Rule:** `notion-adapter.ts`'s write surface stays a closed, enumerated set — `setTaskStatus` (Status only, on Night Ritual close-out or a Data-Completeness Status answer), `updateTaskField` (FR-24, writes only the fields named in `types/domain.ts`'s `PlanningFieldNames` — Estimated Duration, Area, Due Date, Energy, Status — and nothing else), and `createPage(database, properties)` (FR-26/FR-29) — there is still no generic "update or create any Notion property/page" function. `createPage`'s `database` parameter is a closed enum — `Tasks | Projects | ResearchVault` — matching FR-26's own PRD-stated restriction; no other Notion database is ever a valid target, regardless of what the integration token can technically reach. FR-29 (file a search result to the Research Vault) reuses `createPage` with `database: 'ResearchVault'` — no separate function.
   Before `updateTaskField` or `createPage` writes a `select`-backed property (Area when modeled as a `select` rather than `rich_text`; Energy), it retrieves that property's live option list (`dataSources.retrieve`) and resolves the value to one of those real, existing options — exact match, then normalized match, then closest-match by edit distance within a bounded threshold — never writing raw or invented text into a `select` property; a value that can't be confidently resolved fails the write rather than guessing or creating a new option. A `rich_text`-backed Area, Due Date (`date`), and Estimated Duration (`number`) are written directly — no live-option check applies to a property type Notion can't silently corrupt this way. For `createPage`, this same schema resolution runs twice: once at draft-construction time (so the `Proposal<T>` shown to Spencer per AD-3 is actually accurate) and again, authoritatively, at write time — the draft-time check is a UX quality measure, the write-time check is the binding guarantee.
-  **`setTaskStatus` revised (2026-09-22): also schema-checked, and deletes on completion.** Originally `setTaskStatus` wrote its mapped Status option name directly, trusting it to already be live — the one write in this file NOT covered by the schema-check paragraph above. That trust broke once Spencer renamed his live Status options (dropping `"Not Started"`/`"Slipped"` for a leaner nothing/in-progress/completed set); `setTaskStatus` now goes through the identical live-schema `closestOption` resolution Area/Energy already use, closing that gap. Separately, since Spencer's Tasks database is meant to reflect only active work: once a `"completed"` Status write succeeds, `setTaskStatus` also moves that Task's page to Notion's Trash (`in_trash: true` — recoverable, the same "Delete" action available in the Notion UI, never a hard/permanent delete via this API). This is still exactly three write functions, not four — Trash-on-completion is a step inside `setTaskStatus`, not a separate exported capability.
-  All three write functions are called ONLY from `shell/chat-cli.ts`'s interactive flow, never from `shell/ritual-cli.ts` — a cron-triggered subcommand stays one-shot and non-interactive per this spine's own "ritual output is never a blocking question" rule, and never itself writes to Notion. `[ADOPTED, revised for FR-26/FR-29, revised 2026-09-22 for setTaskStatus schema-checking + delete-on-completion]`
+  **`setTaskStatus` history.** *2026-09-22:* `setTaskStatus` became schema-checked through the same live-option `closestOption` resolution Area and Energy use, after Spencer renamed his Status options. That still holds. The same revision also moved completed Tasks to Notion Trash (`in_trash: true`). **Reverted 2026-09-25 (Spencer):** `setTaskStatus` writes the Status property only and never trashes, from any trigger (Night close-out or FR-41 check-off). This satisfies FR-41 and §9.4 (check-off never deletes) and FR-43 (Tasks shows completed Tasks). Completion history is Yoh's own Completion Log (FR-47, AD-10), not Notion's. No Phase 2 capability deletes anything from Notion.
+  **Interactive-only (revised for Phase 2).** All three write functions are called only from `app/*` (AD-16), which only interactive shells reach. They are never called from `rituals/*` or `shell/ritual-cli.ts`, which can't reach `app/` (AD-1). This rule replaces the old "only from `shell/chat-cli.ts`" rule and keeps the property it protected: a cron-triggered run never writes to Notion. Phase 2 callers: FR-41 check-off → `setTaskStatus` (direct-write, committed by AD-20); FR-38 /sandbox cards → `updateTaskField` (direct-write, **synchronous per card**, same guard and re-prompt-on-unresolvable as FR-24; when the session ends, `app/sandbox-submit.ts` raises `sandbox-complete` or `sandbox-failed` only after every card write has settled); FR-51 /research filing → `createPage('ResearchVault', …)` (direct-write, same as FR-29, run by AD-21's job runner inside the server process on Spencer's explicit command). `[ADOPTED, revised for FR-26/FR-29, revised 2026-09-22 for setTaskStatus schema-checking, revised 2026-09-25 for Phase 2 + trash-on-completion reverted]`
 
 ### AD-13 — Confirm-gated exception to Calendar ownership (FR-27)
 
@@ -164,21 +185,109 @@ graph TD
 - **Legitimate no-results is not a `YohError`.** A provider response with zero usable results is a successful `Result` carrying an empty/no-answer payload for `chat-cli.ts` to relay honestly — it is not thrown or wrapped in `YohError`. `YohError.kind: 'unreachable'` / `'rate-limited'` (AD-8) cover the real-failure case (the provider couldn't be reached, or refused the call); `search-adapter.ts` must not conflate "found nothing" with "failed," since FR-28 requires both to be surfaced honestly but they are not the same event.
 - **Honesty note — this Non-Goal's only backstop is classification, not structure.** Unlike AD-13's type-level delete prevention, nothing here structurally prevents a search firing on a misclassified ordinary message — the safeguard is `llm-adapter.ts`'s intent-routing correctness alone. The one mechanism that would act as a hard backstop, a daily call cap, is Deferred (below), not `[ADOPTED]`, and even once built is a warn-Spencer measure, not a blocking one. Named plainly as a residual risk, the same way AD-7 names its own total-outage detection gap, rather than left implicit. `[ADOPTED, corrected 2026-09-18 for Sonar-to-Agent-API deprecation]`
 
+### AD-15 — Process model and hosting: one always-on host, two process kinds, tailnet-only
+
+- **Binds:** FR-39, FR-45, FR-50, FR-51, NFR-Reliability, NFR-CaptureSpeed, §7 Privacy/Cost
+- **Prevents:** ritual reliability becoming coupled to web-server uptime; the Web App being unreachable from class or from the Windows PC; a login step creeping into the three-action capture flow; Yoh's API being exposed to the public internet
+- **Rule:**
+  - Everything runs on Spencer's always-on Pi/home server. The cron rituals stay OS-scheduled one-shots (AD-5, unchanged) and are **not** moved into the server. The server (`shell/server.ts`) is a separate, long-running, systemd-supervised process (`Restart=always`). It serves the built `web/` bundle, the JSON API, and SSE, and it runs AD-20's commit sweep and AD-21's job runner. It schedules no ritual.
+  - The server listens on loopback only. It's reached exclusively through `tailscale serve`, which provides HTTPS with a MagicDNS certificate on the tailnet. It's never exposed via Funnel, port-forwarding, or a public domain. **Tailnet membership is the authentication**, so there is no login screen, session cookie, or password (FR-39). Only Spencer's own devices (Mac laptop, Windows PC) join the tailnet.
+  - The one-click icon (FR-39) is the Web App installed as a PWA from the tailnet HTTPS origin. The PWA shell opens straight to Home or the launch splash (FR-45). `[ADOPTED: Spencer confirmed the always-on host 2026-09-25; Tailscale + PWA are ASSUMPTIONS to verify on the real school network and Windows browser, see Deferred]`
+
+### AD-16 — Surface-agnostic interaction layer (`app/`)
+
+- **Binds:** FR-42, FR-48, FR-50, and every interactive write (FR-24–FR-29, FR-32, FR-38, FR-41, FR-51)
+- **Prevents:** the Web App re-implementing `chat-cli.ts`'s confirm/apply/parse logic so two surfaces drift; a Web control and a typed "yes" confirming under different rules; CLI retirement deleting logic the Web App still needs
+- **Rule:**
+  - `app/` holds one file per interaction use-case (e.g. `confirm-proposal.ts`, `check-off.ts`, `sandbox-queue.ts`, `sandbox-submit.ts`, `request-reshuffle.ts`, `approve-reshuffle.ts`, `chat-turn.ts`, `morning-view.ts`, `night-close-out.ts`, `queue-research.ts`). Each exports functions shaped `(deps, input) → Promise<Result<Output, YohError>>` with `input`/`Output` from `types/api.ts` or `types/domain.ts`.
+  - Shells contain transport only: parse the HTTP request or terminal line, call one `app/` function, and render its `Result`. A shell file never calls an adapter's write function, never constructs or applies a `Proposal`, and never branches on business rules.
+  - **`app/` functions are one-shot per turn and never block for input.** `chat-cli.ts`'s multi-question handlers that loop on `io.readLine()` (the data-completeness, night close-out, Self-Check, and Proposal-answer flows) are **restructured, not moved verbatim**. The interaction request persists which question is pending, each turn answers one question through `app/`, and the next question comes back in the response. The terminal and the Web App drive the same resumable flow. Their tests move and adapt with them.
+  - `chat-cli.ts`'s existing logic is **moved** into `app/`, never copied. During the transition `chat-cli.ts` shrinks to transport over the same `app/` functions the server calls. Free-text parsing that is terminal-specific (e.g. `parseFieldAnswer`) moves too, because the Web chat accepts the same typed commands.
+  - `app/` is the only layer that may call AD-12's Notion writes, AD-13's `applyCalendarEdit`, or AD-19's reshuffle apply. `[ADOPTED]`
+
+### AD-17 — Browser client is a view over the server API
+
+- **Binds:** FR-39–FR-46, NFR-Latency (interactive), NFR-Accessibility
+- **Prevents:** planning logic forked into the browser and drifting from `core/`; a browser holding a Notion, Google, Anthropic, Perplexity, or feed credential; client and server disagreeing on a wire shape
+- **Rule:**
+  - `web/` is a Vite + React single-page app, built to static files and served by `shell/server.ts`. It talks to the system only through the server's HTTP API and SSE (AD-18). Calls go through the typed Hono RPC client generated from the server's route types, so request and response shapes are compiler-checked end to end.
+  - `web/` may `import type` from `types/` and nothing else from `src/`. It never imports `core/`, `rituals/`, `app/`, or `adapters/`. **Every Plan, priority, reshuffle, gate result, and Desk metric is computed server-side**, and the client renders it. Client-side state is a cache of server state, refreshed after each mutation and on each SSE hint (AD-18).
+  - Optimistic UI is visual only. The check-off fade, drag ghost, and thinking state start immediately to meet NFR-Latency and FR-46's motion rule. The authoritative result always comes from the server, and a failure is rendered as a failure (§6 Data integrity, Phase 2 writes).
+  - **Ephemeral view state is client-only** and deliberately not server state: unsent chat text, scroll position, current page, an in-progress drag. The Screensaver is an overlay, not a navigation, so dismissing it restores all of this untouched (FR-45).
+  - No secret, API key, or OAuth token is ever sent to the browser. The Content-Security-Policy is `default-src 'self'` (covering scripts, fonts, and `connect-src`), so the page can't call third parties or load a third-party script or font (AD-22, §7). `[ADOPTED]`
+
+### AD-18 — Live delivery: SQLite outbox → server → one SSE stream
+
+- **Binds:** FR-32 (apply result), FR-34, FR-38, FR-42 (streaming), FR-49, FR-51, NFR-Observability
+- **Prevents:** a cron-ritual process (which can't talk to a browser) producing an event the open Web App never learns about; notifications lost when no tab is open; two notification mechanisms (one per producer) with different read-state rules
+- **Rule:**
+  - An in-app notification is a durable record owned by `notification-store.ts`: `{id, kind: NotificationKind, title, body, deepLink, createdAt, readAt?}`. `NotificationKind` is a closed union in `types/api.ts` covering FR-49's consumers: `research-ready`, `research-failed`, `sandbox-complete`, `sandbox-failed`, `needs-data`, `reshuffle-apply-failed`, `operational`. Any process (server or cron ritual) creates one through `notification-store.ts` only.
+  - Every user-visible change, including a new notification, appends one row to an **outbox** in the same transaction: `{seq (monotonic), topic, entityId}`. The server tails the outbox `[ASSUMPTION: ~2s poll]` and pushes `{seq, topic, entityId}` hints over one SSE stream per open client (`GET /api/events`). SSE carries hints, never data. On a hint, the client re-fetches through the API. On reconnect it sends `Last-Event-ID` and the server replays from that `seq`.
+  - The event stream sends an SSE comment keep-alive on every outbox poll tick, so `tailscale serve` or any intermediary never sees an idle connection. Chat responses stream on their own SSE response to the chat-turn request (FR-42 streaming, thinking/status text), separate from the event stream.
+  - FR-49's "never a proactive check-in" is enforced by the closed `NotificationKind` union. A progress or check-in notification is not a constructible value. `[ADOPTED]`
+
+### AD-19 — Drag-to-Reshuffle is a server-computed `Proposal` applied on the narrow Calendar client
+
+- **Binds:** FR-9 (drag trigger), FR-30–FR-33, FR-31 (Pin), FR-2 (Pin never touches priority), NFR-Latency (≤ ~2 s preview)
+- **Prevents:** a preview computed by different rules than the Morning Plan; a stale preview applied over a changed calendar; a Pin leaking into priority, Slip-Bump, or learning; a reshuffle touching a non-Yoh event; two open previews racing each other
+- **Rule:**
+  - A drag sends `{kind: 'move-block', planBlockId, newStart}` or `{kind: 'pin-task', taskId, newStart}` to `app/request-reshuffle.ts`. That calls `rituals/reshuffle.ts`, which runs the **same** `core/` pipeline the Morning Plan uses (gate → Derived Priority → Work/Break fit within the Time Budget), with the day's current Pins, Routine Blocks (AD-24), and non-Yoh events as fixed inputs. The result is a `Proposal<ReshufflePreview>` whose snapshot is **both** today's stored `Plan.version` (`memory-store.ts`) and a calendar version (a hash over event ids + `updated` timestamps). Either changing makes it stale. A same-day Morning Plan regeneration bumps `Plan.version` and so invalidates any open preview with no cross-import. A Pinned Task is removed from the ordinary `CompleteTask` population before ordering and fitting, so it is placed exactly once, at its Pin. The preview lists moved blocks, unchanged blocks, and Tasks deferred out of today (FR-8, FR-32).
+  - **One open reshuffle proposal at a time**, server-enforced. A new request supersedes the previous one. Discard deletes it, and the server expires it after a fixed TTL `[ASSUMPTION: ~10 min]`. Client unload is only a hint and is never relied on. Nothing is written to Calendar before Approve.
+  - **One re-planning pipeline.** `rituals/reshuffle.ts` exports the day-refit computation that `mid-day-reflow.ts` also calls, so there is no second fitting path. On the Web App, a typed Re-Flow (FR-9, a `mid-day-reflow` `ChatIntent`) goes to `app/request-reshuffle.ts` with `{kind: 'reflow-now'}` and produces the same Reshuffle Preview. That is also the non-drag alternative WCAG 2.5.7 requires for dragging. A Blocker report (FR-10) stays an unconditional apply with no Proposal (AD-3), through the same refit computation.
+  - **Pins exist only inside the proposal until Approve.** On apply, `plan-state-store.ts` persists them dated today, and they expire at local day end. `derived-priority.ts`, `slip-bump.ts`, `memory-store.ts` learning, and `completion-log.ts` never receive Pins as an input (FR-31, Non-Goal §8).
+  - `app/approve-reshuffle.ts` re-reads the calendar. If the version changed, it recomputes and returns a fresh preview instead of applying (FR-32). Otherwise it first writes the new `Plan` (version-checked) and today's Pins in one `writeTx`, then applies every changed block through AD-4's **narrow** client only. Each target goes through `resolveCalendarEditRoute` first, and any `'external'` result aborts before writing. The broad AD-13 client is never used here. Writes are idempotent by the `PLAN_BLOCK_ID_EXTENDED_PROPERTY` tag (update the tagged event, never insert a duplicate). On partial failure, the apply returns which blocks were written, and a `reshuffle-apply-failed` notification names the rest. It is never reported as success.
+  - A reshuffle with a Task missing a Required Field places everything else and raises `needs-data` (FR-34, AD-11). `[ADOPTED]`
+
+### AD-20 — Check-off commits server-side after the undo window
+
+- **Binds:** FR-41, FR-23 (second trigger), FR-47, FR-12 (don't re-ask)
+- **Prevents:** a check-off lost because the laptop lid closed within the undo window; an undone check-off still reaching Notion; Night close-out re-asking about a checked Task; the Completion Log and Notion disagreeing about what was completed
+- **Rule:**
+  - Checking a Task calls `app/check-off.ts`, which records a **pending completion** in `plan-state-store.ts` with `completedAt` = the click instant (captured now, never the later commit time) and `commitAt = completedAt + undo window` `[ASSUMPTION: ~5 s, UX]`. The response returns `commitAt`, so the client never hard-codes the window. Undo deletes the pending record. The server commits due records on a timer and also sweeps overdue ones on startup, so the write never depends on the browser tab surviving.
+  - The commit order is fixed. First `completion-log.ts` `recordCompletion` (Yoh's record of truth, AD-23), then `setTaskStatus(completed)` (AD-12). A Notion failure leaves the completion recorded, marks the Notion sync pending for retry on the next sweep, and raises an `operational` notification. It never rolls back the log.
+  - `night-ritual.ts` excludes Tasks that `completion-log.ts` shows completed today from the close-out questions (FR-41). This replaces the UX spec's accepted client-side write-loss risk with a server-side guarantee at no UX cost. `[ASSUMPTION: supersedes the UX memlog's accepted lid-close risk; the undo UX is unchanged]`
+
+### AD-21 — /research runs as a durable server-side job
+
+- **Binds:** FR-51, FR-28/FR-29 (reused), FR-49
+- **Prevents:** a research result lost when Spencer closes the tab; a crash-restart silently re-running a job and filing a duplicate Research Vault page; research running without the explicit command
+- **Rule:** `/research <q>` (or accepting Yoh's one-time Structured Question offer, per UX) calls `app/queue-research.ts`, which inserts a `queued` job in `job-store.ts` and returns immediately. A runner inside the server process claims jobs one at a time. It calls `search-adapter.ts` (AD-14), then `createPage('ResearchVault', …)` (AD-12 direct-write, with FR-29's provenance), then marks the job `done` with the page id and raises `research-ready`, which deep-links to that page in the Tasks research box. A search failure produces a `failed` job and a `research-failed` notification. On server start, a job still marked `running` from a previous crash is set to `failed` with a notification and is **never automatically re-run**. Spencer re-issues it if wanted. Nothing else creates research jobs, so FR-28's no-automatic-search boundary holds structurally. The research prompt and skill design (UX FR-51 note) lives in `llm-adapter.ts`/`search-adapter.ts` and is not an invariant here. `[ADOPTED]`
+
+### AD-22 — Public feeds are server-side, cached, and independently failing
+
+- **Binds:** FR-44 (feed widgets), §7 Privacy exception, §7 Cost (free tier only)
+- **Prevents:** Task, Calendar, or usage data leaking to a feed provider; one feed's outage blanking Desk or touching Notion/Calendar paths; burning a free-tier rate limit by fetching per page view
+- **Rule:** each feed is its own adapter file (`crypto-feed.ts`, `weather-feed.ts`, `news-feed.ts`), called only by the server. Each keeps its own cache with a last-good value and a fetched-at timestamp (refresh starting points per addendum: ~5/30/60 min), shares no code path, client, or error handling with Notion or Calendar, and returns `{status: 'ok' | 'stale' | 'unavailable', value?, fetchedAt?}` instead of throwing to its caller. Outbound requests carry only ticker symbols, the configured weather location, or news categories. The request signature has no parameter that could carry Task, Calendar, or usage data. The browser never contacts a provider (AD-17 CSP). `[ADOPTED; providers Deferred]`
+
+### AD-23 — Completion Log is Yoh's single record of what got done
+
+- **Binds:** FR-47, FR-44 (Yoh-data widgets), FR-12/FR-41 (both completion paths)
+- **Prevents:** check-off and Night close-out each writing completions in their own shape; Desk metrics reading Notion history; the log losing the estimate-vs-actual pair a future self-calibration phase needs
+- **Rule:** `completion-log.ts` exports exactly one write for completions, `recordCompletion({taskId, taskName, area, dueDate, estimatedMinutes, completedAt, source: 'check-off' | 'close-out'})`, snapshotting these fields at completion time. Both AD-20 and `night-ritual.ts` call it, and nothing else writes completions. It also exports `recordActivityDay(date)`, an idempotent upsert keyed by local date that the server may call on any request. Every Desk metric (Task Completed list, minutes today, all-time hours with Yoh, on-time rate `[ASSUMPTION: completedAt ≤ dueDate]`, current and longest streak, heatmap) is a pure `core/desk-metrics.ts` function over log rows. None of them reads Notion. `[ADOPTED]`
+
+### AD-24 — Routines are Yoh-stored and placed as ordinary Yoh-owned blocks
+
+- **Binds:** FR-35, FR-33 (routine handling in reshuffle), FR-22
+- **Prevents:** Routines implemented as Google recurring events (§9.4 exclusion); a reshuffle deleting a Routine to make room; Morning Plan and reshuffle placing Routines by different rules
+- **Rule:** `routine-store.ts` holds each declared Routine (`{id, label, days, start, durationMinutes}`), added, changed, or removed only via Chat through `app/`. `PlanBlockKind` is **extended**, never replaced, to `'work' | 'break' | 'calendar-anchor' | 'routine'` (plus `routineId` on routine blocks) in `types/domain.ts`. The existing `calendar-anchor` stays as the fixed non-Yoh event kind. The same `core/` fitting step places Routine Blocks for both the Morning Plan and AD-19's reshuffle. **Placement precedence:** `calendar-anchor` and Pins are fixed and placed first. A Pin that overlaps an anchor is rejected, and the preview says why. Routines come next, each at or as near its declared time as fits. They may shift but are never dropped (`[ASSUMPTION: FR-33]`), and an unfittable Routine is flagged in the preview. Work and break blocks are fitted into what remains. On Calendar they are ordinary tagged events on the "Yoh Plan" calendar via AD-4's automatic path, one per day, never with an RRULE. `[ADOPTED]`
+
 ## Consistency Conventions
 
 | Concern | Convention |
 | --- | --- |
-| Naming (entities, files, interfaces, events) | kebab-case filenames; one primary export per `core/`/`adapters/` file, named to match the file (e.g. `computeDerivedPriority` in `derived-priority.ts`); shared types PascalCase in `types/domain.ts`. |
-| Data & formats (ids, dates, error shapes, envelopes) | Dates: ISO-8601 UTC internally everywhere in `core/` and storage; converted to Spencer's local timezone only at the `shell/`/notification edge. IDs: Notion page IDs and Google Calendar event IDs are opaque strings, never parsed or assumed to have structure; `PlanBlock.id` per AD-9. Errors: `Result<T, YohError>` discriminated union; `YohError.kind` values listed in AD-8. |
+| Naming (entities, files, interfaces, events) | kebab-case filenames; one primary export per `core/`/`adapters/` file, named to match the file (e.g. `computeDerivedPriority` in `derived-priority.ts`); shared types PascalCase in `types/domain.ts`; wire shapes in `types/api.ts` (AD-9). `app/` files are named for the use-case (`check-off.ts` exports `checkOff`). API routes are `/api/<noun>[/<verb>]`, JSON in and out, returning `{ok: true, value} | {ok: false, error: YohError}` (the serialized `Result`). React components in `web/` are PascalCase files. |
+| Data & formats (ids, dates, error shapes, envelopes) | Dates: ISO-8601 UTC internally everywhere in `core/` and storage; converted to Spencer's local timezone only at the `shell/`/notification edge, and in `web/` for display. "Today", Pin expiry, activity days, and the streak all use one configured local timezone (the host's `TZ`), never the browser's. IDs: Notion page IDs and Google Calendar event IDs are opaque strings, never parsed or assumed to have structure; `PlanBlock.id` per AD-9. Errors: `Result<T, YohError>` discriminated union; `YohError.kind` values listed in AD-8. |
 | State & cross-cutting (mutation, errors, logging, config, auth) | External state changes only through an adapter call (AD-1/AD-2) — `core/` and `rituals/` never mutate external state directly. Propose-Don't-Impose per AD-3. Logging is single-line structured JSON to stderr, one line per ritual step, sufficient to reconstruct what a cron run did after the fact. Config/secrets and storage ownership per AD-10. |
-| Performance | Plan generation (the Data-Completeness Gate through Work/Break fitting, excluding notification delivery) is timed and logged as one field in the structured log line (Convention above). If it exceeds a low-seconds threshold (concrete number set at build time), `ritual-cli.ts` treats that as a degraded-not-failed run and raises it through the same AD-7 alert path — satisfying NFR-Latency by making a slow run visible rather than silently accepted as normal. |
+| Web UI (tokens, motion, a11y) | One design-token source in `web/` (CSS custom properties, light + dark values per DESIGN.md), consumed through Tailwind v4's theme. No component hard-codes a color, shadow, radius, or duration. Motion reads one reduced-motion flag, so every animation has a fade or instant fallback (NFR-Accessibility). Fonts are self-hosted (Figtree UI, Montserrat wordmark) and never loaded from a third-party CDN (§7 Privacy). Contrast meets WCAG 2.2 AA for text and interactive boundaries in both themes (the UX rim rule). Every drag has a non-drag equivalent (WCAG 2.5.7: typed Re-Flow for reshuffle, pin icon for unpin). Per-device preferences (theme, Tasks grouping) live in `localStorage`, deliberately per device and not synced. Date-triggered UI (the Feb 19 birthday confetti) uses the configured timezone, not the browser's. |
+| Shared tuning constants | Every cross-file number (heartbeat interval and staleness, undo window, reshuffle TTL, outbox poll) has exactly one defining export in the file that owns the behavior (e.g. `plan-state-store.ts` exports the heartbeat constants that `ritual-cli.ts` imports). The client receives any it needs in API responses (e.g. `commitAt`) and never redeclares them. |
+| Performance | Plan generation (the Data-Completeness Gate through Work/Break fitting, excluding notification delivery) is timed and logged as one field in the structured log line (Convention above). If it exceeds a low-seconds threshold (concrete number set at build time), `ritual-cli.ts` treats that as a degraded-not-failed run and raises it through the same AD-7 alert path — satisfying NFR-Latency by making a slow run visible rather than silently accepted as normal. **Phase 2 interactive:** the server logs duration per API request and per reshuffle computation. Starting targets (NFR-Latency, tune in use) are a Reshuffle Preview response in ≤ ~2 s from drag-release, check-off feedback immediate (client-side visual, AD-17), and a Chat thinking state within a fraction of a second (client-side, before the first streamed token). |
 
 ## Stack
 
 | Name | Version |
 | --- | --- |
 | Node.js | 24.12+ (current LTS, supported through Apr 2028; 24.12+ for stable native TypeScript type-stripping) |
-| TypeScript | 7.0.2 (Go-native compiler; used for `tsc --noEmit` type-checking only — execution is via Node's native type-stripping, no build step) |
+| TypeScript | 7.0.2 (Go-native compiler; used for `tsc --noEmit` type-checking only — server-side execution is via Node's native type-stripping, no build step. `web/` has its own tsconfig and is bundled by Vite, the only build step in the repo) |
 | @notionhq/client | ^5.22.0 |
 | @googleapis/calendar | ^16.0.0 |
 | google-auth-library | ^11.0.2 |
@@ -187,76 +296,116 @@ graph TD
 | @anthropic-ai/sdk | ^0.120.0 |
 | node:test / node:assert | built-in (no separate dependency) |
 | Pushover | HTTPS API via Node's built-in `fetch` — no SDK |
+| Hono + @hono/node-server | ^4.13 (4.13.9 latest at 2026-09-25; server routes, `streamSSE`, `hono/client` typed RPC) |
+| React | ^19.3 |
+| Vite | ^8.3 (client bundler only) |
+| Tailwind CSS | 4.x via `@tailwindcss/vite` ^4.2.2 (the first release supporting Vite 8, confirmed 2026-09-25; CSS-first config carries the DESIGN.md tokens) |
+| shadcn/ui | copied-in component source (Tailwind v4 mode), no runtime package version |
+| Motion (`motion`, formerly Framer Motion) | ^13.4 (React 19 compatible, confirmed 2026-09-25) |
+| @dnd-kit/react | 0.5.x (maintained line, pre-1.0; `@dnd-kit/core` 6.3.1 is the unmaintained legacy line, don't use it) |
+| Figtree / Montserrat | self-hosted webfont files (SIL OFL), e.g. via `@fontsource/*`, pin at install |
+| Testing | Server, `app/`, `core/`, `rituals/`, adapters: `node:test` with fake adapters (unchanged). `web/`: Vitest + React Testing Library for components (jsdom). One Playwright smoke suite for the capture flow, check-off/undo, and drag → preview → Approve. Vitest, RTL, and Playwright versions were not verified in this run; pin at install. |
+| Tailscale | free personal plan; MagicDNS + `tailscale serve` HTTPS on the host; client app on the Mac and Windows PC |
 | Perplexity Agent API | REST endpoint (`/v1/responses`) via Node's built-in `fetch` — no SDK. **Not** Sonar's `/v1/chat/completions`: that endpoint is deprecated 2026-09-27, nine days after this AD was written, so this spine targets its replacement, the Agent API, from the start rather than building against a dying endpoint (verified 2026-09-18). Model slugs (`sonar`, `sonar-pro`, etc.) carry over; request/response shape and citation placement (`search_results` inside `output[]`, not a top-level `citations` field) do not — see AD-14. Exact Agent-API pricing not independently confirmed to match Sonar's $1/$1-per-M-tokens + $5–12/1,000-requests figures; Deferred: confirm pricing, pick context/preset tier, set a daily cost ceiling at build time. |
 
 ## Structural Seed
 
+Existing Phase 1/1.5 files (including helpers not listed here, such as `rituals/{data-completeness,ritual-shared}.ts` and `adapters/{logger,iso-datetime,notion-select-match}.ts`) are owned by the code. The tree below shows their homes plus the Phase 2 additions, marked `+`.
+
 ```text
 src/
-  core/                        # pure functions — zero I/O, zero shared state
-    derived-priority.ts        # FR-2 (consumes CompleteTask)
+  core/                          # pure functions — zero I/O, zero shared state
+    derived-priority.ts          # FR-2 (consumes CompleteTask; Refining 'missing' → neutral, AD-11)
     slip-bump.ts                 # FR-11
     time-budget.ts               # FR-5, FR-7
-    work-break-fit.ts            # FR-6, FR-8 (consumes CompleteTask)
-    data-completeness-gate.ts    # FR-4, FR-25 — sole producer of CompleteTask (AD-11)
-    escalate-under-strain.ts     # AD-6 shared curve — consumed by slip-bump, tone, self-check
+    work-break-fit.ts            # FR-6, FR-8; + Pins fixed, Routines shiftable-never-dropped (AD-19, AD-24 precedence)
+    data-completeness-gate.ts    # FR-4 two-tier, FR-25 — sole producer of CompleteTask (AD-11)
+    escalate-under-strain.ts     # AD-6
     tone.ts                      # FR-18, FR-19
-    plan-reasoning.ts            # FR-3 (consumes CompleteTask)
-  rituals/                      # orchestration — wires core + adapters, one file per ritual
-    morning-ritual.ts           # FR-1
-    night-ritual.ts             # FR-12–14
-    mid-day-reflow.ts           # FR-9–10
-    self-check.ts               # FR-17
-  adapters/                     # imperative shell — all I/O, one file per external system
-    notion-adapter.ts           # FR-20, FR-23, FR-24, FR-26, FR-29 (enumerated write surface, AD-12)
-    calendar-adapter.ts         # FR-21, FR-22 (secondary-calendar write, primary read-only, AD-4); FR-27 confirm-gated exception (AD-13)
-    notification-adapter.ts     # Pushover
-    email-adapter.ts            # nodemailer — FR-13 second attempt
-    llm-adapter.ts               # Claude API — chat intent routing (incl. FR-28 search-trigger classification) + FR-25 field-value-suggestion generation + Tone-governed response generation
-    search-adapter.ts            # Perplexity Sonar API — FR-28, read-only, no write capability at all (AD-14)
-    memory-store.ts             # better-sqlite3: hot/cold memory (FR-15), open interaction requests / Proposals
-    token-store.ts               # better-sqlite3: sole OAuth2Client constructor/holder, refresh-token persistence (AD-10)
-  shell/                        # the only two entry points
-    ritual-cli.ts                # `yoh ritual morning|night-prompt|night-escalate|self-check` — OS-cron one-shot (AD-5)
-    chat-cli.ts                  # `yoh chat` — on-demand persistent REPL, resolves open interaction requests first (AD-5)
+    plan-reasoning.ts            # FR-3
+  + desk-metrics.ts              # FR-44 Yoh-data widgets, pure over Completion Log rows (AD-23)
+  rituals/                       # orchestration — wires core + adapters
+    morning-ritual.ts            # FR-1 (+ Routine placement, needs-data notification)
+    night-ritual.ts              # FR-12–14 (+ skips Tasks completed today; records via completion-log)
+    mid-day-reflow.ts            # FR-9–10
+    self-check.ts                # FR-17
+  + reshuffle.ts                 # FR-30–33 — the one day-refit pipeline (also used by mid-day-reflow) + Proposal<ReshufflePreview> (AD-19)
+  adapters/                      # all I/O, one file per external system or record-kind owner
+    notion-adapter.ts            # AD-12 write surface (setTaskStatus no longer trashes)
+    calendar-adapter.ts          # AD-4 / AD-13
+    notification-adapter.ts      # Pushover
+    email-adapter.ts             # FR-13
+    llm-adapter.ts               # Claude — intent routing, suggestions, Tone; + streaming for Web chat
+    search-adapter.ts            # Perplexity Agent API — AD-14
+    memory-store.ts              # FR-15, interaction requests / Proposals
+    token-store.ts               # AD-10 OAuth clients
+  + sqlite.ts                    # sole opener of the SQLite file; shared handle + writeTx (AD-10)
+  + completion-log.ts            # FR-47 completions + activity days (AD-23)
+  + routine-store.ts             # FR-35 (AD-24)
+  + plan-state-store.ts          # Pins, pending check-offs, open reshuffle pointer, server heartbeat
+  + notification-store.ts        # FR-49 notifications + outbox (AD-18)
+  + job-store.ts                 # FR-51 research jobs (AD-21)
+  + crypto-feed.ts               # FR-44 (AD-22)
+  + weather-feed.ts              # FR-44 (AD-22)
+  + news-feed.ts                 # FR-44 (AD-22)
++ app/                           # surface-agnostic interaction use-cases, one per file (AD-16)
+    confirm-proposal.ts · surface-open-items.ts · chat-turn.ts · morning-view.ts · night-close-out.ts
+    check-off.ts · sandbox-queue.ts · sandbox-submit.ts · request-reshuffle.ts · approve-reshuffle.ts
+    queue-research.ts · routines.ts · notifications.ts · desk.ts · tasks-view.ts · time-budget.ts
+  shell/
+    ritual-cli.ts                # cron one-shots (AD-5) — never imports app/
+    chat-cli.ts                  # transport over app/ until FR-50 parity, then deleted
+  + server.ts                    # Hono: static web/ bundle, /api/*, /api/events SSE, commit sweep, job runner (AD-15)
   types/
-    domain.ts                    # Task, CompleteTask, Plan, PlanBlock, TimeBudget, Proposal<T>, EscalationCurve,
-                                  # EscalationLevel, Result<T,E>, YohError — authored/locked first (AD-9).
-                                  # Phase 1.5: FieldValueSuggestion, NotionPageDraft, CalendarEditChange
-                                  # (move|resize|create only) — all instantiate the existing Proposal<T>, no new generic type.
-                                  # Also: ChatIntent (discriminated union — mid-day-reflow | blocker | open-prompt-answer |
-                                  # general-question | search-trigger; AD-5/AD-14) and SearchAnswer (AD-14)
+    domain.ts                    # locked first (AD-9); + Refining<T>, PlanBlock.kind/routineId, Pin, Routine,
+                                 #   ReshufflePreview, Completion, ResearchJob
+  + api.ts                       # wire contract (AD-9, AD-17): request/response DTOs, ChatMessage (incl. Structured
+                                 #   Question), NotificationKind, event-hint shape — locked before server/web tasks
++ web/                           # Vite + React SPA (AD-17) — imports only `import type` from src/types
+    pages/ Home · Chat · Tasks · Desk · Screensaver    components/    tokens.css    api-client.ts    events.ts
 ```
 
 ```mermaid
 erDiagram
     TASK ||--o| COMPLETE_TASK : "gated into (AD-11)"
     COMPLETE_TASK ||--o{ PLAN_BLOCK : "fitted into"
+    ROUTINE ||--o{ PLAN_BLOCK : "placed daily as (AD-24)"
+    PIN |o--|| PLAN_BLOCK : "fixes time today (AD-19)"
     CALENDAR_EVENT ||--o{ PLAN_BLOCK : "anchors"
     PLAN ||--|{ PLAN_BLOCK : contains
     TASK ||--o| PROPOSAL : "may carry a"
     TASK ||--o{ SLIP_RECORD : "accrues on slip"
+    TASK ||--o{ COMPLETION : "logged on completion (AD-23)"
     PROPOSAL ||--|| INTERACTION_REQUEST : "persisted as (AD-3/AD-5)"
+    NOTIFICATION ||--|| OUTBOX_EVENT : "announced by (AD-18)"
 ```
 
 ```mermaid
 graph LR
-    subgraph Host["Spencer's own host — laptop / Raspberry Pi / existing server"]
-        cron["OS scheduler (cron / systemd-timer / launchd)\n4 independent triggers"] -->|"morning · night-prompt ·\nnight-escalate · self-check"| ritualcli["ritual-cli.ts"]
-        spencer["Spencer, terminal"] --> chatcli["chat-cli.ts"]
-        ritualcli --> app["Yoh process"]
-        chatcli --> app
-        app --> db[("SQLite: memory-store + token-store")]
+    subgraph Devices["Spencer's devices (tailnet)"]
+        mac["Mac laptop — PWA"]
+        win["Windows PC — PWA"]
     end
-    app --> notion["Notion API"]
-    app --> gcal["Google Calendar API\n(primary: read/write since AD-13 · 'Yoh Plan': read/write)"]
-    app --> pushover["Pushover"]
-    app --> smtp["SMTP (nodemailer)"]
-    app --> claude["Claude API"]
-    app --> perplexity["Perplexity Sonar API"]
+    subgraph Host["Always-on Pi / home server"]
+        ts["tailscale serve (HTTPS)"] --> server["server.ts (systemd, Restart=always)"]
+        cron["OS scheduler — 4 triggers"] --> ritualcli["ritual-cli.ts one-shots"]
+        server --> db[("one SQLite file (WAL)")]
+        ritualcli --> db
+    end
+    mac --> ts
+    win --> ts
+    server --> notion["Notion API"]
+    server --> gcal["Google Calendar API"]
+    server --> claude["Claude API"]
+    server --> perplexity["Perplexity Agent API"]
+    server --> feeds["Public feeds (crypto · weather · news)"]
+    ritualcli --> notion
+    ritualcli --> gcal
+    ritualcli --> pushover["Pushover"]
+    ritualcli --> smtp["SMTP"]
 ```
 
-**Deployment & environments.** Single environment, single host — no staging/prod split (single permanent user, per PRD §8 Non-Goals). Runs as one Node process tree on whatever host Spencer designates (laptop, Raspberry Pi, or existing server); no containerization needed at this scale. The SQLite file and the `.env` secrets file are the only persistent state and live alongside the checkout on that host — no external database or hosted service beyond the six integrations above. No new recurring *subscription* is introduced (PRD §7 Cost constraint); Pushover is a one-time per-platform license, and Claude/Perplexity API usage at this message/search volume is expected to be a negligible usage-based cost, worth Spencer spot-checking actual spend after a few weeks rather than treating as risk-free by assumption.
+**Deployment & environments.** Single environment, single always-on host (Spencer's Pi/home server, confirmed 2026-09-25), no staging/prod split. The host runs two kinds of process against one SQLite file: the cron-triggered `ritual-cli.ts` one-shots and the systemd-supervised `server.ts` (AD-15). A deploy is `git pull` → `npm ci` → build `web/` → restart the server unit. There is no containerization at this scale. Persistent state is the SQLite file plus `.env`. Because the Completion Log is now irreplaceable Yoh-only data, a nightly cron job copies the SQLite file with SQLite's online backup to a second location on another disk or device `[ASSUMPTION: target location]`. Only Spencer's devices can reach the server, over the tailnet. Nothing is publicly exposed. No new paid subscription is introduced: Tailscale's personal plan and the public feeds are free tiers (§7), and Claude/Perplexity remain usage-based and low-volume.
 
 ## Capability → Architecture Map
 
@@ -274,6 +423,19 @@ graph LR
 | Phase 1.5 — Notion page/DB creation & inferred field-values (FR-25, FR-26, FR-29) | `adapters/notion-adapter.ts` + `core/data-completeness-gate.ts` + `adapters/llm-adapter.ts` | AD-3, AD-11, AD-12 |
 | Phase 1.5 — Confirm-gated Calendar time-block editing (FR-27) | `adapters/calendar-adapter.ts` | AD-3, AD-4, AD-13 |
 | Phase 1.5 — Web search (FR-28) | `adapters/search-adapter.ts` + `adapters/llm-adapter.ts` (trigger classification) | AD-5, AD-14 |
+| Phase 2 — Drag-to-Reshuffle, Pins, needs-data (FR-30–FR-34) | `app/{request,approve}-reshuffle.ts` + `rituals/reshuffle.ts` + `core/work-break-fit.ts` + `adapters/plan-state-store.ts` | AD-3, AD-4, AD-11, AD-19 |
+| Phase 2 — Routines (FR-35) | `adapters/routine-store.ts` + `app/routines.ts` + `core/work-break-fit.ts` | AD-24, AD-4 |
+| Phase 2 — /sandbox (FR-36–FR-38) | `app/sandbox-{queue,submit}.ts` + `adapters/notion-adapter.ts` | AD-11, AD-12, AD-16, AD-18 |
+| Phase 2 — Pages, capture, Screensaver, design system (FR-39–FR-46) | `web/` + `shell/server.ts` | AD-15, AD-17, Web UI convention |
+| Phase 2 — Check-off (FR-41) | `app/check-off.ts` + `adapters/{plan-state-store,completion-log,notion-adapter}.ts` | AD-12, AD-20, AD-23 |
+| Phase 2 — Chat, slash commands, /morning, /night (FR-42) | `app/{chat-turn,morning-view,night-close-out,surface-open-items}.ts` + `adapters/llm-adapter.ts` | AD-3, AD-5, AD-16, AD-18 |
+| Phase 2 — Tasks page + research box (FR-43) | `app/tasks-view.ts` + `adapters/notion-adapter.ts` (reads) | AD-12, AD-17 |
+| Phase 2 — Desk (FR-44) | `app/desk.ts` + `core/desk-metrics.ts` + `adapters/{completion-log,*-feed}.ts` | AD-22, AD-23 |
+| Phase 2 — Completion/Activity Log (FR-47) | `adapters/completion-log.ts` | AD-10, AD-23 |
+| Phase 2 — Surface-agnostic confirmation, CLI retirement (FR-48, FR-50) | `app/confirm-proposal.ts` + `shell/{server,chat-cli}.ts` | AD-3, AD-5, AD-16 |
+| Phase 2 — In-app notifications (FR-49) | `adapters/notification-store.ts` + `shell/server.ts` SSE | AD-7, AD-18 |
+| Phase 2 — /research (FR-51) | `app/queue-research.ts` + `adapters/job-store.ts` + server job runner | AD-12, AD-14, AD-21 |
+| Phase 2 — Hosting, reachability, liveness | host + Tailscale + systemd + `shell/server.ts` heartbeat | AD-7, AD-15 |
 
 ## Deferred
 
@@ -290,9 +452,17 @@ graph LR
 - **Perplexity Agent API pricing, context/preset tier, and daily cost ceiling** (AD-14) — Sonar's per-token ($1/$1 per M) and per-request ($5–12/1,000) figures are confirmed current for Sonar, but the Agent API this spine now targets (AD-14's 2026-09-18 correction) has not had its own pricing independently confirmed as identical — verify before build, then pick the cheapest tier/preset that still returns usable citations and a daily call cap Spencer is warned about rather than silently throttled by. Owner: Spencer. Revisit: before FR-28 implementation.
 - **Notion UTC-default timezone-filter behavior and formula-property read-only status** — search-snippet-level confidence only; direct-docs check recommended before relying on either.
 - **Calendar-read freshness target** — FR-21 assumes near-real-time reads; no explicit NFR number exists yet. State one (e.g. "reflects changes from the last N minutes") if it turns out to matter in practice.
-- **Recurring Calendar events** — out of scope for MVP; known RRULE gotchas (silent no-op updates, some rejected rules) apply only if recurrence is added later.
-- **Backup/durability for the SQLite file and secrets** — not formalized for Phase 1; personal-file-level responsibility only.
+- **Recurring Calendar events** — still out of scope through Phase 2. Routines (AD-24) are placed as one ordinary event per day and never use an RRULE. The known RRULE gotchas apply only if recurrence is ever added.
+- **Backup target for the nightly SQLite backup** (Deployment section): pick the second location (another disk, the Mac, or a USB drive) before the Completion Log holds real history. Secrets (`.env`) stay a personal-file responsibility. Owner: Spencer. Revisit: before Phase 2 goes live.
 - **Total-outage detection gap** — AD-7's dead-man's-switch check is self-referential (each ritual run checks the previous one ran); a host or scheduler outage spanning every future invocation has no detection from inside Yoh itself. Not solved here; worth an external check (a phone-based cron-monitoring service, or simply Spencer's own habit of noticing a missing Morning Plan) if it ever becomes a real failure mode.
 - **Claude API cost at real usage volume** — expected negligible at a few chat turns/day; worth Spencer spot-checking actual spend after a few weeks rather than assuming it forever.
-- **Phase 2+ surfaces proper** (web app, Raspberry Pi voice pipeline, iOS app, the fuller Research Vault vision beyond FR-28/FR-29's first slice) — still out of scope for this spine by design. When each arrives, it becomes a new `shell/*` (or adapter) entry point calling the same `rituals/`/`core/` — never a fork of the planning/ritual logic (AD-1). The voice pipeline's own stack (openWakeWord, whisper.cpp, Piper, Raspberry Pi 5, PipeWire) is settled direction per the technical research but out of this spine's scope.
+- **Phase 3+ surfaces** (Raspberry Pi voice pipeline, iOS app, the fuller Research Vault vision, Goals hub) — out of scope for this spine. Each arrives as a new `shell/*` entry point calling the same `app/` layer (AD-16), never a fork of planning or interaction logic (AD-1). The voice pipeline's own stack (openWakeWord, whisper.cpp, Piper, Raspberry Pi 5, PipeWire) is settled direction per the technical research but out of this spine's scope.
 - **Personality/voice tuning cadence post-launch** — deferred to real usage data, per PRD §11.
+- **Public-feed providers and weather location** (PRD OQ 11, AD-22): pick free-tier crypto, weather, and news providers whose terms allow this use, and set the weather location in config. A provider whose free tier disappears is dropped or replaced, never upgraded (§7). Owner: Spencer. Revisit: before FR-44's feed widgets are built.
+- **Tailscale on the real school network and PWA install on Windows** (AD-15): DERP relaying over TCP 443 should get through restrictive networks, but that's confirmed in principle only. Test it in class, and check that the tailnet HTTPS origin installs as a PWA in the Windows browser Spencer uses. If school blocks Tailscale outright, reopen AD-15, because every alternative adds either public exposure or a login step. Owner: Spencer. Revisit: first Phase 2 story that ships the server.
+- **SSE through `tailscale serve`**: buffering and idle-timeout behavior for a long-held SSE stream isn't documented. With the AD-18 keep-alive in place, confirm empirically that hints arrive promptly on the tailnet origin. Revisit: first story that ships `/api/events`.
+- **Chat transcript persistence** (UX OQ 13): cards and messages stay in Chat history for the session (client memory). Whether the transcript survives a reload or a device switch is unresolved. If it must, add a server-side `chat-store.ts` owner under AD-10. Don't let `web/` invent storage for it. Owner: Spencer. Revisit: when Chat is built.
+- **Skill switcher** (UX): the Chat layout reserves the left bar. Skills would be another `ChatIntent` routing dimension in `llm-adapter.ts` when Goals arrives. Nothing is built in Phase 2.
+- **@dnd-kit/react is pre-1.0 (0.5.x)**: breaking changes are possible. Pin the exact version and keep drag code behind one `web/` hook so a swap stays local. Revisit: at FR-30 build.
+- **Tuning numbers:** outbox poll interval (~2 s start, AD-18), heartbeat interval and staleness threshold (AD-7), undo window (~5 s, AD-20), reshuffle TTL (~10 min, AD-19), Screensaver idle (10 min per UX), feed refresh intervals (AD-22). The values are tunable. Each has one defining export (Shared tuning constants convention).
+- **Shipped-epic behavior changes that need Phase 2 stories:** FR-4's two-tier gate replaces Epic 1's all-five-fields gating (PRD OQ 8), and `setTaskStatus`'s trash-on-completion must be removed (AD-12, 2026-09-25). Two more brownfield refactors come before new Phase 2 feature work: `memory-store.ts` takes the shared `sqlite.ts` handle (AD-10), and `chat-cli.ts`'s blocking multi-question handlers become resumable `app/` flows (AD-16). Also check that the existing `mid-day-reflow.ts` fitting moves onto `reshuffle.ts`'s single refit pipeline (AD-19).

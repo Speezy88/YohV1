@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 08-22-2026 00:00
-last_updated: 09-24-2026 20:33
+last_updated: 09-25-2026 21:26
 project: YohV1
 project_key: NOKEY
 tracking_system: file-system
@@ -85,6 +85,60 @@ development_status:
   6-5-file-a-search-result-to-the-research-vault: done
   6-6-confirm-gated-calendar-editing-beyond-yoh-owned-events: done
   epic-6-retrospective: done
+
+  epic-7: backlog
+  7-1-shared-sqlite-connection-for-concurrent-processes: backlog
+  7-2-web-server-reachable-only-from-my-devices: backlog
+  7-3-in-app-notification-store-and-live-event-stream: backlog
+  7-4-server-liveness-alerting-and-nightly-backup: backlog
+  7-5-web-client-foundation-design-tokens-fonts-themes-installable: backlog
+  7-6-page-shell-navigation-and-screensaver: backlog
+  7-7-in-app-notification-overlay: backlog
+  7-8-home-today-s-plan-and-calendar: backlog
+  7-9-completion-log-and-status-only-completion-writes: backlog
+  7-10-check-off-a-task-with-undo: backlog
+  epic-7-retrospective: optional
+
+  epic-8: backlog
+  8-1-open-interaction-requests-as-resumable-turns: backlog
+  8-2-one-confirmation-path-for-every-proposal: backlog
+  8-3-chat-turn-routing-for-planning-commands: backlog
+  8-4-chat-turn-routing-for-notion-calendar-and-search-commands: backlog
+  8-5-chat-page-with-streaming-replies: backlog
+  8-6-open-items-and-structured-questions-in-chat: backlog
+  8-7-command-palette-morning-and-night: backlog
+  8-8-chat-bubble-on-home-and-the-three-action-capture-flow: backlog
+  8-9-cli-parity-check-and-retirement: backlog
+  epic-8-retrospective: optional
+
+  epic-9: backlog
+  9-1-two-tier-data-completeness-gate: backlog
+  9-2-sandbox-card-flow: backlog
+  9-3-sandbox-finale-and-proof-of-action-notification: backlog
+  9-4-needs-data-notification-and-indicator: backlog
+  epic-9-retrospective: optional
+
+  epic-10: backlog
+  10-1-one-re-planning-pipeline-and-the-reshuffle-preview: backlog
+  10-2-approve-or-discard-a-reshuffle: backlog
+  10-3-routines-declare-once-placed-every-day: backlog
+  10-4-drag-a-block-and-approve-the-animated-preview: backlog
+  10-5-pin-a-task-and-unpin-it: backlog
+  epic-10-retrospective: optional
+
+  epic-11: backlog
+  11-1-tasks-page-every-task-grouped: backlog
+  11-2-research-box-on-tasks: backlog
+  11-3-research-runs-as-a-background-job: backlog
+  11-4-one-time-research-offer: backlog
+  epic-11-retrospective: optional
+
+  epic-12: backlog
+  12-1-activity-days-and-desk-metrics: backlog
+  12-2-usage-heatmap: backlog
+  12-3-feed-providers-and-crypto-tickers: backlog
+  12-4-weather-and-news-widgets: backlog
+  epic-12-retrospective: optional
 action_items:
   - id: "epic-6-retro-item-1-chunk-rich_text-values-into-2000-char-se"
     epic: 6
