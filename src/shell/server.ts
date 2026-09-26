@@ -29,9 +29,16 @@
  * (opened once in `main`, AD-10), the notification routes (transport over
  * `app/notifications.ts`), and `GET /api/events`, the one SSE stream per
  * open client that tails `notification-store.ts`'s outbox (AD-18).
+ *
+ * Story 7.10 adds the check-off routes (transport over `app/check-off.ts`)
+ * and AD-20's commit sweep runner, `startCheckOffCommitSweep`: one sweep at
+ * startup (records left overdue by a previous process), then one per
+ * `CHECK_OFF_COMMIT_TICK_MS`. This file only constructs the Notion client
+ * the sweep is given; the Status write itself is made inside `app/`.
  */
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
+import { validator } from "hono/validator";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
@@ -45,13 +52,23 @@ import {
   tailOutboxSince,
 } from "../adapters/notification-store.ts";
 import { HEARTBEAT_INTERVAL_MS, initPlanStateStoreSchema, writeHeartbeat } from "../adapters/plan-state-store.ts";
-import { createMemoryStore } from "../adapters/memory-store.ts";
+import { createMemoryStore, type MemoryStore } from "../adapters/memory-store.ts";
+import { initCompletionLogSchema } from "../adapters/completion-log.ts";
 import { createTokenStore, loadGoogleOAuthConfigFromEnv } from "../adapters/token-store.ts";
 import { createCalendarReadClient, readCalendarEvents } from "../adapters/calendar-adapter.ts";
-import { loadTaskPropertyNamesFromEnv, readNotionTasks } from "../adapters/notion-adapter.ts";
+import { loadTaskPropertyNamesFromEnv, readNotionTasks, type NotionTaskPropertyNames } from "../adapters/notion-adapter.ts";
 import { listNotifications, markNotificationRead } from "../app/notifications.ts";
 import { getHomeView, type HomeViewDeps } from "../app/home-view.ts";
-import type { ApiResult, EventHint, HealthResponse } from "../types/api.ts";
+import {
+  CHECK_OFF_COMMIT_TICK_MS,
+  checkOff,
+  commitDueCheckOffs,
+  holdCheckOff,
+  releaseCheckOff,
+  undoCheckOff,
+  type CheckOffDeps,
+} from "../app/check-off.ts";
+import type { ApiResult, CheckOffRequest, EventHint, HealthResponse } from "../types/api.ts";
 import type { YohErrorKind } from "../types/domain.ts";
 
 // ============================================================================
@@ -182,6 +199,69 @@ export function startHeartbeatWriter(connection: SqliteConnection, options: Hear
 }
 
 // ============================================================================
+// Check-off commit sweep (Story 7.10, AD-20) — commits due check-offs
+// whether or not any browser tab is still open.
+// ============================================================================
+
+export interface CheckOffCommitSweepOptions {
+  readonly intervalMs?: number;
+  readonly setIntervalFn?: typeof setInterval;
+  readonly clearIntervalFn?: typeof clearInterval;
+  readonly log?: (entry: LogEntry) => void;
+}
+
+export interface CheckOffCommitSweepHandle {
+  /** Settles once the startup sweep (records left overdue by a previous process) has run. */
+  readonly startup: Promise<void>;
+  /** Runs one sweep now — or joins the one already running, so sweeps never overlap. */
+  runOnce(): Promise<void>;
+  stop(): void;
+}
+
+/**
+ * Sweeps immediately (the startup sweep), then on every `intervalMs` tick.
+ * A tick that lands while a sweep is still running (a slow Notion write)
+ * joins it rather than starting a second one. Logs one structured line per
+ * sweep that did something, and every failure; an idle tick is silent.
+ */
+export function startCheckOffCommitSweep(deps: CheckOffDeps, options: CheckOffCommitSweepOptions = {}): CheckOffCommitSweepHandle {
+  const intervalMs = options.intervalMs ?? CHECK_OFF_COMMIT_TICK_MS;
+  const setIntervalFn = options.setIntervalFn ?? setInterval;
+  const clearIntervalFn = options.clearIntervalFn ?? clearInterval;
+  const log = options.log ?? ((entry: LogEntry) => writeStructuredLog(entry));
+
+  let inFlight: Promise<void> | undefined;
+  const runOnce = (): Promise<void> => {
+    if (inFlight) return inFlight;
+    inFlight = (async () => {
+      try {
+        const result = await commitDueCheckOffs({ ...deps, log }, {});
+        if (!result.ok) {
+          log({ level: "error", event: "server.check-off-sweep-failed", detail: { message: result.error.message } });
+        } else if (result.value.committed + result.value.notionSynced + result.value.notionFailed > 0) {
+          log({ level: "info", event: "server.check-off-sweep", detail: { ...result.value } });
+        }
+      } catch (err) {
+        log({ level: "error", event: "server.check-off-sweep-failed", detail: { message: err instanceof Error ? err.message : String(err) } });
+      } finally {
+        inFlight = undefined;
+      }
+    })();
+    return inFlight;
+  };
+
+  const startup = runOnce();
+  const handle = setIntervalFn(() => void runOnce(), intervalMs);
+  return {
+    startup,
+    runOnce,
+    stop(): void {
+      clearIntervalFn(handle);
+    },
+  };
+}
+
+// ============================================================================
 // The app
 // ============================================================================
 
@@ -202,8 +282,22 @@ export interface ServerDeps {
    * — absent (e.g. Notion/Google not yet configured), the route reports a
    * clear configuration error rather than crashing the whole server.
    */
-  readonly homeView?: Omit<HomeViewDeps, "now"> & { readonly now?: () => Date };
+  readonly homeView?: Omit<HomeViewDeps, "now" | "connection"> & { readonly now?: () => Date };
+  /**
+   * Story 7.10: the check-off routes' dependencies (`connection` comes from
+   * this object's own). Optional for the same reason as `homeView` —
+   * absent, the routes report a clear `unreachable` error.
+   */
+  readonly checkOff?: Omit<CheckOffDeps, "connection" | "now" | "log"> & { readonly now?: () => Date };
 }
+
+/** A failure envelope typed without `ApiResult<never>`'s impossible `{ok: true}` arm, so the RPC client's response type stays exact. */
+type ApiFailure = Extract<ApiResult<never>, { ok: false }>;
+
+const CHECK_OFF_NOT_CONFIGURED: ApiFailure = {
+  ok: false,
+  error: { kind: "unreachable", message: "server: check-off dependencies not configured" },
+};
 
 /** HTTP status for a serialized `Result` — the body is always the envelope; the status just makes logs and devtools honest. */
 const ERROR_STATUS: Readonly<Record<YohErrorKind, ContentfulStatusCode>> = {
@@ -229,6 +323,9 @@ export function createApp(deps: ServerDeps) {
   const log = deps.log ?? ((entry: LogEntry) => writeStructuredLog(entry));
   const now = deps.now ?? (() => performance.now());
   const notificationsDeps = { connection: deps.connection, now: deps.clock ?? (() => new Date()) };
+  const checkOffDeps: CheckOffDeps | undefined = deps.checkOff
+    ? { ...deps.checkOff, connection: deps.connection, now: deps.checkOff.now ?? (() => new Date()), log }
+    : undefined;
 
   return (
     new Hono()
@@ -304,7 +401,42 @@ export function createApp(deps: ServerDeps) {
         // Fix round 1 (finding #2): a Calendar/Notion read failure inside
         // getHomeView logs through the SAME structured logger every other
         // route already uses (`log`, bound above), not a separate/ad-hoc one.
-        const result = wire(await getHomeView({ ...deps.homeView, now: deps.homeView.now ?? (() => new Date()), log }, {}));
+        const result = wire(
+          await getHomeView({ ...deps.homeView, connection: deps.connection, now: deps.homeView.now ?? (() => new Date()), log }, {}),
+        );
+        return c.json(result, httpStatus(result));
+      })
+      // Story 7.10, AD-20: check-off with undo. The body carries only the
+      // Task id (Ruling R7); everything else is looked up server-side.
+      .post(
+        "/api/check-off",
+        validator("json", (value, c) => {
+          const taskId = (value as { taskId?: unknown } | null)?.taskId;
+          if (typeof taskId !== "string" || taskId.trim() === "") {
+            const invalid: ApiFailure = { ok: false, error: { kind: "validation", message: "check-off: missing taskId" } };
+            return c.json(invalid, httpStatus(invalid));
+          }
+          return { taskId } satisfies CheckOffRequest;
+        }),
+        async (c) => {
+          if (!checkOffDeps) return c.json(CHECK_OFF_NOT_CONFIGURED, httpStatus(CHECK_OFF_NOT_CONFIGURED));
+          const result = wire(await checkOff(checkOffDeps, c.req.valid("json")));
+          return c.json(result, httpStatus(result));
+        },
+      )
+      .post("/api/check-off/:id/undo", async (c) => {
+        if (!checkOffDeps) return c.json(CHECK_OFF_NOT_CONFIGURED, httpStatus(CHECK_OFF_NOT_CONFIGURED));
+        const result = wire(await undoCheckOff(checkOffDeps, { id: c.req.param("id") }));
+        return c.json(result, httpStatus(result));
+      })
+      .post("/api/check-off/:id/hold", async (c) => {
+        if (!checkOffDeps) return c.json(CHECK_OFF_NOT_CONFIGURED, httpStatus(CHECK_OFF_NOT_CONFIGURED));
+        const result = wire(await holdCheckOff(checkOffDeps, { id: c.req.param("id") }));
+        return c.json(result, httpStatus(result));
+      })
+      .post("/api/check-off/:id/release", async (c) => {
+        if (!checkOffDeps) return c.json(CHECK_OFF_NOT_CONFIGURED, httpStatus(CHECK_OFF_NOT_CONFIGURED));
+        const result = wire(await releaseCheckOff(checkOffDeps, { id: c.req.param("id") }));
         return c.json(result, httpStatus(result));
       })
       // Story 7.5, AD-15/AD-17: the built web/ SPA, mounted after every
@@ -349,34 +481,45 @@ export function startServer(
   connection: SqliteConnection,
   env: Readonly<Record<string, string | undefined>> = process.env,
   serveFn: ServeFn = (options) => serve({ ...options }),
-  /** Story 7.8, threaded through the same way `connection` already is. */
-  homeView?: ServerDeps["homeView"],
+  /** Story 7.8's `homeView` and Story 7.10's `checkOff`, threaded through the same way `connection` already is. */
+  features: Pick<ServerDeps, "homeView" | "checkOff"> = {},
 ): ServerHandle {
   const port = parsePort(env["YOH_SERVER_PORT"]);
-  const app = createApp({ connection, ...(homeView ? { homeView } : {}) });
+  const app = createApp({
+    connection,
+    ...(features.homeView ? { homeView: features.homeView } : {}),
+    ...(features.checkOff ? { checkOff: features.checkOff } : {}),
+  });
   return serveFn({ fetch: app.fetch, hostname: LOOPBACK_HOST, port });
 }
 
 /**
- * Story 7.8: builds `GET /api/home`'s real dependencies, mirroring
- * `shell/ritual-cli.ts`'s `createMorningRitualDeps` construction exactly
- * (same env vars, same client constructors) — the Notion/Calendar clients
- * are otherwise built only inside `rituals/`'s one-shot deps builders, never
- * shared as an importable helper (AD-1 keeps `rituals/` and `shell/server.ts`
- * from depending on each other), so this is its own small copy, not a
- * refactor of that one.
+ * The Notion + host-timezone configuration Home (Story 7.8) and check-off
+ * (Story 7.10) both need — loaded once so the two share ONE Notion client
+ * and ONE memory store. Mirrors `shell/ritual-cli.ts`'s
+ * `createMorningRitualDeps` construction (same env vars, same client
+ * constructor) — the Notion/Calendar clients are otherwise built only
+ * inside `rituals/`'s one-shot deps builders, never shared as an importable
+ * helper (AD-1 keeps `rituals/` and `shell/server.ts` from depending on each
+ * other), so this is its own small copy, not a refactor of that one.
  *
  * Returns `undefined` — logging why, once, at startup — rather than
- * throwing, whenever a required env var is missing OR the Google OAuth
- * client can't be constructed (`loadGoogleOAuthConfigFromEnv` throws on a
- * missing `GOOGLE_CLIENT_ID`/`SECRET`/`REDIRECT_URI`): unlike
- * `ritual-cli.ts` (a one-shot CLI where a thrown config error is the whole
- * run failing anyway), this runs inside the long-lived server's own startup
- * — a misconfigured Home feature must degrade `GET /api/home` to a clear
- * `unreachable` error, never take down `/api/health`, the notification
- * routes, or the built web app with it.
+ * throwing: unlike `ritual-cli.ts` (a one-shot CLI where a thrown config
+ * error is the whole run failing anyway), this runs inside the long-lived
+ * server's own startup — a misconfigured feature must degrade its routes to
+ * a clear `unreachable` error, never take down `/api/health`, the
+ * notification routes, or the built web app with it.
  */
-function buildHomeViewDeps(connection: SqliteConnection, env: Readonly<Record<string, string | undefined>>): ServerDeps["homeView"] {
+interface NotionFeatureConfig {
+  readonly timeZone: string;
+  readonly store: MemoryStore;
+  readonly notionClient: Client;
+  readonly tasksDataSourceId: string;
+  readonly projectsDataSourceId: string;
+  readonly taskPropertyNames: NotionTaskPropertyNames;
+}
+
+function loadNotionFeatureConfig(connection: SqliteConnection, env: Readonly<Record<string, string | undefined>>): NotionFeatureConfig | undefined {
   const timeZone = env["YOH_TIMEZONE"];
   const notionToken = env["NOTION_TOKEN"];
   const tasksDataSourceId = env["NOTION_TASKS_DATA_SOURCE_ID"];
@@ -385,22 +528,47 @@ function buildHomeViewDeps(connection: SqliteConnection, env: Readonly<Record<st
     writeStructuredLog({
       level: "warn",
       event: "server.home-view-not-configured",
-      detail: { message: "missing required environment variable(s) YOH_TIMEZONE / NOTION_TOKEN / NOTION_TASKS_DATA_SOURCE_ID / NOTION_PROJECTS_DATA_SOURCE_ID — GET /api/home will report an error until set" },
+      detail: {
+        message:
+          "missing required environment variable(s) YOH_TIMEZONE / NOTION_TOKEN / NOTION_TASKS_DATA_SOURCE_ID / NOTION_PROJECTS_DATA_SOURCE_ID — GET /api/home and the check-off routes will report an error until set",
+      },
     });
     return undefined;
   }
+  return {
+    timeZone,
+    store: createMemoryStore(connection),
+    notionClient: new Client({ auth: notionToken, ...(env["NOTION_API_VERSION"] ? { notionVersion: env["NOTION_API_VERSION"] } : {}) }),
+    tasksDataSourceId,
+    projectsDataSourceId,
+    taskPropertyNames: loadTaskPropertyNamesFromEnv(env),
+  };
+}
+
+function readTasksWith(notion: NotionFeatureConfig) {
+  return async () =>
+    await readNotionTasks(notion.notionClient, {
+      tasksDataSourceId: notion.tasksDataSourceId,
+      projectsDataSourceId: notion.projectsDataSourceId,
+      taskPropertyNames: notion.taskPropertyNames,
+    });
+}
+
+/**
+ * Story 7.8: `GET /api/home`'s real dependencies. The whole Google client
+ * construction is wrapped: `loadGoogleOAuthConfigFromEnv` throws on a
+ * missing `GOOGLE_CLIENT_ID`/`SECRET`/`REDIRECT_URI`, which must degrade
+ * Home only, never the rest of the server.
+ */
+function buildHomeViewDeps(notion: NotionFeatureConfig, env: Readonly<Record<string, string | undefined>>): ServerDeps["homeView"] {
   try {
-    const store = createMemoryStore(connection);
-    const notionClient = new Client({ auth: notionToken, ...(env["NOTION_API_VERSION"] ? { notionVersion: env["NOTION_API_VERSION"] } : {}) });
-    const taskPropertyNames = loadTaskPropertyNamesFromEnv(env);
     const tokenStore = createTokenStore(loadGoogleOAuthConfigFromEnv(env));
     const calendarClient = createCalendarReadClient(tokenStore.getOAuth2Client() as unknown as Parameters<typeof createCalendarReadClient>[0]);
-
     return {
-      store,
-      readCalendarEvents: () => readCalendarEvents(calendarClient, { timeZone }),
-      readTasks: async () => await readNotionTasks(notionClient, { tasksDataSourceId, projectsDataSourceId, taskPropertyNames }),
-      timeZone,
+      store: notion.store,
+      readCalendarEvents: () => readCalendarEvents(calendarClient, { timeZone: notion.timeZone }),
+      readTasks: readTasksWith(notion),
+      timeZone: notion.timeZone,
     };
   } catch (err) {
     writeStructuredLog({
@@ -412,17 +580,39 @@ function buildHomeViewDeps(connection: SqliteConnection, env: Readonly<Record<st
   }
 }
 
+/**
+ * Story 7.10: the check-off routes' and commit sweep's real dependencies.
+ * Needs no Google configuration. The Notion client goes to `app/check-off.ts`
+ * as a dependency; the Status write itself is made there (AD-16).
+ */
+function buildCheckOffDeps(notion: NotionFeatureConfig): ServerDeps["checkOff"] {
+  const readTasks = readTasksWith(notion);
+  return {
+    store: notion.store,
+    timeZone: notion.timeZone,
+    notionClient: notion.notionClient,
+    notionStatusConfig: { tasksDataSourceId: notion.tasksDataSourceId, taskPropertyNames: notion.taskPropertyNames },
+    lookupTask: async (taskId) => (await readTasks()).tasks.find((t) => t.id === taskId),
+  };
+}
+
 if (import.meta.main) {
   // AD-10: one connection per process, to the same file the cron one-shots use.
   const connection = openSqliteConnection({ databasePath: process.env["MEMORY_DB_PATH"] || "./data/yoh-memory.db" });
   // AD-10: each owner creates its dedicated tables idempotently on startup.
   initNotificationStoreSchema(connection.db);
   initPlanStateStoreSchema(connection.db);
+  initCompletionLogSchema(connection.db);
   // Story 7.4, AD-7: writes the heartbeat `ritual-cli.ts morning` checks on
   // start; stopped alongside the server on shutdown, below.
   const heartbeat = startHeartbeatWriter(connection);
-  const homeView = buildHomeViewDeps(connection, process.env);
-  const handle = startServer(connection, process.env, undefined, homeView);
+  const notion = loadNotionFeatureConfig(connection, process.env);
+  const homeView = notion ? buildHomeViewDeps(notion, process.env) : undefined;
+  const checkOff = notion ? buildCheckOffDeps(notion) : undefined;
+  const handle = startServer(connection, process.env, undefined, { ...(homeView ? { homeView } : {}), ...(checkOff ? { checkOff } : {}) });
+  // Story 7.10, AD-20: the startup sweep commits anything left overdue by a
+  // previous process, then the commit timer takes over.
+  const checkOffSweep = checkOff ? startCheckOffCommitSweep({ ...checkOff, connection, now: () => new Date() }) : undefined;
   writeStructuredLog({
     level: "info",
     event: "server.listening",
@@ -431,10 +621,13 @@ if (import.meta.main) {
   // systemd stops the unit with SIGTERM. Stop accepting connections and let
   // in-flight requests drain; open SSE streams hold the loop open, so exit
   // after a short grace period to keep `systemctl stop/restart` prompt.
-  // Clients reconnect with Last-Event-ID and miss nothing.
+  // Clients reconnect with Last-Event-ID and miss nothing. A check-off still
+  // inside its window when the process stops is committed by the next
+  // process's startup sweep.
   const shutdown = (signal: string) => {
     writeStructuredLog({ level: "info", event: "server.stopping", detail: { signal } });
     heartbeat.stop();
+    checkOffSweep?.stop();
     handle.close();
     setTimeout(() => {
       connection.close();

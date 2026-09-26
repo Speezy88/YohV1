@@ -23,7 +23,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import * as eventBus from "./eventBus.ts";
 import { apiClient } from "./apiClient.ts";
-import { __resetNotificationsForTests, dismissNotification, startNotificationStream, useNotifications } from "./notifications.ts";
+import { __resetNotificationsForTests, addLocalFailureNotice, dismissNotification, startNotificationStream, useNotifications } from "./notifications.ts";
 import type { NotificationRecord } from "../../../src/types/api.ts";
 
 vi.mock("./apiClient.ts", () => ({
@@ -126,6 +126,27 @@ describe("notification store", () => {
     act(() => hintHandlers.onUnreachable());
     expect(onReachableSpy).not.toHaveBeenCalled();
     expect(result.current).toHaveLength(1);
+    stop();
+  });
+
+  it("Story 7.10: addLocalFailureNotice shows a client-side operational failure, message-only, until dismissed (no server call)", () => {
+    const { result } = renderHook(() => useNotifications());
+    act(() => addLocalFailureNotice("Couldn't check off Draft the memo"));
+    expect(result.current).toHaveLength(1);
+    expect(result.current[0]).toMatchObject({ kind: "operational", body: "Couldn't check off Draft the memo", deepLink: null });
+    act(() => dismissNotification(result.current[0]!.id));
+    expect(result.current).toHaveLength(0);
+    expect(apiClient.api.notifications[":id"].read.$post).not.toHaveBeenCalled();
+  });
+
+  it("Story 7.10: dismissing a failure notice does not clear the unreachable dedupe guard", () => {
+    stop = startNotificationStream();
+    const { result } = renderHook(() => useNotifications());
+    act(() => hintHandlers.onUnreachable());
+    act(() => addLocalFailureNotice("Couldn't undo Draft the memo"));
+    act(() => dismissNotification(result.current.find((n) => n.body.startsWith("Couldn't undo"))!.id));
+    act(() => hintHandlers.onUnreachable());
+    expect(result.current.filter((n) => n.title.match(/unreachable/i))).toHaveLength(1);
     stop();
   });
 

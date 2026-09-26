@@ -492,3 +492,20 @@ export interface EscalationLevel {
   readonly value: number;
   readonly atCap: boolean;
 }
+
+// ============================================================================
+// Check-off commit sweep (Story 7.10, AD-20)
+// ============================================================================
+
+/**
+ * What one run of `app/check-off.ts`'s `commitDueCheckOffs` did — server-
+ * internal (the commit timer logs it), never a route response.
+ */
+export interface CheckOffSweepSummary {
+  /** Pending check-offs whose undo window elapsed and whose Completion Log entry was written this run. */
+  readonly committed: number;
+  /** Notion Status writes that succeeded this run (fresh commits and retries alike). */
+  readonly notionSynced: number;
+  /** Notion Status writes that failed this run and stay owed for a later sweep. */
+  readonly notionFailed: number;
+}

@@ -175,6 +175,19 @@ describe("PageShell", () => {
     expect(screen.queryByTestId("launch-splash")).not.toBeInTheDocument();
   });
 
+  // Story 7.10 (found by its Playwright smoke): when Home's data arrives
+  // before the splash is ever painted opaque, the browser runs no opacity
+  // transition at all, so `transitionend` never fires and the (invisible)
+  // splash would stay on top, swallowing every click. A fading splash must
+  // never intercept input or be read out, whether or not its fade completes.
+  it("a fading splash never intercepts clicks and is hidden from assistive tech, even if its transitionend never fires", () => {
+    render(<PageShell />);
+    const splash = screen.getByTestId("launch-splash");
+    expect(splash.className).toMatch(/opacity-0/);
+    expect(splash).toHaveClass("pointer-events-none");
+    expect(splash).toHaveAttribute("aria-hidden", "true");
+  });
+
   it("under reduced motion, the launch splash disappears instantly with no fade", () => {
     vi.spyOn(reducedMotionModule, "useReducedMotion").mockReturnValue(true);
     render(<PageShell />);

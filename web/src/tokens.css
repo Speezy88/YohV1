@@ -131,6 +131,13 @@
      it — the component now removes itself on the LAST piece's real
      `animationend`, not a `setTimeout` guess. */
   --duration-confetti: 1400ms;
+
+  /* Story 7.10, DESIGN.md State-tied motion "Check-off dissolve": the
+     checked Plan Row holds checkmark + strikethrough + 50% opacity for a
+     beat, then fades out. DESIGN.md gives no number, so it's tuned by eye —
+     the same latitude as the page-transition token above. Under reduced
+     motion the row is hidden instantly instead (PlanChecklist.tsx). */
+  --duration-check-off-dissolve: 600ms;
 }
 
 :root {
@@ -239,6 +246,18 @@ body {
   }
 }
 
+/* Story 7.10, DESIGN.md `undo-toast` / `in-app-notification`
+   "accent-bar: 3px left, accent-solid" — the ONE accent-bar mechanism for
+   every glass floating element (Undo Toast, and the In-App Notification
+   card per Ruling R19). Declared here, unlayered and AFTER
+   `.notification-glass`, because that rule's `border` shorthand is
+   unlayered too — it overrides any Tailwind `border-l-*` utility
+   (utilities live in a cascade layer, and unlayered styles win over
+   layered ones), which is why 7.7's card never showed its bar. */
+.glass-accent-bar {
+  border-left: 3px solid var(--color-accent-solid);
+}
+
 /* Story 7.7, "Toast enter": 0.55s ease-out, 5px drop + fade normally;
    fade-only (no drop) and no dot pulse under reduced motion — the
    component picks the entry class, both keyframes read the same duration
@@ -290,6 +309,22 @@ body {
 @keyframes confetti-fall {
   to {
     transform: translateY(110vh) rotate(360deg);
+    opacity: 0;
+  }
+}
+
+/* Story 7.10, "Check-off dissolve" (UX-DR30): applied only when
+   `useReducedMotion` is false — PlanChecklist.tsx hides the row instantly
+   under reduced motion, so this keyframe simply never runs there. */
+.check-off-dissolve {
+  animation: check-off-dissolve var(--duration-check-off-dissolve) ease-out forwards;
+}
+@keyframes check-off-dissolve {
+  0%,
+  40% {
+    opacity: 0.5;
+  }
+  100% {
     opacity: 0;
   }
 }

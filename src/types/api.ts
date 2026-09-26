@@ -162,6 +162,47 @@ export interface HomeViewResponse {
 }
 
 // ============================================================================
+// Check-off with undo (Story 7.10, AD-20) — new shapes only.
+// ============================================================================
+
+/**
+ * `POST /api/check-off`'s body. Only the Task id: `area`/`dueDate`/
+ * `estimatedMinutes` are snapshotted server-side from a live Task read at
+ * commit (Ruling R7), never sent by the client.
+ */
+export interface CheckOffRequest {
+  readonly taskId: string;
+}
+
+/** The path-param input of `POST /api/check-off/:id/{undo,hold,release}`. */
+export interface CheckOffIdRequest {
+  readonly id: string;
+}
+
+/**
+ * A pending check-off as the client sees it — the value of
+ * `POST /api/check-off` and of `/hold` and `/release`. The client never
+ * hard-codes the undo window (AD-20): it shows the Undo Toast for
+ * `commitAt - asOf` from when this response arrives, both being server
+ * timestamps, so a skewed browser clock can't shorten or stretch it.
+ */
+export interface PendingCheckOffResponse {
+  readonly id: string;
+  readonly taskId: string;
+  /** ISO-8601 UTC — when the server will commit (the undo window's end, shifted by any released hold). */
+  readonly commitAt: string;
+  /** ISO-8601 UTC — the server's clock when this response was produced. */
+  readonly asOf: string;
+  /** `true` while a hover/focus hold is pausing the window. */
+  readonly held: boolean;
+}
+
+/** `POST /api/check-off/:id/undo`'s value: the pending record is gone; nothing reached the Completion Log or Notion. */
+export interface UndoCheckOffResponse {
+  readonly id: string;
+}
+
+// ============================================================================
 // Server route type (Ruling R2, AD-17)
 // ============================================================================
 

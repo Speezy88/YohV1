@@ -15,6 +15,7 @@ import type { LogEntry } from "../src/adapters/logger.ts";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { createNotification, initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
 import { createMemoryStore, putPlan } from "../src/adapters/memory-store.ts";
+import { initCompletionLogSchema } from "../src/adapters/completion-log.ts";
 import type { AppType, HealthResponse } from "../src/types/api.ts";
 import { createApp, startServer, type ServeOptions, type ServerDeps } from "../src/shell/server.ts";
 
@@ -23,6 +24,7 @@ const READ_AT = "2026-09-25T12:00:00.000Z";
 function tempApp(overrides: Partial<ServerDeps> = {}) {
   const connection = openSqliteConnection({ databasePath: ":memory:" });
   initNotificationStoreSchema(connection.db);
+  initCompletionLogSchema(connection.db); // Story 7.10: Home's "completed" also reads the Completion Log
   const app = createApp({ connection, log: () => {}, clock: () => new Date(READ_AT), ...overrides });
   return { app, connection };
 }
@@ -204,6 +206,7 @@ test("GET on the mark-read route is not allowed — reading must never change re
 test("GET /api/home returns the home view when homeView deps are configured", async () => {
   const connection = openSqliteConnection({ databasePath: ":memory:" });
   initNotificationStoreSchema(connection.db);
+  initCompletionLogSchema(connection.db); // Story 7.10: Home's "completed" also reads the Completion Log
   const app = createApp({
     connection,
     homeView: {
@@ -225,6 +228,7 @@ test("GET /api/home returns the home view when homeView deps are configured", as
 test("GET /api/home reflects today's stored Plan and calendar", async () => {
   const connection = openSqliteConnection({ databasePath: ":memory:" });
   initNotificationStoreSchema(connection.db);
+  initCompletionLogSchema(connection.db); // Story 7.10: Home's "completed" also reads the Completion Log
   const store = createMemoryStore(connection);
   putPlan(store, {
     id: "plan-2026-09-25",
@@ -265,6 +269,7 @@ test("GET /api/home returns a clear error when homeView deps are not configured"
 test("Fix round 1 (finding #1): GET /api/home degrades gracefully on a calendar-read failure — 200 ok:true, never a thrown 500 or a blanked view", async () => {
   const connection = openSqliteConnection({ databasePath: ":memory:" });
   initNotificationStoreSchema(connection.db);
+  initCompletionLogSchema(connection.db); // Story 7.10: Home's "completed" also reads the Completion Log
   const app = createApp({
     connection,
     homeView: {
@@ -289,6 +294,7 @@ test("Fix round 1 (finding #1): GET /api/home degrades gracefully on a calendar-
 test("Fix round 1 (finding #2): a home-view Calendar-read failure logs through the same structured logger every /api route uses", async () => {
   const connection = openSqliteConnection({ databasePath: ":memory:" });
   initNotificationStoreSchema(connection.db);
+  initCompletionLogSchema(connection.db); // Story 7.10: Home's "completed" also reads the Completion Log
   const entries: LogEntry[] = [];
   const app = createApp({
     connection,
@@ -316,6 +322,7 @@ test("Fix round 1 (finding #2): a home-view Calendar-read failure logs through t
 function tempConnection() {
   const connection = openSqliteConnection({ databasePath: ":memory:" });
   initNotificationStoreSchema(connection.db);
+  initCompletionLogSchema(connection.db); // Story 7.10: Home's "completed" also reads the Completion Log
   return connection;
 }
 

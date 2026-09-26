@@ -31,7 +31,7 @@ function themeBlockText(source: string): string {
   return source.slice(themeStart, themeEnd);
 }
 
-const REQUIRED_DURATION_TOKENS = ["duration-page-transition", "duration-splash-fade"] as const;
+const REQUIRED_DURATION_TOKENS = ["duration-page-transition", "duration-splash-fade", "duration-check-off-dissolve"] as const;
 
 for (const name of REQUIRED_DURATION_TOKENS) {
   test(`tokens.css defines --${name} inside @theme`, () => {

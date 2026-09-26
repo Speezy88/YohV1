@@ -38,8 +38,18 @@
  * Calendar failure falls back to `calendarEvents: []`, so `calendar.blocks`
  * degrades to the Plan's own Yoh-owned `work`/`break` blocks only (or `[]`
  * with no Plan yet) — never a thrown exception, never a blanked checklist.
+ *
+ * **Story 7.10: "completed" also reads Yoh's own Completion Log.** A Task
+ * is completed if Notion says so OR `completion-log.ts` shows it completed
+ * today (host timezone). The log is Yoh's record of truth (AD-23): a
+ * check-off whose Notion Status write failed (and is still being retried,
+ * AD-20) must not reappear on Home. A still-pending (undoable) check-off is
+ * NOT counted — the client dissolves that row itself, and Undo restores it
+ * with no server round trip to wait on.
  */
 import { getPlan } from "../adapters/memory-store.ts";
+import { listCompletedTaskIdsOnDate } from "../adapters/completion-log.ts";
+import type { SqliteConnection } from "../adapters/sqlite.ts";
 import type { MemoryStore } from "../adapters/memory-store.ts";
 import { localIsoDate } from "../rituals/ritual-shared.ts";
 import type { LogEntry } from "../adapters/logger.ts";
@@ -47,6 +57,8 @@ import type { CalendarEvent, ExternalId, PlanBlock, Result, Task, YohError } fro
 import type { HomeCalendarBlock, HomePlanRow, HomeViewResponse } from "../types/api.ts";
 
 export interface HomeViewDeps {
+  /** The process's one connection — read for today's Completion Log entries (Story 7.10). */
+  readonly connection: SqliteConnection;
   readonly store: MemoryStore;
   /** `calendar-adapter.ts`'s `readCalendarEvents`, pre-bound to its client/config. Called once per request — never on a timer. */
   readonly readCalendarEvents: () => Promise<readonly CalendarEvent[]>;
@@ -101,8 +113,11 @@ export async function getHomeView(deps: HomeViewDeps, _input: Record<string, nev
     log({ level: "error", event: "home-view.read-tasks-failed", detail: describeError(err) });
   }
 
+  const loggedToday = listCompletedTaskIdsOnDate(deps.connection, today, deps.timeZone);
   const isCompleted = (block: PlanBlock): boolean =>
-    block.kind === "work" && block.taskId !== undefined && tasksById.get(block.taskId)?.status === "completed";
+    block.kind === "work" &&
+    block.taskId !== undefined &&
+    (loggedToday.has(block.taskId) || tasksById.get(block.taskId)?.status === "completed");
 
   const rows: HomePlanRow[] = [];
   for (const block of stored.data.blocks) {

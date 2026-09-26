@@ -9,14 +9,17 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { createMemoryStore, putPlan } from "../src/adapters/memory-store.ts";
+import { initCompletionLogSchema, recordCompletion } from "../src/adapters/completion-log.ts";
 import { getHomeView, type HomeViewDeps } from "../src/app/home-view.ts";
 import type { LogEntry } from "../src/adapters/logger.ts";
 import type { CalendarEvent, Plan, Task } from "../src/types/domain.ts";
 
 function tempDeps(overrides: Partial<HomeViewDeps> = {}): HomeViewDeps {
   const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initCompletionLogSchema(connection.db);
   const store = createMemoryStore(connection);
   return {
+    connection,
     store,
     readCalendarEvents: async (): Promise<readonly CalendarEvent[]> => [],
     readTasks: async (): Promise<{ tasks: readonly Task[] }> => ({ tasks: [] }),
@@ -101,6 +104,28 @@ test("a work block's Task completed in Notion shows completed: true", async () =
   const result = await getHomeView(deps, {});
   assert.equal(result.ok, true);
   if (result.ok) assert.equal(result.value.plan?.rows[0]!.completed, true);
+  deps.store.close();
+});
+
+test("Story 7.10: a Task in today's Completion Log shows completed even while Notion still says otherwise (a check-off whose Notion sync failed never reappears)", async () => {
+  const deps = tempDeps({
+    readTasks: async () => ({ tasks: [{ id: "t1", title: "Draft the memo", status: "in-progress", createdAt: "x", updatedAt: "x" }] }),
+  });
+  putPlan(deps.store, makePlan({
+    blocks: [
+      { id: "b1", kind: "work", start: "2026-09-25T13:00:00.000Z", end: "2026-09-25T17:00:00.000Z", taskId: "t1", label: "Draft the memo" },
+      { id: "b2", kind: "work", start: "2026-09-25T17:00:00.000Z", end: "2026-09-25T18:00:00.000Z", taskId: "t2", label: "Call the dentist" },
+    ],
+  }));
+  // 11am EDT today — plus one from yesterday (local), which must not count.
+  recordCompletion(deps.connection, { taskId: "t1", taskName: "Draft the memo", area: null, dueDate: null, estimatedMinutes: null, completedAt: "2026-09-25T15:00:00.000Z", source: "check-off" });
+  recordCompletion(deps.connection, { taskId: "t2", taskName: "Call the dentist", area: null, dueDate: null, estimatedMinutes: null, completedAt: "2026-09-25T03:00:00.000Z", source: "check-off" });
+
+  const result = await getHomeView(deps, {});
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.deepEqual(result.value.plan?.rows.map((r) => r.completed), [true, false]);
+  assert.deepEqual(result.value.calendar.blocks.map((b) => b.completed), [true, false]);
   deps.store.close();
 });
 

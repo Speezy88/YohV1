@@ -156,7 +156,12 @@ export function PageShell(): React.JSX.Element {
         {splashVisible && (
           <div
             data-testid="launch-splash"
-            className={`absolute inset-0 z-50 transition-opacity ${splashFadingOut ? "opacity-0" : "opacity-100"}`}
+            // Story 7.10: once fading, the splash never intercepts input or
+            // gets read out — if Home was ready before the splash was ever
+            // painted opaque, no transition runs and `transitionend` never
+            // fires, which would otherwise leave an invisible layer on top.
+            aria-hidden={splashFadingOut || undefined}
+            className={`absolute inset-0 z-50 transition-opacity ${splashFadingOut ? "pointer-events-none opacity-0" : "opacity-100"}`}
             style={{ transitionDuration: "var(--duration-splash-fade)" }}
             // `e.target === e.currentTarget` guards against a bubbled
             // transitionend from some future descendant animation — only this

@@ -11,6 +11,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type {
+  CheckOffRequest,
+  PendingCheckOffResponse,
+  UndoCheckOffResponse,
   ApiResult,
   EventHint,
   HealthResponse,
@@ -128,4 +131,18 @@ test("Story 7.3 notification route shapes: NotificationList, MarkNotificationRea
   // @ts-expect-error — readAt is required on a mark-read response.
   const missingReadAt: MarkNotificationReadResponse = { id: "n1" };
   assert.ok(list.ok && response.ok && request.id && missingReadAt);
+});
+
+test("Story 7.10 check-off shapes: the request carries only the Task id (Ruling R7); the pending response carries the server's commitAt and asOf", () => {
+  const request: CheckOffRequest = { taskId: "t1" };
+  // @ts-expect-error — R7: area/dueDate/estimatedMinutes are looked up server-side, never sent by the client.
+  const widened: CheckOffRequest = { taskId: "t1", area: "Work" };
+  const pending: ApiResult<PendingCheckOffResponse> = {
+    ok: true,
+    value: { id: "p1", taskId: "t1", commitAt: "2026-09-25T18:00:05.000Z", asOf: "2026-09-25T18:00:00.000Z", held: false },
+  };
+  // @ts-expect-error — commitAt is required: the client never hard-codes the undo window (AD-20).
+  const missingCommitAt: PendingCheckOffResponse = { id: "p1", taskId: "t1", asOf: "2026-09-25T18:00:00.000Z", held: false };
+  const undone: UndoCheckOffResponse = { id: "p1" };
+  assert.ok(request.taskId && widened && pending.ok && missingCommitAt && undone.id);
 });

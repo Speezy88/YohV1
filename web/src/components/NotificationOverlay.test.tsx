@@ -41,9 +41,11 @@ describe("NotificationOverlay", () => {
   it("has a 3px accent-solid left border and the glass surface class", () => {
     renderWithNav([{ id: "n1", kind: "operational", title: "x", body: "x", createdAt: "2026-01-01T00:00:00.000Z", deepLink: null }]);
     const card = screen.getByTestId("notification-card");
-    expect(card.className).toMatch(/border-l-\[3px\]/);
-    expect(card.className).toMatch(/border-accent-solid/);
-    expect(card.className).toMatch(/notification-glass/);
+    // Ruling R19: the bar comes from the shared unlayered `.glass-accent-bar`
+    // rule (tokens.css) — a Tailwind `border-l-*` utility is layered and loses
+    // to `.notification-glass`'s unlayered `border` shorthand, so it never showed.
+    expect(card).toHaveClass("notification-glass", "glass-accent-bar");
+    expect(card.className).not.toMatch(/border-l-\[3px\]|border-accent-solid/);
   });
 
   it("clicking a notification with a deepLink navigates to the matching page and dismisses it", () => {

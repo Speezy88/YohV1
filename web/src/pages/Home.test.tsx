@@ -74,7 +74,10 @@ describe("HomePage", () => {
     expect(rows.map((r) => r.textContent)).toEqual(["Z Task", "A Task"]);
   });
 
-  it("marks a past block read-only", () => {
+  // Ruling R18 (Story 7.10 fix round 1): "past blocks read-only" governs the
+  // Calendar Day View's blocks, not checklist rows — a past, incomplete Plan
+  // row stays checkable, keeping only its visual "past" cue.
+  it("a past, incomplete Plan row stays interactive (Ruling R18), keeping its past cue", () => {
     mockState({
       status: "loaded",
       value: {
@@ -84,7 +87,9 @@ describe("HomePage", () => {
       },
     });
     render(<HomePage />);
-    expect(screen.getByTestId("plan-row")).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByTestId("plan-row")).toHaveAttribute("aria-disabled", "false");
+    expect(screen.getByTestId("plan-row")).toHaveClass("opacity-70");
+    expect(screen.getByRole("checkbox", { name: "Draft the memo" })).toBeEnabled();
   });
 
   it("a completed row (alongside an incomplete one, so the checklist isn't fully empty) is read-only and struck through", () => {

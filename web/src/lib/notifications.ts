@@ -21,6 +21,11 @@
  * notification bumped out of the visible window by newer arrivals is only
  * temporarily out of view, never silently discarded ("a failure is never
  * auto-dismissed unseen").
+ *
+ * Story 7.10 adds `addLocalFailureNotice`: a client-side write failure
+ * (a check-off or Undo that didn't go through) shown the same way — an
+ * `operational`, message-only card that stays until dismissed, per
+ * EXPERIENCE.md's "Check-off write failed" row.
  */
 import { useSyncExternalStore } from "react";
 import { onHint, onUnreachable } from "./eventBus.ts";
@@ -38,8 +43,8 @@ const localIds = new Set<string>();
  * the mark-read write turns out to have failed (the revert path below).
  */
 const dismissedIds = new Set<string>();
-/** Dedupes the synthetic "unreachable" record so a prolonged outage doesn't stack a fresh one on every ~15s retry. */
-let unreachablePending = false;
+/** The synthetic "unreachable" record's id while one is showing — dedupes it so a prolonged outage doesn't stack a fresh one on every ~15s retry. */
+let unreachableId: string | undefined;
 let localIdCounter = 0;
 
 const listeners = new Set<() => void>();
@@ -80,21 +85,27 @@ async function refetch(): Promise<void> {
   }
 }
 
-function addLocalUnreachable(): void {
-  if (unreachablePending) return;
-  unreachablePending = true;
-  const id = `local-unreachable-${Date.now()}-${localIdCounter++}`;
+function addLocal(prefix: string, title: string, body: string): string {
+  const id = `local-${prefix}-${Date.now()}-${localIdCounter++}`;
   localIds.add(id);
-  const record: NotificationRecord = {
-    id,
-    kind: "operational",
-    title: "Yoh server unreachable",
-    body: "The connection to Yoh dropped and couldn't reconnect. Retrying in the background.",
-    deepLink: null,
-    createdAt: new Date().toISOString(),
-  };
+  const record: NotificationRecord = { id, kind: "operational", title, body, deepLink: null, createdAt: new Date().toISOString() };
   records = sortRecords([record, ...records]);
   notify();
+  return id;
+}
+
+function addLocalUnreachable(): void {
+  if (unreachableId !== undefined) return;
+  unreachableId = addLocal("unreachable", "Yoh server unreachable", "The connection to Yoh dropped and couldn't reconnect. Retrying in the background.");
+}
+
+/**
+ * Story 7.10: shows a client-side write failure (never sent to or read from
+ * the server) as an `operational`, message-only notification that stays
+ * until dismissed — a failed write is always visible (UX-DR48).
+ */
+export function addLocalFailureNotice(message: string): void {
+  addLocal("failure", message, message);
 }
 
 export function useNotifications(): readonly NotificationRecord[] {
@@ -122,7 +133,7 @@ export function dismissNotification(id: string): void {
   records = records.filter((r) => r.id !== id);
   if (localIds.has(id)) {
     localIds.delete(id);
-    unreachablePending = false;
+    if (id === unreachableId) unreachableId = undefined;
     notify();
     return;
   }
@@ -176,6 +187,6 @@ export function __resetNotificationsForTests(): void {
   records = [];
   localIds.clear();
   dismissedIds.clear();
-  unreachablePending = false;
+  unreachableId = undefined;
   localIdCounter = 0;
 }

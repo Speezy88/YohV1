@@ -71,7 +71,7 @@ export function NotificationOverlay(): React.JSX.Element {
             }
           }}
           className={
-            "notification-glass pointer-events-auto flex w-80 cursor-pointer items-start gap-2 rounded-md border-l-[3px] border-accent-solid p-3 text-body text-ink-primary " +
+            "notification-glass pointer-events-auto flex w-80 cursor-pointer items-start gap-2 rounded-md glass-accent-bar p-3 text-body text-ink-primary " +
             (reducedMotion ? "notification-card--reduced-motion" : "notification-card")
           }
         >
