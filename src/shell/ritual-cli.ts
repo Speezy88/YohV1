@@ -203,6 +203,7 @@
 import { createMemoryStore, getRitualInvocation, listSlipHistories, putRitualInvocation, type MemoryStore } from "../adapters/memory-store.ts";
 import { openSqliteConnection, type SqliteConnection } from "../adapters/sqlite.ts";
 import { initCompletionLogSchema, listCompletedTaskIdsOnDate } from "../adapters/completion-log.ts";
+import { initNotificationStoreSchema } from "../adapters/notification-store.ts";
 import {
   createCalendarReadClient,
   createCalendarWriteClient,
@@ -1259,6 +1260,10 @@ export async function main(
   // created idempotently alongside memory-store.ts's, before any subcommand
   // reads or writes it.
   initCompletionLogSchema(connection.db);
+  // Story 7.3 (AD-10/AD-18): a cron one-shot may raise an in-app
+  // notification (needs-data, operational; Story 7.7), so the store's tables
+  // exist before any subcommand runs, even if the server never has.
+  initNotificationStoreSchema(connection.db);
   try {
     if (argv[0] === "night-prompt") {
       let deps: NightPromptRitualDeps;

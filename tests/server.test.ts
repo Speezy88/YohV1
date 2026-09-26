@@ -1,8 +1,10 @@
 /**
  * Tests for `src/shell/server.ts` (Story 7.2; AD-15, AD-17, Consistency
- * Conventions). Hono's `app.request(...)` drives the app in-process, and
+ * Conventions; Story 7.3's notification routes). Hono's `app.request(...)`
+ * drives the app in-process against an in-memory SQLite connection, and
  * `startServer`'s `serve()` call goes through an injected fake — this suite
- * never binds a real port or makes a network call.
+ * never binds a real port or makes a network call. (`GET /api/events` is
+ * covered in `tests/server-events.test.ts`.)
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -10,8 +12,19 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { hc } from "hono/client";
 import type { LogEntry } from "../src/adapters/logger.ts";
+import { openSqliteConnection } from "../src/adapters/sqlite.ts";
+import { createNotification, initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
 import type { AppType, HealthResponse } from "../src/types/api.ts";
-import { app, createApp, startServer, type ServeOptions } from "../src/shell/server.ts";
+import { createApp, startServer, type ServeOptions, type ServerDeps } from "../src/shell/server.ts";
+
+const READ_AT = "2026-09-25T12:00:00.000Z";
+
+function tempApp(overrides: Partial<ServerDeps> = {}) {
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db);
+  const app = createApp({ connection, log: () => {}, clock: () => new Date(READ_AT), ...overrides });
+  return { app, connection };
+}
 
 function fakeServe() {
   const calls: ServeOptions[] = [];
@@ -23,17 +36,29 @@ function fakeServe() {
   return { calls, serveFn, closedCount: () => closed };
 }
 
+function raise(connection: ReturnType<typeof tempApp>["connection"]): string {
+  return createNotification(connection, {
+    kind: "needs-data",
+    title: "Missing fields",
+    body: "3 Tasks need a Due Date",
+    deepLink: "/tasks",
+    createdAt: "2026-09-25T00:00:00.000Z",
+  });
+}
+
 test("GET /api/health returns 200 {ok:true}", async () => {
+  const { app, connection } = tempApp();
   const res = await app.request("/api/health");
   assert.equal(res.status, 200);
   assert.match(res.headers.get("content-type") ?? "", /application\/json/);
   assert.deepEqual(await res.json(), { ok: true });
+  connection.close();
 });
 
 test("every /api request logs one structured line with its duration (Consistency Conventions: Performance)", async () => {
   const entries: LogEntry[] = [];
   const ticks = [1_000, 1_012];
-  const logged = createApp({ log: (e) => entries.push(e), now: () => ticks.shift() ?? 0 });
+  const { app: logged, connection } = tempApp({ log: (e) => entries.push(e), now: () => ticks.shift() ?? 0 });
 
   await logged.request("/api/health");
   const missing = await logged.request("/api/nope");
@@ -46,51 +71,182 @@ test("every /api request logs one structured line with its duration (Consistency
     detail: { method: "GET", path: "/api/health", status: 200, durationMs: 12 },
   });
   assert.equal((entries[1]!.detail as { status: number }).status, 404);
+  connection.close();
+});
+
+test("a handler that throws an Error is still logged, with status 500", async () => {
+  const entries: LogEntry[] = [];
+  const { app: logged, connection } = tempApp({ log: (e) => entries.push(e), now: () => 0 });
+  logged.get("/api/boom", () => {
+    throw new Error("boom");
+  });
+  const res = await logged.request("/api/boom");
+  assert.equal(res.status, 500);
+  assert.equal(entries.length, 1);
+  assert.equal((entries[0]!.detail as { status: number }).status, 500);
+  connection.close();
+});
+
+test("a handler that throws a non-Error value is still logged (try/finally), as a 500, and the throw propagates", async () => {
+  const entries: LogEntry[] = [];
+  const { app: logged, connection } = tempApp({ log: (e) => entries.push(e), now: () => 0 });
+  logged.get("/api/boom", () => {
+    throw "not an Error"; // Hono rethrows non-Error values past onError, straight through the middleware's next()
+  });
+  await assert.rejects(async () => logged.request("/api/boom"));
+  assert.equal(entries.length, 1, "the request log line must not be skipped when next() rejects");
+  assert.deepEqual(entries[0]!.detail, { method: "GET", path: "/api/boom", status: 500, durationMs: 0 });
+  connection.close();
 });
 
 test("the default app's request log is single-line JSON (writeStructuredLog)", async () => {
   const lines: string[] = [];
-  const logged = createApp({ log: (e) => lines.push(`${JSON.stringify(e)}\n`), now: () => 0 });
+  const { app: logged, connection } = tempApp({ log: (e) => lines.push(`${JSON.stringify(e)}\n`), now: () => 0 });
   await logged.request("/api/health");
   assert.equal(lines.length, 1);
   assert.equal(lines[0]!.trimEnd().includes("\n"), false);
   assert.equal(JSON.parse(lines[0]!).event, "server.api-request");
+  connection.close();
 });
 
-test("the typed Hono RPC client, bound to types/api.ts's AppType, reaches /api/health (AD-17, Ruling R2)", async () => {
+test("the typed Hono RPC client, bound to types/api.ts's AppType, reaches /api/health and /api/notifications (AD-17, Ruling R2)", async () => {
+  const { app, connection } = tempApp();
+  const id = raise(connection);
   const client = hc<AppType>("http://yoh.test", { fetch: (input: string | URL | Request, init?: RequestInit) => app.request(input, init) });
-  const res = await client.api.health.$get();
-  const body: HealthResponse = await res.json();
-  assert.deepEqual(body, { ok: true });
+  const health: HealthResponse = await (await client.api.health.$get()).json();
+  assert.deepEqual(health, { ok: true });
+
+  const list = await (await client.api.notifications.$get()).json();
+  assert.equal(list.ok, true);
+  if (list.ok) assert.equal(list.value.notifications[0]!.id, id);
+
+  const marked = await (await client.api.notifications[":id"].read.$post({ param: { id } })).json();
+  assert.deepEqual(marked, { ok: true, value: { id, readAt: READ_AT } });
+
   // The route schema is real, not `any`: an undeclared route doesn't type-check.
   // @ts-expect-error — no /api/nope route exists on AppType.
   assert.equal(typeof client.api.nope, "function");
+  connection.close();
 });
+
+// ---------------------------------------------------------------------------
+// Story 7.3 — notification routes (transport over app/notifications.ts)
+// ---------------------------------------------------------------------------
+
+test("GET /api/notifications returns the serialized Result of the unread list", async () => {
+  const { app, connection } = tempApp();
+  const id = raise(connection);
+  const res = await app.request("/api/notifications");
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), {
+    ok: true,
+    value: {
+      notifications: [
+        {
+          id,
+          kind: "needs-data",
+          title: "Missing fields",
+          body: "3 Tasks need a Due Date",
+          deepLink: "/tasks",
+          createdAt: "2026-09-25T00:00:00.000Z",
+        },
+      ],
+    },
+  });
+  connection.close();
+});
+
+test("POST /api/notifications/:id/read sets readAt via the server clock and the notification leaves the unread list", async () => {
+  const { app, connection } = tempApp();
+  const id = raise(connection);
+  const res = await app.request(`/api/notifications/${id}/read`, { method: "POST" });
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { ok: true, value: { id, readAt: READ_AT } });
+  assert.deepEqual(await (await app.request("/api/notifications")).json(), { ok: true, value: { notifications: [] } });
+  connection.close();
+});
+
+test("POST /api/notifications/:id/read on an unknown id returns 400 with a validation error envelope", async () => {
+  const { app, connection } = tempApp();
+  const res = await app.request("/api/notifications/nope/read", { method: "POST" });
+  assert.equal(res.status, 400);
+  const body = (await res.json()) as { ok: boolean; error: { kind: string } };
+  assert.equal(body.ok, false);
+  assert.equal(body.error.kind, "validation");
+  connection.close();
+});
+
+test("a store failure renders as 503 with an unreachable error envelope, never a thrown 500", async () => {
+  const { app, connection } = tempApp();
+  connection.close();
+  const res = await app.request("/api/notifications");
+  assert.equal(res.status, 503);
+  const body = (await res.json()) as { ok: boolean; error: { kind: string; detail?: unknown } };
+  assert.equal(body.ok, false);
+  assert.equal(body.error.kind, "unreachable");
+  assert.equal("detail" in body.error, false, "the raw adapter error (detail) never crosses the wire");
+});
+
+test("GET on the mark-read route is not allowed — reading must never change read state", async () => {
+  const { app, connection } = tempApp();
+  const id = raise(connection);
+  const res = await app.request(`/api/notifications/${id}/read`);
+  assert.equal(res.status, 404);
+  assert.equal(((await (await app.request("/api/notifications")).json()) as { value: { notifications: unknown[] } }).value.notifications.length, 1);
+  connection.close();
+});
+
+// ---------------------------------------------------------------------------
+// startServer
+// ---------------------------------------------------------------------------
+
+function tempConnection() {
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db);
+  return connection;
+}
 
 test("startServer binds 127.0.0.1 (loopback only), never 0.0.0.0 or an unspecified host (AD-15)", () => {
   const fake = fakeServe();
-  const handle = startServer({}, fake.serveFn);
+  const connection = tempConnection();
+  const handle = startServer(connection, {}, fake.serveFn);
   assert.equal(fake.calls.length, 1);
   assert.equal(fake.calls[0]!.hostname, "127.0.0.1");
   assert.equal(typeof fake.calls[0]!.fetch, "function");
   handle.close();
   assert.equal(fake.closedCount(), 1);
+  connection.close();
+});
+
+test("startServer's app serves the notification routes from the connection it was given", async () => {
+  const fake = fakeServe();
+  const connection = tempConnection();
+  const id = raise(connection);
+  startServer(connection, {}, fake.serveFn);
+  const res = await fake.calls[0]!.fetch(new Request("http://127.0.0.1/api/notifications"));
+  const body = (await res.json()) as { value: { notifications: Array<{ id: string }> } };
+  assert.equal(body.value.notifications[0]!.id, id);
+  connection.close();
 });
 
 test("startServer reads YOH_SERVER_PORT, defaulting to 8787", () => {
   const fake = fakeServe();
-  startServer({}, fake.serveFn);
-  startServer({ YOH_SERVER_PORT: "9999" }, fake.serveFn);
+  const connection = tempConnection();
+  startServer(connection, {}, fake.serveFn);
+  startServer(connection, { YOH_SERVER_PORT: "9999" }, fake.serveFn);
   assert.equal(fake.calls[0]!.port, 8787);
   assert.equal(fake.calls[1]!.port, 9999);
+  connection.close();
 });
 
 test("startServer refuses an invalid YOH_SERVER_PORT instead of binding somewhere unexpected", () => {
+  const connection = tempConnection();
   for (const bad of ["", "abc", "0", "-1", "65536", "80.5", "8787x"]) {
     const fake = fakeServe();
-    assert.throws(() => startServer({ YOH_SERVER_PORT: bad }, fake.serveFn), /YOH_SERVER_PORT/, `port ${JSON.stringify(bad)}`);
+    assert.throws(() => startServer(connection, { YOH_SERVER_PORT: bad }, fake.serveFn), /YOH_SERVER_PORT/, `port ${JSON.stringify(bad)}`);
     assert.equal(fake.calls.length, 0);
   }
+  connection.close();
 });
 
 test("server.ts schedules no ritual: it never imports rituals/ or shell/ritual-cli.ts (AD-5, AD-15)", () => {
@@ -103,4 +259,17 @@ test("server.ts schedules no ritual: it never imports rituals/ or shell/ritual-c
     [],
   );
   assert.doesNotMatch(source, /0\.0\.0\.0/);
+});
+
+test("server.ts is transport only for notifications: it reaches the store's writes only through app/notifications.ts (AD-16)", () => {
+  const source = readFileSync(join(import.meta.dirname, "..", "src", "shell", "server.ts"), "utf8");
+  const storeImport = source.match(/import\s*\{([^}]*)\}\s*from\s*["']\.\.\/adapters\/notification-store\.ts["']/);
+  const imported = (storeImport?.[1] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  assert.ok(imported.includes("tailOutboxSince"), "the SSE route tails the outbox through the store");
+  // No create / mark-read / outbox-append from the shell: those go through app/.
+  assert.deepEqual(
+    imported.filter((name) => /^(createNotification|createNotificationInTx|appendOutboxInTx|markNotificationRead)$/.test(name)),
+    [],
+  );
+  assert.match(source, /from\s*["']\.\.\/app\/notifications\.ts["']/);
 });

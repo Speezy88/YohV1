@@ -12,6 +12,12 @@ The host runs two kinds of process against one SQLite file:
 - `yoh-server` (`src/shell/server.ts`), long-running, supervised by
   systemd with `Restart=always`, bound to `127.0.0.1` only.
 
+Both must open the **same** file: `MEMORY_DB_PATH` from the same `.env`
+(default `./data/yoh-memory.db`, relative to the same working directory).
+A cron one-shot's in-app notification reaches the open Web App only
+through that shared file's outbox (AD-18). If the two resolve different
+paths, notifications from cron silently never appear.
+
 The only way in from another device is `tailscale serve` HTTPS on the
 host's MagicDNS name. Tailnet membership is the authentication: there is
 no login, cookie, or password. **Never** use `tailscale funnel`, a router
@@ -106,3 +112,8 @@ Run `git checkout main && git pull` to return to tracking `main`.
   `tailscale serve status` and that the device is on the tailnet
   (`tailscale status` on that device). Don't "fix" it by binding
   `0.0.0.0` or opening a port. The server must stay on loopback.
+- **Live updates stall but the page loads:** watch the event stream
+  directly with `curl -N https://<host>.<tailnet>.ts.net/api/events`.
+  A `: keep-alive` line should arrive about every 2 s. If lines arrive in
+  bursts or not at all, something between the browser and the server is
+  buffering the stream (see Story 7.3's manual checklist).

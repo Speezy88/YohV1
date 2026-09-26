@@ -10,7 +10,16 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import type { ApiResult, EventHint, HealthResponse, NotificationKind, NotificationRecord } from "../src/types/api.ts";
+import type {
+  ApiResult,
+  EventHint,
+  HealthResponse,
+  MarkNotificationReadRequest,
+  MarkNotificationReadResponse,
+  NotificationKind,
+  NotificationList,
+  NotificationRecord,
+} from "../src/types/api.ts";
 import type { Result, YohError } from "../src/types/domain.ts";
 
 test("ApiResult<T> shapes both branches of the serialized Result envelope", () => {
@@ -92,4 +101,13 @@ test("NotificationRecord matches AD-18's {id, kind, title, body, deepLink, creat
   assert.ok("deepLink" in operational);
   assert.equal(operational.readAt, undefined);
   assert.ok(missingDeepLink && undefinedDeepLink);
+});
+
+test("Story 7.3 notification route shapes: NotificationList, MarkNotificationReadRequest/Response", () => {
+  const list: ApiResult<NotificationList> = { ok: true, value: { notifications: [] } };
+  const request: MarkNotificationReadRequest = { id: "n1" };
+  const response: ApiResult<MarkNotificationReadResponse> = { ok: true, value: { id: "n1", readAt: "2026-09-25T00:00:00.000Z" } };
+  // @ts-expect-error — readAt is required on a mark-read response.
+  const missingReadAt: MarkNotificationReadResponse = { id: "n1" };
+  assert.ok(list.ok && response.ok && request.id && missingReadAt);
 });

@@ -99,6 +99,26 @@ export interface NotificationRecord {
   readonly readAt?: string;
 }
 
+/** `GET /api/notifications`'s value (Story 7.3): every unread notification, oldest first. */
+export interface NotificationList {
+  readonly notifications: readonly NotificationRecord[];
+}
+
+/** `POST /api/notifications/:id/read`'s input (Story 7.3); `id` comes from the path. */
+export interface MarkNotificationReadRequest {
+  readonly id: string;
+}
+
+/**
+ * `POST /api/notifications/:id/read`'s value (Story 7.3). Idempotent: an
+ * already-read notification returns its original `readAt`.
+ */
+export interface MarkNotificationReadResponse {
+  readonly id: string;
+  /** ISO-8601 UTC. */
+  readonly readAt: string;
+}
+
 // ============================================================================
 // Server route type (Ruling R2, AD-17)
 // ============================================================================
