@@ -24,6 +24,7 @@ import {
   putUncheckedDay,
   type MemoryStore,
 } from "../src/adapters/memory-store.ts";
+import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import {
   MORNING_RITUAL_ID,
   PLAN_GENERATION_DEGRADED_THRESHOLD_MS,
@@ -56,7 +57,7 @@ const NOW_ISO = "2026-08-22T13:00:00.000Z";
 const TODAY = "2026-08-22";
 
 function tempStore(): MemoryStore {
-  return createMemoryStore({ databasePath: ":memory:" });
+  return createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
 }
 
 function makeTask(id: string, title: string, overrides: Partial<Task> = {}): Task {

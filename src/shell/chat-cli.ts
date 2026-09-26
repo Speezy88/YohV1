@@ -172,6 +172,7 @@ import {
   type MemoryStore,
   type StoredRecord,
 } from "../adapters/memory-store.ts";
+import { openSqliteConnection } from "../adapters/sqlite.ts";
 import {
   answerGeneralQuestion,
   classifyChatIntent,
@@ -2288,7 +2289,8 @@ export async function main(env: Readonly<Record<string, string | undefined>> = p
   if (!timeZone) {
     throw new Error("chat-cli: missing required environment variable YOH_TIMEZONE (e.g. America/New_York)");
   }
-  const store = createMemoryStore({ databasePath });
+  const connection = openSqliteConnection({ databasePath });
+  const store = createMemoryStore(connection);
   const llmClient = createAnthropicMessagesClient(loadLlmAdapterConfigFromEnv(env));
   const io = createNodeIo();
   const readTasks = async (): Promise<readonly Task[]> => {
@@ -2480,7 +2482,7 @@ export async function main(env: Readonly<Record<string, string | undefined>> = p
       applyCalendarEditFn,
     );
   } finally {
-    store.close();
+    connection.close();
   }
 }
 

@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 08-22-2026 00:00
-last_updated: 09-25-2026 21:26
+last_updated: 09-25-2026 22:57
 project: YohV1
 project_key: NOKEY
 tracking_system: file-system
@@ -86,8 +86,8 @@ development_status:
   6-6-confirm-gated-calendar-editing-beyond-yoh-owned-events: done
   epic-6-retrospective: done
 
-  epic-7: backlog
-  7-1-shared-sqlite-connection-for-concurrent-processes: backlog
+  epic-7: in-progress
+  7-1-shared-sqlite-connection-for-concurrent-processes: done
   7-2-web-server-reachable-only-from-my-devices: backlog
   7-3-in-app-notification-store-and-live-event-stream: backlog
   7-4-server-liveness-alerting-and-nightly-backup: backlog

@@ -46,19 +46,9 @@
  * for that later translation.
  */
 
-import Database from "better-sqlite3";
-import { existsSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import type Database from "better-sqlite3";
 import type { ExternalId, InteractionRequest, IsoDate, IsoDateTime, Plan, TaskFieldOverride, TimeBudget, YohError } from "../types/domain.ts";
-
-// ============================================================================
-// Config
-// ============================================================================
-
-export interface MemoryStoreConfig {
-  /** Path to the SQLite file, or `:memory:` for an ephemeral in-process store (tests). */
-  readonly databasePath: string;
-}
+import type { SqliteConnection } from "./sqlite.ts";
 
 // ============================================================================
 // Stored record shape
@@ -109,36 +99,22 @@ export class ConflictError extends Error {
 // ============================================================================
 
 export class MemoryStore {
-  private readonly db: Database.Database;
+  private readonly connection: SqliteConnection;
 
-  constructor(config: MemoryStoreConfig) {
-    // `better-sqlite3` (like raw SQLite) refuses to create a database file
-    // inside a directory that doesn't exist yet — it throws
-    // "unable to open database file" rather than creating one. On a fresh
-    // checkout using .env.example's documented default
-    // (MEMORY_DB_PATH=./data/yoh-memory.db), `./data/` doesn't exist, so
-    // this step is required for "initializes its SQLite schema on first
-    // run" to actually hold. Mirrors the same pattern `token-store.ts`
-    // already uses before writing its own token file.
-    if (config.databasePath !== ":memory:") {
-      const dir = dirname(config.databasePath);
-      if (dir && dir !== "." && !existsSync(dir)) {
-        mkdirSync(dir, { recursive: true });
-      }
-    }
-
-    this.db = new Database(config.databasePath);
-    this.db.pragma("journal_mode = WAL");
-    // A conflicting writer's SELECT-then-write can otherwise surface SQLite's
-    // own SQLITE_BUSY/SQLITE_BUSY_SNAPSHOT error under real cross-process
-    // contention instead of letting the application-level version check in
-    // `readModifyWrite` run and throw `ConflictError` — see that method's
-    // `.immediate()` usage below for the other half of this fix. A short
-    // busy_timeout gives a genuinely transient lock (as opposed to a real
-    // stale-version conflict) a chance to clear before either error path is
-    // reached.
-    this.db.pragma("busy_timeout = 5000");
+  /**
+   * Constructs a `MemoryStore` over an already-open `SqliteConnection`
+   * (Story 7.1, AD-10 revised for Phase 2) — the connection's WAL mode,
+   * `busy_timeout`, and directory creation are all `adapters/sqlite.ts`'s
+   * responsibility now, not this file's. This is a pure refactor of *how*
+   * the connection is obtained; every read/write method below is unchanged.
+   */
+  constructor(connection: SqliteConnection) {
+    this.connection = connection;
     this.initSchema();
+  }
+
+  private get db(): Database.Database {
+    return this.connection.db;
   }
 
   /**
@@ -204,7 +180,7 @@ export class MemoryStore {
     expectedVersion: number | undefined,
     modify: (current: StoredRecord<T> | undefined) => T,
   ): StoredRecord<T> {
-    const runTransaction = this.db.transaction((): StoredRecord<T> => {
+    return this.connection.writeTx((db): StoredRecord<T> => {
       const row = this.selectRow(kind, id);
       const actualVersion = row?.version;
 
@@ -222,7 +198,7 @@ export class MemoryStore {
       const nextVersion = (row?.version ?? 0) + 1;
       const updatedAt = new Date().toISOString();
 
-      this.db
+      db
         .prepare(
           `INSERT INTO records (kind, id, data, version, updated_at)
            VALUES (@kind, @id, @data, @version, @updatedAt)
@@ -232,8 +208,6 @@ export class MemoryStore {
 
       return { kind, id, data: nextData, version: nextVersion, updatedAt };
     });
-
-    return runTransaction.immediate();
   }
 
   /**
@@ -264,7 +238,7 @@ export class MemoryStore {
    * create/replace a row, never remove one.
    */
   deleteRecord(kind: string, id: string, expectedVersion: number): void {
-    const runTransaction = this.db.transaction((): void => {
+    this.connection.writeTx((db): void => {
       const row = this.selectRow(kind, id);
       const actualVersion = row?.version;
 
@@ -277,14 +251,20 @@ export class MemoryStore {
         );
       }
 
-      this.db.prepare("DELETE FROM records WHERE kind = @kind AND id = @id").run({ kind, id });
+      db.prepare("DELETE FROM records WHERE kind = @kind AND id = @id").run({ kind, id });
     });
-
-    runTransaction.immediate();
   }
 
+  /**
+   * Closes the underlying `SqliteConnection` — delegates rather than owning
+   * a handle of its own (Story 7.1). Kept so every existing `store.close()`
+   * call site in the test suite keeps compiling unchanged; a real process
+   * (`ritual-cli.ts`/`chat-cli.ts`) closes the shared connection directly in
+   * its own `finally` block instead, since a connection shared across
+   * multiple stores must be closed once by its owner, not once per store.
+   */
   close(): void {
-    this.db.close();
+    this.connection.close();
   }
 
   private selectRow(kind: string, id: string): RecordRow | undefined {
@@ -306,9 +286,9 @@ export class MemoryStore {
   }
 }
 
-/** Constructs a `MemoryStore`, initializing its schema if this is the first run against `databasePath`. */
-export function createMemoryStore(config: MemoryStoreConfig): MemoryStore {
-  return new MemoryStore(config);
+/** Constructs a `MemoryStore` over an already-open `SqliteConnection` (Story 7.1, AD-10), initializing its schema if this is the first run against it. */
+export function createMemoryStore(connection: SqliteConnection): MemoryStore {
+  return new MemoryStore(connection);
 }
 
 // ============================================================================

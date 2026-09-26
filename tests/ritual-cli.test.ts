@@ -11,6 +11,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createMemoryStore, getRitualInvocation, putRitualInvocation, putSelfCheckState } from "../src/adapters/memory-store.ts";
 import { recordSlip } from "../src/adapters/memory-store.ts";
+import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { computeSlipBumpLevels } from "../src/core/slip-bump.ts";
 import {
   checkDailyRitualMissedRun,
@@ -693,7 +694,7 @@ test("the four subcommands' failure alerts each name their OWN subcommand, not a
 });
 
 test("createSelfCheckRitualDeps requires YOH_TIMEZONE and Pushover credentials (review fix), but no Notion/Calendar/SMTP", () => {
-  const store = createMemoryStore({ databasePath: ":memory:" });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
 
   assert.throws(() => createSelfCheckRitualDeps(store, {}), /YOH_TIMEZONE/);
   assert.throws(
@@ -736,7 +737,7 @@ const BASE_ENV: Record<string, string> = {
 };
 
 test("createMorningRitualDeps.bumpLevels is genuinely populated from stored SlipHistory rows via the real computeSlipBumpLevels bridge", () => {
-  const store = createMemoryStore({ databasePath: ":memory:" });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
   recordSlip(store, "t1", "2026-08-21");
   recordSlip(store, "t1", "2026-08-22"); // 2 consecutive slips
   recordSlip(store, "t2", "2026-08-22"); // 1 slip
@@ -757,14 +758,14 @@ test("createMorningRitualDeps.bumpLevels is genuinely populated from stored Slip
 });
 
 test("createMorningRitualDeps.bumpLevels is an empty map when no Task has ever slipped — never throws for lack of history", () => {
-  const store = createMemoryStore({ databasePath: ":memory:" });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
   const deps = createMorningRitualDeps(store, BASE_ENV);
   assert.deepEqual(deps.bumpLevels, {});
   store.close();
 });
 
 test("createMorningRitualDeps wires a real writeCalendarPlan function (final whole-branch review, Finding 1 — the 'Yoh Plan' Calendar-write capability must not silently go unwired again)", () => {
-  const store = createMemoryStore({ databasePath: ":memory:" });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
   const deps = createMorningRitualDeps(store, BASE_ENV);
 
   assert.equal(typeof deps.writeCalendarPlan, "function", "a structural check, not just a type-level one — this must not silently regress to unwired");
@@ -801,7 +802,7 @@ const hoursAgo = (h: number) => new Date(CHECK_NOW.getTime() - h * 60 * 60 * 100
 
 for (const subcommand of ["morning", "night-prompt", "night-escalate"]) {
   test(`checkDailyRitualMissedRun("${subcommand}"): a RitualInvocation older than the ${DAILY_RITUAL_MISSED_RUN_GRACE_HOURS}h grace threshold is a missed run`, () => {
-    const store = createMemoryStore({ databasePath: ":memory:" });
+    const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
     putRitualInvocation(store, subcommand, { at: hoursAgo(DAILY_RITUAL_MISSED_RUN_GRACE_HOURS + 12) });
 
     const result = checkDailyRitualMissedRun(store, subcommand, () => CHECK_NOW);
@@ -813,7 +814,7 @@ for (const subcommand of ["morning", "night-prompt", "night-escalate"]) {
 }
 
 test(`checkDailyRitualMissedRun: a RitualInvocation within the ${DAILY_RITUAL_MISSED_RUN_GRACE_HOURS}h grace threshold does NOT trigger a missed run`, () => {
-  const store = createMemoryStore({ databasePath: ":memory:" });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
   putRitualInvocation(store, "morning", { at: hoursAgo(20) });
 
   const result = checkDailyRitualMissedRun(store, "morning", () => CHECK_NOW);
@@ -823,7 +824,7 @@ test(`checkDailyRitualMissedRun: a RitualInvocation within the ${DAILY_RITUAL_MI
 });
 
 test("checkDailyRitualMissedRun: true first-ever cold start (no RitualInvocation at all) does NOT trigger a missed run", () => {
-  const store = createMemoryStore({ databasePath: ":memory:" });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
 
   assert.equal(getRitualInvocation(store, "morning"), undefined, "sanity: nothing stored yet");
   const result = checkDailyRitualMissedRun(store, "morning", () => CHECK_NOW);
@@ -839,7 +840,7 @@ test("checkDailyRitualMissedRun: true first-ever cold start (no RitualInvocation
 // "unanswered prompt" regression tests further below for why that mattered.
 
 test(`checkSelfCheckMissedRun: a RitualInvocation older than the ${SELF_CHECK_MISSED_RUN_GRACE_DAYS}-day grace threshold is a missed run`, () => {
-  const store = createMemoryStore({ databasePath: ":memory:" });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
   putRitualInvocation(store, "self-check", { at: hoursAgo(SELF_CHECK_MISSED_RUN_GRACE_DAYS * 24 + 12) });
 
   const result = checkSelfCheckMissedRun(store, () => CHECK_NOW);
@@ -850,7 +851,7 @@ test(`checkSelfCheckMissedRun: a RitualInvocation older than the ${SELF_CHECK_MI
 });
 
 test(`checkSelfCheckMissedRun: a RitualInvocation within the ${SELF_CHECK_MISSED_RUN_GRACE_DAYS}-day grace threshold does NOT trigger a missed run`, () => {
-  const store = createMemoryStore({ databasePath: ":memory:" });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
   putRitualInvocation(store, "self-check", { at: hoursAgo(24 * 3) }); // 3 days ago — well within grace
 
   const result = checkSelfCheckMissedRun(store, () => CHECK_NOW);
@@ -860,7 +861,7 @@ test(`checkSelfCheckMissedRun: a RitualInvocation within the ${SELF_CHECK_MISSED
 });
 
 test("checkSelfCheckMissedRun: true first-ever cold start (no RitualInvocation at all) does NOT trigger a missed run", () => {
-  const store = createMemoryStore({ databasePath: ":memory:" });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
 
   assert.equal(getRitualInvocation(store, "self-check"), undefined, "sanity: nothing stored yet");
   const result = checkSelfCheckMissedRun(store, () => CHECK_NOW);
@@ -930,7 +931,7 @@ test("REVIEW FIX (Critical): checkMissedRun() throwing does not suppress Task 25
 // success is still recognized as a genuine invocation.
 
 test("REVIEW FIX (Important): `morning`'s 'nothing-to-plan' no-op (writes no RitualRun) still records an invocation — a LATER check does not false-alarm", async () => {
-  const store = createMemoryStore({ databasePath: ":memory:" });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
   const s = sink();
   const code = await runRitualCli(
     ["morning"],
@@ -952,7 +953,7 @@ test("REVIEW FIX (Important): `morning`'s 'nothing-to-plan' no-op (writes no Rit
 });
 
 test("REVIEW FIX (Important): `night-prompt`'s 'no-plan-today' no-op (writes no RitualRun) still records an invocation — a LATER check does not false-alarm", async () => {
-  const store = createMemoryStore({ databasePath: ":memory:" });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
   const s = sink();
   const code = await runRitualCli(
     ["night-prompt"],
@@ -974,7 +975,7 @@ test("REVIEW FIX (Important): `night-prompt`'s 'no-plan-today' no-op (writes no 
 });
 
 test("REVIEW FIX (Important): `night-escalate`'s 'not-prompted-yet' no-op (writes no RitualRun) still records an invocation — a LATER check does not false-alarm, even across the interlocking no-op chain (morning -> night-prompt -> night-escalate all quiet)", async () => {
-  const store = createMemoryStore({ databasePath: ":memory:" });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
   const s = sink();
 
   // The exact interlocking scenario from the review: a day with nothing
@@ -1041,7 +1042,7 @@ test("REVIEW FIX (Important): `night-escalate`'s 'not-prompted-yet' no-op (write
 });
 
 test("REVIEW FIX (Important): self-check's unanswered-but-normal 'already-open' prompt (SelfCheckState.nextDueDate stuck far in the past) does NOT cause a false missed-run alarm across several daily invocations — checkSelfCheckMissedRun no longer reads SelfCheckState at all", async () => {
-  const store = createMemoryStore({ databasePath: ":memory:" });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
   // The exact regression scenario: an open Self-Check prompt Spencer hasn't
   // answered yet — SelfCheckState.nextDueDate never advances past this (a
   // genuinely normal, designed-for state; see self-check.ts's own
@@ -1174,7 +1175,7 @@ test("a missed-run alert AND a same-run Result failure both fire — two distinc
 // asserted about a mock.
 
 test("SELF-HEALING: after a missed-run alert fires for `morning`, the ritual still runs its own work and a FRESH RitualInvocation marker is recorded (a single missed day never cascades)", async () => {
-  const store = createMemoryStore({ databasePath: ":memory:" });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
   const STALE_AT = hoursAgo(DAILY_RITUAL_MISSED_RUN_GRACE_HOURS + 48); // well past the grace threshold
   putRitualInvocation(store, "morning", { at: STALE_AT });
 
@@ -1257,7 +1258,7 @@ function captureStderr(): { restore: () => void; chunks: string[] } {
 }
 
 test("createMorningRitualDeps.log delegates to the shared structured-log writer (one JSON line to stderr)", () => {
-  const store = createMemoryStore({ databasePath: ":memory:" });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
   const deps = createMorningRitualDeps(store, BASE_ENV);
   const capture = captureStderr();
   try {
@@ -1271,7 +1272,7 @@ test("createMorningRitualDeps.log delegates to the shared structured-log writer 
 });
 
 test("createNightPromptRitualDeps.log delegates to the shared structured-log writer", () => {
-  const store = createMemoryStore({ databasePath: ":memory:" });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
   const deps = createNightPromptRitualDeps(store, { YOH_TIMEZONE: "America/New_York", PUSHOVER_APP_TOKEN: "x", PUSHOVER_USER_KEY: "y" });
   const capture = captureStderr();
   try {
@@ -1285,7 +1286,7 @@ test("createNightPromptRitualDeps.log delegates to the shared structured-log wri
 });
 
 test("createNightEscalateRitualDeps.log delegates to the shared structured-log writer", () => {
-  const store = createMemoryStore({ databasePath: ":memory:" });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
   const deps = createNightEscalateRitualDeps(store, {
     YOH_TIMEZONE: "America/New_York",
     SMTP_HOST: "smtp.example.com",
@@ -1306,7 +1307,7 @@ test("createNightEscalateRitualDeps.log delegates to the shared structured-log w
 });
 
 test("createSelfCheckRitualDeps.log delegates to the shared structured-log writer", () => {
-  const store = createMemoryStore({ databasePath: ":memory:" });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
   const deps = createSelfCheckRitualDeps(store, { YOH_TIMEZONE: "America/New_York", PUSHOVER_APP_TOKEN: "x", PUSHOVER_USER_KEY: "y" });
   const capture = captureStderr();
   try {

@@ -32,6 +32,7 @@ import {
 import { NIGHT_CLOSE_OUT_REQUEST_ID, runNightEscalateRitual, runNightPromptRitual } from "../src/rituals/night-ritual.ts";
 import { runSelfCheckRitual, SELF_CHECK_REQUEST_ID } from "../src/rituals/self-check.ts";
 import type { MemoryStore } from "../src/adapters/memory-store.ts";
+import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import {
   surfaceOpenInteractionRequests,
   runChatCli,
@@ -86,7 +87,7 @@ import type {
 } from "../src/types/domain.ts";
 
 function tempStore(): MemoryStore {
-  return createMemoryStore({ databasePath: ":memory:" });
+  return createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
 }
 
 /**

@@ -51,6 +51,7 @@ import {
   type MemoryStore,
   type Plan,
 } from "../src/adapters/memory-store.ts";
+import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import type { TimeBudget } from "../src/types/domain.ts";
 
 /**
@@ -90,7 +91,7 @@ test("creates the database file's parent directory when it doesn't exist yet (fr
   const parentDir = mkdtempSync(join(tmpdir(), "yoh-memory-store-test-"));
   const dbPath = join(parentDir, "nested", "not-yet-created", "yoh-memory.db");
 
-  const store = createMemoryStore({ databasePath: dbPath });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: dbPath }));
   const created = store.readModifyWrite<{ ok: boolean }>("smoke", "1", undefined, () => ({ ok: true }));
   assert.equal(created.version, 1);
   store.close();
@@ -98,7 +99,7 @@ test("creates the database file's parent directory when it doesn't exist yet (fr
 
 test("initializes its SQLite schema on first run", () => {
   const dbPath = tempDbPath();
-  const store = createMemoryStore({ databasePath: dbPath });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: dbPath }));
 
   // Verify against a completely separate raw connection, not the store's
   // own API, so this is a genuine assertion about what's on disk.
@@ -114,14 +115,14 @@ test("initializes its SQLite schema on first run", () => {
 
 test("schema init is idempotent: reopening an existing store does not throw and preserves prior data", () => {
   const dbPath = tempDbPath();
-  const first = createMemoryStore({ databasePath: dbPath });
+  const first = createMemoryStore(openSqliteConnection({ databasePath: dbPath }));
   first.readModifyWrite<{ label: string }>("time-budget", "2026-08-22", undefined, () => ({
     label: "first",
   }));
   first.close();
 
   assert.doesNotThrow(() => {
-    const second = createMemoryStore({ databasePath: dbPath });
+    const second = createMemoryStore(openSqliteConnection({ databasePath: dbPath }));
     const record = second.getRecord<{ label: string }>("time-budget", "2026-08-22");
     assert.equal(record?.data.label, "first");
     second.close();
@@ -129,7 +130,7 @@ test("schema init is idempotent: reopening an existing store does not throw and 
 });
 
 test("readModifyWrite creates a new record at version 1 when none exists", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
 
   const result = store.readModifyWrite<{ totalMinutes: number }>(
     "time-budget",
@@ -147,7 +148,7 @@ test("readModifyWrite creates a new record at version 1 when none exists", () =>
 });
 
 test("readModifyWrite updates an existing record and increments version when expectedVersion matches", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
 
   const created = store.readModifyWrite<{ totalMinutes: number }>(
     "time-budget",
@@ -173,8 +174,8 @@ test("readModifyWrite surfaces a conflicting write as a ConflictError carrying Y
   const dbPath = tempDbPath();
   // Two independent connections to the same file model two concurrent
   // processes (ritual-cli.ts, chat-cli.ts) per AD-10.
-  const writerA = createMemoryStore({ databasePath: dbPath });
-  const writerB = createMemoryStore({ databasePath: dbPath });
+  const writerA = createMemoryStore(openSqliteConnection({ databasePath: dbPath }));
+  const writerB = createMemoryStore(openSqliteConnection({ databasePath: dbPath }));
 
   const created = writerA.readModifyWrite<{ totalMinutes: number }>(
     "time-budget",
@@ -209,7 +210,7 @@ test("readModifyWrite surfaces a conflicting write as a ConflictError carrying Y
 });
 
 test("readModifyWrite rolls back and leaves the stored record unchanged when the modify callback throws", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
 
   store.readModifyWrite<{ totalMinutes: number }>("time-budget", "2026-08-22", undefined, () => ({
     totalMinutes: 480,
@@ -228,7 +229,7 @@ test("readModifyWrite rolls back and leaves the stored record unchanged when the
 });
 
 test("getRecord returns undefined for a record that doesn't exist", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   assert.equal(store.getRecord("time-budget", "does-not-exist"), undefined);
   store.close();
 });
@@ -247,13 +248,13 @@ test("AD-10: memory-store.ts does not import google-auth-library (token-store.ts
 // ============================================================================
 
 test("listRecordsByKind returns an empty array for a kind with no records", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   assert.deepEqual(store.listRecordsByKind("interaction-request"), []);
   store.close();
 });
 
 test("listRecordsByKind returns every record for a kind, ordered by id, excluding other kinds", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   store.readModifyWrite<{ n: number }>("widget", "b", undefined, () => ({ n: 2 }));
   store.readModifyWrite<{ n: number }>("widget", "a", undefined, () => ({ n: 1 }));
   store.readModifyWrite<{ n: number }>("gadget", "z", undefined, () => ({ n: 99 }));
@@ -271,7 +272,7 @@ test("listRecordsByKind returns every record for a kind, ordered by id, excludin
 });
 
 test("deleteRecord removes a record when expectedVersion matches", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   const created = store.readModifyWrite<{ n: number }>("widget", "a", undefined, () => ({ n: 1 }));
 
   store.deleteRecord("widget", "a", created.version);
@@ -281,7 +282,7 @@ test("deleteRecord removes a record when expectedVersion matches", () => {
 });
 
 test("deleteRecord throws ConflictError (YohError.kind: 'conflict') when expectedVersion is stale", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   store.readModifyWrite<{ n: number }>("widget", "a", undefined, () => ({ n: 1 }));
 
   assert.throws(
@@ -298,7 +299,7 @@ test("deleteRecord throws ConflictError (YohError.kind: 'conflict') when expecte
 });
 
 test("deleteRecord throws ConflictError when deleting a record that doesn't exist", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   assert.throws(
     () => store.deleteRecord("widget", "does-not-exist", 1),
     (err: unknown) => err instanceof ConflictError,
@@ -324,7 +325,7 @@ function makeRequest(overrides: Partial<InteractionRequest> = {}): InteractionRe
 }
 
 test("putOpenInteractionRequest persists a new request retrievable via getOpenInteractionRequest", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   putOpenInteractionRequest(store, "data-completeness", makeRequest());
 
   const record = getOpenInteractionRequest(store, "data-completeness");
@@ -335,13 +336,13 @@ test("putOpenInteractionRequest persists a new request retrievable via getOpenIn
 });
 
 test("getOpenInteractionRequest returns undefined when none is open for that id", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   assert.equal(getOpenInteractionRequest(store, "data-completeness"), undefined);
   store.close();
 });
 
 test("putOpenInteractionRequest called twice for the same id replaces the request's content (upsert, no caller-tracked version needed)", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   putOpenInteractionRequest(store, "data-completeness", makeRequest({ promptText: "first" }));
   putOpenInteractionRequest(store, "data-completeness", makeRequest({ promptText: "second, more Tasks now incomplete" }));
 
@@ -352,7 +353,7 @@ test("putOpenInteractionRequest called twice for the same id replaces the reques
 });
 
 test("listOpenInteractionRequests surfaces every open request across different ids/kinds", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   putOpenInteractionRequest(store, "data-completeness", makeRequest({ requestKind: "data-completeness" }));
   putOpenInteractionRequest(
     store,
@@ -369,7 +370,7 @@ test("listOpenInteractionRequests surfaces every open request across different i
 });
 
 test("clearInteractionRequest removes the request; it no longer appears via get or list", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   const stored = putOpenInteractionRequest(store, "data-completeness", makeRequest());
 
   clearInteractionRequest(store, "data-completeness", stored.version);
@@ -380,7 +381,7 @@ test("clearInteractionRequest removes the request; it no longer appears via get 
 });
 
 test("full persist -> surface -> clear cycle: after clearing, a fresh put starts a new request at version 1 again", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   const first = putOpenInteractionRequest(store, "data-completeness", makeRequest());
   clearInteractionRequest(store, "data-completeness", first.version);
 
@@ -396,13 +397,13 @@ test("full persist -> surface -> clear cycle: after clearing, a fresh put starts
 // ============================================================================
 
 test("getTaskFieldOverride returns undefined when nothing has been answered for that Task yet", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   assert.equal(getTaskFieldOverride(store, "task-1"), undefined);
   store.close();
 });
 
 test("mergeTaskFieldOverride creates a new override record on first answer", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   mergeTaskFieldOverride(store, "task-1", { area: "Work" });
 
   const record = getTaskFieldOverride(store, "task-1");
@@ -412,7 +413,7 @@ test("mergeTaskFieldOverride creates a new override record on first answer", () 
 });
 
 test("mergeTaskFieldOverride called again for the same Task adds a field without clobbering a previously-answered one", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   mergeTaskFieldOverride(store, "task-1", { area: "Work" });
   mergeTaskFieldOverride(store, "task-1", { estimatedDurationMinutes: 30 });
 
@@ -423,7 +424,7 @@ test("mergeTaskFieldOverride called again for the same Task adds a field without
 });
 
 test("mergeTaskFieldOverride overwrites a field's previous value when answered again for the same field", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   mergeTaskFieldOverride(store, "task-1", { area: "Work" });
   mergeTaskFieldOverride(store, "task-1", { area: "Health" });
 
@@ -432,7 +433,7 @@ test("mergeTaskFieldOverride overwrites a field's previous value when answered a
 });
 
 test("overrides for different Tasks are stored independently", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   mergeTaskFieldOverride(store, "task-1", { area: "Work" });
   mergeTaskFieldOverride(store, "task-2", { area: "Health" });
 
@@ -460,13 +461,13 @@ function makeTimeBudget(overrides: Partial<TimeBudget> = {}): TimeBudget {
 }
 
 test("getCurrentTimeBudget returns undefined when Spencer has never declared a Time Budget", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   assert.equal(getCurrentTimeBudget(store), undefined);
   store.close();
 });
 
 test("putTimeBudget persists a new Time Budget retrievable via getCurrentTimeBudget, at version 1", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   putTimeBudget(store, makeTimeBudget());
 
   const record = getCurrentTimeBudget(store);
@@ -477,7 +478,7 @@ test("putTimeBudget persists a new Time Budget retrievable via getCurrentTimeBud
 });
 
 test("putTimeBudget called again replaces the value in place (upsert), not a new row per day", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   putTimeBudget(store, makeTimeBudget({ date: "2026-08-21", totalMinutes: 360 }));
   putTimeBudget(store, makeTimeBudget({ date: "2026-08-25", totalMinutes: 240 }));
 
@@ -509,7 +510,7 @@ test("putTimeBudget called again replaces the value in place (upsert), not a new
 // above already covers — they intentionally add no additional coverage
 // beyond it.
 test("documents: a declared Time Budget has no per-day expiry to simulate — reading again returns it unchanged (no date-based logic exists to test)", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   putTimeBudget(store, makeTimeBudget({ date: "2026-08-21", totalMinutes: 360 }));
 
   // Reading again is the entire test: there is no "advance to the next
@@ -522,7 +523,7 @@ test("documents: a declared Time Budget has no per-day expiry to simulate — re
 });
 
 test("documents: the AC's Friday-declared/Monday-read weekend-boundary guarantee holds by construction, not by a simulated clock (getCurrentTimeBudget takes no date and applies no date filter)", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   putTimeBudget(store, makeTimeBudget({ date: "2026-08-21", totalMinutes: 360 })); // Friday
 
   // No clock is mocked or advanced — this call happens at the same instant
@@ -541,7 +542,7 @@ test("documents: the AC's Friday-declared/Monday-read weekend-boundary guarantee
 // ============================================================================
 
 test("recordSlip: a Task's first reported slip creates a SlipHistory row with consecutiveSlipCount 1", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   assert.equal(getSlipHistory(store, "task-1"), undefined, "sanity: no slip history before any slip is recorded");
 
   const record = recordSlip(store, "task-1", "2026-08-20");
@@ -555,7 +556,7 @@ test("recordSlip: a Task's first reported slip creates a SlipHistory row with co
 });
 
 test("recordSlip: called again for the same Task increments consecutiveSlipCount (consecutive slips accumulate)", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   recordSlip(store, "task-1", "2026-08-20");
   recordSlip(store, "task-1", "2026-08-21");
   const third = recordSlip(store, "task-1", "2026-08-22");
@@ -567,7 +568,7 @@ test("recordSlip: called again for the same Task increments consecutiveSlipCount
 });
 
 test("recordSlip: calling it twice for the SAME slipDate is a no-op — does not double-increment (Task 19 review fix)", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   const first = recordSlip(store, "task-1", "2026-08-20");
   assert.equal(first.data.consecutiveSlipCount, 1);
 
@@ -582,7 +583,7 @@ test("recordSlip: calling it twice for the SAME slipDate is a no-op — does not
 });
 
 test("recordSlip: two different Tasks accumulate independent consecutive-slip counts", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   recordSlip(store, "task-a", "2026-08-20");
   recordSlip(store, "task-a", "2026-08-21");
   recordSlip(store, "task-b", "2026-08-21");
@@ -593,7 +594,7 @@ test("recordSlip: two different Tasks accumulate independent consecutive-slip co
 });
 
 test("clearSlip: a Task's Slip-Bump is cleared on completion, not carried indefinitely (AC)", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   recordSlip(store, "task-1", "2026-08-20");
   assert.equal(getSlipHistory(store, "task-1")?.data.consecutiveSlipCount, 1);
 
@@ -603,7 +604,7 @@ test("clearSlip: a Task's Slip-Bump is cleared on completion, not carried indefi
 });
 
 test("clearSlip: a subsequent NEW slip after a clear starts back at 1, not carried forward from before the clear", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   recordSlip(store, "task-1", "2026-08-20");
   recordSlip(store, "task-1", "2026-08-21");
   clearSlip(store, "task-1"); // Task completed.
@@ -614,14 +615,14 @@ test("clearSlip: a subsequent NEW slip after a clear starts back at 1, not carri
 });
 
 test("clearSlip: clearing a Task with no slip history at all is a harmless no-op", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   assert.doesNotThrow(() => clearSlip(store, "task-never-slipped"));
   assert.equal(getSlipHistory(store, "task-never-slipped"), undefined);
   store.close();
 });
 
 test("listSlipHistories: lists every Task's current slip history, across every taskId", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   recordSlip(store, "task-a", "2026-08-20");
   recordSlip(store, "task-b", "2026-08-20");
   recordSlip(store, "task-b", "2026-08-21");
@@ -634,7 +635,7 @@ test("listSlipHistories: lists every Task's current slip history, across every t
 });
 
 test("listSlipHistories: a cleared Task's history no longer appears in the list", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   recordSlip(store, "task-a", "2026-08-20");
   recordSlip(store, "task-b", "2026-08-20");
   clearSlip(store, "task-a");
@@ -647,11 +648,11 @@ test("listSlipHistories: a cleared Task's history no longer appears in the list"
 
 test("recordSlip: persists across a second connection to the same on-disk file (schema/storage genuinely durable, not just in-process)", () => {
   const dbPath = tempDbPath();
-  const store1 = createMemoryStore({ databasePath: dbPath });
+  const store1 = createMemoryStore(openSqliteConnection({ databasePath: dbPath }));
   recordSlip(store1, "task-1", "2026-08-20");
   store1.close();
 
-  const store2 = createMemoryStore({ databasePath: dbPath });
+  const store2 = createMemoryStore(openSqliteConnection({ databasePath: dbPath }));
   const read = getSlipHistory(store2, "task-1");
   assert.equal(read?.data.consecutiveSlipCount, 1);
   store2.close();
@@ -662,13 +663,13 @@ test("recordSlip: persists across a second connection to the same on-disk file (
 // ============================================================================
 
 test("getTimeBudgetDeferralStreak returns undefined when no streak has ever been recorded", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   assert.equal(getTimeBudgetDeferralStreak(store), undefined);
   store.close();
 });
 
 test("putTimeBudgetDeferralStreak persists a streak retrievable via getTimeBudgetDeferralStreak, at version 1", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   const written = putTimeBudgetDeferralStreak(store, { consecutiveDeferralDays: 1, lastDeferralDate: "2026-08-20" });
   assert.equal(written.version, 1);
 
@@ -678,7 +679,7 @@ test("putTimeBudgetDeferralStreak persists a streak retrievable via getTimeBudge
 });
 
 test("putTimeBudgetDeferralStreak called again replaces the value in place (upsert), not a second row, bumping the version", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   putTimeBudgetDeferralStreak(store, { consecutiveDeferralDays: 1, lastDeferralDate: "2026-08-20" });
   const second = putTimeBudgetDeferralStreak(store, { consecutiveDeferralDays: 2, lastDeferralDate: "2026-08-21" });
 
@@ -688,7 +689,7 @@ test("putTimeBudgetDeferralStreak called again replaces the value in place (upse
 });
 
 test("clearTimeBudgetDeferralStreak removes the streak entirely — it reads back exactly as if it never existed", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   putTimeBudgetDeferralStreak(store, { consecutiveDeferralDays: 3, lastDeferralDate: "2026-08-22" });
   assert.ok(getTimeBudgetDeferralStreak(store));
 
@@ -698,7 +699,7 @@ test("clearTimeBudgetDeferralStreak removes the streak entirely — it reads bac
 });
 
 test("clearTimeBudgetDeferralStreak on a store with no streak recorded is a harmless no-op", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   assert.doesNotThrow(() => clearTimeBudgetDeferralStreak(store));
   store.close();
 });
@@ -708,13 +709,13 @@ test("clearTimeBudgetDeferralStreak on a store with no streak recorded is a harm
 // ============================================================================
 
 test("getUncheckedDay returns undefined for a date that was never left unchecked", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   assert.equal(getUncheckedDay(store, "2026-08-21"), undefined);
   store.close();
 });
 
 test("putUncheckedDay persists a record retrievable via getUncheckedDay, at version 1", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   const record = putUncheckedDay(store, {
     date: "2026-08-21",
     rolledForwardTasks: [{ taskId: "t1", taskTitle: "Draft the memo" }],
@@ -730,7 +731,7 @@ test("putUncheckedDay persists a record retrievable via getUncheckedDay, at vers
 });
 
 test("an UncheckedDay row's mere presence is what distinguishes an unchecked night from a normally-closed one — a closed night has NO row at all, ever", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   // "2026-08-20" was closed out normally — nothing in this codebase ever
   // calls putUncheckedDay for it.
   putUncheckedDay(store, {
@@ -745,7 +746,7 @@ test("an UncheckedDay row's mere presence is what distinguishes an unchecked nig
 });
 
 test("putUncheckedDay called again for the same date replaces the record (upsert), not a second row", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   putUncheckedDay(store, {
     date: "2026-08-21",
     rolledForwardTasks: [{ taskId: "t1", taskTitle: "Draft the memo" }],
@@ -765,7 +766,7 @@ test("putUncheckedDay called again for the same date replaces the record (upsert
 });
 
 test("listUncheckedDays lists every night ever recorded as unchecked, across every date", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   putUncheckedDay(store, { date: "2026-08-19", rolledForwardTasks: [], recordedAt: "2026-08-20T13:00:00.000Z" });
   putUncheckedDay(store, { date: "2026-08-21", rolledForwardTasks: [], recordedAt: "2026-08-22T13:00:00.000Z" });
 
@@ -776,7 +777,7 @@ test("listUncheckedDays lists every night ever recorded as unchecked, across eve
 });
 
 test("markUncheckedDayShown stamps shownAt on an existing record without disturbing rolledForwardTasks/recordedAt, and bumps its version", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   putUncheckedDay(store, {
     date: "2026-08-21",
     rolledForwardTasks: [{ taskId: "t1", taskTitle: "Draft the memo" }],
@@ -797,7 +798,7 @@ test("markUncheckedDayShown stamps shownAt on an existing record without disturb
 });
 
 test("markUncheckedDayShown returns undefined (a clean no-op, NOT a throw) when no UncheckedDay record exists for that date — Task 21 Minor post-review fix: a concurrent clearUncheckedDay is a real, reachable case, not a bug", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   assert.doesNotThrow(() => markUncheckedDayShown(store, "2026-08-21", "2026-08-22T13:00:00.000Z"));
   const result = markUncheckedDayShown(store, "2026-08-21", "2026-08-22T13:00:00.000Z");
   assert.equal(result, undefined);
@@ -805,7 +806,7 @@ test("markUncheckedDayShown returns undefined (a clean no-op, NOT a throw) when 
 });
 
 test("markUncheckedDayShown resolves cleanly (no throw) even when the row is deleted BETWEEN its own internal read and write — the cross-process race the Minor fix targets", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   putUncheckedDay(store, {
     date: "2026-08-21",
     rolledForwardTasks: [{ taskId: "t1", taskTitle: "Draft the memo" }],
@@ -829,7 +830,7 @@ test("markUncheckedDayShown resolves cleanly (no throw) even when the row is del
 });
 
 test("clearUncheckedDay removes an existing UncheckedDay record — it reads back exactly as if that night was never unchecked", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   putUncheckedDay(store, {
     date: "2026-08-21",
     rolledForwardTasks: [{ taskId: "t1", taskTitle: "Draft the memo" }],
@@ -844,14 +845,14 @@ test("clearUncheckedDay removes an existing UncheckedDay record — it reads bac
 });
 
 test("clearUncheckedDay is a harmless no-op when no record exists for that date", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   assert.doesNotThrow(() => clearUncheckedDay(store, "2026-08-21"));
   assert.equal(getUncheckedDay(store, "2026-08-21"), undefined);
   store.close();
 });
 
 test("clearUncheckedDay only removes the record for its OWN date — a different date's row is untouched", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   putUncheckedDay(store, { date: "2026-08-19", rolledForwardTasks: [], recordedAt: "2026-08-20T13:00:00.000Z" });
   putUncheckedDay(store, { date: "2026-08-21", rolledForwardTasks: [], recordedAt: "2026-08-22T13:00:00.000Z" });
 
@@ -866,13 +867,13 @@ test("clearUncheckedDay only removes the record for its OWN date — a different
 // ============================================================================
 
 test("getSelfCheckState returns undefined before any schedule has ever been initialized (cold start)", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   assert.equal(getSelfCheckState(store), undefined);
   store.close();
 });
 
 test("putSelfCheckState persists a record retrievable via getSelfCheckState, at version 1", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   const record = putSelfCheckState(store, { nextDueDate: "2026-08-26", nextDueMinuteOfDay: 600 });
   assert.equal(record.version, 1);
 
@@ -885,7 +886,7 @@ test("putSelfCheckState persists a record retrievable via getSelfCheckState, at 
 });
 
 test("putSelfCheckState called again replaces the value in place (upsert), not a second row", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   putSelfCheckState(store, { nextDueDate: "2026-08-26", nextDueMinuteOfDay: 600 });
   const second = putSelfCheckState(store, {
     nextDueDate: "2026-08-28",
@@ -933,7 +934,7 @@ test("HOT_MEMORY_WINDOW_DAYS/COLD_MEMORY_DEFAULT_LOOKBACK_DAYS are documented po
 });
 
 test("readHotMemory bundles today's Plan, current Time Budget, and named ritual-run markers", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   putPlan(store, makePlan());
   putTimeBudget(store, makeTimeBudget({ date: "2026-08-22", totalMinutes: 300 }));
   putRitualRun(store, "morning", { date: "2026-08-22", ranAt: "2026-08-22T13:00:00.000Z" });
@@ -948,7 +949,7 @@ test("readHotMemory bundles today's Plan, current Time Budget, and named ritual-
 });
 
 test("readHotMemory returns undefined fields (not throws) when nothing has been declared/generated/run yet", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   const hot = readHotMemory(store, "2026-08-22", ["morning"]);
   assert.equal(hot.plan, undefined);
   assert.equal(hot.timeBudget, undefined);
@@ -958,13 +959,13 @@ test("readHotMemory returns undefined fields (not throws) when nothing has been 
 
 test("STRUCTURAL: readHotMemory never calls listRecordsByKind — a hot read is always addressed by (kind, id), never a full-table scan", () => {
   const dbPath = tempDbPath();
-  const real = createMemoryStore({ databasePath: dbPath });
+  const real = createMemoryStore(openSqliteConnection({ databasePath: dbPath }));
   putPlan(real, makePlan());
   putTimeBudget(real, makeTimeBudget({ date: "2026-08-22" }));
   putRitualRun(real, "morning", { date: "2026-08-22", ranAt: "2026-08-22T13:00:00.000Z" });
   real.close();
 
-  const store = createMemoryStore({ databasePath: dbPath });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: dbPath }));
   const { store: spiedStore, callCount } = spyOnListRecordsByKind(store);
 
   readHotMemory(spiedStore, "2026-08-22", ["morning", "night-prompt", "night-escalate"]);
@@ -974,7 +975,7 @@ test("STRUCTURAL: readHotMemory never calls listRecordsByKind — a hot read is 
 });
 
 test("STRUCTURAL: queryColdMemoryPatterns DOES use listRecordsByKind — the cold path is a genuine full scan, unlike the hot path above", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   const { store: spiedStore, callCount } = spyOnListRecordsByKind(store);
 
   queryColdMemoryPatterns(spiedStore, { asOfDate: "2026-08-22" });
@@ -989,7 +990,7 @@ test("STRUCTURAL: queryColdMemoryPatterns DOES use listRecordsByKind — the col
 // ----------------------------------------------------------------------------
 
 test("queryColdMemoryPatterns: a Task that slipped 3 times over 2 weeks produces an accurate slip-streak pattern-statement", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   recordSlip(store, "task-1", "2026-08-09");
   recordSlip(store, "task-1", "2026-08-15");
   recordSlip(store, "task-1", "2026-08-22");
@@ -1003,7 +1004,7 @@ test("queryColdMemoryPatterns: a Task that slipped 3 times over 2 weeks produces
 });
 
 test("queryColdMemoryPatterns POST-REVIEW FIX (Important #1): a lifetime slip streak spread across months is NOT misrepresented as having all happened within the lookback window — only 1 of 5 recorded slips actually falls inside the 30-day window, and the statement must not claim otherwise", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   // Reviewer's exact reproduction scenario: a Task that keeps slipping
   // without ever completing (so clearSlip never resets it — Task 17's
   // design) accumulates a lifetime consecutiveSlipCount across slips spread
@@ -1035,7 +1036,7 @@ test("queryColdMemoryPatterns POST-REVIEW FIX (Important #1): a lifetime slip st
 });
 
 test("queryColdMemoryPatterns: 2 unchecked nights in the last month produce an accurate unchecked-nights pattern-statement", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   putUncheckedDay(store, { date: "2026-08-01", rolledForwardTasks: [], recordedAt: "2026-08-02T13:00:00.000Z" });
   putUncheckedDay(store, { date: "2026-08-10", rolledForwardTasks: [], recordedAt: "2026-08-11T13:00:00.000Z" });
 
@@ -1051,7 +1052,7 @@ test("queryColdMemoryPatterns: 2 unchecked nights in the last month produce an a
 });
 
 test("queryColdMemoryPatterns: singularizes 'night was' correctly when exactly one unchecked night is in range", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   putUncheckedDay(store, { date: "2026-08-10", rolledForwardTasks: [], recordedAt: "2026-08-11T13:00:00.000Z" });
 
   const patterns = queryColdMemoryPatterns(store, { asOfDate: "2026-08-22" });
@@ -1064,7 +1065,7 @@ test("queryColdMemoryPatterns: singularizes 'night was' correctly when exactly o
 });
 
 test("queryColdMemoryPatterns: a single (non-repeating) slip does not produce a 'pattern' — only genuine repeats (>= 2) are reported", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   recordSlip(store, "task-1", "2026-08-20");
 
   const patterns = queryColdMemoryPatterns(store, { asOfDate: "2026-08-22" });
@@ -1073,7 +1074,7 @@ test("queryColdMemoryPatterns: a single (non-repeating) slip does not produce a 
 });
 
 test("queryColdMemoryPatterns: a record older than the lookback window is excluded from the distillation", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   // 60 days before asOfDate — well outside the default 30-day lookback.
   putUncheckedDay(store, { date: "2026-06-23", rolledForwardTasks: [], recordedAt: "2026-06-24T13:00:00.000Z" });
 
@@ -1083,7 +1084,7 @@ test("queryColdMemoryPatterns: a record older than the lookback window is exclud
 });
 
 test("queryColdMemoryPatterns: respects a caller-supplied lookbackDays narrower than the default", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   putUncheckedDay(store, { date: "2026-08-10", rolledForwardTasks: [], recordedAt: "2026-08-11T13:00:00.000Z" }); // 12 days before asOfDate
 
   const wideWindow = queryColdMemoryPatterns(store, { asOfDate: "2026-08-22", lookbackDays: 30 });
@@ -1099,13 +1100,13 @@ test("queryColdMemoryPatterns: respects a caller-supplied lookbackDays narrower 
 });
 
 test("queryColdMemoryPatterns: returns an empty array when there is no historical data at all", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   assert.deepEqual(queryColdMemoryPatterns(store, { asOfDate: "2026-08-22" }), []);
   store.close();
 });
 
 test("queryColdMemoryPatterns: multiple slipping Tasks each get their own accurate statement, ordered by taskId", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   recordSlip(store, "task-b", "2026-08-20");
   recordSlip(store, "task-b", "2026-08-21");
   recordSlip(store, "task-a", "2026-08-18");
@@ -1133,7 +1134,7 @@ test("queryColdMemoryPatterns: multiple slipping Tasks each get their own accura
 // ----------------------------------------------------------------------------
 
 test("queryColdMemoryPatterns: an UncheckedDay record dated EXACTLY at the lookback cutoff is INCLUDED (the window is inclusive of its own start)", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   putUncheckedDay(store, { date: "2026-07-24", rolledForwardTasks: [], recordedAt: "2026-07-25T01:00:00.000Z" }); // exactly the cutoff date
 
   const patterns = queryColdMemoryPatterns(store, { asOfDate: "2026-08-22", lookbackDays: 30 });
@@ -1144,7 +1145,7 @@ test("queryColdMemoryPatterns: an UncheckedDay record dated EXACTLY at the lookb
 });
 
 test("queryColdMemoryPatterns: an UncheckedDay record dated ONE DAY BEFORE the lookback cutoff is EXCLUDED", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   putUncheckedDay(store, { date: "2026-07-23", rolledForwardTasks: [], recordedAt: "2026-07-24T01:00:00.000Z" }); // one day before the cutoff
 
   const patterns = queryColdMemoryPatterns(store, { asOfDate: "2026-08-22", lookbackDays: 30 });
@@ -1157,7 +1158,7 @@ test("queryColdMemoryPatterns: an UncheckedDay record dated ONE DAY BEFORE the l
 });
 
 test("queryColdMemoryPatterns: a SlipHistory record whose lastSlipDate is EXACTLY at the lookback cutoff is INCLUDED", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   recordSlip(store, "task-1", "2026-07-20");
   recordSlip(store, "task-1", "2026-07-24"); // lastSlipDate exactly the cutoff date, count 2 (qualifies)
 
@@ -1169,7 +1170,7 @@ test("queryColdMemoryPatterns: a SlipHistory record whose lastSlipDate is EXACTL
 });
 
 test("queryColdMemoryPatterns: a SlipHistory record whose lastSlipDate is ONE DAY BEFORE the lookback cutoff is EXCLUDED even with a qualifying count", () => {
-  const store = createMemoryStore({ databasePath: tempDbPath() });
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
   recordSlip(store, "task-1", "2026-07-22");
   recordSlip(store, "task-1", "2026-07-23"); // lastSlipDate one day before the cutoff, count 2 (would otherwise qualify)
 

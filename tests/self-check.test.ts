@@ -13,6 +13,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createMemoryStore, getOpenInteractionRequest, getSelfCheckState, putSelfCheckState, type MemoryStore } from "../src/adapters/memory-store.ts";
+import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { computeEscalation } from "../src/core/escalate-under-strain.ts";
 import {
   applySelfCheckAnswer,
@@ -35,7 +36,7 @@ const NOW_ISO = "2026-08-22T15:00:00.000Z"; // 15:00 UTC
 const TODAY = "2026-08-22";
 
 function tempStore(): MemoryStore {
-  return createMemoryStore({ databasePath: ":memory:" });
+  return createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
 }
 
 function fixedRandom(value: number): () => number {

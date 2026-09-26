@@ -31,6 +31,7 @@ import {
   recordSlip,
   type MemoryStore,
 } from "../src/adapters/memory-store.ts";
+import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { computeSlipBumpLevel } from "../src/core/slip-bump.ts";
 import {
   applyNightCloseOutConfirmation,
@@ -54,7 +55,7 @@ const NOW_ISO = "2026-08-22T22:00:00.000Z"; // "tonight"
 const TODAY = "2026-08-22";
 
 function tempStore(): MemoryStore {
-  return createMemoryStore({ databasePath: ":memory:" });
+  return createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
 }
 
 function block(over: Partial<PlanBlock> & Pick<PlanBlock, "id" | "kind" | "start" | "end" | "label">): PlanBlock {

@@ -201,6 +201,7 @@
  * configuration).
  */
 import { createMemoryStore, getRitualInvocation, listSlipHistories, putRitualInvocation, type MemoryStore } from "../adapters/memory-store.ts";
+import { openSqliteConnection } from "../adapters/sqlite.ts";
 import {
   createCalendarReadClient,
   createCalendarWriteClient,
@@ -1246,7 +1247,8 @@ export async function main(
     },
   };
 
-  const store = createMemoryStore({ databasePath: env["MEMORY_DB_PATH"] || "./data/yoh-memory.db" });
+  const connection = openSqliteConnection({ databasePath: env["MEMORY_DB_PATH"] || "./data/yoh-memory.db" });
+  const store = createMemoryStore(connection);
   try {
     if (argv[0] === "night-prompt") {
       let deps: NightPromptRitualDeps;
@@ -1334,7 +1336,7 @@ export async function main(
       recordInvocation: () => putRitualInvocation(store, "morning", { at: new Date().toISOString() }),
     });
   } finally {
-    store.close();
+    connection.close();
   }
 }
 

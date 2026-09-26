@@ -16,6 +16,7 @@ import {
   putTimeBudget,
   type MemoryStore,
 } from "../src/adapters/memory-store.ts";
+import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { runMidDayReflow, type MidDayReflowDeps } from "../src/rituals/mid-day-reflow.ts";
 import type { Plan, PlanBlock, Task } from "../src/types/domain.ts";
 
@@ -28,7 +29,7 @@ const TODAY = "2026-08-22";
 const NOW_ISO = "2026-08-22T11:00:00.000Z";
 
 function tempStore(): MemoryStore {
-  return createMemoryStore({ databasePath: ":memory:" });
+  return createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
 }
 
 function makeTask(id: string, title: string, overrides: Partial<Task> = {}): Task {
