@@ -49,6 +49,13 @@
 import type Database from "better-sqlite3";
 import type { ExternalId, InteractionRequest, IsoDate, IsoDateTime, Plan, TaskFieldOverride, TimeBudget, YohError } from "../types/domain.ts";
 import type { SqliteConnection } from "./sqlite.ts";
+// Task 7 (Story 8.6, AD-18): the sibling-adapter edge `putPlan`'s own
+// `onCommit` callers already use for the "plan" topic — here it's this
+// file's own, since every interaction-request write (unlike `putPlan`'s
+// caller-supplied hook) unconditionally needs an "open-items" outbox row,
+// regardless of which caller (a ritual, `chat-cli.ts`, or a future web
+// route) made the write (AD-10).
+import { appendOutboxInTx } from "./notification-store.ts";
 
 // ============================================================================
 // Stored record shape
@@ -248,7 +255,13 @@ export class MemoryStore {
    * persist/surface/clear cycle (AD-5) — `readModifyWrite` alone can only
    * create/replace a row, never remove one.
    */
-  deleteRecord(kind: string, id: string, expectedVersion: number): void {
+  /**
+   * `onCommit`, when given, runs INSIDE this same `writeTx`, immediately
+   * after the delete — mirrors `readModifyWrite`'s own `onCommit` param
+   * (Story 7.8, Ruling R4), so a caller (`clearInteractionRequest` below)
+   * can append an outbox row atomically with the delete (Task 7, AD-18).
+   */
+  deleteRecord(kind: string, id: string, expectedVersion: number, onCommit?: (db: Database.Database) => void): void {
     this.connection.writeTx((db): void => {
       const row = this.selectRow(kind, id);
       const actualVersion = row?.version;
@@ -263,6 +276,7 @@ export class MemoryStore {
       }
 
       db.prepare("DELETE FROM records WHERE kind = @kind AND id = @id").run({ kind, id });
+      onCommit?.(db);
     });
   }
 
@@ -315,6 +329,17 @@ export function createMemoryStore(connection: SqliteConnection): MemoryStore {
  */
 const INTERACTION_REQUEST_KIND = "interaction-request";
 
+/**
+ * Epic 8's outbox topic (Task 7, AD-18) for ANY change to an open
+ * interaction request — created (`putOpenInteractionRequest`), its
+ * pending-question cursor advanced (`updateInteractionRequestDetail`), or
+ * cleared (`clearInteractionRequest`). `entityId` is always the request's
+ * own `id`, so a connected browser's `GET /api/open-items` refetch (Task 7)
+ * knows exactly which request changed without the outbox itself carrying
+ * any payload.
+ */
+export const OPEN_ITEMS_TOPIC = "open-items";
+
 export type { InteractionRequest };
 
 /**
@@ -325,6 +350,11 @@ export type { InteractionRequest };
  * genuine concurrent writer racing on the exact same `id` still surfaces
  * `ConflictError` per AD-10 — this only removes the *caller's* burden of
  * threading a version through, not the concurrency guarantee itself.
+ *
+ * Task 7 (AD-18): unconditionally appends an `"open-items"` outbox row in
+ * the SAME `writeTx` — a ritual-raised request (which never touches a
+ * browser) still becomes visible to a connected Chat page's
+ * `GET /api/open-items` refetch, without the ritual ever knowing one exists.
  */
 export function putOpenInteractionRequest(
   store: MemoryStore,
@@ -332,7 +362,9 @@ export function putOpenInteractionRequest(
   request: InteractionRequest,
 ): StoredRecord<InteractionRequest> {
   const current = store.getRecord<InteractionRequest>(INTERACTION_REQUEST_KIND, id);
-  return store.readModifyWrite<InteractionRequest>(INTERACTION_REQUEST_KIND, id, current?.version, () => request);
+  return store.readModifyWrite<InteractionRequest>(INTERACTION_REQUEST_KIND, id, current?.version, () => request, (db) =>
+    appendOutboxInTx(db, { topic: OPEN_ITEMS_TOPIC, entityId: id }),
+  );
 }
 
 /** Reads the currently open interaction request at `id`, or `undefined` if none is open. */
@@ -355,9 +387,15 @@ export function listOpenInteractionRequests(store: MemoryStore): StoredRecord<In
  * answered it, enforcing the same optimistic-concurrency check every write
  * in this file does (AD-10): `expectedVersion` should be the version last
  * read via `getOpenInteractionRequest`/`listOpenInteractionRequests`.
+ *
+ * Task 7 (AD-18): appends an `"open-items"` outbox row in the SAME
+ * `writeTx` as the delete — via `deleteRecord`'s `onCommit` seam, so a
+ * conflicting (stale-version) clear, which throws before the delete ever
+ * runs, appends NO hint (the delete never happened, so a hint would lie to
+ * a connected browser).
  */
 export function clearInteractionRequest(store: MemoryStore, id: string, expectedVersion: number): void {
-  store.deleteRecord(INTERACTION_REQUEST_KIND, id, expectedVersion);
+  store.deleteRecord(INTERACTION_REQUEST_KIND, id, expectedVersion, (db) => appendOutboxInTx(db, { topic: OPEN_ITEMS_TOPIC, entityId: id }));
 }
 
 /**
@@ -367,6 +405,12 @@ export function clearInteractionRequest(store: MemoryStore, id: string, expected
  * (`detail.cursor`) across turns. `expectedVersion` mismatch (including "the
  * request no longer exists") throws `ConflictError`, which an `app/*.ts`
  * caller converts to `YohError.kind: "conflict"` per AD-8.
+ *
+ * Task 7 (AD-18): also appends an `"open-items"` outbox row in the SAME
+ * `writeTx` — advancing the pending-question cursor is as much a
+ * user-visible change to the open item as the put/clear above, so a
+ * connected browser must refetch for THIS too (e.g. a multi-question
+ * request moving to its next question).
  */
 export function updateInteractionRequestDetail<TDetail = unknown>(
   store: MemoryStore,
@@ -374,10 +418,16 @@ export function updateInteractionRequestDetail<TDetail = unknown>(
   expectedVersion: number,
   updateDetail: (currentDetail: TDetail | undefined) => TDetail,
 ): StoredRecord<InteractionRequest<TDetail>> {
-  return store.readModifyWrite<InteractionRequest<TDetail>>(INTERACTION_REQUEST_KIND, id, expectedVersion, (current) => {
-    if (!current) throw new ConflictError(`memory-store: cannot update detail — no interaction request open at ${id}`, { id });
-    return { ...current.data, detail: updateDetail(current.data.detail) };
-  });
+  return store.readModifyWrite<InteractionRequest<TDetail>>(
+    INTERACTION_REQUEST_KIND,
+    id,
+    expectedVersion,
+    (current) => {
+      if (!current) throw new ConflictError(`memory-store: cannot update detail — no interaction request open at ${id}`, { id });
+      return { ...current.data, detail: updateDetail(current.data.detail) };
+    },
+    (db) => appendOutboxInTx(db, { topic: OPEN_ITEMS_TOPIC, entityId: id }),
+  );
 }
 
 // ============================================================================

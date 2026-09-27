@@ -59,22 +59,27 @@ import {
 } from "../adapters/notification-store.ts";
 import { HEARTBEAT_INTERVAL_MS, initPlanStateStoreSchema, writeHeartbeat } from "../adapters/plan-state-store.ts";
 import { createMemoryStore, type MemoryStore } from "../adapters/memory-store.ts";
-import { initCompletionLogSchema } from "../adapters/completion-log.ts";
+import { initCompletionLogSchema, recordCompletion as completionLogRecordCompletion, type RecordCompletionInput } from "../adapters/completion-log.ts";
 import { createTokenStore, loadGoogleOAuthConfigFromEnv, type TokenStore } from "../adapters/token-store.ts";
 import {
+  bindCalendarApply,
   createCalendarBroadClient,
   createCalendarReadClient,
   proposeCalendarEdit as calendarProposeEdit,
   proposeNewCalendarEvent,
   readCalendarEvents,
   resolveCalendarEditRoute as calendarResolveRoute,
+  type CalendarApplyBindingFn,
   type CalendarBroadClient,
 } from "../adapters/calendar-adapter.ts";
 import {
+  bindNotionCreatePage,
+  bindNotionTaskWrites,
   loadTaskPropertyNamesFromEnv,
   readNotionTasks,
   type NotionCreatePageBindingFn,
   type NotionTaskPropertyNames,
+  type NotionTaskWriteBindingFn,
 } from "../adapters/notion-adapter.ts";
 import { createAnthropicMessagesClient, loadLlmAdapterConfigFromEnv, type AnthropicMessagesClient } from "../adapters/llm-adapter.ts";
 import { search as runSearch } from "../adapters/search-adapter.ts";
@@ -92,7 +97,10 @@ import {
   undoCheckOff,
   type CheckOffDeps,
 } from "../app/check-off.ts";
+import { surfaceOpenItems } from "../app/surface-open-items.ts";
+import { answerOpenItem, type AnswerOpenItemDeps } from "../app/answer-open-item.ts";
 import type {
+  AnswerOpenItemRequest,
   ApiResult,
   ChatStreamEvent,
   ChatTurnRequest,
@@ -101,7 +109,7 @@ import type {
   EventHint,
   HealthResponse,
 } from "../types/api.ts";
-import type { CalendarEvent, ChatTurn, Result, Task, YohError, YohErrorKind } from "../types/domain.ts";
+import type { CalendarEvent, ChatTurn, ExternalId, IsoDate, Result, Task, YohError, YohErrorKind } from "../types/domain.ts";
 
 // ============================================================================
 // GET /api/events — outbox tail → SSE hints (AD-18)
@@ -414,14 +422,24 @@ export interface ServerDeps {
    */
   readonly checkOff?: Omit<CheckOffDeps, "connection" | "now" | "log"> & { readonly now?: () => Date };
   /**
-   * Story 8.5: `POST /api/chat`'s dependencies — `chatTurn`'s deps minus
-   * `session` (one per process, `chatSession` below) and `emit` (one per
-   * request, `runChatStream`) (controller ruling (a)). Absent (no
-   * `CLAUDE_API_KEY`/`YOH_TIMEZONE`), the route streams one `error` event.
-   * `runChatTurn` is a test seam (default: the real `chatTurn`), the same
-   * DI convention as `eventStream.sleep`.
+   * Story 8.5, extended by Story 8.6 (Task 7, Preflight ruling P2): `POST
+   * /api/chat`'s AND `GET /api/open-items`'s AND `POST
+   * /api/open-items/answer`'s dependencies — one config object, since all
+   * three routes are transport over ONE merged deps object built in
+   * `createApp` (`chatTurnDeps` below), never `deps.chat` directly.
+   * `chatTurn`'s own deps and `answerOpenItem`'s (`AnswerOpenItemDeps`,
+   * which `surfaceOpenItems`'s is a structural subset of) overlap on
+   * `store`/`session`/`llmClient`, so this is their intersection, minus:
+   * `session` (one per process, `chatSession` below), `emit` (one per
+   * request, `runChatStream`), and `today` (`AnswerSelfCheckDeps`'s field —
+   * like `session`, computed fresh per read by `createApp`, via a getter, so
+   * a long-running server never freezes "today" at startup). Absent (no
+   * `CLAUDE_API_KEY`/`YOH_TIMEZONE`), every one of the three routes reports
+   * its own clear `unreachable` error. `runChatTurn` is a test seam
+   * (default: the real `chatTurn`), the same DI convention as
+   * `eventStream.sleep`.
    */
-  readonly chat?: Omit<ChatTurnDeps, "session" | "emit"> & { readonly runChatTurn?: ChatTurnFn };
+  readonly chat?: Omit<ChatTurnDeps & AnswerOpenItemDeps, "session" | "emit" | "today"> & { readonly runChatTurn?: ChatTurnFn };
   /**
    * Story 8.5, contract C3: the ONE `ChatSession` every chat route in this
    * process shares (`startServer` builds it; Stories 8.6/8.7's routes reuse
@@ -436,6 +454,12 @@ type ApiFailure = Extract<ApiResult<never>, { ok: false }>;
 const CHECK_OFF_NOT_CONFIGURED: ApiFailure = {
   ok: false,
   error: { kind: "unreachable", message: "server: check-off dependencies not configured" },
+};
+
+/** Story 8.6 (Task 7): `GET /api/open-items`/`POST /api/open-items/answer`'s "not configured" failure — reuses the exact same `deps.chat` absence `POST /api/chat` already reports (Preflight ruling P2: all three routes share one deps object). */
+const OPEN_ITEMS_NOT_CONFIGURED: ApiFailure = {
+  ok: false,
+  error: { kind: "unreachable", message: "server: chat dependencies not configured" },
 };
 
 /** HTTP status for a serialized `Result` — the body is always the envelope; the status just makes logs and devtools honest. */
@@ -458,6 +482,23 @@ function wire<T>(result: ApiResult<T>): ApiResult<T> {
   return result.ok ? result : { ok: false, error: { kind: result.error.kind, message: result.error.message } };
 }
 
+/**
+ * The LOCAL calendar date of `instant` in `timeZone` — the same computation
+ * `rituals/ritual-shared.ts`'s `localIsoDate` makes, duplicated here rather
+ * than imported: `server.ts` never imports `rituals/` at all (AD-5, AD-15 —
+ * `tests/server.test.ts`'s own structural rule), the identical small,
+ * deliberate duplication that helper's own doc comment already documents
+ * between `core/time-budget.ts` and `core/derived-priority.ts`. Story 8.6
+ * (Task 7): `AnswerSelfCheckDeps.today` must be Spencer's CURRENT local
+ * calendar day, computed fresh on every read (see `chatDeps`'s `today`
+ * getter in `createApp`), never the server process's UTC start time.
+ */
+function currentIsoDate(instant: Date, timeZone: string): IsoDate {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(instant);
+  const get = (type: string): string => parts.find((p) => p.type === type)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
 export function createApp(deps: ServerDeps) {
   const log = deps.log ?? ((entry: LogEntry) => writeStructuredLog(entry));
   const now = deps.now ?? (() => performance.now());
@@ -466,6 +507,28 @@ export function createApp(deps: ServerDeps) {
     ? { ...deps.checkOff, connection: deps.connection, now: deps.checkOff.now ?? (() => new Date()), log }
     : undefined;
   const chatSession: ChatSession = deps.chatSession ?? { recentMessages: [], lastSearchAnswer: undefined };
+  // Preflight ruling P2: the ONE merged deps object `/api/chat`,
+  // `/api/open-items`, and `/api/open-items/answer` ALL call into `app/`
+  // with — never `deps.chat` directly. `runChatTurn` (a test seam, never a
+  // real dependency `chatTurn`/`surfaceOpenItems`/`answerOpenItem` read) is
+  // stripped out here so it never reaches any of the three (pinned by
+  // `tests/server-chat.test.ts`'s "never the runChatTurn seam itself" case).
+  // `today` is a live getter, not a value captured once at startup — the
+  // process may run for days, and `AnswerSelfCheckDeps.today` must always be
+  // Spencer's CURRENT local calendar day (mirrors `session` immediately
+  // below: both are per-read state `createApp` supplies, never something
+  // `deps.chat`'s own config carries).
+  let chatDeps: (Omit<ChatTurnDeps, "emit"> & AnswerOpenItemDeps) | undefined;
+  if (deps.chat) {
+    const { runChatTurn: _runChatTurn, ...rest } = deps.chat;
+    chatDeps = {
+      ...rest,
+      session: chatSession,
+      get today(): IsoDate {
+        return currentIsoDate(new Date(), rest.timeZone);
+      },
+    };
+  }
 
   return (
     new Hono()
@@ -600,19 +663,55 @@ export function createApp(deps: ServerDeps) {
         }),
         (c) => {
           const input = c.req.valid("json");
-          if (!deps.chat) {
+          if (!chatDeps) {
             return streamSSE(c, async (stream) => {
               await stream.writeSSE(sseMessage(CHAT_NOT_CONFIGURED));
             });
           }
-          const { runChatTurn, ...chatDeps } = deps.chat;
           return streamSSE(
             c,
-            (stream) => runChatStream(stream, { ...chatDeps, session: chatSession }, input, runChatTurn),
+            (stream) => runChatStream(stream, chatDeps, input, deps.chat?.runChatTurn),
             async (err) => {
               log({ level: "error", event: "server.chat-stream-failed", detail: { message: err.message } });
             },
           );
+        },
+      )
+      // Story 8.6 (Task 7), AD-16: pure transport over `app/surface-
+      // open-items.ts`'s `surfaceOpenItems` — every open interaction
+      // request/Proposal, each with its current pending question already
+      // resolved, including one a ritual raised while only the CLI existed
+      // (Task 1's outbox append makes that visible here without any change
+      // to this route at all). Reuses the SAME `chatDeps` `/api/chat` does
+      // (Preflight ruling P2), so FR-25's suggestions stay consistent
+      // across `/api/chat` and this route.
+      .get("/api/open-items", async (c) => {
+        if (!chatDeps) return c.json(OPEN_ITEMS_NOT_CONFIGURED, httpStatus(OPEN_ITEMS_NOT_CONFIGURED));
+        const result = wire(await surfaceOpenItems(chatDeps, {}));
+        return c.json(result, httpStatus(result));
+      })
+      // Story 8.6 (Task 7), AD-3/AD-16: pure transport over `app/answer-
+      // open-item.ts`'s `answerOpenItem` — the SAME entry point a chip pick
+      // and a typed "Other" line both call (a Structured Question's pick is
+      // recorded as an ordinary turn; the write itself always goes through
+      // this one function, whichever surface answered).
+      .post(
+        "/api/open-items/answer",
+        validator("json", (value, c) => {
+          const body = value as Partial<AnswerOpenItemRequest> | null;
+          if (typeof body?.requestId !== "string" || typeof body?.questionId !== "string" || typeof body?.answer !== "string") {
+            const invalid: ApiFailure = {
+              ok: false,
+              error: { kind: "validation", message: "open-items/answer: missing requestId/questionId/answer" },
+            };
+            return c.json(invalid, httpStatus(invalid));
+          }
+          return body as AnswerOpenItemRequest;
+        }),
+        async (c) => {
+          if (!chatDeps) return c.json(OPEN_ITEMS_NOT_CONFIGURED, httpStatus(OPEN_ITEMS_NOT_CONFIGURED));
+          const result = wire(await answerOpenItem(chatDeps, c.req.valid("json")));
+          return c.json(result, httpStatus(result));
         },
       )
       // Story 7.5, AD-15/AD-17: the built web/ SPA, mounted after every
@@ -845,6 +944,39 @@ function buildChatDeps(
     return runSearch({ apiKey: perplexityApiKey }, query);
   };
 
+  // Story 8.6 (Task 7): same lazy-construction convention as every Notion
+  // binding above — a session that never answers an open item's Task-field
+  // question must not be unable to chat at all just because Notion isn't
+  // configured. `bindNotionTaskWrites` (`notion-adapter.ts`) is the ONLY
+  // caller of the two Notion Task-write functions this binds (AD-16) — this
+  // file never names either directly, mirroring `chat-cli.ts`'s own
+  // `getNotionTaskWriteBinding`.
+  const getNotionTaskWriteBinding: NotionTaskWriteBindingFn = () => {
+    const notionToken = env["NOTION_TOKEN"];
+    const tasksDataSourceId = env["NOTION_TASKS_DATA_SOURCE_ID"];
+    if (!notionToken || !tasksDataSourceId) {
+      return {
+        ok: false,
+        error: {
+          kind: "missing-field",
+          message: "server: missing required environment variable(s) NOTION_TOKEN / NOTION_TASKS_DATA_SOURCE_ID — needed to record this answer in Notion",
+        },
+      };
+    }
+    return { ok: true, value: { client: notion?.notionClient ?? notionClientFromEnv(notionToken), config: { tasksDataSourceId } } };
+  };
+
+  // Story 8.6 (Task 7): `completion-log.ts`'s `recordCompletion`, pre-bound
+  // to the shared `SqliteConnection` — the server's own equivalent of
+  // `chat-cli.ts`'s `recordCompletion` closure. `initCompletionLogSchema`
+  // already runs unconditionally at server startup (below), so this needs
+  // no lazy guard of its own.
+  const recordCompletion = (input: RecordCompletionInput): void => completionLogRecordCompletion(connection, input);
+  // Reuses `readTasks` above (the same live Notion read Mid-Day Re-Flow
+  // already uses) — Story 7.9's Ruling R7 close-out completion-snapshot
+  // lookup, mirrored from `chat-cli.ts`'s `main()`.
+  const lookupTask = async (taskId: ExternalId): Promise<Task | undefined> => (await readTasks()).find((t) => t.id === taskId);
+
   // Google OAuth is constructed once, on the first Calendar request. The
   // narrow read client lists today's events; the broad one routes and
   // proposes an edit (AD-13).
@@ -859,6 +991,22 @@ function buildChatDeps(
     readCalendarEvents(createCalendarReadClient(getTokenStore().getOAuth2Client() as unknown as Parameters<typeof createCalendarReadClient>[0]), {
       timeZone,
     });
+  // Story 8.6 (Task 7): same lazy-construction convention as every binding
+  // above — a session that never confirms a Calendar-edit Proposal must not
+  // be unable to chat at all just because Google OAuth isn't configured.
+  // `bindCalendarApply` (`calendar-adapter.ts`) is the ONLY caller of the
+  // Calendar apply-edit write this binds (AD-16) — mirrors `chat-cli.ts`'s
+  // own `getCalendarApplyBinding`.
+  const getCalendarApplyBinding: CalendarApplyBindingFn = () => {
+    try {
+      return { ok: true, value: getCalendarBroadClient() };
+    } catch (err) {
+      return {
+        ok: false,
+        error: { kind: "missing-field", message: `server: could not apply that calendar change — ${err instanceof Error ? err.message : String(err)}` },
+      };
+    }
+  };
 
   return {
     store: notion?.store ?? createMemoryStore(connection),
@@ -872,6 +1020,19 @@ function buildChatDeps(
     resolveCalendarEditRouteFn: (calendarId, eventId) => calendarResolveRoute(getCalendarBroadClient(), calendarId, eventId),
     proposeCalendarEditFn: (calendarId, eventId, change) => calendarProposeEdit(getCalendarBroadClient(), calendarId, eventId, change),
     proposeNewCalendarEventFn: proposeNewCalendarEvent,
+    // Story 8.6 (Task 7): `AnswerOpenItemDeps`'s own fields — spread in via
+    // each write function's adapter-owned binder (never named directly
+    // here, AD-16), so `GET /api/open-items`/`POST /api/open-items/answer`
+    // (transport over `surfaceOpenItems`/`answerOpenItem`) and a confirmed
+    // Proposal's `"field-value"`/`"notion-page-draft"`/`"calendar-edit"`
+    // kinds (`confirmProposal`, dispatched from `answerOpenItem`) all work
+    // identically to `chat-cli.ts`'s own equivalent wiring.
+    ...bindNotionTaskWrites(getNotionTaskWriteBinding),
+    ...bindNotionCreatePage(getNotionCreatePageBinding),
+    ...bindCalendarApply(getCalendarApplyBinding),
+    recordCompletion,
+    lookupTask,
+    random: Math.random,
   };
 }
 

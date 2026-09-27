@@ -51,13 +51,16 @@ import {
   type NightPromptRitualDeps,
 } from "../src/rituals/night-ritual.ts";
 import { ATTENTION } from "../src/rituals/ritual-shared.ts";
+import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
 import type { ExternalId, Plan, PlanBlock, Result, Task, TaskStatus, YohError } from "../src/types/domain.ts";
 
 const NOW_ISO = "2026-08-22T22:00:00.000Z"; // "tonight"
 const TODAY = "2026-08-22";
 
 function tempStore(): MemoryStore {
-  return createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db); // Task 7 (Epic 8): interaction-request writes now append an outbox row.
+  return createMemoryStore(connection);
 }
 
 function block(over: Partial<PlanBlock> & Pick<PlanBlock, "id" | "kind" | "start" | "end" | "label">): PlanBlock {

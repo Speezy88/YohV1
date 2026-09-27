@@ -105,7 +105,7 @@ development_status:
   8-3-chat-turn-routing-for-planning-commands: done
   8-4-chat-turn-routing-for-notion-calendar-and-search-commands: done
   8-5-chat-page-with-streaming-replies: done
-  8-6-open-items-and-structured-questions-in-chat: backlog
+  8-6-open-items-and-structured-questions-in-chat: done
   8-7-command-palette-morning-and-night: backlog
   8-8-chat-bubble-on-home-and-the-three-action-capture-flow: backlog
   8-9-cli-parity-check-and-retirement: backlog

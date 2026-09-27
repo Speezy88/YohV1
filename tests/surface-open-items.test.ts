@@ -6,13 +6,16 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createMemoryStore, mergeTaskFieldOverride, putOpenInteractionRequest } from "../src/adapters/memory-store.ts";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
+import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
 import { buildOpenItemQuestion, surfaceOpenItems } from "../src/app/surface-open-items.ts";
 import type { ChatSession } from "../src/app/chat-session.ts";
 import type { MissingFieldReport } from "../src/core/data-completeness-gate.ts";
 import type { NightCloseOutTaskDetail } from "../src/rituals/night-ritual.ts";
 
 function tempStore() {
-  return createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db); // Task 7 (Epic 8): interaction-request writes now append an outbox row.
+  return createMemoryStore(connection);
 }
 function makeSession(): ChatSession {
   return { recentMessages: [], lastSearchAnswer: undefined };

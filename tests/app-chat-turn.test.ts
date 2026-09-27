@@ -180,6 +180,30 @@ test("chatTurn trims an untrimmed history down to MAX_CHAT_HISTORY_TURNS before 
   assert.equal(sentMessages[0]!.role, "user", "trimming must remove complete pairs, never leaving an assistant turn first");
 });
 
+test("Story 8.6 (Task 7): trimming drops a leading assistant turn if one slips through — a dropped empty reply (chatStore.ts's own historyOf() filter) can break strict [user,assistant] alternation, and the Messages API rejects a history starting with 'assistant'", async () => {
+  const llmClient = makeFakeLlmClient("answer");
+  const deps = baseDeps({ llmClient });
+
+  // 50 conceptual turns, alternating user/assistant from i=0, but i=5 (an
+  // assistant reply) is missing — e.g. it streamed to "" and
+  // `web/`'s `chatStore.ts` never appended it. That single gap shifts every
+  // later turn's role one slot out of phase with its ARRAY position, so the
+  // naive "always remove complete [user,assistant] pairs from the front"
+  // trim (stepping the start index by 2 every time) can land on an
+  // assistant turn even though it always started from position 0.
+  const history: ChatTurn[] = [];
+  for (let i = 0; i < 50; i++) {
+    if (i === 5) continue;
+    history.push({ role: i % 2 === 0 ? "user" : "assistant", content: `turn-${i}` });
+  }
+  assert.equal(history.length, 49);
+
+  await chatTurn(deps, { message: "turn-49", history });
+
+  const sentMessages = (llmClient as any).calls[1].messages as ReadonlyArray<{ role: string; content: string }>;
+  assert.equal(sentMessages[0]!.role, "user", "the trimmed history handed to the Messages API must never start with 'assistant'");
+});
+
 // ============================================================================
 // session.recentMessages recording
 // ============================================================================

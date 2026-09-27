@@ -4,9 +4,11 @@
  * and flat; the Thinking Indicator gives way to text the moment any
  * arrives; receipts render in caption style; a failure is always visible.
  */
-import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, it, expect, vi } from "vitest";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ChatMessage } from "./ChatMessage.tsx";
+import * as openItemsLib from "../lib/openItems.ts";
+import * as chatStore from "../lib/chatStore.ts";
 import type { ChatViewMessage } from "../lib/chatStore.ts";
 
 function msg(overrides: Partial<ChatViewMessage> = {}): ChatViewMessage {
@@ -45,16 +47,63 @@ describe("ChatMessage", () => {
     }
   });
 
-  it("renders a follow-up question's text", () => {
+  it("renders a follow-up question as a Structured Question — text plus a chip per option", () => {
     render(
       <ChatMessage
         message={msg({
           text: "Here's the draft.",
-          question: { requestId: "proposal:p1", questionId: "confirm", text: "Create it?", options: [], allowsFreeText: true },
+          question: {
+            requestId: "proposal:p1",
+            questionId: "confirm",
+            text: "Create it?",
+            options: [
+              { label: "Yes", value: "yes" },
+              { label: "No", value: "no" },
+            ],
+            allowsFreeText: false,
+          },
         })}
       />,
     );
     expect(screen.getByText("Create it?")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Yes" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "No" })).toBeInTheDocument();
+  });
+
+  it("picking an inline question's chip calls submitOpenItemAnswer with the question's ids, then records the exchange and hides the chips", async () => {
+    vi.spyOn(openItemsLib, "submitOpenItemAnswer").mockResolvedValue({ ok: true, value: { message: "Done.", receipts: ["Created it."], next: "done" } });
+    const recordSpy = vi.spyOn(chatStore, "recordAnsweredOpenItem").mockImplementation(() => {});
+    render(
+      <ChatMessage
+        message={msg({
+          text: "Here's the draft.",
+          question: { requestId: "proposal:p1", questionId: "confirm", text: "Create it?", options: [{ label: "Yes", value: "yes" }], allowsFreeText: false },
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Yes" }));
+
+    await waitFor(() => expect(openItemsLib.submitOpenItemAnswer).toHaveBeenCalledWith({ requestId: "proposal:p1", questionId: "confirm", answer: "yes" }));
+    await waitFor(() => expect(recordSpy).toHaveBeenCalledWith("yes", { message: "Done.", receipts: ["Created it."] }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Yes" })).not.toBeInTheDocument());
+  });
+
+  it("an inline question's stale-proposal rejection renders honestly, never the raw error message", async () => {
+    vi.spyOn(openItemsLib, "submitOpenItemAnswer").mockResolvedValue({ ok: false, kind: "stale-proposal", message: "entity changed since suggested" });
+    const recordSpy = vi.spyOn(chatStore, "recordAnsweredOpenItem").mockImplementation(() => {});
+    render(
+      <ChatMessage
+        message={msg({
+          text: "Here's the draft.",
+          question: { requestId: "proposal:p1", questionId: "confirm", text: "Create it?", options: [{ label: "Yes", value: "yes" }], allowsFreeText: false },
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Yes" }));
+
+    await waitFor(() => expect(recordSpy).toHaveBeenCalledWith("yes", { message: "That proposal is out of date — nothing was changed.", receipts: [] }));
   });
 
   it("a failed turn with no text shows the server's reason in a caption", () => {

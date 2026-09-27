@@ -5,12 +5,15 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createMemoryStore, getOpenInteractionRequest, getTaskFieldOverride, mergeTaskFieldOverride, putOpenInteractionRequest } from "../src/adapters/memory-store.ts";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
+import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
 import { answerDataCompleteness } from "../src/app/answer-data-completeness.ts";
 import type { MissingFieldReport } from "../src/core/data-completeness-gate.ts";
 import type { Result, YohError } from "../src/types/domain.ts";
 
 function tempStore() {
-  return createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db); // Task 7 (Epic 8): interaction-request writes now append an outbox row.
+  return createMemoryStore(connection);
 }
 function session() {
   return { recentMessages: [], lastSearchAnswer: undefined };

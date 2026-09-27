@@ -12,6 +12,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { createMemoryStore } from "../src/adapters/memory-store.ts";
+import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
 import { draftItem, type CreateItemDeps } from "../src/app/create-item.ts";
 import type { AnthropicMessagesClient } from "../src/adapters/llm-adapter.ts";
 import type { NotionCreatePageClient, NotionCreatePageConfig } from "../src/adapters/notion-adapter.ts";
@@ -73,6 +74,7 @@ function fakeTasksClient(): NotionCreatePageClient {
  */
 function tempDeps(overrides: { bindingOk?: boolean; llmResponse?: string } = {}): CreateItemDeps & { readonly connection: ReturnType<typeof openSqliteConnection> } {
   const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db); // Task 7 (Epic 8): interaction-request writes (via openProposal) now append an outbox row.
   const store = createMemoryStore(connection);
   return {
     connection,

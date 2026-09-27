@@ -23,11 +23,14 @@ import {
   type MemoryStore,
 } from "../src/adapters/memory-store.ts";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
+import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
 import { confirmProposal, type ConfirmProposalDeps } from "../src/app/confirm-proposal.ts";
 import type { CalendarEditChange, FieldValueSuggestion, NotionPageDraft, Proposal, TimeBudget } from "../src/types/domain.ts";
 
 function tempStore(): MemoryStore {
-  return createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db); // Task 7 (Epic 8): interaction-request clears now append an outbox row.
+  return createMemoryStore(connection);
 }
 
 const NOW = "2026-08-24T09:00:00.000Z";

@@ -33,7 +33,13 @@ test("Enter shows Spencer's turn and the Thinking Indicator at once, then Yoh's 
 
   await expect(chat.getByText(FIXTURE_CHAT_REPLY)).toBeVisible({ timeout: 5_000 });
   await expect(chat.getByTestId("thinking-indicator")).toHaveCount(0);
-  await expect(chat.getByRole("button", { name: "Send" })).toBeDisabled(); // blank draft, turn finished
+  // Scoped to the Chat Input's own Send button, not just any "Send" in the
+  // page — the fixture server's `webServer` process is shared across every
+  // spec file in the suite (Story 8.6's own `open-items.spec.ts` may leave
+  // its seeded proposal's Structured Question — which also has a "Send"
+  // button, for its free-text "Other" field — open or answered depending on
+  // run order).
+  await expect(chat.getByTestId("chat-input").getByRole("button", { name: "Send" })).toBeDisabled(); // blank draft, turn finished
 });
 
 test("the unsent draft and the transcript survive a swipe to another page and back", async ({ page }) => {

@@ -54,6 +54,7 @@ import {
   type Plan,
 } from "../src/adapters/memory-store.ts";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
+import { initNotificationStoreSchema, tailOutboxSince } from "../src/adapters/notification-store.ts";
 import type { TimeBudget } from "../src/types/domain.ts";
 
 /**
@@ -83,6 +84,19 @@ function spyOnListRecordsByKind(store: MemoryStore): { store: MemoryStore; callC
 function tempDbPath(): string {
   const dir = mkdtempSync(join(tmpdir(), "yoh-memory-store-test-"));
   return join(dir, "yoh-memory.db");
+}
+
+/**
+ * Task 7 (Epic 8): `putOpenInteractionRequest`/`clearInteractionRequest`/
+ * `updateInteractionRequestDetail` now append an `"open-items"` outbox row
+ * in their own `writeTx`, so any test exercising them needs the `outbox`
+ * table to exist first — the same reason `tests/chat-cli.test.ts`'s own
+ * `tempStore()` already does this.
+ */
+function interactionRequestStore(): MemoryStore {
+  const connection = openSqliteConnection({ databasePath: tempDbPath() });
+  initNotificationStoreSchema(connection.db);
+  return createMemoryStore(connection);
 }
 
 test("creates the database file's parent directory when it doesn't exist yet (fresh checkout, .env.example's ./data/ default)", () => {
@@ -327,7 +341,7 @@ function makeRequest(overrides: Partial<InteractionRequest> = {}): InteractionRe
 }
 
 test("putOpenInteractionRequest persists a new request retrievable via getOpenInteractionRequest", () => {
-  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
+  const store = interactionRequestStore();
   putOpenInteractionRequest(store, "data-completeness", makeRequest());
 
   const record = getOpenInteractionRequest(store, "data-completeness");
@@ -338,13 +352,13 @@ test("putOpenInteractionRequest persists a new request retrievable via getOpenIn
 });
 
 test("getOpenInteractionRequest returns undefined when none is open for that id", () => {
-  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
+  const store = interactionRequestStore();
   assert.equal(getOpenInteractionRequest(store, "data-completeness"), undefined);
   store.close();
 });
 
 test("putOpenInteractionRequest called twice for the same id replaces the request's content (upsert, no caller-tracked version needed)", () => {
-  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
+  const store = interactionRequestStore();
   putOpenInteractionRequest(store, "data-completeness", makeRequest({ promptText: "first" }));
   putOpenInteractionRequest(store, "data-completeness", makeRequest({ promptText: "second, more Tasks now incomplete" }));
 
@@ -355,7 +369,7 @@ test("putOpenInteractionRequest called twice for the same id replaces the reques
 });
 
 test("listOpenInteractionRequests surfaces every open request across different ids/kinds", () => {
-  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
+  const store = interactionRequestStore();
   putOpenInteractionRequest(store, "data-completeness", makeRequest({ requestKind: "data-completeness" }));
   putOpenInteractionRequest(
     store,
@@ -372,7 +386,7 @@ test("listOpenInteractionRequests surfaces every open request across different i
 });
 
 test("clearInteractionRequest removes the request; it no longer appears via get or list", () => {
-  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
+  const store = interactionRequestStore();
   const stored = putOpenInteractionRequest(store, "data-completeness", makeRequest());
 
   clearInteractionRequest(store, "data-completeness", stored.version);
@@ -383,7 +397,7 @@ test("clearInteractionRequest removes the request; it no longer appears via get 
 });
 
 test("full persist -> surface -> clear cycle: after clearing, a fresh put starts a new request at version 1 again", () => {
-  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
+  const store = interactionRequestStore();
   const first = putOpenInteractionRequest(store, "data-completeness", makeRequest());
   clearInteractionRequest(store, "data-completeness", first.version);
 
@@ -394,12 +408,61 @@ test("full persist -> surface -> clear cycle: after clearing, a fresh put starts
 });
 
 // ============================================================================
+// The "open-items" outbox topic (Task 7, AD-18) — every write to an open
+// interaction request appends one outbox hint in the SAME writeTx.
+// ============================================================================
+
+test("putOpenInteractionRequest appends an 'open-items' outbox hint, entityId = the request id (Task 7, AD-18)", () => {
+  const connection = openSqliteConnection({ databasePath: tempDbPath() });
+  initNotificationStoreSchema(connection.db);
+  const store = createMemoryStore(connection);
+
+  putOpenInteractionRequest(store, "data-completeness", makeRequest());
+
+  const hints = tailOutboxSince(connection, 0);
+  assert.deepEqual(
+    hints.map((h) => ({ topic: h.topic, entityId: h.entityId })),
+    [{ topic: "open-items", entityId: "data-completeness" }],
+  );
+  store.close();
+});
+
+test("clearInteractionRequest appends an 'open-items' outbox hint too, in the same writeTx as the delete", () => {
+  const connection = openSqliteConnection({ databasePath: tempDbPath() });
+  initNotificationStoreSchema(connection.db);
+  const store = createMemoryStore(connection);
+  const stored = putOpenInteractionRequest(store, "data-completeness", makeRequest());
+  const afterPut = tailOutboxSince(connection, 0).length;
+
+  clearInteractionRequest(store, "data-completeness", stored.version);
+
+  const hints = tailOutboxSince(connection, 0);
+  assert.equal(hints.length, afterPut + 1);
+  assert.equal(hints[hints.length - 1]!.topic, "open-items");
+  assert.equal(hints[hints.length - 1]!.entityId, "data-completeness");
+  store.close();
+});
+
+test("a conflicting clearInteractionRequest (stale version) throws and appends NO outbox hint — the delete never happened", () => {
+  const connection = openSqliteConnection({ databasePath: tempDbPath() });
+  initNotificationStoreSchema(connection.db);
+  const store = createMemoryStore(connection);
+  putOpenInteractionRequest(store, "data-completeness", makeRequest());
+  const afterPut = tailOutboxSince(connection, 0).length;
+
+  assert.throws(() => clearInteractionRequest(store, "data-completeness", 999));
+
+  assert.equal(tailOutboxSince(connection, 0).length, afterPut, "no second hint from the failed delete");
+  store.close();
+});
+
+// ============================================================================
 // updateInteractionRequestDetail (Story 8.1) — the versioned pending-
 // question-cursor primitive, scoped to `detail` only.
 // ============================================================================
 
 test("updateInteractionRequestDetail rewrites only the detail payload, keeping requestKind/promptText/createdAt intact", () => {
-  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
+  const store = interactionRequestStore();
   putOpenInteractionRequest(store, "self-check", makeRequest({ requestKind: "self-check", promptText: "How are things going?" }));
   const before = getOpenInteractionRequest(store, "self-check")!;
 
@@ -416,7 +479,7 @@ test("updateInteractionRequestDetail rewrites only the detail payload, keeping r
 });
 
 test("updateInteractionRequestDetail throws ConflictError on a stale expectedVersion", () => {
-  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
+  const store = interactionRequestStore();
   putOpenInteractionRequest(store, "self-check", makeRequest({ requestKind: "self-check" }));
   const current = getOpenInteractionRequest(store, "self-check")!;
   updateInteractionRequestDetail(store, "self-check", current.version, () => ({ cursor: "first" }));

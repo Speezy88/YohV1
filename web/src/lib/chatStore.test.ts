@@ -6,7 +6,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, renderHook } from "@testing-library/react";
-import { __resetChatStoreForTests, send, setDraft, useChatStore } from "./chatStore.ts";
+import { __resetChatStoreForTests, recordAnsweredOpenItem, send, setDraft, useChatStore } from "./chatStore.ts";
 import * as chatStreamModule from "./chatStream.ts";
 import * as notifications from "./notifications.ts";
 import type { ChatStreamEvent, ChatTurnRequest, OpenItemQuestion } from "../../../src/types/api.ts";
@@ -171,5 +171,23 @@ describe("chatStore", () => {
     stream.emit({ type: "done", response: { reply: "y", receipts: [] } });
     await stream.finish();
     expect(setItem).not.toHaveBeenCalled();
+  });
+
+  // ==========================================================================
+  // recordAnsweredOpenItem (Story 8.6, Task 7)
+  // ==========================================================================
+
+  it("recordAnsweredOpenItem appends Spencer's pick and Yoh's reply as an ordinary turn pair (UX-DR38)", () => {
+    const { result } = renderHook(() => useChatStore());
+    act(() => recordAnsweredOpenItem("Work", { message: "Got it — Work.", receipts: ["Set area to Work"] }));
+    expect(result.current.messages).toHaveLength(2);
+    expect(result.current.messages[0]).toMatchObject({ role: "user", text: "Work", status: "done" });
+    expect(result.current.messages[1]).toMatchObject({ role: "assistant", text: "Got it — Work.", receipts: ["Set area to Work"], status: "done" });
+  });
+
+  it("recordAnsweredOpenItem with no message still appends Yoh's turn, as an empty reply", () => {
+    const { result } = renderHook(() => useChatStore());
+    act(() => recordAnsweredOpenItem("no", { receipts: [] }));
+    expect(result.current.messages[1]).toMatchObject({ role: "assistant", text: "", receipts: [], status: "done" });
   });
 });

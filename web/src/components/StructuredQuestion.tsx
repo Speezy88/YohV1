@@ -1,0 +1,108 @@
+/**
+ * web/src/components/StructuredQuestion.tsx — Story 8.6, UX-DR38.
+ *
+ * An inline question: the question text, one Secondary-style button per
+ * option chip (flips to Primary the instant it's picked), and — when
+ * `allowsFreeText` — a free-text "Other" field submitted on Enter or its
+ * Send button. Every control is a native `<button>`/`<input>`, so Tab order
+ * and Enter/Space activation come for free (WCAG 2.1.1) — no custom roving
+ * tabindex. One pick calls `onAnswer` with that option's `value` (or the
+ * typed, trimmed line); the caller (`OpenItems.tsx` / `ChatMessage.tsx`)
+ * turns that into an `AnswerOpenItemRequest` and records Spencer's turn
+ * (UX-DR38: "recorded as Spencer's turn").
+ */
+import { useState } from "react";
+
+export interface StructuredQuestionOption {
+  readonly label: string;
+  readonly value: string;
+}
+
+export interface StructuredQuestionProps {
+  readonly text: string;
+  readonly options: readonly StructuredQuestionOption[];
+  readonly allowsFreeText: boolean;
+  /** True while a pick is in flight — disables every chip and the Other field so a second pick can't race the first (AD-5's conflict rule). */
+  readonly busy?: boolean;
+  onAnswer(answer: string): void;
+}
+
+export function StructuredQuestion({ text, options, allowsFreeText, busy = false, onAnswer }: StructuredQuestionProps): React.JSX.Element {
+  const [picked, setPicked] = useState<string | undefined>(undefined);
+  const [freeText, setFreeText] = useState("");
+
+  const pick = (value: string): void => {
+    if (busy) return;
+    setPicked(value);
+    onAnswer(value);
+  };
+
+  const submitFreeText = (): void => {
+    const trimmed = freeText.trim();
+    if (busy || trimmed === "") return;
+    setPicked(undefined);
+    onAnswer(trimmed);
+  };
+
+  return (
+    <div data-testid="structured-question" className="flex flex-col gap-2 rounded-md bg-surface-raised p-3 font-body text-body text-ink-primary">
+      <p>{text}</p>
+      {options.length > 0 && (
+        <div className="flex flex-wrap gap-2" role="group" aria-label="Answer options">
+          {options.map((option) => {
+            const selected = picked === option.value;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                disabled={busy}
+                aria-pressed={selected}
+                onClick={() => pick(option.value)}
+                className={
+                  "rounded-sm border-[length:var(--rim-width)] px-3 py-1 font-bold " +
+                  "focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid " +
+                  (selected ? "border-transparent bg-accent-solid text-on-accent-solid" : "border-rim-interactive bg-transparent text-ink-primary")
+                }
+              >
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {allowsFreeText && (
+        <div className="flex items-center gap-2">
+          <input
+            type="text"
+            aria-label="Other"
+            placeholder="Other…"
+            disabled={busy}
+            value={freeText}
+            onChange={(e) => setFreeText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                submitFreeText();
+              }
+            }}
+            className={
+              "min-w-0 flex-1 rounded-sm border-[length:var(--rim-width)] border-rim-interactive bg-surface-sunken px-3 py-1 text-ink-primary " +
+              "focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid"
+            }
+          />
+          <button
+            type="button"
+            disabled={busy || freeText.trim() === ""}
+            onClick={submitFreeText}
+            className={
+              "rounded-sm border-[length:var(--rim-width)] border-rim-interactive bg-transparent px-3 py-1 font-bold text-ink-primary " +
+              "focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid"
+            }
+          >
+            Send
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}

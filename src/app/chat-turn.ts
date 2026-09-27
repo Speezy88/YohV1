@@ -88,11 +88,29 @@ export interface ChatTurnDeps extends CreateItemDeps, CalendarEditDeps, WebSearc
   readonly emit?: (event: ChatStreamEvent) => void;
 }
 
-/** Trims `history` to at most `MAX_CHAT_HISTORY_TURNS`, removing complete `[user, assistant]` pairs from the front — see that constant's own doc comment for why pairs, not a bare slice. */
+/**
+ * Trims `history` to at most `MAX_CHAT_HISTORY_TURNS`, removing complete
+ * `[user, assistant]` pairs from the front — see that constant's own doc
+ * comment for why pairs, not a bare slice.
+ *
+ * Story 8.6 (Task 7): that pair-stepping alone assumes STRICT
+ * `[user, assistant, user, assistant, ...]` alternation from index 0, which
+ * a long-lived transcript can quietly violate — `web/`'s `chatStore.ts`
+ * leaves out any turn with empty content (a reply that streamed to "" and
+ * failed), so ONE dropped turn shifts every later turn's role one slot out
+ * of phase with its array position. In a rare case (40+ turns plus one such
+ * gap), the pair-stepped `start` can land squarely on an `assistant` turn,
+ * which the Messages API rejects outright. So after trimming, this also
+ * drops any further LEADING `assistant` turn(s) — the history handed
+ * onward always starts with `user`, regardless of how the array's roles
+ * happened to land.
+ */
 function trimHistory(history: readonly ChatTurn[]): readonly ChatTurn[] {
   let start = 0;
   while (history.length - start > MAX_CHAT_HISTORY_TURNS) start += 2;
-  return start === 0 ? history : history.slice(start);
+  let trimmed = start === 0 ? history : history.slice(start);
+  while (trimmed.length > 0 && trimmed[0]!.role === "assistant") trimmed = trimmed.slice(1);
+  return trimmed;
 }
 
 function emitStatus(deps: ChatTurnDeps, text: string): void {

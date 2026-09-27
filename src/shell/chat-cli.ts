@@ -271,6 +271,7 @@ import {
   recordCompletion as completionLogRecordCompletion,
   type RecordCompletionInput,
 } from "../adapters/completion-log.ts";
+import { initNotificationStoreSchema } from "../adapters/notification-store.ts";
 import { search as runSearch, type SearchAdapterConfig } from "../adapters/search-adapter.ts";
 import { createTokenStore, loadGoogleOAuthConfigFromEnv, type TokenStore } from "../adapters/token-store.ts";
 import { parsePlanningFieldValue } from "../core/planning-field-value.ts";
@@ -933,6 +934,14 @@ export async function main(env: Readonly<Record<string, string | undefined>> = p
   // Story 7.9 (AD-10/AD-23): completion-log.ts's own dedicated table, created
   // idempotently alongside memory-store.ts's, before either is used.
   initCompletionLogSchema(connection.db);
+  // Story 8.6 (AD-10/AD-18): every open-interaction-request write
+  // (put/clear/cursor-advance) now unconditionally appends an "open-items"
+  // outbox row (`memory-store.ts`), the same way `server.ts` and
+  // `ritual-cli.ts` already init this schema on startup — a fresh install's
+  // `./data/yoh-memory.db` has no `outbox` table yet, and without this the
+  // very first open item this session surfaces-then-answers would throw
+  // "no such table: outbox".
+  initNotificationStoreSchema(connection.db);
   const recordCompletion: RecordCompletionFn = (input) => completionLogRecordCompletion(connection, input);
   const llmClient = createAnthropicMessagesClient(loadLlmAdapterConfigFromEnv(env));
   const io = createNodeIo();

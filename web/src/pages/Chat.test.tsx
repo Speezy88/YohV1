@@ -8,6 +8,7 @@ import { act, fireEvent, render, renderHook, screen } from "@testing-library/rea
 import ChatPage from "./Chat.tsx";
 import { __resetChatStoreForTests } from "../lib/chatStore.ts";
 import * as chatStreamModule from "../lib/chatStream.ts";
+import * as openItemsLib from "../lib/openItems.ts";
 import * as readiness from "../lib/readiness.ts";
 import type { ChatStreamEvent } from "../../../src/types/api.ts";
 
@@ -21,6 +22,12 @@ describe("Chat page", () => {
   beforeEach(() => {
     __resetChatStoreForTests();
     readiness.__resetReadinessForTests();
+    // Every pre-existing test in this file is about the transcript/input,
+    // not open items — default to "loading" (renders nothing) so those
+    // tests are unaffected; the open-items-specific tests below override
+    // this with their own `mockReturnValue`.
+    vi.spyOn(openItemsLib, "useOpenItems").mockReturnValue({ status: "loading" });
+    vi.spyOn(openItemsLib, "startOpenItemsStream").mockReturnValue(() => {});
   });
   afterEach(() => vi.restoreAllMocks());
 
@@ -68,5 +75,44 @@ describe("Chat page", () => {
     expect(gate).not.toHaveBeenCalled();
     const { result } = renderHook(() => readiness.useAppReady());
     expect(result.current).toBe(true);
+  });
+
+  it("renders open items above the transcript, and starts the open-items stream once on mount", () => {
+    vi.spyOn(openItemsLib, "useOpenItems").mockReturnValue({
+      status: "loaded",
+      items: [
+        {
+          requestId: "data-completeness",
+          requestKind: "data-completeness",
+          promptText: "I need a bit more.",
+          question: { requestId: "data-completeness", questionId: "t1:area", text: "What area is Draft the memo?", options: [], allowsFreeText: true },
+        },
+      ],
+    });
+    const startSpy = vi.spyOn(openItemsLib, "startOpenItemsStream").mockReturnValue(() => {});
+    render(<ChatPage />);
+    expect(screen.getByText("What area is Draft the memo?")).toBeInTheDocument();
+    expect(startSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("sending unrelated chat while an open item is rendered is never blocked (Review Focus #5)", () => {
+    vi.spyOn(openItemsLib, "useOpenItems").mockReturnValue({
+      status: "loaded",
+      items: [
+        {
+          requestId: "data-completeness",
+          requestKind: "data-completeness",
+          promptText: "I need a bit more.",
+          question: { requestId: "data-completeness", questionId: "t1:area", text: "What area?", options: [], allowsFreeText: true },
+        },
+      ],
+    });
+    const streamChat = vi.spyOn(chatStreamModule, "streamChat").mockReturnValue(new Promise(() => {}));
+    render(<ChatPage />);
+    const input = screen.getByRole("textbox", { name: "Message Yoh" });
+    expect(input).toBeEnabled();
+    pressEnterWith("what's on my plan today");
+    expect(screen.getByText("what's on my plan today")).toBeInTheDocument();
+    expect(streamChat).toHaveBeenCalledTimes(1);
   });
 });

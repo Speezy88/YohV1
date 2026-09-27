@@ -231,6 +231,11 @@ test("every process that may raise a notification creates the tables on startup:
   }
 });
 
+test("chat-cli.ts also creates the notification/outbox tables on startup (Story 8.6, AD-10/AD-18): every open-interaction-request write now appends an outbox row unconditionally (memory-store.ts's put/clear/updateDetail), so a fresh install's first answered item would otherwise throw 'no such table: outbox'", () => {
+  const source = readFileSync(join(import.meta.dirname, "..", "src", "shell", "chat-cli.ts"), "utf8");
+  assert.match(source, /\binitNotificationStoreSchema\(connection\.db\)/, "chat-cli.ts's main() must init the notification store before any interaction-request write can happen");
+});
+
 test("only notification-store.ts touches the notifications and outbox tables (AD-10)", () => {
   const srcDir = join(import.meta.dirname, "..", "src");
   const offenders: string[] = [];

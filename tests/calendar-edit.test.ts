@@ -12,6 +12,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { openSqliteConnection, type SqliteConnection } from "../src/adapters/sqlite.ts";
 import { createMemoryStore } from "../src/adapters/memory-store.ts";
+import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
 import { proposeCalendarEdit, type CalendarEditDeps } from "../src/app/calendar-edit.ts";
 import type { AnthropicMessagesClient } from "../src/adapters/llm-adapter.ts";
 import type { CalendarEvent } from "../src/types/domain.ts";
@@ -33,6 +34,7 @@ function tempDeps(overrides: {
   connection?: SqliteConnection;
 } = {}): CalendarEditDeps & { readonly connection: SqliteConnection } {
   const connection = overrides.connection ?? openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db); // Task 7 (Epic 8): interaction-request writes (via openProposal) now append an outbox row.
   const store = createMemoryStore(connection);
   return {
     connection,

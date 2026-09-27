@@ -5,11 +5,14 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createMemoryStore, getOpenInteractionRequest } from "../src/adapters/memory-store.ts";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
+import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
 import { openProposal } from "../src/app/open-proposal.ts";
 import type { Proposal } from "../src/types/domain.ts";
 
 function tempStore() {
-  return createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db); // Task 7 (Epic 8): interaction-request writes now append an outbox row.
+  return createMemoryStore(connection);
 }
 
 function makeCalendarEditProposal(entityId: string, overrides: Partial<Proposal<unknown>> = {}): Proposal<unknown> {

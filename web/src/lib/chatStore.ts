@@ -153,6 +153,31 @@ export async function send(message: string): Promise<void> {
   }
 }
 
+/**
+ * Story 8.6 (Task 7): appends one answered Structured Question as an
+ * ordinary transcript exchange — Spencer's pick or typed line, then Yoh's
+ * message/receipts. A chip answering a Structured Question is "recorded as
+ * Spencer's turn" exactly like typed chat (UX-DR38). Shared by
+ * `OpenItems.tsx` (the top-of-Chat list) and `ChatMessage.tsx` (an inline
+ * `turn.question`) — the one place a Structured Question's answer becomes
+ * part of the conversation, regardless of which surface asked it. Both
+ * turns land `status: "done"` immediately (unlike `send()`'s own
+ * placeholder-then-stream shape): the answer already settled server-side by
+ * the time this is called, so there's nothing left to stream.
+ */
+export function recordAnsweredOpenItem(youText: string, yoh: { message?: string; receipts: readonly string[] }): void {
+  const userId = `chat-${++nextId}`;
+  const assistantId = `chat-${++nextId}`;
+  set({
+    ...state,
+    messages: [
+      ...state.messages,
+      { id: userId, role: "user", text: youText, receipts: [], status: "done" },
+      { id: assistantId, role: "assistant", text: yoh.message ?? "", receipts: yoh.receipts, status: "done" },
+    ],
+  });
+}
+
 /** Test-only: clears the module-level transcript between tests. Never called from production code. */
 export function __resetChatStoreForTests(): void {
   state = EMPTY;
