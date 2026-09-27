@@ -20,11 +20,13 @@ import {
   draftCalendarEditRequest,
   draftNotionPageFields,
   loadLlmAdapterConfigFromEnv,
+  normalizeQuickAddLine,
   streamGeneralQuestion,
   suggestFieldValue,
   CLAUDE_CHAT_MODEL_CAPABLE,
   CLAUDE_CHAT_MODEL_FAST,
   type AnthropicMessagesClient,
+  type QuickAddLiveOptions,
 } from "../src/adapters/llm-adapter.ts";
 import { initLlmUsageStoreSchema, listLlmUsage } from "../src/adapters/llm-usage-store.ts";
 import { openSqliteConnection, type SqliteConnection } from "../src/adapters/sqlite.ts";
@@ -907,4 +909,78 @@ test("draftCalendarEditRequest tolerates a preamble and trailing commentary arou
   const { client } = fakeClient(textMessage("Sure, here you go:\nMOVE: Team sync | 2026-09-18T18:00:00.000Z\n(I assumed 6pm Eastern.)"));
   const result = await draftCalendarEditRequest(client, "move team sync to 6pm", "2026-09-18", "America/New_York", []);
   assert.deepEqual(result, { kind: "move", eventTitle: "Team sync", newStart: "2026-09-18T18:00:00.000Z" });
+});
+
+// ---------------------------------------------------------------------------
+// normalizeQuickAddLine (Polish 4 Task 1) — Spencer's quick-add submit-time
+// Haiku fallback. This function itself only calls Claude and does a loose
+// JSON parse; it never validates against live options or Yoh's enums
+// (`app/quick-add-normalize.ts` does that) — these tests only cover THIS
+// file's own contract.
+// ---------------------------------------------------------------------------
+
+const QUICK_ADD_LIVE_OPTIONS: QuickAddLiveOptions = {
+  area: ["School/ACT/College Apps", "Personal Goals"],
+  energy: ["Deep", "medium", "low"],
+  status: ["Nothing", "In Progress", "Completed"],
+};
+
+test("normalizeQuickAddLine parses a strict JSON reply into raw (unvalidated) fields", async () => {
+  const { client } = fakeClient(
+    textMessage(
+      '{"title": "ACT Math section", "estimatedDurationMinutes": "60", "energy": "high", "area": "School/ACT/College Apps", "status": "not-started"}',
+    ),
+  );
+  const result = await normalizeQuickAddLine(
+    client,
+    "add ACT Math section to act. 60 minutes. deep work. status not started",
+    "2026-09-27",
+    "UTC",
+    QUICK_ADD_LIVE_OPTIONS,
+  );
+  assert.deepEqual(result, {
+    title: "ACT Math section",
+    estimatedDurationMinutes: "60",
+    energy: "high",
+    area: "School/ACT/College Apps",
+    status: "not-started",
+  });
+});
+
+test("normalizeQuickAddLine tolerates a preamble/trailing commentary around the JSON object", async () => {
+  const { client } = fakeClient(textMessage('Sure, here you go:\n{"title": "history poster", "dueDate": "2026-09-30", "energy": "low"}\nHope that helps!'));
+  const result = await normalizeQuickAddLine(client, "history poster due wednesday low energy", "2026-09-27", "UTC", QUICK_ADD_LIVE_OPTIONS);
+  assert.deepEqual(result, { title: "history poster", dueDate: "2026-09-30", energy: "low" });
+});
+
+test("normalizeQuickAddLine returns undefined for malformed JSON or a response with no usable title", async () => {
+  assert.equal(await normalizeQuickAddLine(fakeClient(textMessage("not json at all")).client, "x", "2026-09-27", "UTC", QUICK_ADD_LIVE_OPTIONS), undefined);
+  assert.equal(await normalizeQuickAddLine(fakeClient(textMessage("{not valid json")).client, "x", "2026-09-27", "UTC", QUICK_ADD_LIVE_OPTIONS), undefined);
+  assert.equal(
+    await normalizeQuickAddLine(fakeClient(textMessage('{"energy": "high"}')).client, "x", "2026-09-27", "UTC", QUICK_ADD_LIVE_OPTIONS),
+    undefined,
+  );
+});
+
+test("normalizeQuickAddLine records usage under purpose 'quick-add-normalize' when given a connection", async () => {
+  const connection = fakeUsageConnection();
+  const { client } = fakeClient(textMessage('{"title": "x"}'));
+  await normalizeQuickAddLine(client, "x", "2026-09-27", "UTC", QUICK_ADD_LIVE_OPTIONS, connection);
+  const rows = listLlmUsage(connection);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]!.purpose, "quick-add-normalize");
+  connection.close();
+});
+
+test("normalizeQuickAddLine's stable system block is byte-identical across two calls on different days with different live options", async () => {
+  const first = fakeClient(textMessage('{"title": "a"}'));
+  await normalizeQuickAddLine(first.client, "a", "2026-09-18", "America/New_York", { energy: ["Deep", "medium", "low"], status: ["Nothing", "Completed"] });
+  const second = fakeClient(textMessage('{"title": "b"}'));
+  await normalizeQuickAddLine(second.client, "b", "2026-09-19", "America/Los_Angeles", QUICK_ADD_LIVE_OPTIONS);
+  const firstBlocks = first.calls[0]!.params.system as Anthropic.TextBlockParam[];
+  const secondBlocks = second.calls[0]!.params.system as Anthropic.TextBlockParam[];
+  assert.equal(firstBlocks[0]!.cache_control?.type, "ephemeral");
+  assert.equal(firstBlocks[0]!.text, secondBlocks[0]!.text);
+  assert.equal(firstBlocks[1]!.cache_control, undefined);
+  assert.notEqual(firstBlocks[1]!.text, secondBlocks[1]!.text);
 });

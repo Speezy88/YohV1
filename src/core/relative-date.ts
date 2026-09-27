@@ -277,6 +277,19 @@ const WEEKDAY_PHRASE_RE = /^(?:(next\s+week|next|this)\s+)?([a-z]+)$/i;
  * ignored here — this function only ever returns a bare date; use
  * `resolveRelativeDateTime` when a time matters.
  */
+/**
+ * Real-use fixes plan, Polish 4 Task 1: whether `word` alone reads as a date
+ * word — a bare weekday/month alias or "today"/"tomorrow"/"yesterday" — used
+ * only as a cheap heuristic (`core/quick-add.ts`'s `hasUnresolvedFieldWords`)
+ * to decide whether a quick-add title still looks like it has an
+ * unrecognized date phrase in it, never to resolve an actual date itself.
+ */
+export function isDateWord(word: string): boolean {
+  const lower = word.trim().toLowerCase();
+  if (lower === "today" || lower === "tomorrow" || lower === "yesterday") return true;
+  return WEEKDAY_ALIASES[lower] !== undefined || MONTH_ALIASES[lower] !== undefined;
+}
+
 export function resolveRelativeDate(text: string, ctx: RelativeDateContext): string | undefined {
   const { datePart } = splitTimeClause(text.trim());
   const normalized = datePart.trim();

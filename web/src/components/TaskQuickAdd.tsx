@@ -11,6 +11,14 @@
  * `#tag` that matches no Area says so. The preview is debounced and only
  * the newest one may land.
  *
+ * Polish 4 Task 1 (Spencer): the "Add a date, a time like 30m, …" hint line
+ * — and the row it sat in — is gone. This dock now shows the input only,
+ * with search/grouping below it (`Tasks.tsx`); the "Yoh reads:" chips still
+ * appear above the input, but ONLY when something was actually read — no
+ * empty row is reserved for them. The same task adds a Status chip
+ * (`preview.status`, only ever "not-started"/"in-progress" — quick-add
+ * never sets Completed).
+ *
  * Keys: Enter adds; ↓ moves into the list; ↑ on an empty line, Page Up and
  * Page Down hand back to page navigation (this is a text field, so the
  * page shell leaves those keys alone); Esc clears the line, or leaves it
@@ -19,7 +27,15 @@
 import { forwardRef, useEffect, useRef, useState } from "react";
 import type { QuickAddPreviewResponse } from "../../../src/types/api.ts";
 import { formatDue, formatDuration, optionLabel, requestQuickAddPreview } from "../lib/tasks.ts";
-import type { TaskFieldOptions } from "../../../src/types/domain.ts";
+import type { TaskFieldOptions, TaskStatus } from "../../../src/types/domain.ts";
+
+/** Fallback Status wording when the live options haven't loaded yet — quick-add only ever produces these two. */
+const STATUS_FALLBACK_LABEL: Readonly<Record<TaskStatus, string>> = {
+  "not-started": "Not started",
+  "in-progress": "In progress",
+  completed: "Completed",
+  slipped: "Slipped",
+};
 
 /** How long typing must pause before the chips refresh. */
 const PREVIEW_DEBOUNCE_MS = 150;
@@ -44,6 +60,10 @@ function chipsFor(preview: QuickAddPreviewResponse, today: string | undefined, o
     chips.push(`${optionLabel(live ?? preview.energy)} energy`);
   }
   if (preview.area) chips.push(`Area: ${preview.area}`);
+  if (preview.status) {
+    const live = options?.status.find((o) => o.value === preview.status)?.label;
+    chips.push(`Status: ${live ?? STATUS_FALLBACK_LABEL[preview.status]}`);
+  }
   return chips;
 }
 
@@ -73,6 +93,7 @@ export const TaskQuickAdd = forwardRef<HTMLInputElement, TaskQuickAddProps>(func
 
   const current = preview !== undefined && preview.text === text.trim() ? preview.value : undefined;
   const chips = current ? chipsFor(current, today, options) : [];
+  const hasReads = chips.length > 0 || (current?.unmatchedAreas.length ?? 0) > 0;
 
   const submit = (): void => {
     const trimmed = text.trim();
@@ -112,29 +133,25 @@ export const TaskQuickAdd = forwardRef<HTMLInputElement, TaskQuickAddProps>(func
     // row) in ONE bottom dock now — and the hint/chips row renders BEFORE
     // the input, since the input sits at the very bottom of the page.
     <section aria-label="Add a task" className="flex flex-col gap-3">
-      <div id="quick-add-reads" aria-live="polite" className="flex min-h-[30px] flex-wrap items-center gap-2.5 pl-1">
-        {chips.length > 0 || (current?.unmatchedAreas.length ?? 0) > 0 ? (
-          <>
-            <span className="font-body text-small text-ink-secondary">Yoh reads:</span>
-            {chips.map((chip) => (
-              <span
-                key={chip}
-                data-testid="quick-add-chip"
-                className="inline-flex h-[30px] items-center rounded-full bg-surface-raised px-3 font-body text-small font-bold text-ink-primary shadow-extruded-sm"
-              >
-                {chip}
-              </span>
-            ))}
-            {current?.unmatchedAreas.map((tag) => (
-              <span key={tag} className="font-body text-small text-ink-secondary">
-                #{tag} isn't an Area in Notion — it stays in the title.
-              </span>
-            ))}
-          </>
-        ) : (
-          <span className="font-body text-small text-ink-secondary">Add a date, a time like 30m, high/medium/low, or a #area — Yoh shows what it reads here.</span>
-        )}
-      </div>
+      {hasReads && (
+        <div id="quick-add-reads" aria-live="polite" className="flex flex-wrap items-center gap-2.5 pl-1">
+          <span className="font-body text-small text-ink-secondary">Yoh reads:</span>
+          {chips.map((chip) => (
+            <span
+              key={chip}
+              data-testid="quick-add-chip"
+              className="inline-flex h-[30px] items-center rounded-full bg-surface-raised px-3 font-body text-small font-bold text-ink-primary shadow-extruded-sm"
+            >
+              {chip}
+            </span>
+          ))}
+          {current?.unmatchedAreas.map((tag) => (
+            <span key={tag} className="font-body text-small text-ink-secondary">
+              #{tag} isn't an Area in Notion — it stays in the title.
+            </span>
+          ))}
+        </div>
+      )}
       <label
         className={
           "flex h-[58px] items-center gap-3.5 rounded-lg border-[length:var(--rim-width)] bg-surface-sunken px-4 shadow-inset " +
@@ -150,7 +167,7 @@ export const TaskQuickAdd = forwardRef<HTMLInputElement, TaskQuickAddProps>(func
           ref={ref}
           type="text"
           aria-label="New task"
-          aria-describedby="quick-add-reads"
+          {...(hasReads ? { "aria-describedby": "quick-add-reads" } : {})}
           placeholder="Add a task — e.g. Lab report due fri 90m high #bio"
           autoComplete="off"
           value={text}

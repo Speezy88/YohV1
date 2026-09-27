@@ -421,6 +421,8 @@ export interface QuickAddPreviewResponse {
   readonly estimatedDurationMinutes?: number;
   readonly energy?: Energy;
   readonly area?: string;
+  /** Polish 4 Task 1: only ever `"not-started"`/`"in-progress"` — the deterministic parser never reads "done"/"completed" off a quick-add line (quick-add must never set Completed). */
+  readonly status?: TaskStatus;
   /** `#tag` bodies that matched no live Area option — they stay in the title. */
   readonly unmatchedAreas: readonly string[];
 }

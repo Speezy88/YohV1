@@ -969,3 +969,123 @@ export async function draftCalendarEditRequest(
   // Matched a recognized keyword prefix but neither sub-pattern parsed the rest of the line — malformed, not "not a calendar edit."
   throw new Error(`llm-adapter: unrecognized calendar-edit response: "${text}"`);
 }
+
+// ============================================================================
+// normalizeQuickAddLine (Polish 4 Task 1) — the Haiku fallback for the
+// Tasks page's quick-add line. `core/quick-add.ts`'s deterministic parser
+// handles every unambiguous shape; `app/create-task.ts`'s `createTask`
+// calls THIS only on submit (never while typing), and only when the
+// deterministic title still contains a field-like word it didn't manage to
+// read (`core/quick-add.ts`'s `hasUnresolvedFieldWords`). This function
+// itself never validates its own answer against the live options or
+// Yoh's fixed enums — it returns Claude's claimed values as loose,
+// unvalidated strings, exactly like `draftNotionPageFields` above; the
+// caller (`app/quick-add-normalize.ts`, which — unlike this `adapters/*.ts`
+// file — may import `core/planning-field-value.ts`) is what actually
+// coerces/validates each field, dropping anything that doesn't match a
+// real live option rather than guessing.
+// ============================================================================
+
+/** Claude's claimed fields for one quick-add line — every value a raw, unvalidated string (or absent). `app/quick-add-normalize.ts` is what turns this into real, validated `QuickAddFields`. */
+export interface QuickAddNormalizeRawFields {
+  readonly title?: string;
+  readonly dueDate?: string;
+  readonly estimatedDurationMinutes?: string;
+  readonly energy?: string;
+  readonly area?: string;
+  readonly status?: string;
+}
+
+/** The live option names `normalizeQuickAddLine` shows Claude, so it never invents an Area/Status Spencer's workspace doesn't actually have. */
+export interface QuickAddLiveOptions {
+  readonly area?: readonly string[];
+  readonly energy: readonly string[];
+  readonly status: readonly string[];
+}
+
+const NORMALIZE_QUICK_ADD_MAX_TOKENS = 256;
+
+/** The STABLE half (Task 9's caching convention) — the instructions never depend on `today`/`timeZone`/the live option lists actually CHANGING shape call to call for the same Spencer session, only their VALUES do, which live in the volatile block instead. */
+function buildNormalizeQuickAddStableSystemPrompt(): string {
+  return [
+    "You are helping Yoh, Spencer's personal planning assistant, read the real fields out of a quick-add line for a new Task — Spencer typed the WHOLE line as one piece of free text, and some of it is data (a due date, a duration, an energy level, an area, a status), not title.",
+    'Respond with STRICT JSON only, on one line, with exactly these optional keys: {"title": "...", "dueDate": "YYYY-MM-DD", "estimatedDurationMinutes": "60", "energy": "low|medium|high", "area": "...", "status": "not-started|in-progress"}.',
+    '"title" is the words that are genuinely the task\'s name once every field below is read out of the line — drop a leading imperative like "add". Always include "title", even if you find no other field at all.',
+    "Resolve any relative date/day phrase (\"wednesday\", \"tomorrow\", \"next week friday\") into a real \"YYYY-MM-DD\" date using today's date and timezone, given right after this instruction block. Never invent a date Spencer didn't say or clearly imply.",
+    '"estimatedDurationMinutes" is a whole number of minutes, as a string (e.g. "90" for "1.5h" or "an hour and a half").',
+    '"energy" is exactly one of: low, medium, high (map "deep"/"deep work" to high, "light"/"light work" to low).',
+    '"area" MUST be exactly one of the live Area options listed below, verbatim — never a value that isn\'t in that list, and never invented free text.',
+    '"status" is exactly one of: not-started, in-progress — NEVER "completed" or "done": quick-add must never mark a new Task complete, so if the line says "done"/"completed", omit "status" entirely rather than answering it.',
+    "Omit any key you can't confidently read from the line — never guess. If nothing at all is confidently readable, respond with just the title.",
+  ].join("\n");
+}
+
+function buildNormalizeQuickAddDynamicContext(today: string, timeZone: string, options: QuickAddLiveOptions): string {
+  const lines = [`Today's date is ${today}, Spencer's timezone is ${timeZone}.`, `Live Status options: ${options.status.join(", ")}.`];
+  if (options.area && options.area.length > 0) lines.push(`Live Area options (area must be one of these, verbatim): ${options.area.join(", ")}.`);
+  return lines.join("\n");
+}
+
+/**
+ * Calls Claude once with `line` and returns its claimed fields, unvalidated
+ * (see this section's own header comment). Returns `undefined` — never
+ * throws for "couldn't extract" — when the response has no parseable JSON
+ * object in it, or that object carries no usable `title` at all. A genuine
+ * API/transport failure (including a caller-imposed timeout racing this
+ * promise) still propagates as a thrown error (AD-8); `app/quick-add-
+ * normalize.ts` treats both the same way — fall back to the deterministic
+ * parse, the Task is still created either way.
+ */
+export async function normalizeQuickAddLine(
+  client: AnthropicMessagesClient,
+  line: string,
+  today: string,
+  timeZone: string,
+  options: QuickAddLiveOptions,
+  connection?: SqliteConnection,
+): Promise<QuickAddNormalizeRawFields | undefined> {
+  const message = await client.messages.create({
+    model: CLAUDE_CHAT_MODEL_FAST,
+    max_tokens: NORMALIZE_QUICK_ADD_MAX_TOKENS,
+    system: [cacheableSystemBlock(buildNormalizeQuickAddStableSystemPrompt()), volatileSystemBlock(buildNormalizeQuickAddDynamicContext(today, timeZone, options))],
+    messages: [{ role: "user", content: line }],
+  });
+  recordUsageSafely(connection, "quick-add-normalize", CLAUDE_CHAT_MODEL_FAST, message.usage);
+
+  const text = message.content
+    .filter((block): block is Anthropic.TextBlock => block.type === "text")
+    .map((block) => block.text)
+    .join("\n")
+    .trim();
+
+  const jsonMatch = /\{[\s\S]*\}/.exec(text);
+  if (!jsonMatch) return undefined;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonMatch[0]);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null) return undefined;
+
+  const obj = parsed as Record<string, unknown>;
+  const str = (key: string): string | undefined => (typeof obj[key] === "string" && obj[key].trim().length > 0 ? (obj[key] as string).trim() : undefined);
+  const title = str("title");
+  if (title === undefined) return undefined;
+
+  const dueDate = str("dueDate");
+  const estimatedDurationMinutes = str("estimatedDurationMinutes");
+  const energy = str("energy");
+  const area = str("area");
+  const status = str("status");
+
+  return {
+    title,
+    ...(dueDate !== undefined ? { dueDate } : {}),
+    ...(estimatedDurationMinutes !== undefined ? { estimatedDurationMinutes } : {}),
+    ...(energy !== undefined ? { energy } : {}),
+    ...(area !== undefined ? { area } : {}),
+    ...(status !== undefined ? { status } : {}),
+  };
+}

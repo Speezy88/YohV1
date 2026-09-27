@@ -1108,7 +1108,12 @@ function buildHomeViewDeps(notion: NotionFeatureConfig, env: Readonly<Record<str
  * `bindNotionTaskWrites` spread. The create-page config type also carries a
  * Research Vault id; only the Tasks target is ever used from this page.
  */
-function buildTasksDeps(notion: NotionFeatureConfig, env: Readonly<Record<string, string | undefined>>): ServerDeps["tasks"] {
+function buildTasksDeps(
+  notion: NotionFeatureConfig,
+  env: Readonly<Record<string, string | undefined>>,
+  /** Polish 4 Task 1: the quick-add Haiku fallback's Claude client — the SAME instance `buildChatDeps` already built for `/api/chat`, never a second `Anthropic` client. Absent (no `CLAUDE_API_KEY`/`YOH_TIMEZONE`): the fallback is simply skipped. */
+  llmClient?: AnthropicMessagesClient,
+): ServerDeps["tasks"] {
   const config = {
     tasksDataSourceId: notion.tasksDataSourceId,
     projectsDataSourceId: notion.projectsDataSourceId,
@@ -1123,6 +1128,7 @@ function buildTasksDeps(notion: NotionFeatureConfig, env: Readonly<Record<string
       ok: true,
       value: { client: notion.notionClient, config: { ...config, researchVaultDataSourceId: env["NOTION_RESEARCH_VAULT_DATA_SOURCE_ID"] ?? "" } },
     }),
+    ...(llmClient ? { llmClient } : {}),
     ...bindNotionTaskWrites(() => ({ ok: true, value: { client: notion.notionClient, config } })),
   };
 }
@@ -1398,7 +1404,7 @@ if (import.meta.main) {
   const homeView = notion ? buildHomeViewDeps(notion, process.env) : undefined;
   const checkOff = notion ? buildCheckOffDeps(notion) : undefined;
   const chat = buildChatDeps(connection, notion, process.env);
-  const tasks = notion ? buildTasksDeps(notion, process.env) : undefined;
+  const tasks = notion ? buildTasksDeps(notion, process.env, chat?.llmClient) : undefined;
   const research = buildResearchDeps(notion, process.env);
   const handle = startServer(connection, process.env, undefined, {
     ...(homeView ? { homeView } : {}),

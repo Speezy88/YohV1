@@ -164,6 +164,32 @@ describe("TasksPage", () => {
     expect(screen.getByRole("status", { hidden: false }).textContent).toBe('Added "Lab report" to Tasks.');
   });
 
+  // Polish 4 Task 1: a Status chip, mapped to the live option label.
+  it("shows a Status chip when the quick-add preview reads a Status", async () => {
+    api.tasks.parse.$post.mockResolvedValue(envelope({ ok: true, value: { title: "ACT Math section", status: "not-started", unmatchedAreas: [] } }));
+    await renderLoaded();
+    const input = screen.getByRole("textbox", { name: "New task" });
+    fireEvent.change(input, { target: { value: "ACT Math section status not started" } });
+    await waitFor(() => expect(screen.getAllByTestId("quick-add-chip").map((c) => c.textContent)).toEqual(["Status: Nothing"]));
+  });
+
+  // Polish 4 Task 1 (Spencer): the old hint line ("Add a date, a time
+  // like 30m, …") and the row it sat in are gone — nothing is rendered,
+  // and no empty row is reserved, until something is actually read.
+  it("reserves no row for 'Yoh reads' when nothing has been read yet", async () => {
+    await renderLoaded();
+    expect(screen.queryByText(/Add a date, a time like/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Yoh reads:")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("quick-add-chip")).not.toBeInTheDocument();
+
+    api.tasks.parse.$post.mockResolvedValue(envelope({ ok: true, value: { title: "Call the dentist", unmatchedAreas: [] } }));
+    const input = screen.getByRole("textbox", { name: "New task" });
+    fireEvent.change(input, { target: { value: "Call the dentist" } });
+    // A title-only preview reads no fields at all: still no "Yoh reads" row.
+    await waitFor(() => expect(api.tasks.parse.$post).toHaveBeenCalled());
+    expect(screen.queryByText("Yoh reads:")).not.toBeInTheDocument();
+  });
+
   it("a failed create takes the row back out and shows a plain failure notice", async () => {
     const notice = vi.spyOn(notifications, "addLocalFailureNotice");
     api.tasks.$post.mockResolvedValue(envelope({ ok: false, error: { kind: "unreachable", message: "I couldn't reach Notion right now; nothing was changed." } }));
