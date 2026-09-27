@@ -180,7 +180,7 @@ action_items:
     action: "Add Perplexity daily cost ceiling / pricing confirmation to deferred-work.md
       (F3)"
     owner: "Spencerhatch"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-6-retro-2026-09-24.md"
   - id: "epic-6-retro-item-7-before-next-chat-command-epic-replace-ru"
     epic: 6
