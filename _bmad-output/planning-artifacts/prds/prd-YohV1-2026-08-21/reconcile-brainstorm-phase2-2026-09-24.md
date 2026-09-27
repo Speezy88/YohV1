@@ -4,6 +4,8 @@ created: 2026-09-24
 status: findings only — no PRD/addendum edits made
 ---
 
+**Superseded 2026-09-27: swipe retired; Chat is a panel; pages are Home, Tasks, Desk, Research Hub.**
+
 # Input Reconciliation: Phase 2 Brainstorm → PRD + Addendum
 
 Scope: compares `_bmad-output/brainstorming/brainstorm-phase2-web-app-ui-2026-09-24/brainstorm-intent.md` (primary) and its `.memlog.md` (raw source) against `prd.md` §5.9–§5.13 (FR-30–FR-51) + related §1/§2/§3.3/§4/FR-2/FR-4/FR-23/FR-24/§6–§12, and `addendum.md` § Phase 2: Web App — Technical Notes. Per instructions, the following are **deliberate, memlogged overrides** and are NOT reported as gaps below: checked tasks are not deleted from Notion (C-3); `/sandbox` requires only Due Date + Estimated Duration (O-1); drag only moves Yoh-owned blocks (C-1); Pins are today-only (Pin decision); Routines are Yoh-stored (C-4); feeds are free-tier only with BTC/SOL/ETH + business/AI news (C-6).

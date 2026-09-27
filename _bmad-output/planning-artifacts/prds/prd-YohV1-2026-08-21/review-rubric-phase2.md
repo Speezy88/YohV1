@@ -1,5 +1,7 @@
 # PRD Quality Review — Yoh (Phase 2 update pass)
 
+**Superseded 2026-09-27: swipe retired; Chat is a panel; pages are Home, Tasks, Desk, Research Hub.**
+
 Scope note: Phase 1 (FR-1–FR-24) and Phase 1.5 (FR-25–FR-29, §5.8) were already reviewed and finalized in earlier passes (`review-rubric.md`, `review-rubric-phase1.5.md`) and are not re-litigated here, except to note where this update fixed or interacts with prior findings. This review weights the Phase 2 material — §5.9–§5.13 (FR-30–FR-51), UJ-4–UJ-6, the Phase 2 Glossary terms, the amendments to FR-2/FR-4/FR-23/FR-24, the Phase 2 NFR bullets in §6, §7's Phase 2 clauses, the new §8 Non-Goals, §9.3/§9.4, SM-5–SM-7/SM-C3–C4, §11 items 8–13, and §12's Phase 2 list — and checks whether Phase 2 integrates consistently with unchanged Phase 1/1.5 material.
 
 Housekeeping first: this update resolved both medium findings from the Phase 1.5 review. FR-28's trigger condition (formerly FR-27) now carries an explicit "Implementation note" pointing to the addendum, matching the FR-2/FR-11/FR-17 pattern, with concrete example phrasings. The addendum's Deferred Implementation Parameters section now has a cost-ceiling bullet for web search. The Live Write Registry Glossary entry now correctly lists `saveToResearchVault` (FR-29) and no longer mislabels search as a write action. The addendum's stale-date issue is also gone (`prd.md` and `addendum.md` both read `updated: 2026-09-24`). None of this is re-scored below, but it's worth naming since it shows the prior review's findings were acted on rather than ignored.

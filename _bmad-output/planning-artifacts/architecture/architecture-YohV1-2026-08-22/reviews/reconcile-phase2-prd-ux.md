@@ -11,6 +11,8 @@ reconciled-against:
 created: 2026-09-25
 ---
 
+**Superseded 2026-09-27: swipe retired; Chat is a panel; pages are Home, Tasks, Desk, Research Hub.**
+
 # Reconciliation: Phase 2 spine vs. PRD/UX inputs
 
 ## Verdict

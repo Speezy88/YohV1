@@ -15,17 +15,27 @@ sources:
   - _bmad-output/planning-artifacts/research/technical-yoh-voice-pipeline-and-notion-calendar-a-2026-08-21/research.md
   - _bmad-output/brainstorming/brainstorm-yoh-notion-daily-assistant-2026-08-21/brainstorm-intent.md
 created: 2026-08-21
-updated: 2026-09-25
+updated: 2026-09-27
 ---
 
 # Yoh — Experience Spine
 
 > Web-primary. The Phase 2 laptop web app is the main surface (PRD §5.9–§5.13, FR-30–FR-51). The Phase 1 CLI stays in a short legacy section at the end until FR-50 retires it. The Morning and Night Rituals, and their push/email channels, carry over unchanged. Phase 3 hardware and the Phase 4 iOS app are out of scope. Paired with `DESIGN.md`. Where the spines and the `.working/` explorations disagree, **the spines win**.
 
+## Amendments (2026-09-27, Spencer) — read before the rest of this spine
+
+- **Pages, in order: Home, Tasks, Desk, Research Hub.** There is no Chat page. Every "Chat" row/reference below that names it as a page or a swipe/Page-Indicator destination now means: the Chat panel, opened from a small bottom-center "Ask Yoh" pill (or ⌘K), covering the content area right of the sidebar over whatever page is open.
+- **Swipe navigation retired 2026-09-27 (Spencer).** Every swipe / Page Indicator reference below is superseded. Navigation is a vertical page stack: smooth up/down arrow buttons, the ↑/↓ keys (and Page Up/Page Down) when no text field has focus, an edge-aware mouse wheel (fires only when the hovered scroll area is at its edge), and a left nav sidebar that jumps directly to any page.
+- **Look:** a brighter cool-white base (`#EEF2F8` family, no warm off-white), stronger neumorphism (white highlight top-left, `#a3b1c6`-family shadow bottom-right), more Sky→Azure blue gradient use (the earlier two-moment gradient limit is lifted), and a bigger scale. See `DESIGN.md`'s matching amendment.
+- **Home** also always shows today's Time Budget (editable in place) and a mini month, alongside the Google-Calendar-style day view.
+- **Morning Plan delivery:** in-app only, no Pushover push. Pushover stays for the Night Ritual's push/email escalation and for operational/failure alerts. `/plan` builds today's Plan on demand; `/morning` still never generates one.
+- **Tasks page** is pulled forward from Epic 11 and ships in this plan; a Task Spencer types himself there is a direct write (no confirm), same tier as FR-24. The single Research Box described below moves to the new **Research Hub** page; the async `/research` job and its offer stay Epic 11.
+- **Chat transcript persistence:** OQ13 below is superseded — see PRD/ARCHITECTURE-SPINE and `epics.md`'s "Yoh remembers you" epic (persistent history plus Facts/Decisions/Ideas folders, queued after Epic 9).
+
 ## Foundation
 
 - **Surface:** a single-user web app in a laptop browser (home, class, desk) on **macOS and Windows**. No auth flow, account switching, or picker (FR-39 `[ASSUMPTION]` from the PRD: the session persists).
-- **Pages:** Home → Chat → Tasks → Desk (swipe order, confirmed), plus a Screensaver and cross-cutting overlays.
+- **Pages:** ~~Home → Chat → Tasks → Desk (swipe order, confirmed)~~ *(amended 2026-09-27: Home → Tasks → Desk → Research Hub, in a vertical page stack — see Amendments above)*, plus a Screensaver, the Chat panel over any page, and cross-cutting overlays.
 - **UI base:** shadcn/ui as the headless base, Tailwind for tokens, Motion and transitions.dev for animation (brainstorm stack; the PRD addendum owns the libraries). `DESIGN.md` is the visual contract.
 - **Three usage contexts drive every call:** a home-morning start, a 30-second-to-two-minute classroom capture, and a longer after-school desk session.
 - **Standing gates:** the three-action capture flow (FR-39) never gains a required click. The page never takes initiative mid-block (FR-9, FR-49). Every write is visibly acknowledged or visibly failed (§6 Data integrity).
@@ -37,17 +47,18 @@ updated: 2026-09-25
 
 | Surface | Reached from | Job | Key components | Journey |
 |---|---|---|---|---|
-| **Home** | Launch (after splash); swipe / Page Indicator / ← → | What, in what order, and when | Plan Row + Checkbox, Calendar Day View + Calendar Block + Pin Control, Reshuffle Preview, Chat Bubble, Undo Toast | UJ-4, UJ-5 |
-| **Chat** | Chat Bubble Enter; swipe; notification deep-links | Talk to Yoh; run commands | Chat Message, Chat Input, Command Palette, Thinking Indicator, Structured Question, Sandbox Card, Sandbox Finale; Skill Switcher (hidden in Phase 2, space reserved) | UJ-5, UJ-6 |
-| **Tasks** | Swipe; research-ready deep-link | Find things | Task Group, Grouping Control, Needs-Data Indicator, Research Box | UJ-5 |
-| **Desk** | Swipe | Reflect at the desk | Desk Widget (all variants) | UJ-6 |
+| **Home** | Launch (after splash); sidebar / ↑↓ / wheel | What, in what order, and when | Plan Row + Checkbox, Calendar Day View + Calendar Block + Pin Control, Reshuffle Preview, Time Budget, mini month, Ask Yoh pill, Undo Toast | UJ-4, UJ-5 |
+| **Chat panel** *(not a page — amended 2026-09-27)* | Ask Yoh pill / ⌘K, from any page; notification deep-links | Talk to Yoh; run commands | Chat Message, Chat Input, Command Palette, Thinking Indicator, Structured Question, Sandbox Card, Sandbox Finale; Skill Switcher (hidden in Phase 2, space reserved) | UJ-5, UJ-6 |
+| **Tasks** | Sidebar / ↑↓ / wheel; research-ready deep-link | Find things | Task Group, Grouping Control, Needs-Data Indicator, quick-add | UJ-5 |
+| **Desk** | Sidebar / ↑↓ / wheel | Reflect at the desk | Desk Widget (all variants) | UJ-6 |
+| **Research Hub** *(new page, 2026-09-27)* | Sidebar / ↑↓ / wheel; research-ready deep-link | Find saved research | Research Box (moved from Tasks) | UJ-5 |
 | **Screensaver** | App launch (splash); 10 min idle | Aesthetic only; shows no data | Screensaver | UJ-5 (splash) |
 | **Overlays** | Any page | Cross-cutting feedback | In-App Notification, Undo Toast, Command Palette, Birthday Confetti | UJ-4, UJ-5 |
-| **Push / email** (outside the app) | Rituals, on schedule | Morning Plan; Night close-out escalation | Push Notification | CLI legacy UJ-1, UJ-3 |
+| **Push / email** (outside the app) | Rituals, on schedule | Night close-out escalation, operational alerts *(Morning Plan removed 2026-09-27: in-app only)* | Push Notification | CLI legacy UJ-1, UJ-3 |
 
-**Navigation.** Horizontal trackpad swipe moves between adjacent pages (primary). The non-swipe fallback is a clickable Page Indicator plus the ← → arrow keys `[ASSUMPTION, per memlog; exact form pending]`. Every page is one gesture or click from every other (FR-39) through the indicator. The Theme Toggle sits in a corner of every page. Modal depth is one: the Command Palette is the only layered panel, and toasts never stack a modal.
+**Navigation.** ~~Horizontal trackpad swipe moves between adjacent pages (primary). The non-swipe fallback is a clickable Page Indicator plus the ← → arrow keys `[ASSUMPTION, per memlog; exact form pending]`.~~ *Swipe navigation retired 2026-09-27 (Spencer).* Pages sit in a vertical stack, moved between with smooth up/down arrow buttons, the ↑/↓ keys (and Page Up/Page Down) when no text field has focus, an edge-aware mouse wheel, and a left nav sidebar that jumps directly to any page. Every page is one gesture or click from every other (FR-39). The Theme Toggle sits in a corner of every page. Modal depth is one: the Command Palette is the only layered panel, and toasts never stack a modal.
 
-**Need → surface closure.** FR-30–FR-35 → Home. FR-36–FR-38 → Chat. FR-39 → Screensaver → Home → Chat Bubble. FR-40/41 → Home. FR-42 → Chat. FR-43 → Tasks. FR-44/47 → Desk. FR-45 → Screensaver. FR-46 → all. FR-48 → Home (Approve), Chat (confirmations). FR-49 → overlays. FR-50 → CLI legacy. FR-51 → Chat → Tasks. Every surface above has at least one journey.
+**Need → surface closure.** FR-30–FR-35 → Home. FR-36–FR-38 → Chat panel. FR-39 → Screensaver → Home → Ask Yoh pill. FR-40/41 → Home. FR-42 → Chat panel. FR-43 → Tasks (Research Hub gets the former Research Box, 2026-09-27). FR-44/47 → Desk. FR-45 → Screensaver. FR-46 → all. FR-48 → Home (Approve), Chat panel (confirmations). FR-49 → overlays. FR-50 → CLI legacy. FR-51 → Chat panel → Research Hub. Every surface above has at least one journey.
 
 ## Voice and Tone
 
@@ -71,7 +82,7 @@ Behavioral rules. Visual specs are in `DESIGN.md` Components, under identical na
 
 | Component | Where | Behavioral rules |
 |---|---|---|
-| **Page Indicator** | Every page | Shows the current page among four. Clicking a dot goes to that page. ← → keys move one page when no text field has focus `[ASSUMPTION]`. Announces "Chat, page 2 of 4". |
+| ~~Page Indicator~~ **Nav Sidebar + arrow buttons** *(amended 2026-09-27, swipe/indicator retired)* | Every page | Left sidebar (wordmark, Home/Tasks/Desk/Research Hub, theme toggle) shows and sets the current page; the active item sits in a gradient pill. On-screen up/down arrow buttons, the ↑/↓ keys (no text field focused), and an edge-aware mouse wheel move one page in the vertical stack. Announces "Tasks, page 2 of 4". |
 | **Theme Toggle** | Every page, corner | One click flips light and dark. The first launch follows the OS; after a manual toggle, the choice persists `[ASSUMPTION]`. |
 | **Plan Row** | Home | Ordered exactly as the Plan (FR-2). It reflects an approved reshuffle without a reload (FR-40). A pinned Task shows a Pin Control badge. |
 | **Checkbox** | Plan Row | Click → checkmark + strikethrough, the row dissolves immediately (§6 Latency), and an Undo Toast appears. The Notion Status write and Completion Log entry are **deferred until the toast closes**, and dropped if Undo is pressed (FR-41). The write is Status-only. |
@@ -80,11 +91,11 @@ Behavioral rules. Visual specs are in `DESIGN.md` Components, under identical na
 | **Pin Control** | Pinned Calendar Block; Plan Row badge | Clicking the pin icon on the calendar block unpins the Task (memlog, resolves OQ13) and produces a fresh Reshuffle Preview. The Plan Row badge is an indicator only `[ASSUMPTION]`. A Pin expires at the end of the day. |
 | **Button** | Everywhere | Primary = the one confirming action (Approve, Save). Secondary = Discard, Skip, Undo. No button duplicates a slash command (FR-46). |
 | **Reshuffle Preview** | Home | Animates the current layout to the proposed one. Moved and unchanged blocks are distinguishable, and deferred Tasks are named. Approve writes everything (confirm-then-write, FR-32/FR-48). Discard or navigating away writes nothing. A stale preview recomputes instead of applying. Success: the calendar settles. Failure: an In-App Notification. |
-| **Chat Bubble** | Home | Small until hover or focus, then expands wide. Enter sends and moves to Chat with the message as the first turn (FR-40). Typing "/" opens the Command Palette in place `[ASSUMPTION]`. |
-| **Chat Input** | Chat | Enter sends. "/" as the first character opens the Command Palette. Unsent text survives the Screensaver and page swipes (FR-45). |
+| ~~Chat Bubble~~ **Ask Yoh pill** *(amended 2026-09-27: Wispr-Flow-style pill, fixed bottom-center, ~46px tall)* | Every page | Compact, raised, never covers content. Click or ⌘K opens the Chat panel with input focused, the pressed message as the first turn (FR-40). Typing "/" opens the Command Palette in place `[ASSUMPTION]`. |
+| **Chat Input** | Chat panel | Enter sends. "/" as the first character opens the Command Palette. Unsent text survives the Screensaver and panel close (FR-45); ~~and page swipes~~ *(swipe retired 2026-09-27)*. |
 | **Chat Message** | Chat | Yoh's turns stream as they generate. A write triggered in Chat echoes a one-line receipt in the stream (§6). Yoh ends a conversation naturally and doesn't fish for more. |
 | **Thinking Indicator** | Chat | Appears within a fraction of a second of sending, naming what Yoh is doing ("Searching Notion…"). It gives way to streaming text. |
-| **Command Palette** | Chat Input, Chat Bubble | Lists `/morning`, `/night`, `/sandbox`, `/research`, each with a one-line description and an example. Filters as Spencer types. ↑↓ moves, Enter runs, Esc closes `[ASSUMPTION]`. It is the only command-discovery surface (FR-42). |
+| **Command Palette** | Chat Input, Ask Yoh pill | Lists `/morning`, `/plan` *(added 2026-09-27: builds today's Plan on demand; `/morning` never does)*, `/night`, `/sandbox`, `/research`, each with a one-line description and an example. Filters as Spencer types. ↑↓ moves, Enter runs, Esc closes `[ASSUMPTION]`. It is the only command-discovery surface (FR-42). |
 | **Structured Question** | Chat stream | Yoh asks a question with selectable options plus a free-text "Other". One pick answers it, and the answer is recorded as Spencer's turn. Used for clarifying questions, the one-time /research offer, and Proposal confirmations (FR-16/25/26/27, via FR-48) `[ASSUMPTION for Proposals]`. An unanswered question blocks conflicting writes but not unrelated chat `[ASSUMPTION]`. *Flagged for PRD update.* |
 | **Skill Switcher** | Chat left bar | **Hidden in Phase 2**: only General chat exists, and Research is *not* a skill (`/research` is its only trigger, per FR-46's no-redundant-controls rule). The IA reserves the left-bar space. The switcher appears once a second real skill (Goals) exists: click to switch, with the active skill always indicated. It is a sanctioned nav element, not an FR-46 violation. *Flagged for PRD update.* |
 | **Sandbox Card** | Chat stream | One Yoh message per Task missing a Required Field, soonest-due first (PRD `[ASSUMPTION]`, FR-36). Required fields: Due Date, Estimated Duration (Save stays disabled until both are filled). Refining fields are optional. Skip writes nothing and keeps the Task in the count. Save writes directly (FR-38), plays a visual pulse on that card (respecting reduced motion), and decrements the remaining counter live. The reward **sound plays once, when the batch is cleared**, not per card (respecting system mute). The next card appears below. Cards stay in chat history. An unresolvable select value re-prompts on that card. |
@@ -94,12 +105,12 @@ Behavioral rules. Visual specs are in `DESIGN.md` Components, under identical na
 | **Needs-Data Indicator** | Tasks `[ASSUMPTION: placement]` | A persistent count of Tasks missing Required Fields. Click → Chat with `/sandbox` started. It clears only when the count reaches zero (memlog; resolves the OQ13 tray question). |
 | **Task Group** | Tasks | Groups every Notion Task by the active grouping. Every Task is findable (FR-43). A checked-off Task shows as completed, not deleted. |
 | **Grouping Control** | Tasks | Area (default), Due Date, Energy, or Status. `[ASSUMPTION]` The choice persists across visits. |
-| **Research Box** | Tasks | The latest research output up front, with the Research Vault library browsable below. It is the only research surface (FR-43). A research-ready notification opens the new doc here. Output follows the dedicated research prompt's consistent, focused shape (FR-51). |
+| **Research Box** | ~~Tasks~~ **Research Hub** *(moved 2026-09-27, Spencer: Tasks page ships standalone; a fourth Research Hub page holds this)* | The latest research output up front, with the Research Vault library browsable below, plus an "ask a research question" box that sends into the Chat panel. It is the only research surface (FR-43). A research-ready notification opens the new doc here. Output follows the dedicated research prompt's consistent, focused shape (FR-51). The async `/research` job and its offer stay Epic 11; only the page shell ships now. |
 | **Desk Widget** | Desk | Yoh-data widgets read the Completion/Activity Log only (FR-47). **Worked** is a single merged widget. Its primary figure is today's minutes (sum of Estimated Duration of Tasks completed today); a secondary line shows all-time hours with Yoh on the same Completion Log basis (resolves OQ10). **Streak** shows current and longest, in neutral wording. **On-Time Rate** follows FR-44's definition. **Usage Heatmap** is weeks × 7 days with hover tooltips. **Feed widgets** fail independently, showing "Unavailable" plus the last value and timestamp. |
 | **Screensaver** | Launch; 10-min idle | Launch: plays briefly and auto-fades into Home with no click (FR-39). Idle: any input dismisses it and returns to the prior page with unsent chat text intact. It never shows data or notifications. |
 | **Birthday Confetti** | Home, Feb 19 | Plays once per Feb 19 `[ASSUMPTION: once per day]`. Skipped under reduced motion. It is the only named celebration. |
 | **Icon** | Everywhere | Icons pair with a text label or accessible name. An icon never stands alone as the only signal of state. |
-| **Push Notification** | Phone (Pushover) | Exactly one Morning Plan push per day (FR-1). The Night close-out is a push first, then an email escalation, capped at two attempts (FR-13). Unchanged by the web app (FR-49, FR-50). |
+| **Push Notification** | Phone (Pushover) | ~~Exactly one Morning Plan push per day (FR-1).~~ *Amended 2026-09-27 (Spencer): the Morning Plan arrives in the app only — no Pushover push for it.* Pushover stays for the Night close-out (a push first, then an email escalation, capped at two attempts, FR-13) and for operational/failure alerts. Unchanged by the web app otherwise (FR-49, FR-50). |
 
 ## State Patterns
 
@@ -109,7 +120,7 @@ Copy shown is proposed wording `[ASSUMPTION]`; the rule is binding.
 |---|---|---|
 | Launch / cold load | Screensaver → Home | The splash covers the load and fades into Home when ready. No click, no picker. |
 | Cold data load | Home, Tasks, Desk | Skeleton rows or cards matching the layout (skeleton-reveal). Never a static spinner (FR-46). |
-| No Plan yet today | Home | "No Plan yet today." The Chat Bubble stays live; `/morning` opens the Ritual in Chat. |
+| No Plan yet today | Home | "No Plan yet today. Type /plan to build it now." *(amended 2026-09-27)* The Ask Yoh pill *(was Chat Bubble)* stays live; `/morning` opens the Ritual in the Chat panel. |
 | All Tasks checked | Home | The empty checklist reads "Nothing left on today's Plan." The calendar stays. No celebration. |
 | Unplaceable Task | Home | Not placed on the calendar. A needs-data In-App Notification appears, and the Needs-Data Indicator count rises (FR-34). |
 | Reshuffle pending | Home | The Reshuffle Preview is open. Further drags are blocked until Approve or Discard `[ASSUMPTION]`. |
@@ -126,19 +137,19 @@ Copy shown is proposed wording `[ASSUMPTION]`; the rule is binding.
 | Empty group | Tasks | Groups with no Tasks are omitted `[ASSUMPTION]`. |
 | /research running | Chat, any page | Spencer can leave. The result arrives as an In-App Notification. A failed search raises a failure notification (FR-51). |
 | Needs-data count = 0 | Tasks | The indicator is hidden. |
-| Empty Research Vault | Tasks | "No research yet. Try /research in Chat." |
+| Empty Research Vault | ~~Tasks~~ **Research Hub** *(moved 2026-09-27)* | ~~"No research yet. Try /research in Chat."~~ "Nothing saved yet. Ask a question, then say "save that"." *(copy amended 2026-09-27)* |
 | No completions yet | Desk | Widgets show 0 / "Streak: 0 days". No guilt copy. |
 | Feed down | Desk | That widget shows "Unavailable" plus the last value and timestamp. The rest of Desk is unaffected (FR-44). |
 | Idle 10 min | Any | Screensaver. Scroll and pointer movement count as input. Any input returns to the same page, scroll position, and state. |
-| Focus | Any | A `{spacing.focus-ring-width}` `{colors.accent-solid}` ring on the focused control, plus `{colors.accent-glow}` on the Chat Bubble / Chat Input. |
+| Focus | Any | A `{spacing.focus-ring-width}` `{colors.accent-solid}` ring on the focused control, plus `{colors.accent-glow}` on the Ask Yoh pill *(was Chat Bubble)* / Chat Input. |
 
 ## Interaction Primitives
 
-- **Swipe:** a horizontal two-finger trackpad swipe moves one page (macOS and Windows precision touchpads). The browser's own two-finger back/forward swipe is suppressed on the app surface (`overscroll-behavior-x: none` on the root), so a page swipe never leaves the app. A page swipe fires only when the gesture starts outside a horizontally scrollable region (calendar, ticker row, heatmap). The Page Indicator and ← → fallback stay visible at all times. Verified on macOS and Windows before swipe ships. OS-level gestures (e.g. swiping between desktops or full-screen apps) are outside the page's control.
-- **Keys:** ← → move pages (no text focus). "/" opens the Command Palette in chat inputs. Enter sends or runs. Esc closes the Palette or collapses the Chat Bubble `[ASSUMPTION]`. Tab order follows reading order.
-- **Click:** Page Indicator dots, Checkbox, Pin Control (unpin), Approve/Discard, Undo, notification deep-links, Skill Switcher entries, Grouping Control segments, Theme Toggle.
+- ~~**Swipe:** a horizontal two-finger trackpad swipe moves one page...~~ **Swipe navigation retired 2026-09-27 (Spencer).** No swipe gesture is part of this spine. Navigation is a vertical stack: **arrow buttons** (on-screen up/down, smooth transition), **keys** (↑/↓, Page Up/Down, no text field focused), and an **edge-aware mouse wheel** — it moves a page only when the hovered scroll area is already at its scroll edge, so it never hijacks scrolling inside a page. The nav sidebar jumps directly to any page. Reduced motion makes transitions instant.
+- **Keys:** ↑ / ↓ (and Page Up/Page Down) move pages (no text focus) *(amended 2026-09-27; was ← →)*. "/" opens the Command Palette in chat inputs. Enter sends or runs. Esc closes the Palette or collapses the Ask Yoh pill `[ASSUMPTION]`. Tab order follows reading order.
+- **Click:** Nav Sidebar entries, up/down arrow buttons, Checkbox, Pin Control (unpin), Approve/Discard, Undo, notification deep-links, Skill Switcher entries, Grouping Control segments, Theme Toggle.
 - **Drag:** Calendar Blocks only (Home), today only. Release opens the Reshuffle Preview. There is no drag anywhere else.
-- **Hover/focus:** expands the Chat Bubble. Shows heatmap tooltips.
+- **Hover/focus:** ~~expands the Chat Bubble~~ *(amended 2026-09-27: the Ask Yoh pill is a fixed-size pill, not an expand-on-hover bubble; hover/focus just shows its focus ring/glow)*. Shows heatmap tooltips.
 - **Idle:** 10 minutes with no input → Screensaver. Scrolling and pointer movement count as input, not only key presses. The first input after the Screensaver returns to the same page and scroll position.
 - **Banned:** proactive mid-block prompts, buttons that duplicate slash commands, emoji, auto-run research, modal stacks deeper than one.
 
@@ -179,13 +190,13 @@ Mirrors PRD UJ-4–UJ-6 (§3.3), with this pass's decisions layered in. Protagon
 *Classroom, laptop open, two minutes free.*
 
 1. Open laptop → click the Yoh icon → the splash fades into Home (no click).
-2. He types "Lab report draft, due Thursday" into the Chat Bubble and presses Enter. He lands in Chat with the message as the first turn, and Yoh confirms the Task was created with a one-line receipt.
+2. He types "Lab report draft, due Thursday" into the ~~Chat Bubble~~ **Ask Yoh pill** and presses Enter. ~~He lands in Chat~~ *(amended 2026-09-27)* The Chat panel opens over Home with the message as the first turn, and Yoh confirms the Task was created with a one-line receipt.
 3. He types "/". The Command Palette opens, he picks `/sandbox`, and presses Enter.
 4. The first Sandbox Card appears inline: "Chem problem set — Due Date, Estimated Duration · 4 remaining". He fills both and clicks **Save**. The card pulses, and the counter reads "3 remaining".
 5. He skips one he's unsure about (no cue, and it stays in the count), then saves two more. Each card stays in the chat history.
 6. **Climax:** the batch is cleared, so the single reward sound plays. The Sandbox Finale bar runs while Notion writes land, and an In-App Notification appears: "Saved 3 Tasks." The Needs-Data Indicator on Tasks drops to 1.
 7. Before closing the laptop he sends `/research when is the AP Bio registration deadline`. Yoh runs it immediately, with no narrowing questions.
-8. Later, on any page, "Research ready: AP Bio registration deadline" appears. One click opens the doc in the Research Box on Tasks.
+8. Later, on any page, "Research ready: AP Bio registration deadline" appears. One click opens the doc in the Research Box ~~on Tasks~~ *(amended 2026-09-27: on Research Hub)*.
 
 **Failure paths:** a Notion write fails → the completion notification names the failed Task instead of claiming success, and that Task stays in the count. The search fails → a failure notification, not a research-ready one. **Variant:** Spencer describes something obviously research-sized without the command → Yoh offers once, via a Structured Question ("Do you want to do research on this?"), and runs only if he accepts.
 
@@ -193,11 +204,11 @@ Mirrors PRD UJ-4–UJ-6 (§3.3), with this pass's decisions layered in. Protagon
 
 *Desk, after school, a longer session.*
 
-1. Spencer swipes from Home to Desk (or presses → three times).
-2. Desk shows Tasks Completed (a scrollable list of checked, struck-through rows), the Worked widget ("145 min today", with "212 h with Yoh" beneath) in tabular figures, the on-time rate, "Streak: 1 day · Longest: 12 days", and the usage heatmap. Next to these are BTC/SOL/ETH tickers, weather, and top business and AI news.
+1. Spencer ~~swipes~~ *(swipe retired 2026-09-27)* moves from Home to Desk via the sidebar (or presses ↓ three times).
+2. Desk shows Tasks Completed (a scrollable list of checked, struck-through rows), the Worked widget ("145 min today", with "212 h with Yoh" beneath) in tabular figures, the on-time rate, "Streak: 1 day · Longest: 12 days", the usage heatmap, and *(added 2026-09-27)* this month's Claude API spend. Next to these are ~~BTC/SOL/ETH tickers, weather, and top business and AI news~~ *(confirmed 2026-09-27)* BTC/ETH/SOL tickers, weather for Seattle WA, and the biggest business stories with an AI emphasis.
 3. He hovers the heatmap to see last Tuesday's count.
 4. **Climax:** he sees the day's work summed up in one glance, in neutral words, with no guilt about the streak reset.
-5. When he's ready, he swipes to Chat and runs `/night`. The close-out runs interactively, and tonight's scheduled push and email escalation are cancelled (FR-42).
+5. When he's ready, he opens the Chat panel (Ask Yoh pill / ⌘K — *not a swipe to a Chat page, 2026-09-27*) and runs `/night`. The close-out runs interactively, and tonight's scheduled push and email escalation are cancelled (FR-42).
 
 **Failure path:** the news feed is down → that widget reads "Unavailable · last updated 2:14 PM", and the rest of Desk is unaffected.
 
@@ -206,6 +217,7 @@ Mirrors PRD UJ-4–UJ-6 (§3.3), with this pass's decisions layered in. Protagon
 | Command | Does | Example |
 |---|---|---|
 | `/morning` | Opens today's Morning Ritual in Chat: the Plan, its reasoning line, and pending questions or Proposals. It never re-sends the push or regenerates the Plan. | `/morning` |
+| `/plan` *(added 2026-09-27, Spencer)* | Builds today's Plan on demand. `/morning` still never generates one (FR-1 stands). | `/plan` |
 | `/night` | Runs the Night Ritual close-out interactively, and cancels that night's scheduled prompt and escalation. | `/night` |
 | `/sandbox` | Starts the inline Sandbox Card flow. | `/sandbox` |
 | `/research <question>` | Queues research immediately. The result files to the Research Vault, and a notification follows. This is the only way research runs. | `/research AP Bio registration deadline` |
@@ -223,7 +235,7 @@ Research is **not** a skill. `/research` is its only trigger (memlog subtraction
 
 | Trigger (FR-49 consumer) | Message shape | Deep-link |
 |---|---|---|
-| Research ready (FR-51) | "Research ready: {topic}" | Research Box doc on Tasks |
+| Research ready (FR-51) | "Research ready: {topic}" | Research Box doc ~~on Tasks~~ *(amended 2026-09-27: on Research Hub)* |
 | Research failed (FR-51) | "Couldn't finish research: {topic}" | Chat `[ASSUMPTION]` |
 | /sandbox complete (FR-38) | "Saved {n} Tasks" | Chat |
 | /sandbox partial/failed (FR-38) | "Couldn't save {Task}" | Chat → /sandbox |
@@ -252,14 +264,14 @@ Rules: notifications appear only as a result of something Spencer started, or a 
 
 | Platform | Behavior |
 |---|---|
-| macOS laptop browser | Primary. Trackpad swipe between pages. |
-| Windows laptop browser | Must reach parity: self-hosted Figtree (no `system-ui`), precision-touchpad swipe supported, or the Page Indicator and arrow keys carry navigation. `backdrop-filter` verified, with an opaque fallback `[ASSUMPTION]`. |
+| macOS laptop browser | Primary. ~~Trackpad swipe between pages~~ *(swipe retired 2026-09-27)* — vertical stack via sidebar, arrow buttons, ↑/↓ keys, edge-aware wheel. |
+| Windows laptop browser | Must reach parity: self-hosted Figtree (no `system-ui`), ~~precision-touchpad swipe supported, or the Page Indicator and arrow keys carry navigation~~ *(amended 2026-09-27: same vertical-stack navigation as macOS — sidebar, arrow buttons, ↑/↓ keys, wheel; no swipe on either platform)*. `backdrop-filter` verified, with an opaque fallback `[ASSUMPTION]`. |
 | Narrow windows / phone | Not specified. The iOS app is Phase 4. See Open Questions. |
 | School network | The app must be reachable from class (PRD OQ12, architecture). |
 
 ## Rituals (carried over)
 
-- **Morning Ritual:** runs unattended and sends one Pushover push with the Plan and reasoning line (FR-1). In the web app, `/morning` views the same Plan in Chat.
+- **Morning Ritual:** runs unattended and builds the Plan with its reasoning line (FR-1). ~~sends one Pushover push~~ *Amended 2026-09-27 (Spencer): delivery is in-app only, no Pushover push.* In the web app, `/morning` views the same Plan in the Chat panel, and `/plan` (added 2026-09-27) builds it on demand.
 - **Night Ritual:** a push first, then a single email escalation, and never a third attempt (FR-13). An unacknowledged night is marked unchecked, and mandatory Blockers roll into tomorrow (FR-14). `/night` in Chat pre-empts both.
 - **Self-Check** (FR-17) and **Ritual-created Proposals** (FR-48/FR-50) must be resolvable in the web app once the CLI is retired. Where they surface is open (see Open Questions).
 - Silence is still a feature: nothing appears between the Morning Plan and whatever Spencer starts next.
@@ -278,7 +290,7 @@ Rules: notifications appear only as a result of something Spencer started, or a 
 10. **/sandbox "batch cleared":** does the sound play when every card has been saved or skipped, or only when the needs-data count reaches zero?
 11. **Non-drag reshuffle path (WCAG 2.5.7):** is the Chat request enough, or is a dedicated control needed?
 12. **Narrow-window behavior:** there are no breakpoints yet.
-13. **Chat history persistence** across launches (Sandbox Cards "remain in history").
+13. ~~Chat history persistence across launches (Sandbox Cards "remain in history").~~ *Superseded 2026-09-27 (Spencer): persistent chat history is now planned — the "Yoh remembers you" epic (persistent history plus Facts about me / Decisions & commitments / Ideas & notes folders), queued after Epic 9. See `epics.md`.*
 14. **Routine declaration UI:** Chat only (PRD `[ASSUMPTION]`) or also a /sandbox step?
 15. **Screensaver parameters and wordmark size:** dot count, speed, and size are unspecified.
 16. **Reward sound asset** and its volume.
@@ -293,6 +305,7 @@ Rules: notifications appear only as a result of something Spencer started, or a 
 - **FR-37 reward cue:** a visual pulse per saved card plus one sound when the batch is cleared (the PRD says a "ping sound or haptic" after *each* completed card).
 - **/research one-time offer:** a Propose-Don't-Impose offer next to FR-51's "never runs without the command".
 - **Resolved here, for PRD §11 update:** OQ9 (rim rule), OQ10 (hours definition), and OQ13 (undo form, unpin gesture, grouping, needs-data persistence, /sandbox placement).
+- **2026-09-27 (Spencer), recorded in this pass:** page order Home/Tasks/Desk/Research Hub, no Chat page (Chat is a panel), swipe retired in favor of a vertical stack (arrow buttons, ↑/↓, edge-aware wheel, sidebar), brighter/stronger neumorphic look with more blue gradient, Home's Time Budget + mini month, Morning Plan in-app-only delivery, `/plan` on demand, Tasks-page direct-write ruling, the Research Hub page shell, and Desk's Seattle/BTC-ETH-SOL/business-AI-news/Claude-spend tile. See `prd.md`, `DESIGN.md`, `epics.md`, `ARCHITECTURE-SPINE.md` for the corresponding amendments.
 
 ---
 

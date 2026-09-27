@@ -5,9 +5,9 @@ inputDocuments:
   - _bmad-output/planning-artifacts/architecture/architecture-YohV1-2026-08-22/ARCHITECTURE-SPINE.md
   - _bmad-output/planning-artifacts/ux-designs/ux-YohV1-2026-08-21/DESIGN.md
   - _bmad-output/planning-artifacts/ux-designs/ux-YohV1-2026-08-21/EXPERIENCE.md
-updated: '2026-09-25'
+updated: '2026-09-27'
 phase2StepsCompleted: [1, 2, 3, 4]
-phase2Status: "Complete — Phase 2 (FR-30–FR-51 + amended FR-1/2/4/12–14/23/24), Epics 7–12, Stories 7.1–12.4 designed, validated, and approved 2026-09-25. Ready for sprint planning."
+phase2Status: "Complete — Phase 2 (FR-30–FR-51 + amended FR-1/2/4/12–14/23/24), Epics 7–12, Stories 7.1–12.4 designed, validated, and approved 2026-09-25. Ready for sprint planning. Amended 2026-09-27 (Spencer): page order Home/Tasks/Desk/Research Hub, Chat is a panel (not a page), swipe navigation retired, Tasks page (Story 11.1) delivered early via the 2026-09-27 fixes + UI plan, Research Hub page shell added, Desk gains a Claude-spend tile, and backlog Epic 13 'Yoh remembers you' added."
 epic6Status: "Complete -- Epic 6 (Phase 1.5, FR-25-29, Stories 6.1-6.6) fully designed, validated, and approved. Epics 1-6 all done; workflow finished 2026-09-18."
 ---
 
@@ -23,7 +23,7 @@ This document provides the complete epic and story breakdown for Yoh, decomposin
 
 ### Functional Requirements
 
-FR-1: Generate and deliver the Morning Plan — one ordered Plan per day from current Tasks (Estimated Duration, Area, Due Date, Status, Energy) and today's fixed Calendar events, delivered as a single notification.
+FR-1: Generate and deliver the Morning Plan — one ordered Plan per day from current Tasks (Estimated Duration, Area, Due Date, Status, Energy) and today's fixed Calendar events, delivered as a single notification. *Amended 2026-09-27 (Spencer): delivery is in-app only — no Pushover push for the Morning Plan (FR-1 itself stands; only the delivery channel changes). `/plan` builds today's Plan on demand; `/morning` still never generates one.*
 
 FR-2: Derived Priority ordering — Tasks ordered by an automatically computed priority; primary axis is Due Date proximity adjusted by Estimated Duration, with a weighted score across Area/Energy fit/difficulty breaking ties. Never manually set.
 
@@ -121,17 +121,17 @@ FR-38: /sandbox write-back and proof-of-action finale — each completed card is
 
 *§5.11 Pages and App Shell (priority 3):*
 
-FR-39: Three-action capture flow — from a closed laptop: open the laptop → click the Yoh icon → type the Task in the chat bubble and press Enter. There is no login, picker, or intermediate screen, and no Phase 2 feature may add a required click. This is a regression gate. Every page is reachable from every other in one gesture or click: swipe, plus a visible non-swipe fallback.
+FR-39: Three-action capture flow — from a closed laptop: open the laptop → click the Yoh icon → type the Task in the ~~chat bubble~~ **Ask Yoh pill** *(amended 2026-09-27)* and press Enter. There is no login, picker, or intermediate screen, and no Phase 2 feature may add a required click. This is a regression gate. Every page is reachable from every other in one gesture or click. ~~swipe, plus a visible non-swipe fallback~~ **Swipe navigation retired 2026-09-27 (Spencer):** navigation is a vertical page stack (smooth up/down arrow buttons, ↑/↓ keys, an edge-aware mouse wheel, and a left nav sidebar).
 
-FR-40: Home page — today's Plan checklist on the left (in exact Plan order, reflecting any approved reshuffle without a reload), today's calendar day view on the right (where drag happens, with non-Yoh events visibly fixed), and a small chat bubble at the bottom. The bubble expands on hover or focus. Enter sends the message and moves to Chat with it as the first turn.
+FR-40: Home page — today's Plan checklist on the left (in exact Plan order, reflecting any approved reshuffle without a reload), today's calendar day view on the right (where drag happens, with non-Yoh events visibly fixed) plus, *added 2026-09-27*, today's Time Budget (editable in place) and a mini month, and the Ask Yoh pill fixed bottom-center *(was: a small chat bubble at the bottom — renamed 2026-09-27, now on every page)*. Pressing Enter sends the message and opens the Chat panel with it as the first turn.
 
 FR-41: Check off a Task — checking a Task on Home fades the row, writes Status = completed to Notion (Status only, never a delete), and writes a Completion Log record. Night close-out doesn't re-ask about it. A short undo window applies. `[ASSUMPTION: ~5 s undo]`
 
-FR-42: Chat page and slash commands — Chat replaces the CLI as the Chat surface. It has four commands (`/morning`, `/night`, `/sandbox`, `/research`), and typing `/` opens a filterable Command Palette that lists each command with a description and an example. While Yoh works, a loading indicator shows status text, and responses stream. Parity with every CLI Chat capability is required before retirement: Time Budget, Re-Flow, Blockers, open interaction requests and Proposals, FR-24–FR-29, and Self-Check. Yoh never claims a capability it doesn't have, and it closes conversations naturally. `/morning` shows today's Plan, its reasoning line, and pending items, without re-pushing or regenerating. `/night` runs close-out interactively; that counts as the night's close-out, cancels the scheduled prompt and the escalation, and the day is never marked unchecked. The left menu bar is empty or hidden in Phase 2.
+FR-42: ~~Chat page~~ **Chat panel** *(amended 2026-09-27: there is no Chat page — Chat is a panel over every page, opened from the Ask Yoh pill or ⌘K)* and slash commands — Chat replaces the CLI as the Chat surface. It has five commands (`/morning`, `/plan` *(added 2026-09-27: builds today's Plan on demand; `/morning` never does)*, `/night`, `/sandbox`, `/research`), and typing `/` opens a filterable Command Palette that lists each command with a description and an example. While Yoh works, a loading indicator shows status text, and responses stream. Parity with every CLI Chat capability is required before retirement: Time Budget, Re-Flow, Blockers, open interaction requests and Proposals, FR-24–FR-29, and Self-Check. Yoh never claims a capability it doesn't have, and it closes conversations naturally. `/morning` shows today's Plan, its reasoning line, and pending items, without re-pushing or regenerating. `/night` runs close-out interactively; that counts as the night's close-out, cancels the scheduled prompt and the escalation, and the day is never marked unchecked. ~~The left menu bar is empty or hidden in Phase 2.~~ *Amended 2026-09-27: the left menu bar is the nav sidebar (Home/Tasks/Desk/Research Hub + Theme Toggle) — no longer empty.*
 
-FR-43: Tasks page — the full Notion Tasks database, grouped by Area with other groupings available, plus one research box: the latest research output up front and the full Research Vault library browsable in the same box. It is the only research surface. A research-ready notification deep-links straight to the new document there.
+FR-43: Tasks page — the full Notion Tasks database, grouped by Area with other groupings available, ~~plus one research box: the latest research output up front and the full Research Vault library browsable in the same box. It is the only research surface.~~ *Amended 2026-09-27 (Spencer): the research box moves to the new Research Hub page (see Epic List). Tasks itself is pulled forward from Epic 11 into the 2026-09-27 fixes + UI plan, with a quick-add row and Notion-speed inline editing; a Task Spencer types himself is a direct write (FR-24 tier), amending AD-3/AD-12.* A research-ready notification deep-links straight to the new document on Research Hub.
 
-FR-44: Desk dashboard — widgets built from Yoh's own data (Completion/Activity Log only, never Notion history): Tasks Completed list, minutes worked, on-time rate, usage streak, hours worked with Yoh, and a usage heatmap. Public-feed widgets: BTC/SOL/ETH tickers, weather, and business/AI news. Each feed widget fails independently, showing "unavailable" or its last value with a timestamp. No Task or Calendar data is sent to any feed provider. `[ASSUMPTION: on-time = completedAt ≤ dueDate]`
+FR-44: Desk dashboard — widgets built from Yoh's own data (Completion/Activity Log only, never Notion history): Tasks Completed list, minutes worked, on-time rate, usage streak, hours worked with Yoh, a usage heatmap, and *(added 2026-09-27)* a "Claude API spend this month" tile computed locally from Task 9's per-call usage records × one price table. Public-feed widgets: BTC/ETH/SOL tickers, weather for Seattle WA *(confirmed 2026-09-27)*, and news — the biggest business stories with an AI emphasis *(confirmed 2026-09-27)*. Each feed widget fails independently, showing "unavailable" or its last value with a timestamp. No Task or Calendar data is sent to any feed provider. `[ASSUMPTION: on-time = completedAt ≤ dueDate]`
 
 FR-45: Screensaver — animated gradient-dot field with the centered "Yoh Meeseek" wordmark. It shows as a launch splash that auto-fades into Home with no click, and after inactivity. Any input dismisses it and returns to the same page with unsent chat text intact. It is decorative only and shows no data or notifications.
 
@@ -145,7 +145,7 @@ FR-47: Yoh-owned Completion and Activity Log — a durable record of every compl
 
 FR-48: Surface-agnostic confirmation — any confirm-then-write can be confirmed from any interactive surface. A Web App control (Approve, a Chat confirm) counts exactly like a typed "yes", under the same rules: apply only after an explicit confirmation, and reject a stale proposal. Unattended Ritual runs never supply a confirmation. Proposals left open when the CLI retires stay visible and resolvable in the Web App.
 
-FR-49: In-app notifications — one reusable capability that appears on whatever page is open and deep-links to its target in one click. Consumers: research ready/failed, /sandbox complete/failed, needs data, reshuffle apply failed, and operational problems. A notification fires only as the result of something Spencer started or a system failure, never as a proactive check-in. It does not replace the Morning push or the Night push/email channels.
+FR-49: In-app notifications — one reusable capability that appears on whatever page is open and deep-links to its target in one click. Consumers: research ready/failed, /sandbox complete/failed, needs data, reshuffle apply failed, and operational problems. A notification fires only as the result of something Spencer started or a system failure, never as a proactive check-in. ~~It does not replace the Morning push or the Night push/email channels.~~ *Amended 2026-09-27 (Spencer): the Morning Plan no longer pushes — it's in-app only. It does not replace the Night Ritual's push/email escalation, which is unchanged.*
 
 FR-50: Retire the CLI — once the Web App covers FR-42's parity list, the interactive CLI is retired. Rituals keep running unattended on schedule. No capability is lost. Open interaction requests and Proposals created by Rituals surface in the Web App.
 
@@ -410,7 +410,7 @@ UX-DR22: Color token system. Implement every DESIGN.md color token as a CSS cust
 UX-DR23: Typography.
 - Figtree is self-hosted (SIL OFL) and preloaded. The fallback face carries metric overrides (`size-adjust`, `ascent-override`) so the swap causes no layout shift.
 - `system-ui` and SF Pro are never in the stack.
-- Roles: display 26/700, title 17/700, body 13.5/500, label 11.5/700, caption 10.6/700 uppercase +0.06em, and numerals 13.6/600 with `tabular-nums` for every Desk figure, time, and counter.
+- Roles: ~~display 26/700, title 17/700, body 13.5/500~~ *(amended 2026-09-27, Spencer: bigger scale — body 17-18px, headings ~40px, controls 44-64px; exact values confirmed against the approved mockup in Task 6A)*, label 11.5/700, caption 10.6/700 uppercase +0.06em, and numerals 13.6/600 with `tabular-nums` for every Desk figure, time, and counter.
 - Montserrat bold is used only for the "Yoh Meeseek" wordmark on the splash and Screensaver.
 - `[ASSUMPTION]` Sizes carry over 1:1 at full laptop size; confirm on key-screen mocks.
 
@@ -418,7 +418,7 @@ UX-DR24: Spacing, radius, and elevation scales.
 - Spacing: a 4 px scale (`spacing.1`–`6` = 4–32 px), `rim-width` 1.5 px, `focus-ring-width` 2 px.
 - Radius: xs 5, sm 8, md 10, lg 16, xl 24, full.
 - Elevation recipes in light and dark: Inset, Extruded-sm/md/lg (light source top-left at 135°), and Glass (fill + 14–18 px backdrop blur, saturate 140%, + rim).
-- Glass is only for floating elements: Chat Bubble, Chat Input, Undo Toast, In-App Notification, Command Palette.
+- Glass is only for floating elements: the Ask Yoh pill *(was Chat Bubble)*, Chat Input, Undo Toast, In-App Notification, Command Palette.
 - Where `backdrop-filter` is unsupported, fall back to an opaque `surface-raised` fill with the same rim.
 - Pills are only for things that float or navigate.
 - Page frame: `spacing.5` padding and `rounded.xl`.
@@ -428,34 +428,33 @@ UX-DR25: Hairline rim rule. Every interactive surface gets a 1.5 px neutral rim.
 - Dark: `#7A7367` plus an inset `rim-highlight`.
 - A shadow is never the only boundary.
 - `accent-solid` marks only focus and primary elements.
-- Focus: 2 px `accent-solid` ring. The Chat Bubble and Chat Input also get `accent-glow`.
+- Focus: 2 px `accent-solid` ring. The Ask Yoh pill *(was Chat Bubble)* and Chat Input also get `accent-glow`.
 - `rim-structural` is for non-interactive seams only.
 - The contrast pairs in DESIGN.md's measured table must hold in both themes.
 
 UX-DR26: Gradient rule.
-- The full two-stop "Sky → Azure" gradient (135°) is used in exactly two places: the Thinking Indicator shimmer and the active Page Indicator pill.
-- Every other accent, and anything carrying text or a glyph, uses `accent-solid`: Approve, a checked Checkbox, focus rings, the dragging and moved outlines, toast bars, the Sandbox Finale bar, active icons.
+- ~~The full two-stop "Sky → Azure" gradient (135°) is used in exactly two places: the Thinking Indicator shimmer and the active Page Indicator pill.~~ *Amended 2026-09-27 (Spencer): the two-moment limit is lifted.* The gradient now also runs on the active nav sidebar item, primary buttons, checked Checkboxes, today's date, and Plan blocks, in addition to the Thinking Indicator shimmer and accent headings.
+- Every other accent, and anything carrying text or a glyph on the light gradient stop, uses `accent-solid`: focus rings, the dragging and moved outlines, toast bars, the Sandbox Finale bar, active icons.
 - The gradient is never a page or card background.
 
 UX-DR27: Light and dark themes with a Theme Toggle.
-- Toggle: a 30 px circle in a top corner of every page, 1 px `accent-solid` border, Extruded-sm, sun or moon glyph.
+- Toggle: a 30 px circle, ~~in a top corner of every page~~ *(amended 2026-09-27: lives in the left nav sidebar, below the page list)*, 1 px `accent-solid` border, Extruded-sm, sun or moon glyph.
 - First launch follows the OS appearance. A manual toggle persists per device in `localStorage`. `[ASSUMPTION]`
 - The toggle is a sanctioned exception to FR-46's no-persistent-button rule.
 
 *Navigation and shell:*
 
-UX-DR28: Pages, Page Indicator, and navigation.
-- Pages run Home → Chat → Tasks → Desk, one in view at a time.
-- A horizontal two-finger trackpad swipe moves one page (macOS and Windows precision touchpads).
-  - The root sets `overscroll-behavior-x: none` so browser back/forward never fires.
-  - A swipe that starts inside a horizontally scrollable region (calendar, ticker row, heatmap) doesn't change page.
-- Page Indicator: four 6 px dots at 35% `ink-primary`. The active dot is a 16×6 gradient pill.
-  - Every dot is clickable.
-  - ← → keys move pages when no text field has focus.
-  - Page changes announce "Chat, page 2 of 4".
-- Page transitions slide in the swipe direction, or cross-fade under reduced motion.
+UX-DR28: Pages, Nav Sidebar, and navigation.
+
+**Swipe navigation retired 2026-09-27 (Spencer).** This rule is rewritten; the pre-2026-09-27 version (four pages including Chat, swipe as primary navigation) is superseded in full.
+
+- Pages run Home → Tasks → Desk → Research Hub, in a vertical stack, one in view at a time. There is no Chat page — Chat is a panel over every page (see UX-DR35/36).
+- Navigation moves one page via: on-screen up/down arrow buttons (smooth transition); the ↑/↓ keys (and Page Up/Page Down) when no text field has focus; the mouse wheel, only when the hovered scroll area is at its edge (never hijacks in-page scrolling); or the left nav sidebar, which jumps directly to any page.
+- Nav Sidebar: Yoh wordmark, then Home/Tasks/Desk/Research Hub as icon+label rows, then the Theme Toggle. The active item is a gradient-filled pill.
+  - Page changes announce "Tasks, page 2 of 4".
+- Page transitions slide vertically, or cross-fade under reduced motion.
 - Modal depth is one: the Command Palette is the only layered panel.
-- `[OPEN: indicator position and labels — bottom dots vs labeled top bar]`
+- No swipe gesture exists anywhere in the app.
 
 UX-DR29: Screensaver.
 - A full-bleed `surface-base` field of drifting gradient dots at varied transparency, with the centered Montserrat "Yoh Meeseek" wordmark. It shows no data or notifications.
@@ -473,8 +472,9 @@ UX-DR30: Plan Row and Checkbox.
 - On check: checkmark + strikethrough + 50% opacity, then the row dissolves immediately and an Undo Toast appears. Reduced motion hides the row instantly.
 - A pinned Task shows a "pinned" badge on its row. The badge is an indicator only.
 - Empty-checklist state: "Nothing left on today's Plan." No celebration.
-- No-Plan state: "No Plan yet today." The Chat Bubble stays live.
+- No-Plan state: "No Plan yet today. Type /plan to build it now." ~~The Chat Bubble stays live.~~ *(amended 2026-09-27: the Ask Yoh pill stays live)*
 - `[OPEN: any further Home reaction on check-off]`
+- *Added 2026-09-27 (Spencer):* Home also always shows today's Time Budget (editable in place) and a mini month, alongside a Google-Calendar-style day view (a scrolling hour grid opening at the current time, with a now-line and rounded event blocks). It never stretches the full screen height. Untitled or punctuation-only events show "(No title)".
 
 UX-DR31: Undo Toast.
 - Glass with a 3 px `accent-solid` left bar: "Checked off {Task} · Undo". Undo is a Secondary button.
@@ -509,22 +509,22 @@ UX-DR34: Reshuffle Preview.
 - Success: the calendar settles and the Plan list reorders.
 - Failure: the calendar shows the true state and a "Couldn't update your calendar" notification deep-links to Home.
 
-UX-DR35: Chat Bubble (Home only).
-- A glass pill with a "/" chip and the placeholder "Ask Yoh, or type / for commands".
-- Small and centered when collapsed. It expands wide on hover or focus, with a focus ring + glow.
-- Enter sends and moves to Chat with the message as the first turn.
+UX-DR35: ~~Chat Bubble (Home only)~~ Ask Yoh pill (every page). *Amended 2026-09-27 (Spencer).*
+- A glass pill (~46px tall, ~30px above the bottom edge), fixed bottom-center on every page, never covering content, with a "/" chip and the placeholder "Ask Yoh, or type / for commands".
+- Compact and raised. Click it, or press ⌘K, to open the Chat panel with the input focused.
+- Enter sends and opens the Chat panel with the message as the first turn.
 - "/" opens the Command Palette in place. `[ASSUMPTION]`
-- Esc collapses it.
+- Esc closes the panel and returns focus to where it was.
 - It adds no required click to the capture flow (FR-39).
 
 *Chat:*
 
-UX-DR36: Chat layout, Chat Input, and Chat Message.
-- Layout: the left-bar space is reserved for the Skill Switcher, which is hidden in Phase 2; the stream is centered; the Chat Input sits at the bottom, always wide, in the Chat Bubble's material.
-- Messages: Spencer's turns are right-aligned on `surface-sunken`. Yoh's turns are left-aligned and flat on the page, and they stream as they generate.
+UX-DR36: Chat panel layout, Chat Input, and Chat Message. *(Amended 2026-09-27: "Chat" here is the panel, not a page — it covers the content area right of the sidebar, inset ~24px, opened from the Ask Yoh pill or ⌘K; the page behind is dimmed context.)*
+- Layout: the left-bar space is reserved for the Skill Switcher, which is hidden in Phase 2; the stream is centered; the Chat Input sits at the bottom, always wide, in the Ask Yoh pill's material.
+- Messages: Spencer's turns are right-aligned on `surface-sunken`. Yoh's turns are left-aligned and flat on the page, and they stream as they generate. Markdown renders through a bundled library (no raw HTML, CSP-safe).
 - A write triggered in Chat echoes a one-line receipt in caption style.
-- Unsent text survives the Screensaver and page swipes.
-- Open interaction requests and Proposals render at the top of Chat.
+- Unsent text survives the Screensaver and ~~page swipes~~ *(swipe retired 2026-09-27)* panel close.
+- Open interaction requests and Proposals render at the top of the panel.
 - Yoh ends conversations naturally.
 
 UX-DR37: Thinking Indicator.
@@ -536,7 +536,7 @@ UX-DR37: Thinking Indicator.
 
 UX-DR38: Command Palette and Structured Question.
 - **Command Palette**
-  - A glass panel rising from the Chat Input or Chat Bubble. It lists `/morning`, `/night`, `/sandbox`, and `/research`, each with a one-line description and an example.
+  - A glass panel rising from the Chat Input or Ask Yoh pill. It lists `/morning`, `/plan` *(added 2026-09-27: builds today's Plan on demand; `/morning` never does)*, `/night`, `/sandbox`, and `/research`, each with a one-line description and an example.
   - Filters as Spencer types. The highlighted row gets a 1.5 px `accent-solid` rim.
   - ↑↓ moves, Enter runs, Esc closes. Fully keyboard-operable.
   - No-match state: "No matching command" plus the full list.
@@ -570,8 +570,9 @@ UX-DR40: Skill Switcher reserved.
 
 *Tasks and Desk:*
 
-UX-DR41: Tasks page layout.
-- The grouped Task list sits on the left and the Research Box on the right.
+UX-DR41: Tasks page layout. *(Amended 2026-09-27, Spencer: Tasks is pulled forward from Epic 11 into the fixes+UI plan and ships standalone — no Research Box, see UX-DR43.)*
+- ~~The grouped Task list sits on the left and the Research Box on the right.~~ A quick-add row sits at the top, always focused on page arrival, with the grouped Task list below.
+- A Task Spencer types himself is a **direct write** (the same tier as FR-24), not a Yoh-drafted Proposal — amends AD-3/AD-12. Yoh-drafted items (from Chat, FR-26) still go through Proposal/confirm.
 - Task Group: a caption header (e.g. "AREA: SCHOOL") over rows of Task name and due date. Every Notion Task is findable. A checked-off Task shows as completed, not deleted. Empty groups are omitted.
 - Grouping Control: a segmented control in a `surface-sunken` well with the options Area (default), Due Date, Energy, and Status. The active segment is an `accent-solid` pill. The choice persists per device.
 - Notion unreachable: the last-loaded Tasks stay visible with a "last updated" time, and an operational notification appears.
@@ -582,10 +583,10 @@ UX-DR42: Needs-Data Indicator.
 - It reads the same computed queue as the /sandbox counter.
 - It is hidden when the count is 0.
 
-UX-DR43: Research Box.
-- A card showing the latest research output up front (a title-style heading, the body, and a source list), with the Research Vault library as rows below.
+UX-DR43: Research Box, ~~on Tasks~~ **on the Research Hub page** *(moved 2026-09-27, Spencer — Research Hub is a new fourth page; its shell ships now, the async `/research` job and offer stay Epic 11)*.
+- A card showing the latest research output up front (a title-style heading, the body, and a source list), with the Research Vault library as rows below, plus an "ask a research question" box that sends into the Chat panel.
 - A research-ready notification opens the new doc here.
-- Empty state: "No research yet. Try /research in Chat."
+- Empty state: "Nothing saved yet. Ask a question, then say "save that"."
 - Output follows the dedicated research prompt's consistent shape.
 
 UX-DR44: Desk widgets.
@@ -595,7 +596,8 @@ UX-DR44: Desk widgets.
 - On-Time Rate.
 - Streak: "Streak: 1 day · Longest: 12 days", in neutral wording.
 - Usage Heatmap: GitHub-style, weeks × 7 days, with hover tooltips and `accent-solid` at stepped opacities. `[OPEN: ramp]`
-- Feed widgets for tickers, weather, and news. An unavailable feed shows "Unavailable · last updated 2:14 PM" in `ink-secondary` and never affects the other widgets.
+- *(Added 2026-09-27, Spencer)* Claude API spend this month: computed locally from Task 9's per-call usage records × one price table, no Admin API key needed.
+- Feed widgets: BTC/ETH/SOL tickers, weather for Seattle WA, and a news hub of the biggest business stories with an AI emphasis (confirmed 2026-09-27, Spencer). An unavailable feed shows "Unavailable · last updated 2:14 PM" in `ink-secondary` and never affects the other widgets.
 - No completions yet: "0" / "Streak: 0 days".
 
 *Cross-cutting overlays and feedback:*
@@ -662,8 +664,8 @@ UX-DR51: Web accessibility floor.
 - WCAG 2.2.1: the Undo Toast timer pauses on hover or focus.
 
 UX-DR52: Platform parity.
-- macOS is primary. The Windows laptop browser must reach parity: self-hosted fonts, precision-touchpad swipe (or indicator + arrow keys as the fallback), and `backdrop-filter` verified with an opaque fallback.
-- Every blur-, font-, or swipe-dependent detail is verified on Windows Chromium/Edge and on macOS before it ships.
+- macOS is primary. The Windows laptop browser must reach parity: self-hosted fonts, ~~precision-touchpad swipe (or indicator + arrow keys as the fallback)~~ *(amended 2026-09-27: swipe retired everywhere — both platforms use the same vertical-stack navigation: sidebar, arrow buttons, ↑/↓ keys, edge-aware wheel)*, and `backdrop-filter` verified with an opaque fallback.
+- Every blur- or font-dependent detail is verified on Windows Chromium/Edge and on macOS before it ships.
 - Narrow windows and phones are not specified; the iOS app is Phase 4.
 
 *UX refinements that diverge from PRD text (the UX spine flags these for a PRD update; stories follow the UX unless you say otherwise):*
@@ -672,6 +674,7 @@ UX-DR52: Platform parity.
 - FR-46: blue accent, dark mode, glass, and the Theme Toggle.
 - FR-42: the Structured Question, and a Skill Switcher that is hidden rather than an "empty menu".
 - FR-51: a one-time research offer.
+- *(2026-09-27, Spencer, already applied above, not just flagged):* FR-39 swipe retired for a vertical page stack; FR-40/FR-42 Chat Bubble/Chat page renamed to the Ask Yoh pill/Chat panel; FR-43 splits into a standalone Tasks page (direct-write for Spencer-typed Tasks, amends AD-3/AD-12) plus a new Research Hub page; FR-44 gains a Claude-spend tile and confirmed feed choices (Seattle WA weather, BTC/ETH/SOL, business+AI news); FR-46 gains the brighter cool-white/stronger-neumorphism palette, lifted gradient limit, and bigger scale; FR-1/FR-49 gain in-app-only Morning Plan delivery and `/plan` on demand.
 
 *Remaining UX open questions:* OQ1–OQ17 from EXPERIENCE.md. Each is carried into the owning UX-DR above as `[OPEN]` or `[ASSUMPTION]`; the owning story either resolves it or ships the stated assumption. OQ9 is not yet mapped to a UX-DR: where Ritual-created Proposals, Self-Check prompts, and the unchecked-day flag surface. The spine answers it: at the top of Chat plus the existing push/email, with no in-app notification.
 
@@ -724,9 +727,9 @@ FR-36: Epic 9 - /sandbox walks Tasks missing Required Fields
 FR-37: Epic 9 - Skip, live counter, reward cue
 FR-38: Epic 9 - /sandbox write-back and proof-of-action finale
 FR-39: Epic 8 - Three-action capture flow (verified end to end)
-FR-40: Epic 7 (Plan list + calendar) / Epic 8 (Chat Bubble)
+FR-40: Epic 7 (Plan list + calendar) / Epic 8 (Ask Yoh pill, was Chat Bubble)
 FR-41: Epic 7 - Check off a Task
-FR-42: Epic 8 - Chat page and slash commands
+FR-42: Epic 8 - Chat panel (was "Chat page", amended 2026-09-27) and slash commands
 FR-43: Epic 11 - Tasks page
 FR-44: Epic 12 - Desk dashboard
 FR-45: Epic 7 - Screensaver (launch splash + idle)
@@ -832,9 +835,9 @@ Spencer clicks the Yoh icon on his Mac or Windows PC. The splash fades into Home
 
 ### Epic 8: Chat moves to the web, and the CLI retires
 
-Everything Spencer did in the terminal now happens in the Web App's Chat, with streaming replies, a thinking state, `/morning`, `/night`, a Command Palette, and Structured Questions. Capturing a Task takes three actions from a closed laptop. A Proposal is confirmed the same way from any surface. Once parity is proven, the CLI is gone and nothing is lost.
+Everything Spencer did in the terminal now happens in the Web App's Chat ~~page~~ *(amended 2026-09-27: Chat is a panel over every page, not a page)*, with streaming replies, a thinking state, `/morning`, `/plan` *(added 2026-09-27)*, `/night`, a Command Palette, and Structured Questions. Capturing a Task takes three actions from a closed laptop. A Proposal is confirmed the same way from any surface. Once parity is proven, the CLI is gone and nothing is lost.
 
-**FRs covered:** FR-39, FR-40 (Chat Bubble), FR-42, FR-48, FR-50, FR-24 (amended), FR-1 / FR-12–FR-14 (amended)
+**FRs covered:** FR-39, FR-40 (Ask Yoh pill, was Chat Bubble), FR-42, FR-48, FR-50, FR-24 (amended), FR-1 / FR-12–FR-14 (amended)
 
 **NFRs:** NFR-CaptureSpeed (Playwright capture-flow gate)
 
@@ -847,7 +850,7 @@ Everything Spencer did in the terminal now happens in the Web App's Chat, with s
 - Decision on chat transcript persistence (AD Deferred).
 - Deleting `chat-cli.ts` once the FR-42 parity checklist passes.
 
-**UX:** UX-DR35 (Chat Bubble), UX-DR36, UX-DR37, UX-DR38, UX-DR40
+**UX:** UX-DR35 (Ask Yoh pill, was Chat Bubble), UX-DR36, UX-DR37, UX-DR38, UX-DR40
 
 ### Epic 9: Missing data never blocks the day
 
@@ -884,24 +887,25 @@ Spencer drags a block, or pins a single Task, on today's calendar. He sees the a
 
 **UX:** UX-DR32 (drag variant), UX-DR33, UX-DR34
 
-### Epic 11: Tasks page and asynchronous research
+### Epic 11: ~~Tasks page and~~ asynchronous research
 
-Every Notion Task is findable and grouped the way Spencer wants. He fires off `/research` in class, closes the laptop, and later reads the answer in the Research Box via a "research ready" notification.
+*Amended 2026-09-27 (Spencer): the Tasks page is pulled forward and delivered early, in the 2026-09-27 fixes + UI plan — see Story 11.1 below. Epic 11 now keeps only the Research Box/`/research` background job and the one-time research offer, both now landing on the new Research Hub page (also delivered early, as a shell) instead of Tasks.*
 
-**FRs covered:** FR-43, FR-51
+Spencer fires off `/research` in class, closes the laptop, and later reads the answer on Research Hub via a "research ready" notification.
+
+**FRs covered:** FR-43 (research-box portion only), FR-51
 
 **Also carries:**
-- `app/tasks-view.ts`.
 - `job-store.ts` and the in-server job runner. A job crashed while running becomes failed and is never auto-re-run (AD-21).
 - The `research-ready` and `research-failed` notification kinds.
 - The one-time Structured Question offer to run research.
-- Replacing the Epic 9 Tasks route stub with the full page.
+- ~~Replacing the Epic 9 Tasks route stub with the full page.~~ *(moot 2026-09-27: the Tasks page ships early — see Story 11.1)*
 
-**UX:** UX-DR41, UX-DR43
+**UX:** UX-DR43
 
 ### Epic 12: Desk — the after-school view
 
-At his desk, Spencer sees Tasks completed, minutes worked, on-time rate, streak, and a usage heatmap, all computed from Yoh's own log. Next to them are crypto, weather, and news widgets, each of which fails on its own without breaking the rest.
+At his desk, Spencer sees Tasks completed, minutes worked, on-time rate, streak, a usage heatmap, and *(added 2026-09-27)* a Claude API spend-this-month tile, all computed from Yoh's own log/usage store. Next to them are crypto (BTC/ETH/SOL), weather (Seattle, WA), and news (biggest business stories, AI emphasis) widgets — all confirmed 2026-09-27 — each of which fails on its own without breaking the rest.
 
 **FRs covered:** FR-44, FR-47 (activity days + metrics)
 
@@ -910,9 +914,14 @@ At his desk, Spencer sees Tasks completed, minutes worked, on-time rate, streak,
 - `core/desk-metrics.ts`, pure over log rows (AD-23).
 - `app/desk.ts`.
 - `crypto-feed.ts`, `weather-feed.ts`, and `news-feed.ts`, each with its own cache and an `{status}` return (AD-22).
-- A spike to pick the free-tier feed providers and the weather location.
+- A spike to pick the free-tier feed providers (location and category confirmed 2026-09-27; terms-check still open).
+- *(Added 2026-09-27)* the "Claude API spend this month" tile, reading Task 9's per-call usage-recording store (prompt caching also lands in Task 9) × one price table — no Admin API key needed.
 
 **UX:** UX-DR44
+
+### Epic 13 (backlog, to be planned): "Yoh remembers you" — persistent memory
+
+*Added 2026-09-27 (Spencer). Queued after Epic 9, before Epic 10. Supersedes the Phase 2 "client memory only" chat-transcript default.* Persistent chat history plus three auto-categorized folders — Facts about me, Decisions & commitments, Ideas & notes — so Yoh recalls Spencer without him repeating himself. Story list is sketched only; full planning happens when this epic starts. See the full entry after Epic 12 below.
 
 ## Epic 1: Morning Ritual — the day arrives already planned
 
@@ -1736,7 +1745,7 @@ So that a dead server or a failed disk never silently costs me days of Completio
 ### Story 7.5: Web Client Foundation — Design Tokens, Fonts, Themes, Installable App
 
 As Spencer,
-I want a Yoh web app I can install as an icon, styled in the agreed warm neumorphic look in light and dark,
+I want a Yoh web app I can install as an icon, styled in the agreed ~~warm~~ *(amended 2026-09-27: brighter cool-white, stronger)* neumorphic look in light and dark,
 So that opening Yoh feels crafted and identical on my Mac and my Windows PC.
 
 **Acceptance Criteria:**
@@ -1787,25 +1796,31 @@ Reviews check each web story against these three rules.
 
 ### Story 7.6: Page Shell, Navigation, and Screensaver
 
+*Amended 2026-09-27 (Spencer): this story's page list and navigation model are superseded — see the amended ACs below. "Swipe navigation retired 2026-09-27 (Spencer)": swipe is removed from this story entirely.*
+
 As Spencer,
-I want to move between Home, Chat, Tasks, and Desk with a swipe, a click, or an arrow key, and see the Yoh splash on launch and when idle,
+~~I want to move between Home, Chat, Tasks, and Desk with a swipe, a click, or an arrow key~~ *(amended 2026-09-27)* I want to move between Home, Tasks, Desk, and Research Hub with a vertical page stack — arrow buttons, ↑/↓ keys, an edge-aware wheel, or the sidebar — and see the Yoh splash on launch and when idle,
 So that every page is one gesture away and the app feels alive without ever getting in my way.
 
 **Acceptance Criteria:**
 
 **Given** the page shell
 **When** it renders
-**Then** the four pages Home → Chat → Tasks → Desk exist in that order, one in view at a time. Chat, Tasks, and Desk are placeholders until their epics.
+**Then** ~~the four pages Home → Chat → Tasks → Desk exist in that order, one in view at a time. Chat, Tasks, and Desk are placeholders until their epics.~~ *(amended 2026-09-27)* the four pages Home → Tasks → Desk → Research Hub exist in that order, in a vertical stack, one in view at a time. There is no Chat page — Chat is a panel available over every page (Epic 8, superseded 2026-09-27). Tasks, Desk, and Research Hub are placeholders until their epics/tasks.
 
-**Given** a two-finger horizontal trackpad swipe that starts outside a horizontally scrollable region
+~~**Given** a two-finger horizontal trackpad swipe that starts outside a horizontally scrollable region
 **When** Spencer swipes
 **Then** the view moves one page in the swipe direction with a slide transition (a cross-fade under reduced motion)
-**And** the root sets `overscroll-behavior-x: none`, so the browser's back/forward gesture never fires (UX-DR28)
+**And** the root sets `overscroll-behavior-x: none`, so the browser's back/forward gesture never fires (UX-DR28)~~
+**Swipe navigation retired 2026-09-27 (Spencer).** *Replaced by:*
 
-**Given** the Page Indicator (four dots; the active one is the gradient pill)
-**When** Spencer clicks a dot, or presses ← or → with no text field focused
-**Then** that page shows, and a screen reader announces e.g. "Chat, page 2 of 4"
-**And** `[ASSUMPTION: resolves UX OQ1]` the indicator sits bottom-center, unlabeled, with each dot carrying an accessible name
+**Given** the vertical page stack
+**When** Spencer clicks an on-screen up/down arrow button, presses ↑/↓ or Page Up/Page Down with no text field focused, or scrolls the mouse wheel while the hovered scroll area is already at its edge
+**Then** the view moves one page with a smooth slide transition (a cross-fade under reduced motion)
+
+**Given** ~~the Page Indicator (four dots; the active one is the gradient pill)~~ *(amended 2026-09-27)* the left nav sidebar (wordmark, then Home/Tasks/Desk/Research Hub, then the Theme Toggle; active item in a gradient pill)
+**When** Spencer clicks a sidebar item
+**Then** that page shows directly, and a screen reader announces e.g. "Tasks, page 2 of 4"
 
 **Given** a cold launch
 **When** the app opens
@@ -1865,7 +1880,17 @@ As Spencer,
 I want Home to show today's Plan as a checklist next to today's calendar,
 So that I can see what to do, in what order, and when, at a glance.
 
+*Amended 2026-09-27 (Spencer):* Home also always shows today's Time Budget (the declared budget, how much of it the Plan uses, and time done so far), editable in place through the existing `app/time-budget.ts`, plus a mini month alongside the Calendar Day View.
+
 **Acceptance Criteria:**
+
+**Given** today's declared Time Budget *(added 2026-09-27)*
+**When** Home loads
+**Then** it shows the budget, how much of it the Plan uses, and time done so far (e.g. "Time Budget 6 h · 4 h planned · 1 h done"), clickable to change the budget in place; with no budget set today, it shows the default and "Set today's budget"
+
+**Given** the Calendar Day View *(added 2026-09-27)*
+**When** Home renders
+**Then** a mini month also renders alongside it
 
 **Given** today's Plan exists
 **When** Home loads
@@ -1968,7 +1993,7 @@ So that marking progress is instant and a mis-click costs nothing.
 
 ## Epic 8: Chat moves to the web, and the CLI retires
 
-Everything Spencer did in the terminal now happens in the Web App's Chat, with streaming replies, a thinking state, `/morning`, `/night`, a Command Palette, and Structured Questions. Capturing a Task takes three actions from a closed laptop. A Proposal is confirmed the same way from any surface. Once parity is proven, the CLI is gone and nothing is lost.
+Everything Spencer did in the terminal now happens in the Web App's Chat ~~page~~ *(amended 2026-09-27: Chat is a panel over every page, not a page)*, with streaming replies, a thinking state, `/morning`, `/plan` *(added 2026-09-27)*, `/night`, a Command Palette, and Structured Questions. Capturing a Task takes three actions from a closed laptop. A Proposal is confirmed the same way from any surface. Once parity is proven, the CLI is gone and nothing is lost.
 
 ### Story 8.1: Open Interaction Requests as Resumable Turns
 
@@ -2072,15 +2097,17 @@ So that the Phase 1.5 capabilities carry over to the Web App with their trust bo
 **When** it succeeds
 **Then** the `app/` result carries a one-line receipt naming what changed, which both shells render
 
-### Story 8.5: Chat Page With Streaming Replies
+### Story 8.5: ~~Chat Page~~ Chat Panel With Streaming Replies
+
+*Amended 2026-09-27 (Spencer): there is no Chat page. Chat is a panel available over every page, opened from a small bottom-center "Ask Yoh" pill (or ⌘K), covering the content area right of the sidebar. Everywhere below that said "Chat page" now means the Chat panel.*
 
 As Spencer,
-I want a Chat page in the Web App where Yoh's replies stream in behind a live thinking indicator,
+I want a Chat panel in the Web App where Yoh's replies stream in behind a live thinking indicator,
 So that talking to Yoh feels immediate and I can always see what it's doing.
 
 **Acceptance Criteria:**
 
-**Given** the Chat page
+**Given** the Chat panel
 **When** it renders
 **Then** the conversation stream is centered with the Chat Input at the bottom: glass, always wide, with a focus ring and glow. The left-bar space is reserved and empty, because the Skill Switcher is hidden (UX-DR36, UX-DR40).
 
@@ -2098,13 +2125,13 @@ So that talking to Yoh feels immediate and I can always see what it's doing.
 **When** the reply renders
 **Then** the one-line receipt appears in caption style in the stream
 
-**Given** Spencer swipes away, or the Screensaver shows
+**Given** ~~Spencer swipes away~~ *(swipe retired 2026-09-27)* Spencer navigates to another page, or the Screensaver shows
 **When** he returns
 **Then** the unsent Chat Input text and the stream are intact
 
 **Given** chat history persistence (spine Deferred, UX OQ13)
 **When** this story is built
-**Then** `[DECISION DEFAULT: client memory only for Phase 2]` the transcript lasts for the page session. If Spencer instead wants it to survive a reload, this story adds a `chat-store.ts` owner under AD-10, and `web/` never invents its own storage.
+**Then** ~~`[DECISION DEFAULT: client memory only for Phase 2]` the transcript lasts for the page session. If Spencer instead wants it to survive a reload, this story adds a `chat-store.ts` owner under AD-10, and `web/` never invents its own storage.~~ *Superseded 2026-09-27 (Spencer): client-memory-only is no longer the plan. Persistent history plus Facts about me / Decisions & commitments / Ideas & notes folders is planned as the "Yoh remembers you" epic, queued after Epic 9 — see `epics.md`'s Epic List. This story still ships session-only memory for now; the persistent version is that epic's job, not this story's.*
 
 ### Story 8.6: Open Items and Structured Questions in Chat
 
@@ -2115,7 +2142,7 @@ So that I can answer or approve them with one click, and I never lose a proposal
 **Acceptance Criteria:**
 
 **Given** open interaction requests or Proposals exist, including ones created while the CLI was in use
-**When** the Chat page loads
+**When** the Chat panel *(amended 2026-09-27, was "Chat page")* opens
 **Then** they render at the top of Chat through `app/surface-open-items.ts` (AD-5, FR-48, FR-50)
 
 **Given** Yoh asks a question with discrete answers (a proposal confirmation, a close-out status, a clarifying question)
@@ -2152,6 +2179,10 @@ So that commands are discoverable without cluttering any page, and an early clos
 **And** it never sends a push and never regenerates the Plan (FR-1, FR-42)
 **And** with no Plan yet, it says so
 
+**Given** `/plan` *(added 2026-09-27, Spencer)*
+**When** Spencer runs it
+**Then** it builds today's Plan on demand. `/morning` still never generates one (FR-1 stands).
+
 **Given** `/night`
 **When** Spencer runs it
 **Then** `app/night-close-out.ts` runs the close-out interactively through 8.1's resumable flow, excluding Tasks already completed today, and records it in the same `memory-store.ts` record `night-escalate` checks
@@ -2160,22 +2191,24 @@ So that commands are discoverable without cluttering any page, and an early clos
 **When** `ritual-cli.ts night-prompt` and later `night-escalate` run
 **Then** both are no-ops for that night, and the day is never marked unchecked (FR-12–FR-14, AD-5)
 
-### Story 8.8: Chat Bubble on Home and the Three-Action Capture Flow
+### Story 8.8: ~~Chat Bubble on Home~~ Ask Yoh Pill on Every Page and the Three-Action Capture Flow
+
+*Amended 2026-09-27 (Spencer): the Chat Bubble is renamed the "Ask Yoh" pill, fixed bottom-center on every page (not Home only), like Wispr Flow's — ~46px tall, ~30px above the bottom edge, never covering content.*
 
 As Spencer,
-I want to open my laptop, click the Yoh icon, type a Task into Home's chat bubble, and press Enter,
+I want to open my laptop, click the Yoh icon, type a Task into the Ask Yoh pill, and press Enter,
 So that capturing something in class takes seconds.
 
 **Acceptance Criteria:**
 
-**Given** Home
+**Given** any page
 **When** it renders
-**Then** the Chat Bubble is docked bottom-center: a small glass pill with a "/" chip and "Ask Yoh, or type / for commands". It expands wide on hover or focus, with a focus ring and glow. Esc collapses it (UX-DR35).
+**Then** the Ask Yoh pill is fixed bottom-center: a small glass pill with a "/" chip and "Ask Yoh, or type / for commands". Click it or press ⌘K to open the Chat panel with the input focused. Esc closes the panel and returns focus (UX-DR35).
 
-**Given** text in the Chat Bubble
+**Given** text in the Ask Yoh pill
 **When** Spencer presses Enter
-**Then** the app moves to Chat, and the message is sent as the first turn of the conversation (FR-40)
-**And** "/" in the bubble opens the Command Palette in place
+**Then** the Chat panel opens over the current page, and the message is sent as the first turn of the conversation (FR-40)
+**And** "/" in the pill opens the Command Palette in place
 
 **Given** a message describing a new Task (e.g. "Lab report draft, due Thursday")
 **When** it is sent
@@ -2184,7 +2217,7 @@ So that capturing something in class takes seconds.
 
 **Given** the Playwright smoke suite
 **When** it runs the capture flow from a fresh launch
-**Then** it asserts no login, picker, or extra screen appears between launch and a focused Chat Bubble, and the flow takes at most three actions to send. This test is the NFR-CaptureSpeed regression gate for every later story.
+**Then** it asserts no login, picker, or extra screen appears between launch and a focused Ask Yoh pill *(was Chat Bubble)*, and the flow takes at most three actions to send. This test is the NFR-CaptureSpeed regression gate for every later story.
 
 ### Story 8.9: CLI Parity Check and Retirement
 
@@ -2519,11 +2552,15 @@ So that I can lock in "Chem at 7" without changing how Yoh prioritizes anything.
 **Then** it shows the Pin Control (a pin glyph on a `surface-sunken` pill), and its Plan Row shows a "pinned" badge that is an indicator only (UX-DR33)
 **And** clicking the pin icon unpins the Task and produces a fresh Reshuffle Preview. This is also the non-drag unpin path.
 
-## Epic 11: Tasks page and asynchronous research
+## Epic 11: ~~Tasks page and~~ asynchronous research
 
-Every Notion Task is findable and grouped the way Spencer wants. He fires off `/research` in class, closes the laptop, and later reads the answer in the Research Box via a "research ready" notification.
+*Amended 2026-09-27 (Spencer): the Tasks page is delivered early, in the 2026-09-27 fixes + UI plan (Story 11.1 below is marked accordingly). Epic 11 keeps only the Research Box/`/research` background job and the one-time research offer, now landing on the Research Hub page.*
 
-### Story 11.1: Tasks Page — Every Task, Grouped
+Spencer fires off `/research` in class, closes the laptop, and later reads the answer on Research Hub via a "research ready" notification.
+
+### Story 11.1: Tasks Page — Every Task, Grouped — **delivered early in the 2026-09-27 fixes + UI plan (Task 6B)**
+
+*Amended 2026-09-27 (Spencer): this story shipped as Task 6B of the 2026-09-27 fixes + UI plan, standalone (no Research Box column — that moved to the new Research Hub page, Story 11.2 below), with a quick-add row and Notion-speed inline editing added, and the direct-write ruling for Spencer-typed Tasks (amends AD-3/AD-12). Kept here for FR/UX traceability; the plan's Task 6B brief is authoritative for exact scope.*
 
 As Spencer,
 I want a Tasks page showing my whole Notion Tasks database, grouped by Area or another field,
@@ -2533,9 +2570,13 @@ So that I can find anything without opening Notion.
 
 **Given** the Tasks page (replacing Epic 9's route stub and keeping its Needs-Data Indicator, or creating the page fresh if Epic 11 runs before Epic 9)
 **When** it loads
-**Then** `app/tasks-view.ts` returns every Task in the Notion Tasks database. The left column renders Task Groups: a caption header (e.g. "AREA: SCHOOL") over rows showing the Task name and due date (FR-43, UX-DR41).
+**Then** `app/tasks-view.ts` returns every Task in the Notion Tasks database. ~~The left column renders~~ *(amended 2026-09-27: Tasks is a standalone page, full width, with a quick-add row at top)* Task Groups: a caption header (e.g. "AREA: SCHOOL") over rows showing the Task name and due date (FR-43, UX-DR41).
 **And** a checked-off Task shows as completed, not deleted
 **And** cold loads show skeleton rows
+
+**Given** a Task Spencer types himself in the quick-add row *(added 2026-09-27)*
+**When** he presses Enter
+**Then** it is a direct write (the same tier as FR-24), not a Yoh-drafted Proposal — amends AD-3/AD-12. Yoh-drafted items (from Chat, FR-26) still go through Proposal/confirm.
 
 **Given** the Grouping Control (a segmented control in a `surface-sunken` well)
 **When** Spencer picks Area (the default), Due Date, Energy, or Status
@@ -2545,22 +2586,25 @@ So that I can find anything without opening Notion.
 **When** the page loads
 **Then** the last-loaded Tasks stay visible with a "last updated" time, and an `operational` notification appears
 
-### Story 11.2: Research Box on Tasks
+### Story 11.2: Research Box ~~on Tasks~~ on Research Hub
+
+*Amended 2026-09-27 (Spencer): the Research Hub page shell (Task 6C) ships in the 2026-09-27 fixes + UI plan, ahead of this story — a fourth page (Home, Tasks, Desk, Research Hub) rather than a column on Tasks. This story's Research Box content lands there; the async `/research` job (Story 11.3) and the one-time offer (Story 11.4) remain Epic 11's job.*
 
 As Spencer,
-I want my latest research up front on the Tasks page and my whole Research Vault browsable underneath it,
+I want my latest research up front on Research Hub and my whole Research Vault browsable underneath it,
 So that research answers live in one obvious place.
 
 **Acceptance Criteria:**
 
-**Given** the Tasks page's right column
+**Given** the Research Hub page
 **When** it loads
 **Then** the Research Box shows the latest research output first (a title-style heading, the body, and a source list), with the Research Vault library listed as rows below, read through `notion-adapter.ts` reads (FR-43, UX-DR43)
+**And** an "ask a research question" box sends the question into the Chat panel
 **And** clicking a library row opens that document in the box
 
 **Given** an empty Research Vault
 **When** the box renders
-**Then** it reads "No research yet. Try /research in Chat."
+**Then** it reads "Nothing saved yet. Ask a question, then say "save that"."
 
 **Given** Desk
 **When** it is built (Epic 12)
@@ -2584,7 +2628,7 @@ So that I can fire off questions in class without waiting on them.
 
 **Given** the in-server job runner
 **When** it claims a job (one at a time)
-**Then** it calls `search-adapter.ts`, then `createPage('ResearchVault', …)` with FR-29's provenance (source-tagged, dated) as a direct write, then marks the job `done` with the page id and raises `research-ready`, "Research ready: {topic}", deep-linking to that page in the Research Box
+**Then** it calls `search-adapter.ts`, then `createPage('ResearchVault', …)` with FR-29's provenance (source-tagged, dated) as a direct write, then marks the job `done` with the page id and raises `research-ready`, "Research ready: {topic}", deep-linking to that page in the Research Box on Research Hub *(amended 2026-09-27, was Tasks)*
 **And** the notification arrives even if Spencer closed the tab
 
 **Given** the search fails, or filing fails
@@ -2601,7 +2645,7 @@ So that I can fire off questions in class without waiting on them.
 
 **Given** a `research-ready` notification
 **When** Spencer clicks it
-**Then** he lands on Tasks with that new document open in the Research Box, in one click
+**Then** he lands ~~on Tasks~~ *(amended 2026-09-27: on Research Hub)* with that new document open in the Research Box, in one click
 
 ### Story 11.4: One-Time Research Offer
 
@@ -2629,7 +2673,7 @@ So that I don't have to remember the command, and Yoh still never searches on it
 
 ## Epic 12: Desk — the after-school view
 
-At his desk, Spencer sees Tasks completed, minutes worked, on-time rate, streak, and a usage heatmap, all computed from Yoh's own log. Next to them are crypto, weather, and news widgets, each of which fails on its own without breaking the rest.
+At his desk, Spencer sees Tasks completed, minutes worked, on-time rate, streak, a usage heatmap, and *(added 2026-09-27)* a Claude API spend-this-month tile, all computed from Yoh's own log/usage store. Next to them are crypto (BTC/ETH/SOL), weather (Seattle, WA), and news (biggest business stories, AI emphasis) widgets — confirmed 2026-09-27 — each of which fails on its own without breaking the rest.
 
 ### Story 12.1: Activity Days and Desk Metrics
 
@@ -2682,8 +2726,8 @@ So that I can see my rhythm over weeks at a glance.
 **Then** a tooltip shows the date and that day's count, and the cell is keyboard-focusable with an accessible label
 
 **Given** the heatmap sits in a horizontally scrollable region
-**When** Spencer swipes inside it
-**Then** the page doesn't change (UX-DR28)
+**When** Spencer scrolls or drags inside it ~~swipes inside it~~ *(swipe navigation retired 2026-09-27; the heatmap's own horizontal scroll is unaffected)*
+**Then** the page doesn't change, and the edge-aware page-navigation wheel doesn't fire while the pointer is over this region (UX-DR28)
 
 ### Story 12.3: Feed Providers and Crypto Tickers
 
@@ -2695,7 +2739,7 @@ So that I get the glance I want without leaking anything or paying for it.
 
 **Given** a provider spike
 **When** this story starts
-**Then** free-tier crypto, weather, and news providers whose terms allow this use are chosen and recorded, and the weather location is set in config (spine Deferred, PRD OQ11)
+**Then** free-tier crypto, weather, and news providers whose terms allow this use are chosen and recorded. ~~and the weather location is set in config~~ *(resolved 2026-09-27, Spencer: weather location is Seattle, WA; crypto is BTC/ETH/SOL; news is the biggest business stories with an AI emphasis — spine Deferred, PRD OQ11 partially resolved, provider terms-check remains open)*
 
 **Given** `adapters/crypto-feed.ts`
 **When** the server calls it
@@ -2722,8 +2766,48 @@ So that one flaky feed never blanks my desk view.
 
 **Given** Desk
 **When** the weather and news widgets render
-**Then** weather shows current conditions for the configured location, and the news hub shows top business and top AI headlines, linking out
+**Then** weather shows current conditions for Seattle, WA *(confirmed 2026-09-27)*, and the news hub shows the biggest business stories with an AI emphasis *(confirmed 2026-09-27, was "top business and top AI headlines")*, linking out
 
 **Given** either feed is down or rate-limited
 **When** Desk renders
 **Then** that widget alone shows "Unavailable · last updated {time}", and the rest of Desk is unaffected (FR-44, UJ-6 failure path)
+
+### Story 12.5: Claude API Spend Tile *(added 2026-09-27, Spencer)*
+
+As Spencer,
+I want to see this month's Claude API spend on Desk,
+So that I can spot-check real usage cost without hunting through a separate billing dashboard.
+
+**Acceptance Criteria:**
+
+**Given** Task 9's per-call usage-recording store (prompt caching and per-call usage recording, landed 2026-09-27 as Task 9 of the fixes + UI plan)
+**When** Desk renders the spend tile
+**Then** it computes this month's spend locally from recorded usage rows × one price table — no Admin API key needed
+**And** it follows the same widget shape as the other Desk widgets (neumorphic card, caption header, numerals value)
+
+**Given** the usage store has no rows yet this month
+**When** the tile renders
+**Then** it shows "$0.00" or an equivalent zero state, not an error
+
+## Epic 13 (backlog, to be planned): "Yoh remembers you" — persistent memory
+
+*Added 2026-09-27 (Spencer). Queued after Epic 9, before Epic 10 (queue: fixes+UI plan → Epic 9 → this epic → 10 → 11 → 12). Supersedes the Phase 2 "client memory only" chat-transcript default (EXPERIENCE.md OQ13, ARCHITECTURE-SPINE.md's Chat-transcript-persistence open item, and Story 8.5's `[DECISION DEFAULT: client memory only]`). Story list below is sketched only — to be planned in full (SDD plan + per-story plans) when this epic starts, same as Epics 9–12.*
+
+Spencer's chat history persists across sessions and devices instead of resetting on reload, and Yoh keeps auto-categorized "important folders" so it can recall facts, decisions, and ideas without Spencer repeating himself.
+
+**Covers (sketch, to be planned):**
+- Persistent chat history: transcripts survive a reload or a new session, backed by a server-side `chat-store.ts` owner under AD-10 (not invented storage in `web/`).
+- Three auto-categorized folders: **Facts about me**, **Decisions & commitments**, and **Ideas & notes** (not topic-grouped saved conversations).
+- A way to browse/search the folders and past history from the Web App.
+- Rules for what gets filed into which folder, and how Yoh decides (to be planned).
+- Retention/deletion policy (to be planned).
+
+**Sketch story list (to be planned in full):**
+- Story 13.1: `chat-store.ts` — persistent transcript storage and retrieval.
+- Story 13.2: Auto-categorization into Facts / Decisions / Ideas folders.
+- Story 13.3: Folder browsing and search in the Web App.
+- Story 13.4: Migration/backfill of any session-only history from before this epic.
+
+**FRs covered:** none yet assigned — this epic is backlog, not yet broken into FRs.
+
+**UX:** to be planned.

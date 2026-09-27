@@ -28,8 +28,15 @@
 # - Developer typically creates the next story after the previous one is 'done' to incorporate learnings
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
+# AMENDED 2026-09-27 (Spencer), via Task 8 of the fixes + UI plan:
+# - Story 11.1 (Tasks page) is marked done — delivered early as Task 6B of the 2026-09-27 fixes + UI plan,
+#   ahead of Epic 11. Epic 11 itself stays backlog: only the /research job (11.3) and the offer (11.4) remain
+#   its scope, plus 11.2's Research Box content, which now lands on the new Research Hub page (Task 6C).
+# - New backlog epic-13, "Yoh remembers you" (persistent chat memory), added — queued after epic-9, before
+#   epic-10, per the ledger's queue (fixes+UI plan -> Epic 9 -> this epic -> 10 -> 11 -> 12). Story list is a
+#   sketch only, to be planned in full when this epic starts (see epics.md).
 generated: 08-22-2026 00:00
-last_updated: 09-26-2026 16:38
+last_updated: 09-27-2026 00:00
 project: YohV1
 project_key: NOKEY
 tracking_system: file-system
@@ -118,6 +125,16 @@ development_status:
   9-4-needs-data-notification-and-indicator: backlog
   epic-9-retrospective: optional
 
+  # epic-13 (backlog, to be planned): "Yoh remembers you" -- persistent chat memory. Added 2026-09-27 (Spencer),
+  # queued after epic-9 and before epic-10 (queue: fixes+UI plan -> epic-9 -> epic-13 -> epic-10 -> epic-11 ->
+  # epic-12). Sketch story list only -- see epics.md for the full entry.
+  epic-13: backlog
+  13-1-chat-store-persistent-transcript-storage-and-retrieval: backlog
+  13-2-auto-categorization-into-facts-decisions-ideas-folders: backlog
+  13-3-folder-browsing-and-search-in-the-web-app: backlog
+  13-4-migration-backfill-of-session-only-history: backlog
+  epic-13-retrospective: optional
+
   epic-10: backlog
   10-1-one-re-planning-pipeline-and-the-reshuffle-preview: backlog
   10-2-approve-or-discard-a-reshuffle: backlog
@@ -126,9 +143,11 @@ development_status:
   10-5-pin-a-task-and-unpin-it: backlog
   epic-10-retrospective: optional
 
+  # epic-11: Tasks page (11-1) delivered early via the 2026-09-27 fixes + UI plan's Task 6B -- see the
+  # amendment note at the top of this file. Epic 11 itself (job + offer) stays backlog.
   epic-11: backlog
-  11-1-tasks-page-every-task-grouped: backlog
-  11-2-research-box-on-tasks: backlog
+  11-1-tasks-page-every-task-grouped: done # delivered early, Task 6B, 2026-09-27 fixes + UI plan
+  11-2-research-box-on-tasks: backlog # content now ships on the new Research Hub page (Task 6C shell, 2026-09-27)
   11-3-research-runs-as-a-background-job: backlog
   11-4-one-time-research-offer: backlog
   epic-11-retrospective: optional
@@ -138,6 +157,7 @@ development_status:
   12-2-usage-heatmap: backlog
   12-3-feed-providers-and-crypto-tickers: backlog
   12-4-weather-and-news-widgets: backlog
+  12-5-claude-api-spend-tile: backlog # added 2026-09-27
   epic-12-retrospective: optional
 action_items:
   - id: "epic-6-retro-item-1-chunk-rich_text-values-into-2000-char-se"

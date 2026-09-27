@@ -1,5 +1,7 @@
 # Yoh — SDD Implementation Plan, Phase 2 (Epic 8)
 
+**Superseded 2026-09-27: swipe retired; Chat is a panel; pages are Home, Tasks, Desk, Research Hub.**
+
 **Derived plan file for superpowers:subagent-driven-development.** This file exists
 only so the SDD scripts (`task-brief`, `review-package`) have `## Task N` headings
 to key on. It is *not* a new source of requirements. It packages the approved

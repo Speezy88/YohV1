@@ -3,6 +3,8 @@ source: brainstorm-phase2-web-app-ui-2026-09-24/.memlog.md
 type: intent distillation
 ---
 
+**Superseded 2026-09-27: swipe retired; Chat is a panel; pages are Home, Tasks, Desk, Research Hub.**
+
 # Intent: Yoh Phase 2 Web App UI
 
 ## Goal

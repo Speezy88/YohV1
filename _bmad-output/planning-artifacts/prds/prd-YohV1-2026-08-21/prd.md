@@ -76,7 +76,7 @@ Yoh has exactly one user, permanently — not a v1 scoping choice (see §8 Non-G
 - **UJ-5. Spencer fills in missing data in two minutes in class.**
   - **Persona + context:** Spencer, in class with a couple of minutes free, laptop open.
   - **Entry state:** Several Tasks are missing a Due Date or Estimated Duration; Yoh has flagged them with a needs-data In-App Notification.
-  - **Path:** Open laptop → click the Yoh icon (splash fades straight into Home) → type a new Task into the chat bubble → type `/sandbox` → Yoh walks the flagged Tasks one card at a time; the counter drops with each card and a small ping confirms it; he skips one he's unsure about → the finale loading bar runs and, once Notion confirms every write, a completion In-App Notification appears. He fires off `/research when is the AP Bio registration deadline` before closing the laptop; the answer arrives later as an In-App Notification that jumps to the doc on Tasks.
+  - **Path:** Open laptop → click the Yoh icon (splash fades straight into Home) → type a new Task into the ~~chat bubble~~ **Ask Yoh pill** *(amended 2026-09-27)* → type `/sandbox` → Yoh walks the flagged Tasks one card at a time; the counter drops with each card and a small ping confirms it; he skips one he's unsure about → the finale loading bar runs and, once Notion confirms every write, a completion In-App Notification appears. He fires off `/research when is the AP Bio registration deadline` before closing the laptop; the answer arrives later as an In-App Notification that jumps to the doc ~~on Tasks~~ *(amended 2026-09-27: on Research Hub)*.
   - **Edge case:** A Notion write fails — the completion In-App Notification names the failed Task instead of claiming the session succeeded.
   - *Capability → FR:* capture flow → FR-39; launch splash → FR-45; /sandbox → FR-36–FR-38; /research → FR-51; notifications → FR-49.
 
@@ -93,8 +93,8 @@ Yoh has exactly one user, permanently — not a v1 scoping choice (see §8 Non-G
 - **Project** — A Notion Projects DB item. Organizational grouping only — not a planning input.
 - **Research Vault** — A Notion store for on-demand research output. Output-only; not a planning input. A first slice — live web search plus filing a result on request (§5.8) — is in scope as of Phase 1.5, brought forward from its original Phase 5 placement.
 - **Live Write Registry** — The fixed, named set of write and search actions Yoh may perform — from Chat, or (from Phase 2) from Web App controls such as a checkbox or Approve. As of Phase 1.5: create Task (existing), create Page (FR-26), edit Calendar time-block (FR-27), search the web (FR-28, read-only — writes nothing), file a search result to Research Vault (FR-29). Phase 2 adds: mark Task complete (FR-41, Status-only), apply a Reshuffle Preview to Yoh-owned blocks (FR-32), and queue a /research question that searches and files (FR-51). Yoh is never given raw Notion/Calendar API or token access to route from freeform chat text — only these named actions.
-- **Chat** — Yoh's interactive conversation surface, as distinct from the non-interactive Morning/Night Ritual runs. Through Phase 1.5 this was the CLI's terminal session; from Phase 2 it is the Web App's Chat page (FR-42), and the CLI is retired (FR-50). FR-24–FR-29 gate on a request arriving through Chat, whichever surface hosts it.
-- **Web App** — Yoh's Phase 2 interface: four pages (Home, Chat, Tasks, Desk; §5.11) plus a Screensaver. The only interactive surface once the CLI is retired.
+- **Chat** — Yoh's interactive conversation surface, as distinct from the non-interactive Morning/Night Ritual runs. Through Phase 1.5 this was the CLI's terminal session; from Phase 2 it is ~~the Web App's Chat page (FR-42)~~ *(amended 2026-09-27, Spencer: the Web App's Chat panel, FR-42 — there is no Chat page)*, and the CLI is retired (FR-50). FR-24–FR-29 gate on a request arriving through Chat, whichever surface hosts it.
+- **Web App** — Yoh's Phase 2 interface: four pages, in order — ~~Home, Chat, Tasks, Desk~~ *(amended 2026-09-27: Home, Tasks, Desk, Research Hub; §5.11)* — plus a Screensaver and the Chat panel available over every page. The only interactive surface once the CLI is retired.
 - **Slash Command** — A `/`-prefixed command typed in Chat (`/morning`, `/night`, `/sandbox`, `/research`). Typing `/` opens the **Command Palette**, a filterable list of every command with a description and example.
 - **Reshuffle Preview** — The animated proposed day Yoh shows after a drag (FR-32). Nothing is written until Spencer clicks Approve.
 - **Pin** — A Task Spencer has dragged to a specific time; fixed there for today only. Changes placement, never Derived Priority (FR-31).
@@ -557,27 +557,28 @@ Each completed card's values are written back to Notion through FR-24's write pa
 
 ### 5.11 Pages and App Shell (Phase 2, priority 3)
 
-**Description:** The Web App has four pages, each with one job — Home answers *what, in what order, and when*; Chat is for talking to Yoh; Tasks is for finding things; Desk is for reflecting at the end of the day — plus a launch/idle Screensaver. Commands are slash commands, not buttons, to keep every page uncluttered. Three usage contexts drive every choice: a home-morning start, a 30-second-to-two-minute classroom capture, and a longer desk session after school. Realizes UJ-4, UJ-5, UJ-6.
+**Description:** The Web App has four pages, each with one job, in order — Home answers *what, in what order, and when*; Tasks is for finding things; Desk is for reflecting at the end of the day; Research Hub holds saved research — plus a launch/idle Screensaver. **There is no Chat page** *(amended 2026-09-27, Spencer)*: Chat is a panel available on every page, opened from a small "Ask Yoh" pill fixed bottom-center (or ⌘K), covering the content area right of the sidebar while the page behind stays dimmed. Commands are slash commands, not buttons, to keep every page uncluttered. Three usage contexts drive every choice: a home-morning start, a 30-second-to-two-minute classroom capture, and a longer desk session after school. Realizes UJ-4, UJ-5, UJ-6.
 
 **Functional Requirements:**
 
 #### FR-39: Three-action capture flow
 
-From a closed laptop, Spencer can capture a Task in at most three actions: open laptop → click the Yoh app icon → type the Task in the chat bubble and press Enter.
+From a closed laptop, Spencer can capture a Task in at most three actions: open laptop → click the Yoh app icon → type the Task in the ~~chat bubble~~ **Ask Yoh pill** *(amended 2026-09-27)* and press Enter.
 
 **Consequences (testable):**
 - The app icon opens the Web App directly on Home (or the launch splash that fades into Home, FR-45) with no login, picker, or intermediate screen under normal operation. `[ASSUMPTION: session persists across launches; auth mechanics are architecture's call]`
 - No Phase 2 feature — including the Screensaver — may add a required click to this flow. This is a regression gate on every future page change.
-- Every page is reachable from every other page in one gesture or click — a left/right swipe moves between adjacent pages (from the Phase 2 brainstorm), with a visible fallback for input without swipe. `[ASSUMPTION: page order and the non-swipe fallback are a bmad-ux call]`
+- Every page is reachable from every other page in one gesture or click. **Swipe navigation retired 2026-09-27 (Spencer):** pages sit in a vertical stack, moved between with smooth up/down arrow buttons, the ↑/↓ keys (and Page Up/Page Down) when no text field has focus, an edge-aware mouse wheel, and a left nav sidebar that jumps directly to any page. No swipe gesture is a requirement anywhere in this document; every prior swipe reference is superseded by this line.
 
 #### FR-40: Home page
 
-Home shows today's ordered Plan as a checklist on the left, today's Google Calendar day view on the right, and a small chat bubble at the bottom.
+Home shows today's ordered Plan as a checklist on the left, today's Google Calendar day view on the right, and ~~a small chat bubble at the bottom~~ **the Ask Yoh pill fixed bottom-center** *(amended 2026-09-27)*.
 
 **Consequences (testable):**
 - The Plan list is ordered exactly as the Plan orders it (FR-2) and reflects any approved reshuffle (FR-32) without a reload.
 - The calendar is where Drag-to-Reshuffle (§5.9) happens; non-Yoh events are visible but visibly fixed.
-- The chat bubble starts small and expands wide on hover or focus; pressing Enter sends the message and moves Spencer to Chat (FR-42) with that message as the first turn of the conversation.
+- ~~The chat bubble starts small and expands wide on hover or focus;~~ *(amended 2026-09-27: the Ask Yoh pill is a fixed-size pill — compact, raised, never covering content, not an expand-on-hover bubble)* pressing Enter opens the Chat panel (Chat is a panel, not a page — see §5.11) with that message as the first turn of the conversation.
+- *Amended 2026-09-27 (Spencer):* Home also always shows today's Time Budget (the declared budget, how much of it the Plan uses, and time done so far), editable in place, plus a mini month alongside the Google-Calendar-style day view.
 
 #### FR-41: Check off a Task
 
@@ -589,9 +590,11 @@ Checking a Task on Home marks it completed: the row fades out, the Task's Status
 - The Night Ritual (FR-12) treats a Task already checked off during the day as completed and does not ask about it again.
 - An accidental check can be undone for a short window before it's final. `[ASSUMPTION: undo window; length and form are a bmad-ux call]`
 
-#### FR-42: Chat page and slash commands
+#### FR-42: Chat panel and slash commands
 
-Chat is a dedicated conversation with Yoh that replaces the CLI as the Chat surface (§4). It supports four slash commands — `/morning` (Morning Ritual), `/night` (Night Ritual), `/sandbox` (§5.10), `/research` (FR-51) — and typing `/` opens a filterable Command Palette.
+*Amended 2026-09-27 (Spencer):* Chat is not a page — it is a panel available over every page (§5.11), opened from the "Ask Yoh" pill or ⌘K. Everywhere below that says "Chat" names that panel, not a page.
+
+Chat is a dedicated conversation with Yoh that replaces the CLI as the Chat surface (§4). It supports five slash commands — `/morning` (Morning Ritual), `/plan` (build today's Plan on demand — added 2026-09-27; `/morning` never generates one, FR-1 stands), `/night` (Night Ritual), `/sandbox` (§5.10), `/research` (FR-51) — and typing `/` opens a filterable Command Palette.
 
 **Consequences (testable):**
 - The Command Palette lists every available slash command with a one-line description and an example, filters as Spencer types, and is the app-wide way to discover and run commands. No separate help page is required for command discovery.
@@ -600,23 +603,24 @@ Chat is a dedicated conversation with Yoh that replaces the CLI as the Chat surf
 - Yoh never claims or offers a capability it doesn't have, and it closes out a conversation when it naturally ends rather than prompting for more.
 - `/morning` opens today's Morning Ritual in Chat: the Plan, its reasoning line (FR-3), and any pending questions or Proposals. It never sends a second push notification (FR-1's one-per-day holds) and never regenerates the Plan on its own — regenerating remains a Mid-Day Re-Flow (FR-9).
 - `/night` runs the Night Ritual close-out (FR-12) interactively in Chat. A close-out completed this way before the scheduled prompt counts as that night's close-out: the scheduled prompt and its escalation (FR-13) are cancelled for that night, and the day is never marked unchecked (FR-14).
-- The left vertical menu bar ships empty as a placeholder (its contents are out of scope, §9.4).
+- The left vertical menu bar ships empty as a placeholder ~~(its contents are out of scope, §9.4)~~. *Amended 2026-09-27 (Spencer):* it is the left nav sidebar (§5.11) — Yoh wordmark, then Home/Tasks/Desk/Research Hub, then the theme toggle. No longer a placeholder.
 
 #### FR-43: Tasks page
 
-Tasks shows the full Notion Tasks database, organized by Area and by field, alongside a single research box: the latest research output up front and the full Research Vault library browsable from the same box.
+Tasks shows the full Notion Tasks database, organized by Area and by field, with a quick-add row and Notion-speed inline editing.
 
 **Consequences (testable):**
 - Every Task in the Notion Tasks database is findable from Tasks, grouped by Area, with the ability to organize by other fields. `[ASSUMPTION: exact grouping/sort controls are a bmad-ux call]`
-- The research box is the only research surface in Phase 2 — Desk does not duplicate it.
-- A research-ready In-App Notification (FR-49, FR-51) deep-links straight to the new document in this box.
+- A Task Spencer types himself on the Tasks page is a **direct write** (the same tier as FR-24), not a Yoh-drafted Proposal — amends AD-3/AD-12. Yoh-drafted items (from Chat, FR-26) still go through Proposal/confirm.
+
+*Amended 2026-09-27 (Spencer):* Tasks is pulled forward from Epic 11 into the 2026-09-27 fixes + UI plan and delivered early. The single research box described here through 2026-09-24 moves to its own **Research Hub** page (§5.11's fourth page): recent Research Vault items (title, date, source count) linking to their Notion page, plus an "ask a research question" box that sends the question into the Chat panel. A research-ready In-App Notification (FR-49, FR-51) deep-links straight to the new document there. The asynchronous `/research` job queue and the research offer stay Epic 11; only the page shell ships now.
 
 #### FR-44: Desk dashboard
 
 Desk visualizes everything Yoh knows about Spencer's work for the after-school desk session, as a set of widgets:
 
-- **From Yoh's own data (Completion Log, FR-47):** Task Completed list (scrollable; Task name with a checked, struck-through checkbox); total minutes worked (sum of Estimated Duration across completed Tasks); on-time completion rate; streak of consecutive days using Yoh; total hours worked with Yoh; Yoh usage-frequency heatmap (GitHub-style, week columns × 7 days).
-- **From public feeds (§7):** crypto tickers for Bitcoin, Solana, and Ethereum; weather; a news hub of top business and top AI news.
+- **From Yoh's own data (Completion Log, FR-47):** Task Completed list (scrollable; Task name with a checked, struck-through checkbox); total minutes worked (sum of Estimated Duration across completed Tasks); on-time completion rate; streak of consecutive days using Yoh; total hours worked with Yoh; Yoh usage-frequency heatmap (GitHub-style, week columns × 7 days); *(added 2026-09-27, Spencer)* a "Claude API spend this month" tile, computed locally from per-call usage records × one price table (Task 9's usage store) — no Admin API key needed.
+- **From public feeds (§7):** crypto tickers for Bitcoin, Ethereum, and Solana; weather for Seattle, WA *(location confirmed 2026-09-27, Spencer — resolves Open Question 11)*; a news hub of the biggest business stories, with an AI emphasis *(confirmed 2026-09-27, Spencer)*.
 
 **Consequences (testable):**
 - Every Yoh-data widget reads from the Completion Log / Activity Log (FR-47), never from Notion history — the numbers stay correct regardless of what happens to the Task in Notion afterward.
@@ -637,7 +641,7 @@ The Web App shows an animated Screensaver — a field of gradient dots with vary
 
 ### 5.12 Design System (Phase 2, priority 3)
 
-**Description:** The Web App should feel high-tech but minimalistic, and every capability should show at its highest level — the brainstorm's bar is that the effort invested pays off as miles better than any other AI product Spencer uses, not merely "a nicer CLI." One visual language across all four pages: off-white and black, soft neumorphic surfaces, a bold Montserrat "Yoh Meeseek" wordmark, and motion that shows what Yoh is doing (thinking, streaming, reshuffling) rather than decorating. The anti-clutter strategy is structural: one job per page (§5.11) and slash commands instead of buttons. Specific libraries and the animation set live in `addendum.md` § Phase 2 — Technical Notes; the full visual spec is bmad-ux's.
+**Description:** The Web App should feel high-tech but minimalistic, and every capability should show at its highest level — the brainstorm's bar is that the effort invested pays off as miles better than any other AI product Spencer uses, not merely "a nicer CLI." One visual language across all four pages: ~~off-white and black~~ *(amended 2026-09-27, Spencer: a brighter cool-white base, `#EEF2F8` family, no warm off-white)*, soft neumorphic surfaces *(strengthened 2026-09-27: white highlight top-left, `#a3b1c6`-family shadow bottom-right)*, more Sky→Azure blue gradient use *(2026-09-27: the earlier two-moment gradient limit is lifted)*, a bigger scale *(2026-09-27)*, a bold Montserrat "Yoh Meeseek" wordmark, and motion that shows what Yoh is doing (thinking, streaming, reshuffling) rather than decorating. The anti-clutter strategy is structural: one job per page (§5.11) and slash commands instead of buttons. Specific libraries and the animation set live in `addendum.md` § Phase 2 — Technical Notes; the full visual spec is bmad-ux's.
 
 **Functional Requirements:**
 
@@ -646,7 +650,7 @@ The Web App shows an animated Screensaver — a field of gradient dots with vary
 Every page uses one shared set of design tokens (color, surface/shadow, type, motion) implementing the direction above.
 
 **Consequences (testable):**
-- Color is off-white and black; surfaces use neumorphic (soft extruded/inset) shadows; the wordmark is "Yoh Meeseek" in bold Montserrat.
+- Color is ~~off-white and black~~ *(amended 2026-09-27: cool white `#EEF2F8` family and black)*; surfaces use neumorphic (soft extruded/inset) shadows, strengthened 2026-09-27; the wordmark is "Yoh Meeseek" in bold Montserrat.
 - Motion accompanies state: task check-off (fade/dissolve), reshuffle (animated preview), Yoh thinking (loader + status text), streaming responses, page transitions. No page ships with a static loading state where one of these applies.
 - Contrast meets the Accessibility NFR (§6) — neumorphism's low-contrast default does not ship unchecked.
 - No page adds a persistent action button for something a slash command already does.
@@ -686,9 +690,9 @@ The Web App has one reusable In-App Notification capability: a notification appe
 
 **Consequences (testable):**
 - Phase 2 consumers: research ready (FR-51), /sandbox complete or failed (FR-38), needs data (FR-34), reshuffle apply failed (FR-32), and Yoh operational problems (Observability NFR, §6).
-- Clicking a notification takes Spencer to its target (e.g. the new research document on Tasks, or /sandbox) in one click.
+- Clicking a notification takes Spencer to its target (e.g. the new research document ~~on Tasks~~ *(amended 2026-09-27: on Research Hub)*, or /sandbox) in one click.
 - Notifications fire only as the result of something Spencer started (a command, a drag, a planning run) or a system failure — never as a proactive mid-block check-in (FR-9, §8).
-- In-App Notifications do not replace the Morning Ritual's single push notification (FR-1) or the Night Ritual's push/email escalation (FR-13); those channels are unchanged.
+- In-App Notifications do not replace the Night Ritual's push/email escalation (FR-13), which is unchanged. ~~or the Morning Ritual's single push notification (FR-1)~~ *Amended 2026-09-27 (Spencer): the Morning Plan now arrives in the app only — no Pushover push for it (FR-1 stands; only its delivery channel changes here). Pushover is kept for FR-13's escalation and for AD-7 failure/operational alerts.*
 
 #### FR-50: Retire the CLI
 
@@ -776,7 +780,7 @@ Ordered by Spencer's priority:
 - **Physical hardware device** (Pi 5, wake-word/STT/TTS voice pipeline, bedroom/bathroom build) — Phase 3. Architecture direction already researched (see brief `addendum.md`), but no product-level parts (mic/speaker/display) chosen yet. The Phase-1 Night Ritual's second escalation attempt (FR-13) no longer depends on this — it uses email for Phase 1, with the home-speaker call-out remaining a Phase 3 upgrade once the hardware exists, not a blocking dependency.
 - **Goals hub** — raised in the Phase 2 brainstorm; deferred to a later phase.
 - **Receipts folder** (an inbox of everything Yoh did) — dropped, not deferred. Proof-of-action lives inside each action instead: the /sandbox ping fires only after the real write (FR-38), and a reshuffle is previewed before it's applied (FR-32).
-- **Chat page left-menu contents** — the menu bar ships empty (FR-42); what goes in it is deferred.
+- ~~Chat page left-menu contents — the menu bar ships empty (FR-42); what goes in it is deferred.~~ *Resolved 2026-09-27: there is no Chat page; the left menu is the nav sidebar (§5.11), no longer empty.*
 - **Estimated-vs-actual time bar** on completed-Task rows — an unconfirmed idea; the Completion Log (FR-47) keeps the data so it can be added later.
 - **Deleting Tasks from Notion on check-off** — considered and rejected for Phase 2; check-off writes Status instead (FR-41).
 - **Pin as priority feedback** — learning from where Spencer drags Tasks; belongs with self-calibration (Phase 6).
@@ -836,7 +840,7 @@ The four questions that blocked Phase 1 in the first draft are resolved below; t
 8. **Architecture spine is stale for Phase 2** — AD-3/AD-5 name the CLI chat entry point as the only place a Proposal is applied, and AD-12 is titled "CLI-only." FR-48 and FR-50 retire that rule at the product level; the spine is updated by `bmad-architecture`, not this PRD. Separately, `epics.md` describes shipped Epic 1's FR-4 as all-five-fields gating; the Required/Refining split is a behavior change to a done epic and needs a story in the Phase 2 epics. Owner: Spencer. Revisit: `bmad-architecture` run after `bmad-ux`.
 9. **Neumorphism contrast check** — the Accessibility NFR (§6) sets the bar; whether off-white + neumorphism clears it (and what changes if it doesn't) is a design task. Owner: Spencer. Revisit: `bmad-ux`.
 10. **"Hours worked with Yoh" definition** (FR-44) — distinct from "total minutes worked" (sum of Estimated Duration of completed Tasks), but what it measures (time in the Web App? sum of approved Plan time? completed Work Blocks?) wasn't settled in the brainstorm. Owner: Spencer. Revisit: `bmad-ux`, before Desk is built.
-11. **Public-feed providers** — free-tier crypto, weather, and news sources, plus the weather location. Owner: Spencer. Revisit: architecture / before FR-44's feed widgets are built.
+11. **Public-feed providers** — free-tier crypto, weather, and news sources. ~~plus the weather location~~ *(resolved 2026-09-27, Spencer: weather is Seattle, WA; crypto is BTC/ETH/SOL; news is the biggest business stories with an AI emphasis — see FR-44)*; provider selection and terms-check remain open. Owner: Spencer. Revisit: architecture / before FR-44's feed widgets are built.
 12. **Hosting and app icon** — how the Web App is hosted on owned infrastructure and launched from an icon in one click (FR-39), including reachability from the school network. Owner: Spencer. Revisit: `bmad-architecture`.
 13. **Design details deferred to UX** — Command Palette depth (settled as sufficient for discovery; details to UX), check-off undo window (FR-41), unpin gesture (FR-31), Tasks page grouping controls (FR-43), whether needs-data also shows a tray alongside the In-App Notification (FR-34). Owner: Spencer. Revisit: `bmad-ux`.
 
@@ -848,7 +852,7 @@ No Phase 1 or Phase 1.5 assumptions remain in the FR text; Phase 2's inline tags
 - FR-4 — a Task with empty Status is treated as eligible, not gated.
 - FR-30 — drag is today-only.
 - FR-30 — a multi-block Task moves as a whole when any segment is dragged.
-- FR-39 — page order and non-swipe navigation fallback (→ bmad-ux).
+- ~~FR-39 — page order and non-swipe navigation fallback (→ bmad-ux).~~ *Resolved 2026-09-27 (Spencer): page order is Home, Tasks, Desk, Research Hub; navigation is a vertical stack (arrow buttons, ↑/↓ keys, edge-aware wheel, sidebar); swipe is retired, not a fallback-needing case.*
 - FR-44 — on-time completion rate definition.
 - §6 Accessibility — WCAG 2.2 AA as the contrast standard.
 - FR-31 — unpin interaction shape (→ bmad-ux).
