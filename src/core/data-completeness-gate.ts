@@ -36,7 +36,9 @@ import type { CompleteTask, PlanningFieldNames, Result, Task, YohError } from ".
 
 /**
  * Reports exactly which of the five planning fields (FR-4) are missing on
- * one Task — the shape a caller (`shell/chat-cli.ts`) turns into a combined
+ * one Task — the shape a caller (`rituals/data-completeness.ts`'s
+ * `buildMissingFieldsPromptText`; Story 8.9: originally also `shell/
+ * chat-cli.ts` directly) turns into a combined
  * open interaction request naming exactly the missing field(s) on exactly
  * that Task (Story 1.5's acceptance criteria).
  */

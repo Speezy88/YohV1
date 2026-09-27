@@ -55,7 +55,8 @@
  * WHICH Task nor HOW MUCH time was lost, and FR-10 itself says Yoh must not
  * try to resolve/judge/problem-solve the Blocker. So this needs no free-text
  * parsing of a Task or a duration — only a classification ("this input is
- * reporting a logistics Blocker", `chat-cli.ts`'s `isBlockerReportCommand`)
+ * reporting a logistics Blocker", `core/chat-commands.ts`'s
+ * `isBlockerReportCommand` — Story 8.3: moved from `chat-cli.ts`)
  * plus a MECHANICAL rule for "what was Spencer just supposed to be doing":
  * the current/most-recently-active `work`/`break` block as of `now` (never
  * a `calendar-anchor` — AD-4, see `findBlockerOverrideBlockId` below).
@@ -71,7 +72,8 @@
  * smaller footprint than a parallel copy of ~150 lines of re-fit/merge/
  * persist logic. The RESPONSE rendering still differs sharply between the
  * two callers (UX-DR11's "one short block" vs UX-DR12's "one confirmation
- * line") — that stays entirely `chat-cli.ts`'s job (see
+ * line") — that stays entirely `app/mid-day-reflow.ts`'s / `app/blocker-
+ * report.ts`'s job (Story 8.3: moved from `chat-cli.ts`; see
  * `buildBlockerConfirmationLine` below), so this shared function's own
  * `rendered`/`plan.reasoning` fields keep meaning exactly what they already
  * meant for Task 15, unaffected by which caller triggered this run.
@@ -225,8 +227,9 @@
  * ============================================================================
  *
  * `runMidDayReflow` is called from exactly one place in this codebase:
- * `shell/chat-cli.ts`'s new Mid-Day Re-Flow command check, itself only
- * reached in direct response to a line Spencer typed. Nothing in
+ * `app/mid-day-reflow.ts`'s `reflowDay` (Story 8.3: moved from `shell/
+ * chat-cli.ts`'s own Mid-Day Re-Flow command check), itself only reached in
+ * direct response to a line Spencer typed in Chat. Nothing in
  * `rituals/*.ts`, `shell/ritual-cli.ts` (the cron-triggered entry point),
  * or any timer calls it — see `tests/mid-day-reflow.test.ts`'s "no
  * proactive trigger path" structural check for how that's verified.
@@ -278,8 +281,9 @@ export interface MidDayReflowDeps {
   /** Forces color on/off for `rendered`; defaults to `renderPlan`'s own `shouldUseColor()`. */
   readonly color?: boolean;
   /**
-   * Story 2.4 / Task 16 (FR-10): set by `chat-cli.ts` when the triggering
-   * line was recognized as a logistics Blocker report (e.g. "meeting ran
+   * Story 2.4 / Task 16 (FR-10): set by `app/blocker-report.ts` (Story 8.3:
+   * moved from `chat-cli.ts`) when the triggering line was recognized as a
+   * logistics Blocker report (e.g. "meeting ran
    * over"), rather than an explicit Mid-Day Re-Flow trigger. When `true`,
    * the current/most-recently-active `work`/`break` block as of `now` is
    * treated as NOT elapsed regardless of its scheduled `end` — see the file
@@ -427,14 +431,15 @@ function elapsedMinutesSinceBlockStart(block: PlanBlock, nowMs: number): number 
 }
 
 /**
- * `chat-cli.ts`'s ONLY rendering for a Blocker report's outcome
- * (`status: "reflowed"`) — UX-DR12's "single confirmation line describing
- * the schedule change," deliberately far terser than `outcome.rendered`
- * (UX-DR11's "one short block," reused only by Task 15's Mid-Day Re-Flow
- * trigger, never by this path). No suggestions for resolving the underlying
- * obstacle, no commentary or judgment — just what moved. Exported (rather
- * than kept private like `buildReflowReasoning`) because `chat-cli.ts`, not
- * this file, is the caller that needs it — this file's own `rendered`/
+ * `app/blocker-report.ts`'s ONLY rendering for a Blocker report's outcome
+ * (`status: "reflowed"`; Story 8.3: moved from `chat-cli.ts`) — UX-DR12's
+ * "single confirmation line describing the schedule change," deliberately
+ * far terser than `outcome.rendered` (UX-DR11's "one short block," reused
+ * only by Task 15's Mid-Day Re-Flow trigger, never by this path). No
+ * suggestions for resolving the underlying obstacle, no commentary or
+ * judgment — just what moved. Exported (rather than kept private like
+ * `buildReflowReasoning`) because `app/blocker-report.ts`, not this file,
+ * is the caller that needs it — this file's own `rendered`/
  * `plan.reasoning` fields keep their Task 15 meaning regardless of which
  * caller triggered the run (see the file docstring).
  */

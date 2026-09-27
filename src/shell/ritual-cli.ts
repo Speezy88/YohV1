@@ -1,16 +1,21 @@
 /**
  * src/shell/ritual-cli.ts
  *
- * The one-shot, OS-cron-triggered ritual entry point (AD-5). Where
- * `chat-cli.ts` is a REPL that blocks indefinitely for Spencer's answers,
- * this file is its opposite in every respect: it runs one subcommand, prints
- * what happened, and exits. It NEVER waits for input — not even when the
- * Data-Completeness Gate finds a missing field. In that case the Morning
- * Ritual persists an open interaction request in `memory-store.ts` and the
- * process exits; Spencer answers it the next time he opens `chat-cli.ts`,
- * which is the only place an open interaction request is ever resolved
- * (AD-5). A test in `tests/ritual-cli.test.ts` enforces that by scanning this
- * file's own source for any stdin/readline use.
+ * The one-shot, OS-cron-triggered ritual entry point (AD-5). This file is
+ * the opposite of an interactive surface in every respect: it runs one
+ * subcommand, prints what happened, and exits. It NEVER waits for input —
+ * not even when the Data-Completeness Gate finds a missing field. In that
+ * case the Morning Ritual persists an open interaction request in
+ * `memory-store.ts` and the process exits; Spencer answers it the next time
+ * he opens Chat in the Web App, which dispatches to `app/surface-open-
+ * items.ts`/`app/answer-open-item.ts` — the only place an open interaction
+ * request is ever resolved (AD-5). (Story 8.9: this was `shell/chat-cli.ts`,
+ * a REPL that blocked indefinitely for Spencer's answers, until it was
+ * retired once every one of its handlers had moved into `app/`; this file
+ * still never imports `app/` itself — AD-1 — it only persists the request
+ * for whichever interactive surface picks it up.) A test in
+ * `tests/ritual-cli.test.ts` enforces that by scanning this file's own
+ * source for any stdin/readline use.
  *
  * Task 10 introduces this file with ONE subcommand, `morning`. AD-5 names
  * three more — `night-prompt` (Task 19), `night-escalate` (Task 20), and
@@ -565,7 +570,7 @@ function safeCheckServerHeartbeatStale(checkServerHeartbeatStale: () => boolean,
  * `withFailureAlert` covers. The real checks (`checkDailyRitualMissedRun`/
  * `checkSelfCheckMissedRun`) do a live `MemoryStore` read that CAN throw (a
  * `SQLITE_BUSY` under the exact cross-process concurrency AD-10 documents
- * — e.g. `chat-cli.ts` writing while `ritual-cli.ts` reads — a malformed
+ * — e.g. `server.ts` writing while `ritual-cli.ts` reads — a malformed
  * stored blob, a disk I/O error). Left unguarded, that throw used to
  * escape `withFailureAlert` entirely: `runSubcommand` never ran (no
  * Plan/notification/marker for THIS invocation), and — worse — Task 25's
@@ -1176,8 +1181,8 @@ export function createMorningRitualDeps(
  * `createMorningRitualDeps`: `night-prompt` reads the already-stored Plan,
  * persists an interaction request, and sends one Pushover push — no Notion
  * or Calendar credentials are needed, so running it must not require THOSE
- * to be configured (mirrors `shell/chat-cli.ts`'s own "don't force unrelated
- * config" convention for its lazily-constructed `readTasks`). Pushover
+ * to be configured (mirrors `shell/server.ts`'s own "don't force unrelated
+ * config" convention for its own lazily-constructed dependencies). Pushover
  * credentials ARE required now, same as `morning`.
  */
 export function createNightPromptRitualDeps(
@@ -1283,7 +1288,7 @@ export function createSelfCheckRitualDeps(
   };
 }
 
-/** A `RitualCliDeps` runner that throws if called — used for the OTHER subcommand's slot below, mirroring `shell/chat-cli.ts`'s "throws only if actually invoked" convention for a seam a given run never exercises. */
+/** A `RitualCliDeps` runner that throws if called — used for the OTHER subcommand's slot below, mirroring `shell/server.ts`'s own "throws only if actually invoked" convention for a seam a given run never exercises. */
 function unreachableRunner(label: string): () => Promise<never> {
   return () => {
     throw new Error(`ritual-cli: ${label} should not be invoked for this subcommand`);
@@ -1329,7 +1334,7 @@ export function createOperationalNotifier(connection: SqliteConnection): (title:
 /**
  * Real entrypoint: opens the `MemoryStore` (per `MEMORY_DB_PATH`, defaulting
  * to `./data/yoh-memory.db` — the same default `.env.example` documents and
- * `chat-cli.ts` uses), wires ONLY the real adapters the requested subcommand
+ * `server.ts` uses), wires ONLY the real adapters the requested subcommand
  * actually needs, dispatches, and always closes the store. Returns the exit
  * code rather than setting it, so it stays callable from a test.
  *

@@ -10,7 +10,7 @@ document is the numbered runbook for doing them once.
 `token-store.ts` and `memory-store.ts` (this task's code) are fully
 implemented and unit-tested against placeholder config already — nothing
 below is required to run `npm run check`. It's required before Yoh's later
-`ritual-cli.ts`/`chat-cli.ts` commands can talk to Spencer's real Google
+`ritual-cli.ts` commands and the Web App can talk to Spencer's real Google
 Calendar and Notion workspace.
 
 ---
@@ -224,16 +224,17 @@ node src/shell/ritual-cli.ts self-check
 Each is a **one-shot process that runs and exits** — see "Not a daemon"
 below.
 
-### The interactive chat CLI
+### The Web App
 
-```
-node src/shell/chat-cli.ts
-```
-
-This is the interactive surface: ask "what's my plan", answer an open
-interaction request (a Data-Completeness prompt, a close-out confirmation, a
-Self-Check score, a Time-Budget-change Proposal), declare a Time Budget, and
-so on. Run it whenever you want to talk to Yoh — it is not cron-triggered.
+Yoh's interactive surface is the Web App (`src/shell/server.ts`), reached at
+the tailnet HTTPS URL `tailscale serve` publishes — see
+`deploy/DEPLOY.md`. It's the one long-lived process (see "Not a daemon"
+below); the four `ritual-cli.ts` subcommands above are the only other way
+Yoh runs. From it: ask "what's my plan", answer an open interaction request
+(a Data-Completeness prompt, a close-out confirmation, a Self-Check score, a
+Time-Budget-change Proposal), declare a Time Budget, and so on — the
+terminal `chat-cli.ts` this section used to point at is retired (Story 8.9,
+FR-50): every capability it had now lives here.
 
 ### A sample crontab
 
@@ -272,8 +273,9 @@ otherwise unspecified.
 All four `ritual-cli.ts` subcommands are independent, one-shot processes:
 each cron firing starts a fresh process that does its work and exits — there
 is no long-running Yoh daemon to keep alive, restart, or monitor as a
-service. `chat-cli.ts` is the one long-lived-per-session process, and only
-for as long as you're actively talking to it.
+service *for the rituals*. The Web App server (`src/shell/server.ts`,
+`deploy/yoh-server.service`) is the one actually long-running process,
+managed by systemd (`Restart=always`) — see `deploy/DEPLOY.md`.
 
 ---
 

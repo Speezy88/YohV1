@@ -37,8 +37,9 @@ export const CREATE_ITEM_OPTIONS: readonly OpenItemOption[] = [
 
 /**
  * The one place this task's code names `resolveNotionPageDraftProperties` —
- * `shell/chat-cli.ts` never does, keeping it clear of AD-16's write-surface
- * scan once this task removes `chat-cli.ts` from `SHELL_WRITE_ALLOWLIST`.
+ * no `shell/*.ts` file does, keeping it clear of AD-16's write-surface
+ * scan (Story 8.4 removed `chat-cli.ts` from `SHELL_WRITE_ALLOWLIST`; Story
+ * 8.9 then retired the file itself).
  * `undefined`-shaped as a `Result` failure (not a thrown error) so this
  * function never needs its own try/catch around a missing-config case.
  * Shared with `app/save-search-result.ts` (this task's other real

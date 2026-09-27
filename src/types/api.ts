@@ -275,11 +275,13 @@ export interface ConfirmProposalResponse {
 
 /**
  * `app/chat-turn.ts`'s `chatTurn`'s input: the current message plus the
- * caller-held running transcript. For `shell/chat-cli.ts` this `history`
- * already ends with `{role: "user", content: message}` (its own
- * `withConversationHistory` wrapper records that turn the moment the line is
- * read, before `chatTurn` is ever called) — `chatTurn` doesn't re-append it.
- * `message` is used only for deterministic-command recognition and Tone/model
+ * caller-held running transcript. For `web/src/lib/chatStore.ts` (Story
+ * 8.9: originally `shell/chat-cli.ts`'s own `withConversationHistory`
+ * wrapper) this `history` already ends with `{role: "user", content:
+ * message}` — appended before `send()` even calls the server, since the
+ * Web App shows Spencer's own turn optimistically — `chatTurn` doesn't
+ * re-append it. `message` is used only for deterministic-command
+ * recognition and Tone/model
  * routing, never appended a second time.
  */
 export interface ChatTurnRequest {

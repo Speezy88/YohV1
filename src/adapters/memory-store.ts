@@ -53,8 +53,9 @@ import type { SqliteConnection } from "./sqlite.ts";
 // `onCommit` callers already use for the "plan" topic — here it's this
 // file's own, since every interaction-request write (unlike `putPlan`'s
 // caller-supplied hook) unconditionally needs an "open-items" outbox row,
-// regardless of which caller (a ritual, `chat-cli.ts`, or a future web
-// route) made the write (AD-10).
+// regardless of which caller (a ritual, or `server.ts`'s Web App route;
+// Story 8.9: originally also `chat-cli.ts`, since retired) made the write
+// (AD-10).
 import { appendOutboxInTx } from "./notification-store.ts";
 
 // ============================================================================
@@ -85,8 +86,9 @@ interface RecordRow {
 /**
  * Thrown by `readModifyWrite` when the caller's `expectedVersion` no longer
  * matches the row's current version — i.e. a concurrent writer (AD-10:
- * `ritual-cli.ts` and `chat-cli.ts` are allowed to run concurrently) has
- * already applied a change since the caller last read this record. Carries
+ * `ritual-cli.ts` and `server.ts` are allowed to run concurrently; Story
+ * 8.9: `chat-cli.ts`, retired, was originally the other allowed process)
+ * has already applied a change since the caller last read this record. Carries
  * `.yohError` (`kind: "conflict"`) so a `rituals/*.ts` catch site can
  * surface it as `Result<T, YohError>` per AD-8 without this adapter
  * returning `Result` itself.
@@ -169,7 +171,7 @@ export class MemoryStore {
    * deferred `BEGIN`): this acquires SQLite's write lock up front, before
    * the SELECT that reads `expectedVersion` against, rather than only at
    * the first write. Under real cross-process concurrency (AD-10:
-   * `ritual-cli.ts` and `chat-cli.ts` running concurrently against the
+   * `ritual-cli.ts` and `server.ts` running concurrently against the
    * same file), a deferred transaction can have its SELECT establish a
    * snapshot that a second connection's commit then invalidates, causing
    * SQLite itself to throw `SQLITE_BUSY`/`SQLITE_BUSY_SNAPSHOT` at the
@@ -284,7 +286,7 @@ export class MemoryStore {
    * Closes the underlying `SqliteConnection` — delegates rather than owning
    * a handle of its own (Story 7.1). Kept so every existing `store.close()`
    * call site in the test suite keeps compiling unchanged; a real process
-   * (`ritual-cli.ts`/`chat-cli.ts`) closes the shared connection directly in
+   * (`ritual-cli.ts`/`server.ts`) closes the shared connection directly in
    * its own `finally` block instead, since a connection shared across
    * multiple stores must be closed once by its owner, not once per store.
    */
@@ -374,8 +376,9 @@ export function getOpenInteractionRequest(store: MemoryStore, id: string): Store
 
 /**
  * Lists every currently open interaction request, across every `id` —
- * what `chat-cli.ts` calls on start and before accepting any unrelated
- * command (AD-5) to surface whatever's open, without needing to already
+ * what `app/surface-open-items.ts`'s `surfaceOpenItems` calls (Story 8.9:
+ * originally `chat-cli.ts`, on start and before accepting any unrelated
+ * command, AD-5) to surface whatever's open, without needing to already
  * know each open request's `id`.
  */
 export function listOpenInteractionRequests(store: MemoryStore): StoredRecord<InteractionRequest>[] {
@@ -438,7 +441,8 @@ export function updateInteractionRequestDetail<TDetail = unknown>(
  * The fixed `records.kind` partition every Spencer-answered
  * `TaskFieldOverride` is stored under, keyed by the overridden Task's `id`.
  * Added as part of Task 5's fix: once Spencer answers a Data-Completeness
- * prompt for a missing field, `chat-cli.ts` persists the parsed answer here
+ * prompt for a missing field, `app/answer-data-completeness.ts` (Story 8.9:
+ * originally `chat-cli.ts`) persists the parsed answer here
  * (via `mergeTaskFieldOverride`) rather than discarding it — a raw `Task`
  * re-read later (e.g. from `notion-adapter.ts`, which still won't have the
  * field, since Notion write-back is Status-only per AD-12) is merged against
@@ -461,7 +465,8 @@ export function getTaskFieldOverride(store: MemoryStore, taskId: string): Stored
  * (creating one at `{}` if none exists yet), and persists the merged
  * result — "put a bit more" semantics, so a Task whose prompt named
  * multiple missing fields can have each field's answer merged in one at a
- * time (e.g. as `chat-cli.ts` asks about them one at a time) without a
+ * time (e.g. as `app/answer-data-completeness.ts` asks about them one
+ * question per turn, C4) without a
  * caller needing to track a version or re-supply fields already answered.
  * Like `putOpenInteractionRequest`, this reads the current version
  * internally before calling `readModifyWrite`, so a genuine concurrent
@@ -534,7 +539,7 @@ export function getCurrentTimeBudget(store: MemoryStore): StoredRecord<TimeBudge
  * Budget — "put" semantics, like `putOpenInteractionRequest`: the caller
  * doesn't need to track a version to call this. Internally reads the
  * current record's version (if any) and passes it to `readModifyWrite`, so a
- * genuine concurrent writer (AD-10: `ritual-cli.ts` and `chat-cli.ts` running
+ * genuine concurrent writer (AD-10: `ritual-cli.ts` and `server.ts` running
  * concurrently) still surfaces `ConflictError` rather than silently
  * clobbering a change made between this function's internal read and write.
  */
@@ -820,8 +825,8 @@ const SLIP_HISTORY_KIND = "slip-history";
  * row (reset — in practice, cleared entirely, see `clearSlip` below — the
  * moment it completes, per this story's AC: "its Slip-Bump is cleared, not
  * carried indefinitely"), and the date of its most recent slip, kept for
- * lineage-view display (`shell/chat-cli.ts`'s "why is X prioritized"
- * command, UX-DR19).
+ * lineage-view display (`app/why-prioritized.ts`'s "why is X prioritized"
+ * command, UX-DR19; Story 8.9: moved from `shell/chat-cli.ts`).
  */
 export interface SlipHistory {
   readonly consecutiveSlipCount: number;
@@ -979,8 +984,8 @@ export interface UncheckedDayTask {
  * unchecked night means Spencer never confirmed which `work` Plan Blocks
  * completed or slipped, so the Tasks still named by that night's close-out
  * interaction request (which only ever clears once EVERY named Task has
- * been answered or explicitly skipped — see `chat-cli.ts`'s
- * `answerNightCloseOutRequest`) are exactly what "rolled forward." Snapshot
+ * been answered or explicitly skipped — see `app/answer-night-close-out.ts`'s
+ * `answerNightCloseOut`) are exactly what "rolled forward." Snapshot
  * copies of `taskId`/`taskTitle`, not a live re-read of Notion: a Task
  * could be renamed, completed some other way, or deleted by the time this
  * is displayed, and the notice is about what happened THAT NIGHT, not
@@ -1068,7 +1073,7 @@ export function putUncheckedDay(store: MemoryStore, day: UncheckedDay): StoredRe
  * `runMorningRitual` reads the row at its own "step 1.5" and doesn't stamp
  * `shownAt` until its own "step 12d" — with Notion/Calendar reads and a
  * Pushover send awaited in between, a real window during which a SEPARATE
- * `chat-cli.ts` process (same SQLite file, AD-10) can legitimately answer
+ * `server.ts` process (same SQLite file, AD-10) can legitimately answer
  * the close-out and delete this exact row via `clearUncheckedDay` before
  * `runMorningRitual` ever reaches its own write. That is not a bug and not
  * a genuine conflict — the night is no longer unchecked either way, and
@@ -1265,9 +1270,9 @@ export function putSelfCheckState(store: MemoryStore, state: SelfCheckState): St
 // inventing a new storage mechanism"), this computes pattern-statements
 // in-memory from `listRecordsByKind`'s existing results on every call —
 // there is no new persisted "pattern-statement" record. A future caller
-// (e.g. a `chat-cli.ts` "how have I been doing lately" command, or Epic 5's
+// (e.g. a Chat "how have I been doing lately" command, or Epic 5's
 // Self-Check trend) is free to call this directly; wiring an actual
-// chat-cli.ts command is explicitly out of scope for this task (see the
+// chat command is explicitly out of scope for this task (see the
 // task brief — no AC requires an on-demand query SURFACE, only the query
 // path itself).
 //

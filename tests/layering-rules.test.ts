@@ -201,6 +201,8 @@ test("detector: disallowedShellEdges permits only api.ts's type-only AppType re-
   ]);
   assert.deepEqual(disallowedShellEdges("api.ts", `export type { AppType, Other } from "../shell/server.ts";`).length, 1);
   assert.deepEqual(disallowedShellEdges("domain.ts", `export type { AppType } from "../shell/server.ts";`).length, 1);
+  // "chat-cli.ts" here is an intentionally synthetic fixture string for the detector logic — it
+  // doesn't assert anything about a real file's existence (chat-cli.ts itself was retired, Story 8.9).
   assert.deepEqual(disallowedShellEdges("api.ts", `export * from "../shell/chat-cli.ts";`).length, 1);
 });
 
@@ -253,4 +255,17 @@ test("AD-9/AD-17: types/ reaches shell/ only via api.ts's type-only AppType re-e
     disallowedShellEdges(relative(typesDir, f).split(sep).join("/"), readFileSync(f, "utf8")),
   );
   assert.deepEqual(offenders, []);
+});
+
+// ============================================================================
+// Story 8.9 (FR-42/FR-50): CLI parity check and retirement
+// ============================================================================
+
+test("FR-50: shell/chat-cli.ts no longer exists once CLI parity retirement is complete", () => {
+  assert.equal(existsSync(join(SRC_DIR, "shell", "chat-cli.ts")), false, "chat-cli.ts must be deleted once FR-42 parity passes (FR-50)");
+});
+
+test("ritual-shared.ts no longer exports WRAP_WIDTH or renderMarkdownForTerminal (chat-cli-only, dead after FR-50)", () => {
+  const contents = readFileSync(join(SRC_DIR, "rituals", "ritual-shared.ts"), "utf8");
+  assert.ok(!/export (const WRAP_WIDTH|function renderMarkdownForTerminal)/.test(contents));
 });

@@ -113,7 +113,9 @@ export type TaskStatus = "not-started" | "in-progress" | "completed" | "slipped"
  * The set of Task fields FR-4's Data-Completeness Gate requires before a
  * Task can enter Plan assembly. Exported (Task 5) so
  * `core/data-completeness-gate.ts` — the sole producer of `CompleteTask`
- * (AD-11) — and its `shell/chat-cli.ts` caller can reference the exact field
+ * (AD-11) — and its callers (`rituals/data-completeness.ts`'s
+ * `buildMissingFieldsPromptText`; Story 8.9: originally also `shell/
+ * chat-cli.ts` directly) can reference the exact field
  * name set (e.g. to iterate it, or to label a missing field in a prompt)
  * without redeclaring a parallel list that could drift out of sync with
  * `CompleteTask`'s own derivation below.
@@ -204,7 +206,8 @@ export type TaskFieldOverride = Partial<Pick<Task, PlanningFieldNames>>;
  * FieldValueSuggestion — FR-25's inferred-value payload. `llm-adapter.ts`'s
  * `suggestFieldValue` returns this when it can confidently infer a missing
  * planning field's value from Spencer's own recent chat lines (AD-11:
- * generated lazily, at `chat-cli.ts` display time, never at ritual time).
+ * generated lazily, at `app/surface-open-items.ts`'s display time — Story
+ * 8.9: originally `chat-cli.ts`'s — never at ritual time).
  * `taskTitle` rides alongside `taskId` for the same reason
  * `MissingFieldReport` does — so a caller can render a confirmation prompt
  * without a separate Task lookup. `reason` is Claude's own short
@@ -242,8 +245,9 @@ export interface NotionPageDraft {
 
 /**
  * SearchAnswer — FR-28's result shape (AD-14), pinned once here so
- * `search-adapter.ts` (the implementer) and `llm-adapter.ts`/`chat-cli.ts`
- * (the callers) can't independently diverge on it. A legitimate zero-result
+ * `search-adapter.ts` (the implementer) and `llm-adapter.ts`/`app/web-
+ * search.ts` (the callers; Story 8.9: originally also `chat-cli.ts`) can't
+ * independently diverge on it. A legitimate zero-result
  * search is `{ answer: "", citations: [] }` — still a successful value, not
  * absent.
  */
@@ -253,15 +257,17 @@ export interface SearchAnswer {
 }
 
 /**
- * ChatIntent — the discriminated union AD-14 names for `chat-cli.ts`'s
- * intent routing. Only `search-trigger` (Story 6.4/FR-28) has a real
- * classifier producing it today (`llm-adapter.ts`'s `classifyChatIntent`,
- * called only after every existing deterministic trigger check has already
- * failed to match). The other four kinds name the territory
+ * ChatIntent — the discriminated union AD-14 names for `app/chat-turn.ts`'s
+ * `chatTurn` intent routing (Story 8.9: originally `chat-cli.ts`'s). Only
+ * `search-trigger` (Story 6.4/FR-28) has a real classifier producing it
+ * today (`llm-adapter.ts`'s `classifyChatIntent`, called only after every
+ * existing deterministic trigger check has already failed to match). The
+ * other four kinds name the territory
  * `parseTimeBudgetCommand`/`isPlanViewCommand`/`isMidDayReflowCommand`/
  * `isBlockerReportCommand`/`parseWhyPrioritizedCommand`/
- * `parseCreateItemCommand` already cover via their own deterministic
- * checks, by `chat-cli.ts`'s own documented design choice — named here so
+ * `parseCreateItemCommand` (`core/chat-commands.ts`) already cover via
+ * their own deterministic checks, by that original `chat-cli.ts` design
+ * choice `chatTurn` still follows — named here so
  * this type's inventory is complete per AD-9, not because a second
  * classifier produces them.
  */
@@ -273,19 +279,23 @@ export type ChatIntent =
   | { readonly kind: "search-trigger"; readonly query: string };
 
 /**
- * ChatTurn — one turn of `shell/chat-cli.ts`'s running session transcript,
- * threaded into `llm-adapter.ts`'s `answerGeneralQuestion` as real
- * conversation history (2026-09-22 revision) so a general-chat answer can
- * accurately reference what was just said or done earlier in the SAME
- * session — including by a deterministic flow (a Data-Completeness answer,
- * a Night Ritual close-out, a Calendar edit, a Notion write) that never
- * itself calls Claude, not only a prior general-chat exchange. `content` is
- * plain text — never ANSI-colored (`chat-cli.ts`'s recording wrapper strips
- * color codes before storing a turn) — since this is sent to Claude, not
- * rendered to a terminal. Shared in `types/` (not `adapters/` or `shell/`)
- * because AD-1 restricts `adapters/*.ts` to importing only from `types/`,
- * and both `llm-adapter.ts` (consumes it) and `chat-cli.ts` (builds it) need
- * the same shape.
+ * ChatTurn — one turn of the running Chat session transcript, threaded into
+ * `llm-adapter.ts`'s `answerGeneralQuestion` as real conversation history
+ * (2026-09-22 revision) so a general-chat answer can accurately reference
+ * what was just said or done earlier in the SAME session — including by a
+ * deterministic flow (a Data-Completeness answer, a Night Ritual close-out,
+ * a Calendar edit, a Notion write) that never itself calls Claude, not only
+ * a prior general-chat exchange. `content` is plain text — markdown allowed,
+ * never ANSI — since this is sent to Claude, not rendered to a terminal.
+ * Shared in `types/` (not `adapters/` or `shell/`) because AD-1 restricts
+ * `adapters/*.ts` to importing only from `types/`, and both `llm-adapter.ts`
+ * (consumes it) and the transcript's builder need the same shape. (Story
+ * 8.9: `shell/chat-cli.ts` — which used to build this by wrapping its own
+ * `io` and stripping ANSI from every printed line — is retired; the
+ * transcript is now held client-side, per turn, by `web/src/lib/
+ * chatStore.ts`, sent as `ChatTurnRequest.history` on every `/api/chat` call
+ * (C2, C3) — never ANSI-colored to begin with, since the Web App never
+ * emits any.)
  */
 export interface ChatTurn {
   readonly role: "user" | "assistant";
@@ -401,8 +411,9 @@ export interface TimeBudget {
  * of directly applying a suggested behavior or budget change (AD-3): a
  * learned pattern (FR-16) or a suggested Time Budget change (FR-5). Persisted
  * by `memory-store.ts` as an open interaction request until Spencer answers
- * yes/no in `chat-cli.ts`, which then calls the matching `apply(proposal)`
- * function.
+ * yes/no in Chat, which then calls `app/confirm-proposal.ts`'s
+ * `confirmProposal` (Story 8.2: originally `chat-cli.ts`'s own matching
+ * `apply(proposal)` function).
  *
  * `entityVersion` is the snapshot/version of the entity this proposal would
  * change, captured at proposal-creation time; `apply` must re-read the live
@@ -431,8 +442,9 @@ export interface Proposal<T> {
 /**
  * InteractionRequest — the generic "Yoh needs an answer from Spencer before
  * it can proceed" envelope AD-5 requires `memory-store.ts` to persist as an
- * open interaction request, and `chat-cli.ts` to surface before accepting
- * any unrelated input (UX-DR5). Introduced by Task 5 (the Data-Completeness
+ * open interaction request, and Chat's `app/surface-open-items.ts` to
+ * surface before accepting any unrelated input (UX-DR5; Story 8.9:
+ * originally `chat-cli.ts`). Introduced by Task 5 (the Data-Completeness
  * Gate, FR-4) as the first of several prompt kinds sharing this pattern —
  * later tasks (Night close-out FR-12–FR-14, Self-Check FR-17,
  * Propose-Don't-Impose AD-3) persist their own prompts through the same
@@ -446,13 +458,14 @@ export interface Proposal<T> {
  * requester (e.g. a fixed singleton id like `"data-completeness"` so
  * multiple incomplete Tasks collapse into the one open request UX-DR10
  * requires, rather than one row per Task) and doubles as the handle
- * `chat-cli.ts` clears once Spencer answers (UX-DR20: no timeout ever
+ * `app/answer-open-item.ts` clears once Spencer answers (Story 8.9:
+ * originally `chat-cli.ts`; UX-DR20: no timeout ever
  * expires an open request — it waits indefinitely for that clear).
  */
 export interface InteractionRequest<TDetail = unknown> {
   /** What this request is about, e.g. "data-completeness", "night-close-out", "self-check", "proposal". Free-form per requester, not a fixed enum — mirrors `Proposal.kind`'s own free-form design so a later task can add a new request kind without touching this shape. */
   readonly requestKind: string;
-  /** The accent-labeled prompt line(s) `chat-cli.ts` renders verbatim before accepting other input (UX-DR5, UX-DR10). */
+  /** The prompt line(s) Chat renders verbatim before accepting other input (UX-DR5, UX-DR10; Story 8.9: plain text, never ANSI — `chat-cli.ts`, since retired, was the one caller that applied accent-color wrapping). */
   readonly promptText: string;
   /** Structured payload specific to `requestKind`, for a caller that wants to act on the answer programmatically (e.g. which Task fields are missing on which Tasks) — like `YohError.detail`, callers should not depend on its shape beyond what they themselves wrote. */
   readonly detail?: TDetail;

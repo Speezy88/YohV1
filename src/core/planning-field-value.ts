@@ -5,13 +5,16 @@
  * validates/coerces a raw string into the correctly-typed value for a given
  * `PlanningFieldNames` field, per each field's real type in
  * `types/domain.ts`. Used by BOTH:
- *  - `shell/chat-cli.ts`'s `answerDataCompletenessRequest` (FR-4: a typed
- *    answer to a blind "what's the Due Date?" ask) — which also wants the
- *    Spencer-facing rejection message this function returns.
+ *  - `app/answer-data-completeness.ts`'s `answerDataCompleteness` (FR-4: a
+ *    typed answer to a blind "what's the Due Date?" ask; Story 8.9:
+ *    originally `shell/chat-cli.ts`'s `answerDataCompletenessRequest`) —
+ *    which also wants the Spencer-facing rejection message this function
+ *    returns.
  *  - `adapters/llm-adapter.ts`'s `suggestFieldValue` (FR-25: validating a
  *    value Claude claims to have confidently inferred from recent chat) —
  *    via an injected `parseValue` parameter, since AD-1 forbids `adapters/`
- *    importing from `core/`; `chat-cli.ts` passes a thin wrapper over this
+ *    importing from `core/`; `app/surface-open-items.ts` (Story 8.9:
+ *    originally `chat-cli.ts`) passes a thin wrapper over this
  *    function that discards the message on a rejection.
  *
  * Before this file existed, `chat-cli.ts`'s `parseFieldAnswer` and

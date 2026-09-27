@@ -138,8 +138,9 @@ export interface NotionDataSourceClient {
  * `dataSources.query`) to also supply a `pages.update` stub, for a
  * capability it never uses. A real `Client` instance satisfies both
  * interfaces structurally at once, so `shell/ritual-cli.ts` and
- * `shell/chat-cli.ts` bind the one real `Client` to both `readNotionTasks`
- * and `setTaskStatus` without needing two separate client objects.
+ * `shell/server.ts` (Story 8.9: originally also `shell/chat-cli.ts`) bind
+ * the one real `Client` to both `readNotionTasks` and `setTaskStatus`
+ * without needing two separate client objects.
  */
 export interface NotionWriteClient {
   readonly pages: {
@@ -155,7 +156,8 @@ export interface NotionWriteClient {
  * file uses. Kept separate from `NotionDataSourceClient` (which only ever
  * needs `.query`) for the same reason `NotionWriteClient` is kept separate
  * from it — a real `Client` satisfies every one of these interfaces at
- * once, so `shell/chat-cli.ts` still only ever constructs one real client.
+ * once, so `shell/server.ts` (Story 8.9: originally also `shell/chat-cli.ts`)
+ * still only ever constructs one real client.
  */
 export interface NotionSchemaClient {
   readonly dataSources: {
@@ -468,8 +470,9 @@ export async function readNotionTasks(
  * written — a rename or minor casing drift self-corrects; an option that
  * genuinely no longer exists (e.g. `"Slipped"`, now that Spencer's workspace
  * has none) fails clearly instead of writing garbage, surfacing through the
- * same `YohError` path `shell/chat-cli.ts`'s "skip" escape hatch (Task 19)
- * already handles for a permanently-failing Status write.
+ * same `YohError` path `app/answer-night-close-out.ts`'s "skip" escape
+ * hatch (Task 19; Story 8.9: originally `shell/chat-cli.ts`'s) already
+ * handles for a permanently-failing Status write.
  *
  * **Reverted 2026-09-25 (Spencer, AD-12).** `setTaskStatus` writes the
  * Status property only and never trashes, from any trigger (Night
@@ -493,7 +496,8 @@ export async function readNotionTasks(
  * to `readNotionTasks(client, config)` — a zero-Notion-detail thunk closing
  * over the real client/config) — see `rituals/night-ritual.ts`'s
  * `NightCloseOutApplyDeps.setTaskStatus` and `shell/ritual-cli.ts`'s
- * `createMorningRitualDeps`/`shell/chat-cli.ts`'s `main` for the binding
+ * `createMorningRitualDeps`/`shell/server.ts`'s `main` (Story 8.9:
+ * originally also `shell/chat-cli.ts`'s `main`) for the binding
  * sites. The actual exported function below keeps the SAME
  * `(client, config, ...)` leading shape `readNotionTasks` already
  * establishes, so both functions really do "share the same
@@ -718,8 +722,9 @@ function capitalizeFirst(raw: string): string {
  * check its env vars (the same laziness `shell/chat-cli.ts`'s own
  * pre-Story-8.4 closures always had). Only THIS file's own source may name
  * `setTaskStatus`/`updateTaskField` directly (AD-16) — a shell that needs a
- * bound closure for either (e.g. `shell/chat-cli.ts`'s `AnswerOpenItemDeps`
- * construction, which feeds `app/answer-data-completeness.ts` and
+ * bound closure for either (e.g. `shell/server.ts`'s `AnswerOpenItemDeps`
+ * construction — Story 8.9: originally `shell/chat-cli.ts`'s — which feeds
+ * `app/answer-data-completeness.ts` and
  * `app/answer-night-close-out.ts`) spreads this binder's return value
  * instead of importing/calling the two write functions itself, so their
  * names never appear as literal text in `shell/*.ts` (not even as an object-
@@ -758,7 +763,8 @@ export function bindNotionTaskWrites(getBinding: NotionTaskWriteBindingFn): Noti
 // createPage (Story 6.3 / FR-26, FR-29, AD-12) — the adapter's THIRD and
 // final write function. resolveNotionPageDraftProperties is the shared,
 // no-write schema-resolution core both createPage (write time) and
-// shell/chat-cli.ts (draft time, before showing Spencer a Proposal) call —
+// app/create-item.ts (draft time, before showing Spencer a Proposal; Story
+// 8.9: originally shell/chat-cli.ts) call —
 // the exact same resolution genuinely runs twice, per AD-12.
 // ============================================================================
 
@@ -895,10 +901,10 @@ function resolveCreatePageProperty(
  * internal field name for `database`, a missing/unresolvable `title`, or
  * any single property that can't be confidently resolved (e.g. a
  * `select`-backed value with no close live match). Called by
- * `shell/chat-cli.ts` at DRAFT time (so the `Proposal<NotionPageDraft>`
- * shown to Spencer is actually accurate) and internally by `createPage`
- * again at WRITE time (the binding guarantee) — the exact same resolution,
- * genuinely run twice.
+ * `app/create-item.ts` (Story 8.9: originally `shell/chat-cli.ts`) at DRAFT
+ * time (so the `Proposal<NotionPageDraft>` shown to Spencer is actually
+ * accurate) and internally by `createPage` again at WRITE time (the binding
+ * guarantee) — the exact same resolution, genuinely run twice.
  */
 export async function resolveNotionPageDraftProperties(
   client: NotionCreatePageClient,
@@ -961,7 +967,8 @@ export async function resolveNotionPageDraftProperties(
  * "runs twice") rather than trusting an already-resolved payload from a
  * caller — so a draft that was valid moments ago but has since drifted
  * still fails closed here, not just at draft time. Only called from
- * `shell/chat-cli.ts`, never `shell/ritual-cli.ts` (AD-12).
+ * `app/save-search-result.ts` and `app/confirm-proposal.ts` (Story 8.9:
+ * originally `shell/chat-cli.ts`), never `shell/ritual-cli.ts` (AD-12).
  */
 export async function createPage(
   client: NotionCreatePageClient,
@@ -1009,7 +1016,8 @@ export async function createPage(
  * every actual write, never at bind time. `app/save-search-result.ts` calls
  * `createPage` itself against the RAW client/config that function's own
  * binding returns (AD-16's own convention for `app/*.ts`); this binder is
- * for `shell/chat-cli.ts`'s OTHER call site, `AnswerOpenItemDeps`'s
+ * for `shell/server.ts`'s OTHER call site (Story 8.9: originally
+ * `shell/chat-cli.ts`'s), `AnswerOpenItemDeps`'s
  * `createPage` field (consumed by `app/confirm-proposal.ts`'s
  * `"notion-page-draft"` branch) — a shell may never name `createPage`
  * directly (not even as an object-literal property key), so it spreads this

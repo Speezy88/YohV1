@@ -110,7 +110,7 @@ export async function buildOpenItemQuestion(deps: SurfaceOpenItemsDeps, input: B
   return { ok: true, value: await buildForRecord(deps, record) };
 }
 
-/** Every open interaction request, each with its CURRENT pending question, built from its stored cursor (C3) — what a Web route or `chat-cli.ts`'s transport loop presents. */
+/** Every open interaction request, each with its CURRENT pending question, built from its stored cursor (C3) — what the Web App's `GET /api/open-items` route presents (Story 8.9: originally also `chat-cli.ts`'s own blocking transport loop). */
 export async function surfaceOpenItems(deps: SurfaceOpenItemsDeps, _input: Record<string, never>): Promise<Result<OpenItemsResponse, YohError>> {
   const open = listOpenInteractionRequests(deps.store);
   const items: OpenItem[] = [];

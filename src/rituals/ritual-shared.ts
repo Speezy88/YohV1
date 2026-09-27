@@ -35,8 +35,8 @@ import type { IsoDate, IsoDateTime, Plan, PlanBlock } from "../types/domain.ts";
 
 /**
  * 256-color (8-bit) ANSI escape for DESIGN.md's `colors.accent` (#5FAFFF).
- * Used ONLY for a section label — the Plan's header here, a prompt's label
- * in `chat-cli.ts` — never for emphasis inside body text.
+ * Used ONLY for a section label — the Plan's header here — never for
+ * emphasis inside body text.
  *
  * Was a 24-bit truecolor escape (`\x1b[38;2;95;175;255m`) until real-world
  * testing found it rendering as an unintended color in Apple's Terminal.app,
@@ -50,9 +50,8 @@ export const ACCENT = "\x1b[38;5;75m";
 
 /**
  * 256-color (8-bit) ANSI escape for DESIGN.md's `colors.muted` (#6B6B6B).
- * Used ONLY for the one-line Plan reasoning (UX-DR4) and the between-turns
- * divider in `chat-cli.ts`, so both read as a quiet aside rather than a
- * competing headline.
+ * Used ONLY for the one-line Plan reasoning (UX-DR4), so it reads as a
+ * quiet aside rather than a competing headline.
  *
  * Same Terminal.app-compatibility switch as `ACCENT` above. #6B6B6B
  * (107,107,107) doesn't land exactly on a 256-color cube step, so this uses
@@ -86,51 +85,6 @@ export const ATTENTION = "\x1b[38;5;173m";
 export const RESET = "\x1b[0m";
 
 /**
- * ANSI bold (SGR 1). Not a DESIGN.md color token — a text WEIGHT, the same
- * kind of styling DESIGN.md's Typography section already allows for a
- * section label ("bold... for the section label, plain weight for
- * everything else"). Used by `renderMarkdownForTerminal` below for markdown
- * emphasis in Claude's chat replies.
- */
-const BOLD = "\x1b[1m";
-
-/** ANSI italic (SGR 3). Same rationale as `BOLD` above, for `*italic*`. */
-const ITALIC = "\x1b[3m";
-
-/**
- * Turns markdown emphasis/structure syntax in `text` into either real
- * terminal styling (`enabled: true` — pass `shouldUseColor()`, the same
- * TTY/`NO_COLOR`/`TERM=dumb` gating color itself uses, since a destination
- * that can't render color can't render bold/italic either) or plain text
- * with the syntax characters simply removed (`enabled: false`) — never
- * literal asterisks/hashes either way. `shell/chat-cli.ts`'s general-chat
- * path calls this on every Claude reply: nothing tells Claude to avoid
- * markdown, and a plain terminal doesn't render it on its own, so without
- * this a reply that uses `**bold**` would print the literal asterisks.
- *
- * Deliberately narrow, not a full markdown parser — handles exactly the
- * constructs Claude's own chat replies actually produce: `**bold**`,
- * `*italic*`, `` `inline code` ``, fenced code block fences, and `#`
- * headings. Skips underscore-delimited emphasis (`_italic_`/`__bold__`)
- * entirely on purpose: this assistant discusses env-var-style names
- * (`NOTION_TOKEN`, `PUSHOVER_APP_TOKEN`) constantly, and naive underscore
- * emphasis would mangle every one of them.
- */
-export function renderMarkdownForTerminal(text: string, enabled: boolean): string {
-  return text
-    // Fenced code blocks: drop the ``` fence lines/markers, keep the code plain.
-    .replace(/^```[^\n]*\n?/gm, "")
-    .replace(/```/g, "")
-    // Headings: strip the leading #'s; bold what's left when styling is on.
-    .replace(/^#{1,6}[ \t]+(.+)$/gm, (_match, heading: string) => (enabled ? `${BOLD}${heading}${RESET}` : heading))
-    // Bold before italic, so a "**x**" span isn't mis-split by the italic pass below.
-    .replace(/\*\*(\S(?:.*?\S)?)\*\*/g, (_match, inner: string) => (enabled ? `${BOLD}${inner}${RESET}` : inner))
-    .replace(/(?<!\*)\*(\S(?:.*?\S)?)\*(?!\*)/g, (_match, inner: string) => (enabled ? `${ITALIC}${inner}${RESET}` : inner))
-    // Inline code: drop the backticks either way — no styling budget left to spend on it.
-    .replace(/`([^`]+)`/g, "$1");
-}
-
-/**
  * Whether to emit color at all. DESIGN.md is explicit that truecolor support
  * must not be assumed and that everything must degrade gracefully to plain
  * text — and UX-DR20 requires every color cue to be paired with plain-text
@@ -155,18 +109,18 @@ export function shouldUseColor(
 // renderPlan — DESIGN.md's Plan block list (UX-DR1..DR4, DR7, DR8, DR20)
 // ============================================================================
 
-/** DESIGN.md's `spacing.wrap-width` (`80ch`) — body wraps at roughly 80 characters so output stays readable without resizing the terminal. */
-export const WRAP_WIDTH = 80;
-
 /** The plain-text marker a `calendar-anchor` block carries so a fixed Calendar event reads as immovable WITHOUT relying on color or on the reader knowing about `PlanBlockKind` (UX-DR20). */
 const ANCHOR_MARKER = "(fixed)";
+
+/** DESIGN.md's `spacing.wrap-width` (`80ch`) — `renderPlan`'s own default wrap column, so output stays readable without resizing the terminal. (Story 8.9: this was `WRAP_WIDTH`, a constant `shell/chat-cli.ts` also imported directly for its own divider line; now private to this file, since `chat-cli.ts` was retired and no other caller ever needed it.) */
+const PLAN_WRAP_WIDTH = 80;
 
 export interface RenderPlanOptions {
   /** IANA zone the block times are rendered in. Per the Consistency Conventions, Plans are stored in UTC and converted to Spencer's local time only at this presentation edge. Defaults to the host's own zone. */
   readonly timeZone?: string;
   /** Emit ANSI color. Defaults to `shouldUseColor()` — i.e. off for a pipe, a redirect, `NO_COLOR`, or a notification body. */
   readonly color?: boolean;
-  /** Column to wrap body text at, defaulting to `WRAP_WIDTH`. */
+  /** Column to wrap body text at, defaulting to `PLAN_WRAP_WIDTH`. */
   readonly width?: number;
   /** Include the accent-labeled "Today's Plan for ..." header. `false` is what the push-notification body uses, since the notification's own title carries the label. */
   readonly includeHeader?: boolean;
@@ -197,14 +151,14 @@ export interface RenderPlanOptions {
  *
  * Pure and free of I/O beyond reading `Intl` — deliberately so: this exact
  * function is called by `rituals/morning-ritual.ts`'s delivery path,
- * `rituals/mid-day-reflow.ts`'s remainder-of-day view, and
- * `shell/chat-cli.ts`'s on-demand "what's my plan" view, all with the
- * identical signature.
+ * `rituals/mid-day-reflow.ts`'s remainder-of-day view, and (Story 8.9,
+ * moved from `shell/chat-cli.ts`) `app/plan-view.ts`'s on-demand "what's my
+ * plan" view, all with the identical signature.
  */
 export function renderPlan(plan: Plan, options: RenderPlanOptions = {}): string {
   const timeZone = options.timeZone ?? hostTimeZone();
   const color = options.color ?? shouldUseColor();
-  const width = options.width ?? WRAP_WIDTH;
+  const width = options.width ?? PLAN_WRAP_WIDTH;
   const includeHeader = options.includeHeader ?? true;
 
   const units: string[][] = [];

@@ -29,11 +29,13 @@
  *     TODAY is due for a Self-Check and, if so, persists one open
  *     interaction request (`requestKind: "self-check"`) and returns
  *     immediately — Spencer's answer only ever arrives later, interactively,
- *     in `chat-cli.ts`.
- *  2. `applySelfCheckAnswer` — what `chat-cli.ts` calls once Spencer has
- *     given a complete answer (both a score AND a reason, UX-DR15): persists
- *     the answer and computes/stores the NEXT due schedule, via this file's
- *     own `scheduleNextSelfCheck` (which is what actually calls
+ *     in Chat (Story 8.9: `app/answer-self-check.ts`'s `answerSelfCheck`;
+ *     originally `shell/chat-cli.ts`, since retired).
+ *  2. `applySelfCheckAnswer` — what `app/answer-self-check.ts`'s
+ *     `answerSelfCheck` calls once Spencer has given a complete answer (both
+ *     a score AND a reason, UX-DR15): persists the answer and
+ *     computes/stores the NEXT due schedule, via this file's own
+ *     `scheduleNextSelfCheck` (which is what actually calls
  *     `computeEscalation`).
  *
  * ============================================================================
@@ -152,8 +154,9 @@
  * ============================================================================
  *
  * `runSelfCheckRitual`'s FIRST version persisted only the open interaction
- * request, with no active nudge — discoverable exclusively by opening
- * `chat-cli.ts`. That is the exact gap `rituals/night-ritual.ts`'s own
+ * request, with no active nudge — discoverable exclusively by opening Chat
+ * (at the time, `chat-cli.ts`; since retired, Story 8.9). That is the exact
+ * gap `rituals/night-ritual.ts`'s own
  * `runNightPromptRitual` had until Task 20's review fix added a Pushover
  * push for the identical reason (see that file's own "The first attempt's
  * own push notification" docstring section) — and the gap is genuinely
@@ -172,8 +175,8 @@
  *     nothing. And unlike the nightly close-out, which fires at a
  *     predictable, habitual moment (every night), Self-Check fires at a
  *     RANDOMIZED time on a ~4-day cadence — there is no analogous daily
- *     habit that would make Spencer likely to open `chat-cli.ts` and
- *     stumble onto an open prompt on his own. A silently-persisted request
+ *     habit that would make Spencer likely to open Chat and stumble onto an
+ *     open prompt on his own. A silently-persisted request
  *     here can realistically sit unnoticed indefinitely, permanently
  *     freezing the whole feature (every later trigger keeps returning
  *     `"already-open"`, never re-prompting, never escalating).
@@ -184,7 +187,7 @@
  * interaction request is already persisted by the time the send is
  * attempted, so a delivery failure here surfaces as a `Result` failure
  * (`kind: "unreachable"`) but never loses the already-persisted request —
- * Spencer can still find it by opening `chat-cli.ts` even without the push.
+ * Spencer can still find it by opening Chat even without the push.
  */
 import {
   getOpenInteractionRequest,
@@ -234,7 +237,7 @@ export const SELF_CHECK_SCORE_MAX = 10;
  */
 export const SELF_CHECK_CURVE: EscalationCurve = { cap: 2, step: 2 };
 
-/** The Self-Check prompt's fixed text — UX-DR15: both a numeric score AND a short written reason are required. Mentions both explicitly so a re-prompt after an incomplete answer (`chat-cli.ts`) reads as a restatement of the same requirement, not a new/different question. */
+/** The Self-Check prompt's fixed text — UX-DR15: both a numeric score AND a short written reason are required. Mentions both explicitly so a re-prompt after an incomplete answer (`app/answer-self-check.ts`) reads as a restatement of the same requirement, not a new/different question. */
 export const SELF_CHECK_PROMPT_TEXT =
   "Quick Self-Check: on a scale of 1-10, how well is this working for you right now? Give me a number and a short written reason.";
 
@@ -386,7 +389,7 @@ export interface SelfCheckRitualDeps {
   readonly log?: (entry: LogEntry) => void;
 }
 
-/** `InteractionRequest<SelfCheckRequestDetail>`'s `detail` payload — the structured half `chat-cli.ts` reads to know which local date this check-in is about. */
+/** `InteractionRequest<SelfCheckRequestDetail>`'s `detail` payload — the structured half `app/answer-self-check.ts` reads to know which local date this check-in is about. */
 export interface SelfCheckRequestDetail {
   readonly date: IsoDate;
 }
@@ -432,7 +435,7 @@ function describeError(err: unknown): string {
  *
  * Per AD-8, this is one of the layers allowed to catch an adapter's throw:
  * every `memory-store.ts` write below (which can throw `ConflictError` under
- * AD-10 concurrency with `chat-cli.ts`), and `deps.sendNotification` itself
+ * AD-10 concurrency with `server.ts`), and `deps.sendNotification` itself
  * (which can throw on I/O failure), are each wrapped and converted into a
  * `Result` failure plus a structured log line.
  */
@@ -489,7 +492,7 @@ export async function runSelfCheckRitual(deps: SelfCheckRitualDeps): Promise<Res
   // --- Notify Spencer the Self-Check prompt is waiting (AD-8 boundary) -----
   // The interaction request is already persisted above, so a delivery
   // failure here never loses it — Spencer can still find it by opening
-  // chat-cli.ts even without the push. Mirrors `runNightPromptRitual`'s own
+  // Chat even without the push. Mirrors `runNightPromptRitual`'s own
   // persist-then-send ordering (rituals/night-ritual.ts) — see the file
   // docstring's "The push notification" section for why this is required
   // from the start here rather than an optional/later addition.
@@ -505,12 +508,13 @@ export async function runSelfCheckRitual(deps: SelfCheckRitualDeps): Promise<Res
 }
 
 // ============================================================================
-// applySelfCheckAnswer — the answer-processing half chat-cli.ts calls
+// applySelfCheckAnswer — the answer-processing half app/answer-self-check.ts
+// (`answerSelfCheck`) calls
 // ============================================================================
 
-/** Input to `applySelfCheckAnswer` — a complete, already-validated answer (UX-DR15: both fields required, enforced by `chat-cli.ts`'s own parser before this is ever called). */
+/** Input to `applySelfCheckAnswer` — a complete, already-validated answer (UX-DR15: both fields required, enforced by `core/open-item-answers.ts`'s `parseSelfCheckAnswer` before this is ever called). */
 export interface ApplySelfCheckAnswerInput {
-  /** The local calendar date this check-in is being recorded against — `chat-cli.ts` passes its own current local date. */
+  /** The local calendar date this check-in is being recorded against — `app/answer-self-check.ts` passes its own current local date. */
   readonly today: IsoDate;
   readonly score: number;
   readonly reason: string;
@@ -523,8 +527,8 @@ export interface ApplySelfCheckAnswerInput {
  * schedule in one write — `scheduleNextSelfCheck` (this file's own pure
  * helper, which is what actually calls `computeEscalation`, AD-6) decides
  * the new `nextDueDate`/`nextDueMinuteOfDay`; this function only persists
- * the result. `chat-cli.ts` clears the open interaction request itself, once
- * this call succeeds (mirroring `rituals/night-ritual.ts`'s
+ * the result. `app/answer-self-check.ts` clears the open interaction
+ * request itself, once this call succeeds (mirroring `rituals/night-ritual.ts`'s
  * `applyNightCloseOutConfirmation` / `clearNightCloseOutRequestIfOpen`
  * split).
  *

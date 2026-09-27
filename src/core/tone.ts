@@ -17,7 +17,8 @@
  *     file as the expected source of that override — see
  *     `adapters/llm-adapter.ts`).
  *  3. `resolveToneSystemPrompt` — the one-call composition of the above two,
- *     which is what `shell/chat-cli.ts` actually calls: classify the line,
+ *     which is what `app/general-question.ts`'s `answerQuestion` actually
+ *     calls (Story 8.3: moved from `shell/chat-cli.ts`): classify the line,
  *     then hand `answerGeneralQuestion` the resulting instruction as its
  *     third argument.
  *
@@ -90,9 +91,10 @@
  * message is about," so escalation is NOT folded into that function — it
  * stays exactly as Task 14 built it, unescalated by construction (there is
  * no Task context to check in the first place), not by an ad-hoc special
- * case. `shell/chat-cli.ts`'s `whyPrioritizedCommand` is the one place in
- * this codebase today that already resolves a specific Task's Slip-Bump
- * level (`computeSlipBumpLevel`) for a chat interaction — but it is a plain,
+ * case. `app/why-prioritized.ts`'s `explainPriority` (Story 8.3: moved from
+ * `shell/chat-cli.ts`'s `whyPrioritizedCommand`) is the one place in this
+ * codebase today that already resolves a specific Task's Slip-Bump level
+ * (`computeSlipBumpLevel`) for a chat interaction — but it is a plain,
  * deterministic string-formatting reply that never calls Claude at all (no
  * `answerGeneralQuestion` / `systemPrompt` in its path), so there is nothing
  * for a "system-prompt addition" to attach to there without also turning it
@@ -202,15 +204,16 @@ export function classifyTone(message: string): ToneRegister {
 /**
  * What Yoh can actually DO, in Spencer's own words, for the general-QA
  * fallback turn specifically (Task 15's root-cause fix — see this file's
- * module doc comment's cross-reference from `chat-cli.ts`). Without this,
- * Claude answers a capability question (or a request phrased outside every
- * deterministic trigger's exact wording) as a generic model with no
- * knowledge of Yoh's real tool surface — observed denying it could write to
- * Notion at all, when `chat-cli.ts`'s create-item path
- * (`parseCreateItemCommand` -> `handleCreateItemCommand`) does exactly that.
- * Listed here, not invented per-answer, so the claims stay truthful and in
- * sync with what `chat-cli.ts` actually wires up; update this list when a
- * new trigger is added there.
+ * module doc comment's cross-reference from `chat-cli.ts`, since retired;
+ * Story 8.9). Without this, Claude answers a capability question (or a
+ * request phrased outside every deterministic trigger's exact wording) as a
+ * generic model with no knowledge of Yoh's real tool surface — observed
+ * denying it could write to Notion at all, when `app/chat-turn.ts`'s
+ * create-item path (`core/chat-commands.ts`'s `parseCreateItemCommand` ->
+ * `app/create-item.ts`'s `draftItem`) does exactly that. Listed here, not
+ * invented per-answer, so the claims stay truthful and in sync with what
+ * `chatTurn` actually wires up; update this list when a new trigger is
+ * added there.
  */
 const CAPABILITIES_INSTRUCTION =
   "Yoh (you) can actually do the following, for real, inside this same chat — when Spencer asks what you " +
@@ -281,14 +284,15 @@ export function buildToneSystemPrompt(register: ToneRegister): string {
 }
 
 // ============================================================================
-// resolveToneSystemPrompt — the shell/chat-cli.ts integration seam
+// resolveToneSystemPrompt — the app/general-question.ts integration seam
+// (Story 8.3: originally shell/chat-cli.ts's own integration seam)
 // ============================================================================
 
 /**
  * Classifies `message` and returns its resulting tone instruction in one
- * call — this is what `shell/chat-cli.ts` actually calls before invoking
- * `answerGeneralQuestion`, passing this function's return value as that
- * function's third (`systemPrompt`) argument.
+ * call — this is what `app/general-question.ts`'s `answerQuestion` actually
+ * calls before invoking `answerGeneralQuestion`, passing this function's
+ * return value as that function's third (`systemPrompt`) argument.
  */
 export function resolveToneSystemPrompt(message: string): string {
   return buildToneSystemPrompt(classifyTone(message));
@@ -297,7 +301,7 @@ export function resolveToneSystemPrompt(message: string): string {
 // ============================================================================
 // Tone escalation (Task 18 / Story 2.6, FR-19) — see this file's module doc
 // comment ("Tone escalation" section) for the full design rationale,
-// including why this is left unwired into any real chat-cli.ts call site.
+// including why this is left unwired into any real chat-turn call site.
 // ============================================================================
 
 /**

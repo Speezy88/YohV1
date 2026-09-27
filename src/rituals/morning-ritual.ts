@@ -24,8 +24,9 @@
  *  2. **Read Notion Tasks** (`readTasks`, may throw — AD-8).
  *  3. **Merge stored `TaskFieldOverride`s, run the Data-Completeness Gate,
  *     and sync the open interaction request** (`runDataCompletenessGate`,
- *     below — the same wiring `shell/chat-cli.ts` has used since Task 5,
- *     which now lives here; see "Where the gate wiring lives" below).
+ *     below — the same wiring Task 5 originally built inside
+ *     `shell/chat-cli.ts` (since retired, Story 8.9), which now lives here;
+ *     see "Where the gate wiring lives" below).
  *  4. **Decide whether there is anything to plan.** Per AD-11 an incomplete
  *     Task simply never becomes a `CompleteTask`, so it is absent from the
  *     Plan while every complete Task is planned normally — an incomplete
@@ -33,7 +34,7 @@
  *     prompt for the rest"). Only when NO Task is complete is there nothing
  *     to build: that run returns `nothing-to-plan`, sends no notification,
  *     and deliberately does NOT write the ran-today marker, so a later
- *     trigger (after Spencer answers the open prompt in `chat-cli.ts`) can
+ *     trigger (after Spencer answers the open prompt in Chat) can
  *     still produce the morning Plan rather than the day being burned by a
  *     run that produced nothing.
  *  5. **Read today's Calendar events** (`readCalendarEvents`, may throw).
@@ -147,10 +148,12 @@
  * Where the gate wiring lives
  * ----------------------------------------------------------------------------
  *
- * NOT here. The merge-then-gate-then-sync sequence is its own capability
- * with two callers in two layers (this file and `shell/chat-cli.ts`), so per
- * AD-9 it lives in its own file, `rituals/data-completeness.ts`, which both
- * import directly. See that file's docstring for the full history.
+ * NOT here. The merge-then-gate-then-sync sequence is its own capability —
+ * today (Story 8.9) it has two callers, this file and
+ * `rituals/mid-day-reflow.ts`; originally (Task 5) it was `shell/chat-cli.ts`
+ * and this file, in two different layers, since retired — so per AD-9 it
+ * lives in its own file, `rituals/data-completeness.ts`, which every caller
+ * imports directly. See that file's docstring for the full history.
  *
  * ----------------------------------------------------------------------------
  * Rendering, color tokens, and `localIsoDate` live in `ritual-shared.ts`
@@ -158,9 +161,10 @@
  *
  * `renderPlan` is presentation, not business logic, so it must not go in
  * `core/` (AD-2). It also must not be private to `shell/ritual-cli.ts`:
- * `chat-cli.ts` has its own on-demand "what's my plan" view that has to
- * render the identical thing, and `mid-day-reflow.ts` renders a
- * remainder-of-day view with it too. It is therefore a pure
+ * `app/plan-view.ts` (Story 8.9: moved from `shell/chat-cli.ts`) has its own
+ * on-demand "what's my plan" view that has to render the identical thing,
+ * and `mid-day-reflow.ts` renders a remainder-of-day view with it too. It is
+ * therefore a pure
  * `(plan, options) => string` — along with the DESIGN.md color tokens
  * (`ACCENT`, `MUTED`, `ATTENTION`, `RESET`, `shouldUseColor`) and the
  * `localIsoDate` local-calendar-date helper — exported from
@@ -311,7 +315,7 @@ export const MORNING_RITUAL_ID = "morning";
  * pathological `O(n^2)`-or-worse slice introduced later, an unexpectedly
  * huge candidate set, a slow Calendar API response, or a SQLite write stuck
  * behind real lock contention — AD-10's cross-process concurrency with
- * `chat-cli.ts`) well before it would be noticeable to Spencer as "my Plan
+ * `server.ts`) well before it would be noticeable to Spencer as "my Plan
  * is late."
  */
 export const PLAN_GENERATION_DEGRADED_THRESHOLD_MS = 5_000;
@@ -328,7 +332,8 @@ export const PLAN_GENERATION_DEGRADED_THRESHOLD_MS = 5_000;
  * is persisted under — mirrors `DATA_COMPLETENESS_REQUEST_ID`/
  * `NIGHT_CLOSE_OUT_REQUEST_ID`'s own "fixed id chosen by the requester"
  * convention (`InteractionRequest`'s own doc comment in `types/domain.ts`).
- * `shell/chat-cli.ts`'s `surfaceOpenInteractionRequests` surfaces an open
+ * `app/surface-open-items.ts`'s `surfaceOpenItems` (Story 8.9: moved from
+ * `shell/chat-cli.ts`'s `surfaceOpenInteractionRequests`) surfaces an open
  * Proposal by its `requestKind: "proposal"` alone, deliberately not by this
  * id — keeping `apply(proposal)` generic for a future Proposal kind with its
  * own id — but THIS file still needs a stable id to check "is one already
@@ -339,9 +344,11 @@ export const PLAN_GENERATION_DEGRADED_THRESHOLD_MS = 5_000;
 export const TIME_BUDGET_PROPOSAL_REQUEST_ID = "time-budget-proposal";
 
 /**
- * The accent-labeled prompt line `chat-cli.ts` shows for an open
- * Time-Budget-change Proposal (AD-3, UX-DR16): states what Yoh wants to do
- * and why (`proposal.reason`, already a complete sentence — see
+ * The prompt line Chat shows for an open Time-Budget-change Proposal (AD-3,
+ * UX-DR16; Story 8.9: plain text, never ANSI — `chat-cli.ts`, since
+ * retired, was the one caller that applied accent-color wrapping): states
+ * what Yoh wants to do and why (`proposal.reason`, already a complete
+ * sentence — see
  * `core/time-budget.ts`'s `buildTimeBudgetChangeProposal`), then names the
  * explicit yes/no answer it's waiting for — silence is never treated as
  * consent.
@@ -563,7 +570,7 @@ function describeError(err: unknown): string {
  * Per AD-8 this is one of the two layers allowed to catch an adapter's
  * throw: every `deps.readTasks` / `deps.readCalendarEvents` /
  * `deps.sendNotification` call, and every `memory-store.ts` write (which can
- * throw `ConflictError` under AD-10 concurrency with `chat-cli.ts`), is
+ * throw `ConflictError` under AD-10 concurrency with `server.ts`), is
  * wrapped and converted into a `Result` failure plus a structured log line.
  * Nothing thrown from an adapter escapes this function.
  */
@@ -730,8 +737,9 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
   // open: an existing unanswered Proposal is left exactly as Spencer last
   // saw it (same snapshot, same reason) rather than silently replaced by a
   // fresher one every day the pattern continues. Once Spencer answers it
-  // (`shell/chat-cli.ts`'s `answerProposalRequest`, which clears the
-  // request AND resets the streak — review fix, Important #1), a later run
+  // (`app/confirm-proposal.ts`'s `confirmProposal`, which clears the
+  // request AND resets the streak — review fix, Important #1; Story 8.2:
+  // moved from `shell/chat-cli.ts`'s `answerProposalRequest`), a later run
   // is free to propose again if the pattern is still happening.
   //
   // **Review fix, Important #3.** When the streak resets to zero (the
@@ -744,7 +752,7 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
   //
   // Deliberately NON-FATAL: this whole step is wrapped so that a failure to
   // record the streak or persist a Proposal (e.g. a genuine `ConflictError`
-  // racing `chat-cli.ts`) never blocks delivering today's actual Plan — this
+  // racing `server.ts`) never blocks delivering today's actual Plan — this
   // is a secondary, propose-only signal, not part of the Plan's own critical
   // path.
   try {
@@ -999,7 +1007,7 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
   // fix) now deletes this exact row once Spencer genuinely answers a
   // close-out, and this whole function's own Notion/Calendar reads and
   // Pushover send (steps 2–12b, all awaited above) leave a real window
-  // during which a SEPARATE `chat-cli.ts` process (same SQLite file,
+  // during which a SEPARATE `server.ts` process (same SQLite file,
   // AD-10) can answer and clear it before this line ever runs. That is not
   // an error — the night is no longer unchecked either way — so this run
   // does not fail for it (nothing to catch, since `markUncheckedDayShown`

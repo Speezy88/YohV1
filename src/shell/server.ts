@@ -890,8 +890,9 @@ function buildCheckOffDeps(notion: NotionFeatureConfig): ServerDeps["checkOff"] 
 
 /**
  * Story 8.5: `POST /api/chat`'s real dependencies — the same wiring
- * `shell/chat-cli.ts`'s `main()` builds for its own `chatTurn` call,
- * mirrored here for the server process. Only `YOH_TIMEZONE` and
+ * `shell/chat-cli.ts`'s `main()` used to build for its own `chatTurn` call
+ * (since retired, Story 8.9), mirrored here for the server process. Only
+ * `YOH_TIMEZONE` and
  * `CLAUDE_API_KEY` are required up front (general chat, Time Budget, and
  * Plan-view need nothing else); every Notion, search, and Calendar
  * dependency is constructed lazily on first use and reports its own missing
@@ -963,7 +964,7 @@ function buildChatDeps(
   // configured. `bindNotionTaskWrites` (`notion-adapter.ts`) is the ONLY
   // caller of the two Notion Task-write functions this binds (AD-16) — this
   // file never names either directly, mirroring `chat-cli.ts`'s own
-  // `getNotionTaskWriteBinding`.
+  // `getNotionTaskWriteBinding` before it was retired (Story 8.9).
   const getNotionTaskWriteBinding: NotionTaskWriteBindingFn = () => {
     const notionToken = env["NOTION_TOKEN"];
     const tasksDataSourceId = env["NOTION_TASKS_DATA_SOURCE_ID"];
@@ -981,13 +982,15 @@ function buildChatDeps(
 
   // Story 8.6 (Task 7): `completion-log.ts`'s `recordCompletion`, pre-bound
   // to the shared `SqliteConnection` — the server's own equivalent of
-  // `chat-cli.ts`'s `recordCompletion` closure. `initCompletionLogSchema`
+  // `chat-cli.ts`'s `recordCompletion` closure, before it was retired
+  // (Story 8.9). `initCompletionLogSchema`
   // already runs unconditionally at server startup (below), so this needs
   // no lazy guard of its own.
   const recordCompletion = (input: RecordCompletionInput): void => completionLogRecordCompletion(connection, input);
   // Reuses `readTasks` above (the same live Notion read Mid-Day Re-Flow
   // already uses) — Story 7.9's Ruling R7 close-out completion-snapshot
-  // lookup, mirrored from `chat-cli.ts`'s `main()`.
+  // lookup, mirrored from `chat-cli.ts`'s `main()` (since retired, Story
+  // 8.9).
   const lookupTask = async (taskId: ExternalId): Promise<Task | undefined> => (await readTasks()).find((t) => t.id === taskId);
 
   // Google OAuth is constructed once, on the first Calendar request. The
@@ -1009,7 +1012,7 @@ function buildChatDeps(
   // be unable to chat at all just because Google OAuth isn't configured.
   // `bindCalendarApply` (`calendar-adapter.ts`) is the ONLY caller of the
   // Calendar apply-edit write this binds (AD-16) — mirrors `chat-cli.ts`'s
-  // own `getCalendarApplyBinding`.
+  // own `getCalendarApplyBinding` before it was retired (Story 8.9).
   const getCalendarApplyBinding: CalendarApplyBindingFn = () => {
     try {
       return { ok: true, value: getCalendarBroadClient() };
@@ -1043,7 +1046,8 @@ function buildChatDeps(
     // (transport over `surfaceOpenItems`/`answerOpenItem`) and a confirmed
     // Proposal's `"field-value"`/`"notion-page-draft"`/`"calendar-edit"`
     // kinds (`confirmProposal`, dispatched from `answerOpenItem`) all work
-    // identically to `chat-cli.ts`'s own equivalent wiring.
+    // identically to `chat-cli.ts`'s own equivalent wiring, before it was
+    // retired (Story 8.9).
     ...bindNotionTaskWrites(getNotionTaskWriteBinding),
     ...bindNotionCreatePage(getNotionCreatePageBinding),
     ...bindCalendarApply(getCalendarApplyBinding),

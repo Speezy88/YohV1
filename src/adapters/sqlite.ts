@@ -2,9 +2,11 @@
  * src/adapters/sqlite.ts
  *
  * Story 7.1, AD-10 (revised for Phase 2): the ONE file that ever opens
- * Yoh's SQLite file. One connection per process — `shell/ritual-cli.ts` and
- * `shell/chat-cli.ts` each call `openSqliteConnection` exactly once in their
- * own `main()` and pass the resulting `SqliteConnection` to every store
+ * Yoh's SQLite file. One connection per process — `shell/ritual-cli.ts`,
+ * `shell/server.ts`, and `shell/backup-cli.ts` each call
+ * `openSqliteConnection` exactly once in their own `main()` (Story 8.9:
+ * `shell/chat-cli.ts` did too, until it was retired) and pass the resulting
+ * `SqliteConnection` to every store
  * (`memory-store.ts` today; `notification-store.ts`, `plan-state-store.ts`,
  * `completion-log.ts` in later Phase 2 stories). No store opens its own
  * connection — `tests/sqlite.test.ts`'s source-scan test fails the build if

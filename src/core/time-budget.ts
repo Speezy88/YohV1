@@ -7,8 +7,9 @@
  * outputs, and it never throws — it always returns `Result<T, YohError>`. It
  * does NOT call `memory-store.ts` itself and does not persist anything —
  * per this task's Implementer note, the actual read/write against
- * `memory-store.ts` happens in `shell/chat-cli.ts`'s thin wiring function
- * (`declareTimeBudget`), which calls `shapeDeclaredTimeBudget` below and only
+ * `memory-store.ts` happens in `app/time-budget.ts`'s thin wiring function
+ * (`declareTimeBudget`; Story 8.3: originally `shell/chat-cli.ts`'s), which
+ * calls `shapeDeclaredTimeBudget` below and only
  * then persists the result.
  *
  * Two pure responsibilities live here:
@@ -41,8 +42,7 @@
  *     getting deferred because they don't fit the declared budget, day after
  *     day, is real evidence the budget itself might be too small — not a
  *     guess about Spencer's unstated preferences (the kind of "learned
- *     behavioral pattern" this task's own brief explicitly scopes OUT — see
- *     `shell/chat-cli.ts`'s module docstring for that scoping note).
+ *     behavioral pattern" this task's own brief explicitly scopes OUT).
  *
  *     Both functions stay pure (AD-2): `nextTimeBudgetDeferralStreak` turns
  *     "did today defer anything" plus yesterday's streak into today's streak
@@ -52,9 +52,13 @@
  *     `buildTimeBudgetChangeProposal` turns a streak that has met the
  *     threshold into a real `Proposal<Partial<TimeBudget>>` — never applies
  *     anything itself. Persisting that Proposal as an open interaction
- *     request, and `apply(proposal)`'s later confirm/apply pathway, are both
- *     `shell/chat-cli.ts`'s job per AD-3 ("only `chat-cli.ts` ... calls
- *     `apply(proposal)`").
+ *     request is still `rituals/morning-ritual.ts`'s own job (its fixed
+ *     `TIME_BUDGET_PROPOSAL_REQUEST_ID`, not `app/open-proposal.ts`'s
+ *     generic path); the later confirm/apply pathway is
+ *     `app/confirm-proposal.ts`'s `confirmProposal` (Story 8.2: originally
+ *     `shell/chat-cli.ts`'s own `apply(proposal)`, per AD-3's "only
+ *     `chat-cli.ts` ... calls `apply(proposal)`" — now the single confirm
+ *     path for every surface).
  */
 import type { IsoDate, IsoDateTime, Proposal, Result, TimeBudget, YohError } from "../types/domain.ts";
 
@@ -82,8 +86,10 @@ const MAX_TOTAL_MINUTES = 24 * 60;
 // ============================================================================
 
 /**
- * Raw input to `shapeDeclaredTimeBudget`: what a caller (`shell/chat-cli.ts`,
- * after parsing Spencer's chat command) has extracted from Spencer's
+ * Raw input to `shapeDeclaredTimeBudget`: what a caller (`app/time-budget.ts`'s
+ * `declareTimeBudget`, after `core/chat-commands.ts`'s
+ * `parseTimeBudgetCommand` parses Spencer's chat command — Story 8.3:
+ * originally `shell/chat-cli.ts`) has extracted from Spencer's
  * declaration, before it's validated/shaped into a real `TimeBudget`.
  */
 export interface DeclareTimeBudgetInput {
@@ -128,7 +134,8 @@ function validationError(message: string, detail?: unknown): Result<never, YohEr
  * at) anything that doesn't parse cleanly — a whole positive number of
  * minutes no greater than 24 hours, a real ISO calendar date, and (if
  * overridden) positive whole-minute work/break segment lengths — so the
- * caller (`shell/chat-cli.ts`) can surface a clear error instead of silently
+ * caller (`app/time-budget.ts`; Story 8.3: originally `shell/chat-cli.ts`)
+ * can surface a clear error instead of silently
  * persisting a nonsensical budget (e.g. a negative or fractional-minute
  * value).
  */
@@ -304,9 +311,11 @@ export const TIME_BUDGET_PROPOSAL_INCREASE_RATIO = 0.2;
  * constant (`"current"`) rather than imported, for the same AD-1/AD-2
  * layering reason `TimeBudgetDeferralStreakSnapshot`'s own doc comment
  * gives: `core/*.ts` may not import from `adapters/*.ts`. `Proposal.entityId`
- * itself is documentation only in this codebase's actual usage — `apply`'s
- * `TimeBudget` accessor (`shell/chat-cli.ts`) re-reads the live singleton
- * Time Budget row directly, never by parsing this id back apart — but it is
+ * itself is documentation only in this codebase's actual usage —
+ * `confirmProposal`'s `TimeBudget` accessor (`app/confirm-proposal.ts`;
+ * Story 8.2: originally `shell/chat-cli.ts`'s `apply`) re-reads the live
+ * singleton Time Budget row directly, never by parsing this id back apart —
+ * but it is
  * exported here so a test (or a future caller) can assert on it without
  * hardcoding the literal string a second time.
  */
@@ -348,8 +357,10 @@ export interface BuildTimeBudgetChangeProposalInput {
  * once `input.streak.consecutiveDeferralDays` has reached
  * `DEFERRAL_STREAK_PROPOSAL_THRESHOLD_DAYS` — never applies anything itself
  * (AD-3): the caller (`rituals/morning-ritual.ts`) persists the result as an
- * open interaction request, and only `shell/chat-cli.ts`'s `apply(proposal)`,
- * after Spencer's explicit yes/no, ever changes the real stored Time Budget.
+ * open interaction request, and only `app/confirm-proposal.ts`'s
+ * `confirmProposal` (Story 8.2: originally `shell/chat-cli.ts`'s
+ * `apply(proposal)`), after Spencer's explicit yes/no, ever changes the
+ * real stored Time Budget.
  *
  * Returns `undefined` — not a Proposal — in either of two cases:
  *  - the streak hasn't met the threshold yet (nothing to propose), or

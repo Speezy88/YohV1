@@ -13,8 +13,8 @@
  * config-first shape every adapter in this codebase uses. AD-14's own
  * quoted "exactly `search(query: string): Promise<Result<SearchAnswer,
  * YohError>>`" describes the bound, zero-config closure a `shell/*.ts`
- * caller threads through (`chat-cli.ts` binds one from its own env-loaded
- * config) — the same "quoted signature names the bound dependency, not the
+ * caller threads through (`server.ts` binds one from its own env-loaded
+ * config; Story 8.9: originally `chat-cli.ts`) — the same "quoted signature names the bound dependency, not the
  * raw export" reading `notion-adapter.ts`'s own `setTaskStatus`
  * Implementer note already established for this spine.
  *

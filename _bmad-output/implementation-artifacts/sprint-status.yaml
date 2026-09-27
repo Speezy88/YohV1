@@ -99,7 +99,7 @@ development_status:
   7-10-check-off-a-task-with-undo: done
   epic-7-retrospective: optional
 
-  epic-8: in-progress
+  epic-8: done
   8-1-open-interaction-requests-as-resumable-turns: done
   8-2-one-confirmation-path-for-every-proposal: done
   8-3-chat-turn-routing-for-planning-commands: done
@@ -108,7 +108,7 @@ development_status:
   8-6-open-items-and-structured-questions-in-chat: done
   8-7-command-palette-morning-and-night: done
   8-8-chat-bubble-on-home-and-the-three-action-capture-flow: done
-  8-9-cli-parity-check-and-retirement: backlog
+  8-9-cli-parity-check-and-retirement: done
   epic-8-retrospective: optional
 
   epic-9: backlog

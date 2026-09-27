@@ -539,7 +539,8 @@ function normalizeIsoDateTime(raw: string, label: string): IsoDateTime {
  * Checks whether `eventId` (on `calendarId`) is a Yoh-created "Yoh Plan"
  * event — the SAME `PLAN_BLOCK_ID_EXTENDED_PROPERTY` tag AD-4's automatic
  * path already stamps every "Yoh Plan" event with. Every FR-27 caller
- * (`shell/chat-cli.ts`) routes through this first; `'owned'` means this
+ * (`app/calendar-edit.ts`; Story 8.9: originally `shell/chat-cli.ts`) routes
+ * through this first; `'owned'` means this
  * confirm-gated path must decline and defer to AD-4's existing automatic
  * mechanism instead (Mid-Day Re-Flow) — it never proceeds to
  * `proposeCalendarEdit` for an `'owned'` result.
@@ -669,7 +670,8 @@ export function proposeNewCalendarEvent(change: CreateBlockChange): Proposal<Cal
  *
  * Unlike this file's other exports, failures come back as a `Result`
  * rather than a throw: this is the confirm-then-write boundary
- * `chat-cli.ts` must be able to report on without a try/catch.
+ * `app/confirm-proposal.ts` must be able to report on without a try/catch
+ * (Story 8.9: originally `chat-cli.ts`).
  */
 export async function applyCalendarEdit(
   client: CalendarBroadClient,
@@ -789,8 +791,9 @@ export async function applyCalendarEdit(
  * configured) as an ordinary `Result` failure rather than a thrown error, so
  * a session that never applies a Calendar edit is never blocked by it. Only
  * THIS file's own source may name `applyCalendarEdit` directly (AD-16).
- * `shell/chat-cli.ts`'s `AnswerOpenItemDeps` construction (consumed by
- * `app/confirm-proposal.ts`'s `"calendar-edit"` branch) spreads this
+ * `shell/server.ts`'s `AnswerOpenItemDeps` construction (consumed by
+ * `app/confirm-proposal.ts`'s `"calendar-edit"` branch; Story 8.9:
+ * originally `shell/chat-cli.ts`'s own construction) spreads this
  * binder's return value instead of importing/calling it itself, so the name
  * never appears as literal text in `shell/*.ts` (not even as an
  * object-literal property key).

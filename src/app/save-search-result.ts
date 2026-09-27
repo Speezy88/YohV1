@@ -8,8 +8,9 @@
  * `createPage` call site stays separate and is never routed through it).
  * Moved from `shell/chat-cli.ts`'s `handleSaveSearchResultCommand` (Story
  * 6.5). This is the one file in Story 8.4 that itself calls `createPage`
- * (AD-16: only `app/` may) — `shell/chat-cli.ts` never does, after this
- * task removes it from `SHELL_WRITE_ALLOWLIST`.
+ * (AD-16: only `app/` may) — no `shell/*.ts` file does (Story 8.4 removed
+ * `chat-cli.ts` from `SHELL_WRITE_ALLOWLIST`; Story 8.9 then retired the
+ * file itself).
  */
 import { createPage } from "../adapters/notion-adapter.ts";
 import { localIsoDate } from "../rituals/ritual-shared.ts";

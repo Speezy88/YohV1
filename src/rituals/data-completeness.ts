@@ -7,27 +7,32 @@
  * interaction request to match.
  *
  * ============================================================================
- * Why this file exists (and why the logic isn't in `chat-cli.ts` or
- * `morning-ritual.ts`)
+ * Why this file exists (and why the logic isn't in `morning-ritual.ts`)
  * ============================================================================
  *
- * This sequence has exactly two callers, in two different layers:
- * `shell/chat-cli.ts` (which surfaces the request and collects Spencer's
- * answers) and `rituals/morning-ritual.ts` (which needs the gated
- * `CompleteTask[]` to build a Plan from). It is also STATEFUL — it writes
- * and clears one singleton `"data-completeness"` row in `memory-store.ts` —
- * so two copies of it would be two writers of the same row, free to drift
- * apart.
+ * `runDataCompletenessGate` has two callers today, both in `rituals/*.ts`:
+ * `rituals/morning-ritual.ts` (which needs the gated `CompleteTask[]` to
+ * build a Plan from) and `rituals/mid-day-reflow.ts` (same need, for a
+ * re-flow). It is also STATEFUL — it writes and clears one singleton
+ * `"data-completeness"` row in `memory-store.ts` — so two copies of it
+ * would be two writers of the same row, free to drift apart. (Story 8.9:
+ * `syncDataCompletenessInteractionRequest` below, the throwing wrapper
+ * `shell/chat-cli.ts` used to surface the request and collect Spencer's
+ * answers through, lost that caller when `chat-cli.ts` was retired —
+ * answering now goes through `app/answer-data-completeness.ts`, which reads
+ * `DATA_COMPLETENESS_REQUEST_ID` directly rather than through this file's
+ * throwing wrapper.)
  *
  * Task 5 originally wrote it inside `shell/chat-cli.ts`, and recorded why in
- * that file's own doc comment: "a `rituals/*.ts` file would be the more
- * natural home once one exists for this concern, but none is owned by this
- * task." Task 10 briefly moved it into `rituals/morning-ritual.ts`, which
- * fixed the layering (AD-1 forbids `rituals -> shell`) but broke AD-9: the
- * Data-Completeness Gate is its own capability and must not be bolted onto
- * the file that owns Plan generation. `chat-cli.ts` would also have had to
- * import the entire Morning Ritual and Plan-persistence surface just to
- * reach a field-label map and a record id.
+ * that file's own doc comment (since retired — Story 8.9): "a
+ * `rituals/*.ts` file would be the more natural home once one exists for
+ * this concern, but none is owned by this task." Task 10 briefly moved it
+ * into `rituals/morning-ritual.ts`, which fixed the layering (AD-1 forbids
+ * `rituals -> shell`) but broke AD-9: the Data-Completeness Gate is its own
+ * capability and must not be bolted onto the file that owns Plan
+ * generation. `chat-cli.ts` would also have had to import the entire
+ * Morning Ritual and Plan-persistence surface just to reach a field-label
+ * map and a record id.
  *
  * So it lives here, in its own file named for the capability it implements.
  * Both callers import from it directly (`shell -> rituals` per AD-1, no
@@ -148,7 +153,9 @@ export const DATA_COMPLETENESS_REQUEST_ID = "data-completeness";
  * Returns the gate's `Result` rather than throwing on a malformed candidate
  * set (currently: duplicate Task ids), so a `rituals/*.ts` caller can convert
  * it per AD-8. `syncDataCompletenessInteractionRequest` below is the
- * throwing wrapper `shell/chat-cli.ts` uses.
+ * throwing wrapper `shell/chat-cli.ts` used before it was retired (Story
+ * 8.9) — kept for `tests/data-completeness.test.ts`'s own coverage, but no
+ * `src/` caller uses it any more.
  */
 export function runDataCompletenessGate(
   store: MemoryStore,
@@ -179,11 +186,11 @@ export function runDataCompletenessGate(
 
 /**
  * `runDataCompletenessGate` with the throw-on-malformed-input behavior
- * `shell/chat-cli.ts` established in Task 5 and its callers still expect.
- * Kept as a separate wrapper (rather than changing that behavior) because
- * AD-8's "never throws" rule binds `core/*.ts`, and chat-cli has no `Result`
- * channel to surface a duplicate-id bug through. The message names this
- * capability rather than either calling file — both layers raise it.
+ * `shell/chat-cli.ts` established in Task 5, back when it (not a `Result`
+ * channel) was how a duplicate-id bug surfaced there. Kept as a separate
+ * wrapper rather than deleted outright (Story 8.9: `chat-cli.ts` itself is
+ * gone, and nothing in `src/` calls this any more) since
+ * `tests/data-completeness.test.ts` still pins its throwing behavior.
  */
 export function syncDataCompletenessInteractionRequest(store: MemoryStore, tasks: readonly Task[]): void {
   const result = runDataCompletenessGate(store, tasks);

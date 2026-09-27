@@ -70,8 +70,9 @@ export function parseSelfCheckAnswer(raw: string): SelfCheckAnswer | undefined {
  * anything that isn't a clearly recognized yes/no) is never treated as
  * consent.
  *
- * Moved from `chat-cli.ts` (Ruling 2) — used by `answerProposalRequest`
- * (still in `chat-cli.ts`, Task 3's move) AND by `app/answer-data-
+ * Moved from `chat-cli.ts` (Ruling 2) — used by `app/answer-open-item.ts`'s
+ * `"proposal"` dispatch (Story 8.2: originally `chat-cli.ts`'s own
+ * `answerProposalRequest`, superseded outright) AND by `app/answer-data-
  * completeness.ts`'s FR-25 suggest-confirm step.
  */
 export function parseProposalAnswer(raw: string): boolean | undefined {

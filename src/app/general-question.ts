@@ -4,9 +4,10 @@
  * Story 8.3 (AD-16). Moved from `shell/chat-cli.ts`'s general-qa catch-all
  * (Tone/model routing unchanged) — now also streams through `deps.emit`
  * when present (`llm-adapter.ts`'s `streamGeneralQuestion`), otherwise the
- * existing non-streaming `answerGeneralQuestion`. `chat-cli.ts` never
- * supplies `emit`, so it keeps using the non-streaming path exactly as
- * before; a future streaming caller (the server, Task 6) supplies one.
+ * existing non-streaming `answerGeneralQuestion`. A caller with no live
+ * stream sink (`shell/chat-cli.ts`, before it was retired, never had one)
+ * keeps using the non-streaming path; `shell/server.ts` (Task 6) supplies
+ * one.
  */
 import {
   answerGeneralQuestion,

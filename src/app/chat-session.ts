@@ -2,8 +2,8 @@
  * src/app/chat-session.ts
  *
  * Story 8.1 (C3). `ChatSession` is a mutable per-conversation holder the
- * SHELL creates as a plain literal — one per `chat-cli.ts` run, one per
- * server-side chat session — and threads into every `app/*.ts` call that
+ * SHELL creates as a plain literal — one per server-side chat session
+ * (Story 8.9: originally also one per `chat-cli.ts` run) — and threads into every `app/*.ts` call that
  * needs it (`surfaceOpenItems`/`buildOpenItemQuestion`'s FR-25 inference,
  * and later `app/chat-turn.ts`'s "save that" search-answer lookup). No
  * exported functions here: this file only owns the shape and its one

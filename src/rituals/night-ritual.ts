@@ -16,8 +16,9 @@
  * `night-prompt` (AD-5) is one-shot, OS-cron-triggered, and must never wait
  * for input — the same contract `rituals/morning-ritual.ts` has for
  * `ritual-cli.ts morning`. Spencer's ANSWER, though, only ever arrives later,
- * interactively, in `shell/chat-cli.ts`. So — mirroring
- * `rituals/data-completeness.ts`'s own two-caller split, and
+ * interactively, in Chat (Story 8.9: `app/answer-night-close-out.ts`'s
+ * `answerNightCloseOut`; originally `shell/chat-cli.ts`, since retired). So
+ * — mirroring `rituals/data-completeness.ts`'s own two-caller split, and
  * `rituals/mid-day-reflow.ts`'s "one function, two shell-layer callers"
  * shape — this file exports two independent entry points instead of one:
  *
@@ -36,10 +37,11 @@
  *     makes the violation impossible to construct in the first place, not
  *     just discouraged.
  *
- *  2. `applyNightCloseOutConfirmation` — what `shell/chat-cli.ts` calls once
- *     PER TASK, as Spencer answers each one. Writes the confirmed status to
- *     Notion (`notion-adapter.ts`'s `setTaskStatus`, injected) and then —
- *     for a `"slipped"` confirmation — calls `memory-store.ts`'s
+ *  2. `applyNightCloseOutConfirmation` — what `app/answer-night-close-out.ts`'s
+ *     `answerNightCloseOut` calls once PER TASK, as Spencer answers each one
+ *     (Story 8.1: originally `shell/chat-cli.ts`). Writes the confirmed
+ *     status to Notion (`notion-adapter.ts`'s `setTaskStatus`, injected) and
+ *     then — for a `"slipped"` confirmation — calls `memory-store.ts`'s
  *     `recordSlip`, Task 17's AUTHORITATIVE Slip-Bump trigger ("Night Ritual
  *     close-out is Slip-Bump's guaranteed, authoritative trigger; Mid-Day
  *     Re-Flow is the earlier, optional one" — the epics text, quoted
@@ -47,28 +49,32 @@
  *     confirmation calls `clearSlip` if a `SlipHistory` row exists, per Task
  *     17's own AC ("cleared, not carried indefinitely"). The interaction
  *     request's LOOP (ask each named Task, persist each answer, clear once
- *     every Task is answered) lives in `shell/chat-cli.ts` itself — this
- *     function is the single-Task apply step it calls once per answer,
- *     exactly the role `core/planning-field-value.ts`'s `parsePlanningFieldValue` + the per-field
- *     `mergeTaskFieldOverride` call plays inside
- *     `chat-cli.ts`'s `answerDataCompletenessRequest` for the
- *     Data-Completeness precedent.
+ *     every Task is answered) lives in `app/surface-open-items.ts`/
+ *     `app/answer-open-item.ts` (one question per turn — C4 — rather than a
+ *     blocking loop; Story 8.1: originally `shell/chat-cli.ts` itself) —
+ *     this function is the single-Task apply step `answerNightCloseOut`
+ *     calls once per answer, exactly the role
+ *     `core/planning-field-value.ts`'s `parsePlanningFieldValue` + the
+ *     per-field `mergeTaskFieldOverride` call plays inside
+ *     `app/answer-data-completeness.ts` for the Data-Completeness
+ *     precedent.
  *
  * Notion is written BEFORE any local Slip-Bump state changes (see the
  * ordering inside `applyNightCloseOutConfirmation` below) — a failed Notion
  * write must not leave a `SlipHistory` row (or a cleared one) that Notion
- * itself doesn't yet agree with; `chat-cli.ts` re-asks the same question on
- * failure rather than silently moving on, the same "wait indefinitely,
- * re-prompt on failure" pattern `answerDataCompletenessRequest` already uses
- * for an unparseable answer.
+ * itself doesn't yet agree with; `answerNightCloseOut` re-asks the same
+ * question on failure rather than silently moving on, the same "wait
+ * indefinitely, re-prompt on failure" pattern `answerDataCompleteness`
+ * already uses for an unparseable answer.
  *
  * ============================================================================
  * The first attempt's own push notification (Task 20 review fix)
  * ============================================================================
  *
  * `runNightPromptRitual` was originally built (Task 19) to only persist the
- * open interaction request — discoverable exclusively by opening
- * `chat-cli.ts`, with no active nudge at all. That silently broke Task 20's
+ * open interaction request — discoverable exclusively by opening Chat (at
+ * the time, `chat-cli.ts`; since retired, Story 8.9), with no active nudge
+ * at all. That silently broke Task 20's
  * whole premise ("a channel distinct from the first attempt's push
  * notification"): there was no first push to be distinct FROM. Fixed here by
  * adding a `sendNotification` seam to `NightPromptRitualDeps`, the exact
@@ -220,14 +226,14 @@ export const NIGHT_PROMPT_NOTIFICATION_TITLE = "Close out today?";
 // Prompt text / detail shape
 // ============================================================================
 
-/** One Task named by the close-out prompt — enough for `chat-cli.ts` to ask "completed or slipped?" and later call `applyNightCloseOutConfirmation(taskId, ...)`. */
+/** One Task named by the close-out prompt — enough for `app/answer-night-close-out.ts` to ask "completed or slipped?" and later call `applyNightCloseOutConfirmation(taskId, ...)`. */
 export interface NightCloseOutTaskDetail {
   readonly taskId: ExternalId;
   /** The PlanBlock's own `label` (the Task's title as of Plan-generation time) — display only, never re-parsed. */
   readonly taskTitle: string;
 }
 
-/** `InteractionRequest<NightCloseOutRequestDetail>`'s `detail` payload — the structured half `chat-cli.ts` reads programmatically, alongside `promptText`'s human-readable half. */
+/** `InteractionRequest<NightCloseOutRequestDetail>`'s `detail` payload — the structured half `app/answer-night-close-out.ts` reads programmatically, alongside `promptText`'s human-readable half. */
 export interface NightCloseOutRequestDetail {
   readonly date: IsoDate;
   readonly tasks: readonly NightCloseOutTaskDetail[];
@@ -237,8 +243,10 @@ export interface NightCloseOutRequestDetail {
  * Builds the single combined prompt text (UX-DR10's "one prompt may cover
  * multiple ... Tasks" shape, applied here) — mirrors
  * `rituals/data-completeness.ts`'s `buildMissingFieldsPromptText`. Pure/no
- * I/O; the caller applies any accent-color wrapping when actually printing
- * it (`chat-cli.ts`, same as every other interaction-request prompt).
+ * I/O; presented as-is, plain text (never ANSI — C2), by whichever
+ * interactive surface calls `app/surface-open-items.ts` (the Web App's
+ * Chat; historically `chat-cli.ts`, which alone applied accent-color
+ * wrapping before printing, since retired — Story 8.9).
  */
 export function buildNightCloseOutPromptText(tasks: readonly NightCloseOutTaskDetail[]): string {
   const subject = tasks.length === 1 ? "this Task" : "these Tasks";
@@ -319,8 +327,8 @@ export interface NightPromptRitualDeps {
    * `MorningRitualDeps.sendNotification`, added by Task 20's review fix: the
    * first close-out attempt has to be an actively-delivered push, not merely
    * a silently-persisted interaction request Spencer only sees if he happens
-   * to open `chat-cli.ts` — see the module docstring's "The first attempt's
-   * own push notification" section. Throws on I/O failure (AD-8).
+   * to open Chat — see the module docstring's "The first attempt's own push
+   * notification" section. Throws on I/O failure (AD-8).
    */
   readonly sendNotification: (notification: PlanNotification) => Promise<void>;
   /** Injectable clock — never `new Date()` inline, so a test can pin the night. */
@@ -377,7 +385,7 @@ function describeError(err: unknown): string {
  *
  * Per AD-8, this is one of the layers allowed to catch an adapter's throw:
  * every `memory-store.ts` write below (which can throw `ConflictError` under
- * AD-10 concurrency with `chat-cli.ts`) is wrapped and converted into a
+ * AD-10 concurrency with `server.ts`) is wrapped and converted into a
  * `Result` failure plus a structured log line.
  */
 export async function runNightPromptRitual(
@@ -445,7 +453,7 @@ export async function runNightPromptRitual(
   // --- Notify Spencer the close-out prompt is waiting (AD-8 boundary) -------
   // The interaction request is already persisted above, so a delivery
   // failure here never loses it — Spencer can still find it by opening
-  // `chat-cli.ts` even without the push. Mirrors `runMorningRitual`'s own
+  // Chat even without the push. Mirrors `runMorningRitual`'s own
   // "persist before send" ordering.
   try {
     await deps.sendNotification({
@@ -509,7 +517,7 @@ export interface NightCloseOutApplyDeps {
    * Controller ruling R7: a live-Task lookup used ONLY to snapshot
    * `area`/`dueDate`/`estimatedMinutes` onto the completion record for a
    * `"completed"` confirmation — run BEFORE the Status write (see this
-   * function's own body). `chat-cli.ts` binds this to `readNotionTasks`
+   * function's own body). `server.ts` binds this to `readNotionTasks`
    * filtered by id; tests use a fake. A rejection is caught and logged; it
    * never blocks either the completion record (recorded with `null` for all
    * three fields) or the Status write itself. `undefined` (Task not found,
@@ -632,11 +640,12 @@ export async function applyNightCloseOutConfirmation(
 
 /**
  * Clears the combined close-out interaction request, IF it is still open —
- * `shell/chat-cli.ts`'s per-Task confirmation loop calls this once every
- * named Task has been either answered OR explicitly skipped (Task 19's
- * "skip" escape hatch — see `chat-cli.ts`'s own `answerNightCloseOutRequest`
- * doc comment), mirroring `answerDataCompletenessRequest`'s own
- * re-read-current-version-then-clear step in that file. Re-reads the
+ * `app/answer-night-close-out.ts`'s `answerNightCloseOut` (Story 8.1:
+ * originally `shell/chat-cli.ts`'s per-Task confirmation loop) calls this
+ * once every named Task has been either answered OR explicitly skipped
+ * (Task 19's "skip" escape hatch — see that file's own doc comment),
+ * mirroring `answerDataCompleteness`'s own re-read-current-version-then-clear
+ * step in that file. Re-reads the
  * request's current version rather than trusting a version captured before
  * the loop ran, so a genuine concurrent write to it (AD-10) is still caught
  * as `ConflictError` rather than silently dropped — the same reasoning that
@@ -655,18 +664,18 @@ export async function applyNightCloseOutConfirmation(
  *
  * BUT the second post-review fix that added this originally cleared the
  * record UNCONDITIONALLY on every call — including a skip-all or partial
- * skip, where `chat-cli.ts` deliberately does NOT call `setTaskStatus`/
- * `recordSlip`/`clearSlip` for the skipped Task(s) ("since Spencer
- * explicitly did not confirm what actually happened," per that function's
- * own doc comment) yet still clears the request to unblock the chat
- * session. A skip is NOT a genuine answer — Spencer still hasn't confirmed
+ * skip, where `answerNightCloseOut` deliberately does NOT call
+ * `setTaskStatus`/`recordSlip`/`clearSlip` for the skipped Task(s) ("since
+ * Spencer explicitly did not confirm what actually happened," per that
+ * function's own doc comment) yet still clears the request so it stops
+ * surfacing in Chat. A skip is NOT a genuine answer — Spencer still hasn't confirmed
  * what happened to at least one Task that night — so clearing the
  * `UncheckedDay` record on a skip would silently vanish the escalated
  * night's flag and rolled-forward Task names forever, precisely the
  * "silently vanishes" failure mode FR-14/UX-DR14 exist to prevent, and
  * precisely the scenario the skip hatch was built for.
  *
- * `resolveUncheckedDay` is therefore a REQUIRED parameter — `chat-cli.ts`
+ * `resolveUncheckedDay` is therefore a REQUIRED parameter — `answerNightCloseOut`
  * passes `skippedTitles.length === 0` (true only when every named Task was
  * genuinely answered, none skipped). Making it required rather than
  * defaulted forces every call site to make this choice explicitly rather
@@ -802,7 +811,7 @@ export type NightEscalateOutcome =
       readonly date: IsoDate;
     }
   | {
-      /** `night-prompt` DID run tonight, and the close-out request is now absent — genuinely answered and cleared by `chat-cli.ts` before this trigger ran (the only other way it could be absent, `night-prompt` simply not having run yet, is `"not-prompted-yet"` above). Nothing to escalate. */
+      /** `night-prompt` DID run tonight, and the close-out request is now absent — genuinely answered and cleared by `answerNightCloseOut` before this trigger ran (the only other way it could be absent, `night-prompt` simply not having run yet, is `"not-prompted-yet"` above). Nothing to escalate. */
       readonly status: "no-open-request";
       readonly date: IsoDate;
     }
@@ -840,13 +849,13 @@ export type NightEscalateOutcome =
  * Per AD-8, this is one of the layers allowed to catch an adapter's throw:
  * `sendEscalationEmail` (which may throw on I/O failure, `email-adapter.ts`'s
  * own contract) and every `memory-store.ts` write below (which can throw
- * `ConflictError` under AD-10 concurrency with `chat-cli.ts`) are wrapped and
+ * `ConflictError` under AD-10 concurrency with `server.ts`) are wrapped and
  * converted into a `Result` failure plus a structured log line.
  *
  * **Disambiguating "no open request" (Task 20 review fix, Important #2).**
  * `getOpenInteractionRequest` returning nothing is ambiguous by itself — it
- * cannot distinguish "Spencer already answered and `chat-cli.ts` cleared it"
- * from "`night-prompt` hasn't fired tonight yet" (a delayed cron, a crash, a
+ * cannot distinguish "Spencer already answered and `answerNightCloseOut`
+ * cleared it" from "`night-prompt` hasn't fired tonight yet" (a delayed cron, a
  * manual re-run later). Only the FIRST case should burn the escalation cap;
  * the second must leave it un-burned so a later same-night trigger — once
  * `night-prompt` has actually run — can still escalate. See
@@ -911,9 +920,10 @@ export type NightEscalateOutcome =
  * (below — read verbatim off the still-open request's own `detail.tasks`,
  * the same list `runNightPromptRitual` built), stored into
  * `rolledForwardTasks`. This also naturally handles a PARTIALLY answered
- * close-out correctly without any extra bookkeeping: `chat-cli.ts`'s
- * `answerNightCloseOutRequest` only ever clears the request once EVERY
- * named Task has been answered or explicitly skipped (see that function's
+ * close-out correctly without any extra bookkeeping:
+ * `app/answer-night-close-out.ts`'s `answerNightCloseOut` only ever clears
+ * the request once EVERY named Task has been answered or explicitly
+ * skipped (see that function's
  * own doc comment) — the list of named Tasks never shrinks mid-way through
  * a partially-completed session. So "still open at cap time" already means
  * "not fully closed out," and everything the request names is genuinely
@@ -941,7 +951,7 @@ export async function runNightEscalateRitual(
   if (!open) {
     // Task 20 review fix (Important #2): `getOpenInteractionRequest`
     // returning `undefined` is ambiguous on its own — it can't tell "Spencer
-    // already answered and chat-cli.ts cleared it" apart from "night-prompt
+    // already answered and answerNightCloseOut cleared it" apart from "night-prompt
     // hasn't fired tonight at all yet" (`clearInteractionRequest` just
     // deletes the row; there's no audit trail). Disambiguate via
     // `night-prompt`'s OWN ritual-run marker before deciding whether to burn

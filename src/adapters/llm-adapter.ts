@@ -1,9 +1,11 @@
 /**
  * src/adapters/llm-adapter.ts
  *
- * Owns Yoh's Claude API surface for `shell/chat-cli.ts`'s free-text chat
- * routing (Story 2.1 / Task 13, UX-DR9). Per the Architecture Spine's Stack
- * table this uses the official `@anthropic-ai/sdk`, never raw HTTP.
+ * Owns Yoh's Claude API surface for the free-text chat routing (Story 2.1 /
+ * Task 13, UX-DR9) `app/general-question.ts`'s `answerQuestion` calls today
+ * (Story 8.3: moved from `shell/chat-cli.ts`, since retired — Story 8.9).
+ * Per the Architecture Spine's Stack table this uses the official
+ * `@anthropic-ai/sdk`, never raw HTTP.
  *
  * ============================================================================
  * Scope (post-review simplification)
@@ -43,7 +45,8 @@
  * signature or the caller contract — `tone.ts` stays a pure `core/*.ts`
  * classifier per AD-1/AD-2 (it cannot call Claude itself) and this file
  * remains the only place that actually calls the API. Task 14 update: this
- * seam is now wired up — `shell/chat-cli.ts`'s catch-all calls `tone.ts`'s
+ * seam is now wired up — `app/general-question.ts`'s `answerQuestion`
+ * (Story 8.3: originally `shell/chat-cli.ts`'s catch-all) calls `tone.ts`'s
  * `resolveToneSystemPrompt(line)` and passes its result here as
  * `systemPrompt`, so `DEFAULT_GENERAL_QA_SYSTEM_PROMPT` below is only ever
  * used by a caller that doesn't supply an override (e.g. this file's own
@@ -53,10 +56,12 @@
  * `Result` itself — a transport-level SDK rejection propagates unchanged,
  * and an unexpected empty-text response is raised as a thrown `Error` too
  * (silently returning "" would look like a real, if empty, answer).
- * `shell/chat-cli.ts` catches either around its call site so one failed
- * Claude turn cannot crash the whole persistent REPL session — that is
- * ordinary shell-layer error handling, not the Result-conversion AD-8
- * reserves for `rituals/*.ts`.
+ * `app/general-question.ts`'s `answerQuestion` catches either around its
+ * call site, converting it to a `Result` so one failed Claude turn cannot
+ * crash the calling shell (Story 8.3: originally `shell/chat-cli.ts`
+ * caught it directly to protect its own persistent REPL session, since
+ * retired — Story 8.9) — that is ordinary shell-layer error handling, not
+ * the Result-conversion AD-8 reserves for `rituals/*.ts`.
  */
 import Anthropic from "@anthropic-ai/sdk";
 import { isValidIsoDateTime, normalizeIsoDateTime } from "./iso-datetime.ts";
@@ -144,12 +149,13 @@ export function loadLlmAdapterConfigFromEnv(
  *    exactly the kind of task a fast/cheap model handles reliably, and none
  *    of them are exposed for escalation; they always use this constant.
  *  - `CLAUDE_CHAT_MODEL_CAPABLE` (Sonnet) — used ONLY by
- *    `answerGeneralQuestion`, and only situationally: `shell/chat-cli.ts`
- *    picks between the two based on `core/tone.ts`'s existing
- *    `classifyTone(line)` register (already computed there to choose the
- *    system prompt) — a `"concise-educational"` factual/analytical question
- *    routes to Sonnet, ordinary `"casual-peer"` chat stays on Haiku. That
- *    routing decision lives in `chat-cli.ts`, not here: AD-1 restricts
+ *    `answerGeneralQuestion`, and only situationally: `app/general-question.ts`
+ *    (Story 8.3: originally `shell/chat-cli.ts`) picks between the two based
+ *    on `core/tone.ts`'s existing `classifyTone(line)` register (already
+ *    computed there to choose the system prompt) — a `"concise-educational"`
+ *    factual/analytical question routes to Sonnet, ordinary `"casual-peer"`
+ *    chat stays on Haiku. That routing decision lives in
+ *    `app/general-question.ts`, not here: AD-1 restricts
  *    `adapters/*.ts` to importing only from `types/`, so this file cannot
  *    import `core/tone.ts`'s `ToneRegister`/`classifyTone` itself.
  */
@@ -187,28 +193,34 @@ export const DEFAULT_GENERAL_QA_SYSTEM_PROMPT =
  * Notion, asking "have you written the data to Notion" got a confident "No
  * ... I don't see any task data" — correct only in the narrow sense that
  * THAT single isolated API call had no data in it, and useless/misleading to
- * Spencer, who experienced it as one continuous session. `messages` is built
+ * Spencer, who experienced it as one continuous session. `messages` is the
+ * `ChatTurnRequest.history` the caller supplies (Story 8.9: originally built
  * by `shell/chat-cli.ts`'s recording wrapper around its `ChatCliIo`, which
- * captures every line written/read across EVERY flow (deterministic commands
- * included, not just prior general-chat turns) as alternating `user`/
- * `assistant` turns — see that wrapper's own doc comment for how it
- * guarantees the strict alternation (and "starts with `user`") the Messages
- * API requires. This function trusts that invariant rather than
- * re-validating it structurally on every call; a malformed `messages` array
- * is a caller bug, not a runtime condition worth guarding against on the
- * hot path, though an empty array is rejected outright below (there is
- * always at least the current turn once `chat-cli.ts` reaches this call
- * site — an empty array signals the wrapper wiring itself is broken).
+ * captured every line written/read across EVERY flow — deterministic
+ * commands included, not just prior general-chat turns — as alternating
+ * `user`/`assistant` turns; now held client-side, per turn, by `web/src/lib/
+ * chatStore.ts` and sent as-is), trimmed to `MAX_CHAT_HISTORY_TURNS` by
+ * `app/chat-turn.ts`'s `chatTurn`, which also guarantees the strict
+ * alternation (and "starts with `user`") the Messages API requires. This
+ * function trusts that invariant rather than re-validating it structurally
+ * on every call; a malformed `messages` array is a caller bug, not a runtime
+ * condition worth guarding against on the hot path, though an empty array is
+ * rejected outright below (there is always at least the current turn by the
+ * time this call site is reached — an empty array signals the caller's own
+ * wiring is broken).
  *
  * Per AD-8, this throws rather than returning `Result` on any failure: a
  * transport/API-level rejection from the SDK propagates unchanged, and a
  * response that comes back with no text content at all is raised as a
  * thrown `Error` too (never silently returned as `""`, which would read as a
  * real if empty answer rather than something worth investigating).
- * `shell/chat-cli.ts` is the layer that catches either around its call site
- * so one failed turn doesn't crash the whole REPL session.
+ * `app/general-question.ts`'s `answerQuestion` (Story 8.3; formerly
+ * `shell/chat-cli.ts`, retired Story 8.9) is the layer that catches either
+ * around its call site, converting it to a `Result` so one failed turn never
+ * crashes the calling shell (`server.ts`).
  *
- * `model` defaults to `CLAUDE_CHAT_MODEL_FAST` (Haiku) — `chat-cli.ts`
+ * `model` defaults to `CLAUDE_CHAT_MODEL_FAST` (Haiku) — `app/general-
+ * question.ts`'s `answerQuestion` (Story 8.3: originally `shell/chat-cli.ts`)
  * overrides it with `CLAUDE_CHAT_MODEL_CAPABLE` (Sonnet) for a message
  * `core/tone.ts`'s `classifyTone` reads as genuinely factual/analytical; see
  * this file's "Model routing" doc comment above `CLAUDE_CHAT_MODEL_FAST`.
@@ -248,9 +260,10 @@ export async function answerGeneralQuestion(
  * having yielded no text at all, or if `messages` is empty. Yields raw text
  * chunks (`content_block_delta` events whose `delta.type === "text_delta"`)
  * as they arrive; a caller with no live stream sink should keep using
- * `answerGeneralQuestion` instead (this file exposes both — `chat-cli.ts`
- * never calls this one; see `app/general-question.ts`, which uses it only
- * when its caller supplied a stream sink).
+ * `answerGeneralQuestion` instead (this file exposes both — see
+ * `app/general-question.ts`'s `answerQuestion`, which uses this one only
+ * when its own caller supplied a stream sink; `shell/chat-cli.ts`, since
+ * retired, never had one, so it only ever called the non-streaming twin).
  */
 export async function* streamGeneralQuestion(
   client: AnthropicMessagesClient,
@@ -285,7 +298,8 @@ export async function* streamGeneralQuestion(
 // ============================================================================
 // suggestFieldValue (Story 6.2 / FR-25, AD-11) — lazy, display-time-only
 // inference of a missing Task planning field from Spencer's own recent chat
-// lines. Called ONLY by shell/chat-cli.ts, at the moment it's about to
+// lines. Called ONLY by `app/surface-open-items.ts` (Story 8.1: originally
+// `shell/chat-cli.ts`), at the moment it's about to
 // surface an already-open "missing-field" interaction request — never by
 // core/data-completeness-gate.ts (pure/I-O-free, AD-1/AD-11) and never by a
 // ritual (chat context is typically sparse/nonexistent at an unattended
@@ -324,7 +338,8 @@ function buildSuggestFieldValueSystemPrompt(taskTitle: string, field: PlanningFi
  * F8/F9) — `core/planning-field-value.ts`'s `parsePlanningFieldValue`,
  * validating/coercing Claude's claimed raw value into `field`'s real type.
  * AD-1 forbids this `adapters/*.ts` file from importing `core/*.ts`
- * directly, so `shell/chat-cli.ts` (which may import both) passes a thin
+ * directly, so `app/surface-open-items.ts` (which may import both; Story
+ * 8.1: originally `shell/chat-cli.ts`) passes a thin
  * wrapper over `parsePlanningFieldValue` that discards the rejection
  * message: unlike FR-4's typed answer, an unparseable CONFIDENT claim never
  * surfaces to Spencer — it just means "no confident inference"
@@ -344,8 +359,9 @@ export type ParsePlanningFieldValueFn = (
  * `CONFIDENT: <value> | <reason>` format; or a claimed value `parseValue`
  * rejects as invalid for `field` (never trusted blindly). A genuine
  * API/transport failure still propagates as a thrown error (AD-8) —
- * `chat-cli.ts` treats that identically to "no confident inference" at its
- * own call site.
+ * `app/surface-open-items.ts` (Story 8.1: originally `shell/chat-cli.ts`)
+ * treats that identically to "no confident inference" at its own call
+ * site.
  */
 export async function suggestFieldValue(
   client: AnthropicMessagesClient,
@@ -384,7 +400,8 @@ export async function suggestFieldValue(
 // draftNotionPageFields (Story 6.3 / FR-26) — extracts a structured field
 // map from Spencer's free-text "create a ..." request. Never validates
 // against Notion's live schema itself (that's notion-adapter.ts's
-// resolveNotionPageDraftProperties, called by chat-cli.ts right after this)
+// resolveNotionPageDraftProperties, called by app/create-item.ts right
+// after this — Story 8.9: originally chat-cli.ts)
 // — this function only turns prose into a flat internal-field-name ->
 // raw-string-value map, on a best-effort basis, failing closed to
 // `undefined` whenever no usable title was extracted.
@@ -414,7 +431,8 @@ function buildDraftNotionPageSystemPrompt(database: NotionDatabaseTarget): strin
  * never throws for "couldn't extract" — when Claude's response has no
  * parseable `field=value` lines at all, or extracts no `title`. A genuine
  * API/transport failure still propagates as a thrown error (AD-8);
- * `chat-cli.ts` treats that the same as "couldn't draft."
+ * `app/create-item.ts` (Story 8.9: originally `shell/chat-cli.ts`) treats
+ * that the same as "couldn't draft."
  */
 export async function draftNotionPageFields(
   client: AnthropicMessagesClient,
@@ -449,7 +467,8 @@ export async function draftNotionPageFields(
 
 // ============================================================================
 // classifyChatIntent (Story 6.4 / FR-28, AD-14) — the ONE real producer of
-// ChatIntent today. Called only by shell/chat-cli.ts, only on a line that
+// ChatIntent today. Called only by `app/chat-turn.ts`'s `chatTurn` (Story
+// 8.4: originally `shell/chat-cli.ts`), only on a line that
 // already failed every existing deterministic trigger check (time budget,
 // plan view, mid-day reflow, blocker, why-prioritized, create-item) — never
 // on every message unconditionally, to avoid firing a paid search call on
@@ -474,7 +493,8 @@ const CLASSIFY_CHAT_INTENT_SYSTEM_PROMPT = [
  * recognized `SEARCH: ...` line — never throws for "not a search," so a
  * malformed classifier response degrades to the ordinary chat path rather
  * than blocking it. A genuine API/transport failure still propagates as a
- * thrown error (AD-8); `chat-cli.ts` treats that the same way.
+ * thrown error (AD-8); `app/chat-turn.ts` (Story 8.9: originally
+ * `shell/chat-cli.ts`) treats that the same way.
  */
 export async function classifyChatIntent(client: AnthropicMessagesClient, line: string): Promise<ChatIntent> {
   const message = await client.messages.create({
@@ -598,14 +618,15 @@ function buildDraftCalendarEditSystemPrompt(
  * Extracts a structured move/resize/create request from `line`. Returns
  * `undefined` ONLY when Claude confidently answered `NONE` or the response
  * contained no recognized `MOVE:`/`RESIZE:`/`CREATE:` line at all — i.e. it
- * genuinely isn't a calendar edit, so `chat-cli.ts` falls through to
+ * genuinely isn't a calendar edit, so `app/calendar-edit.ts` (Story 8.9:
+ * originally `shell/chat-cli.ts`) falls through to
  * ordinary chat. If a `MOVE:`/`RESIZE:`/`CREATE:` line IS present but fails
  * to parse (a malformed line, or an invalid/out-of-range ISO datetime, never
  * trusted blindly), this throws instead — that's a drafting failure, not
- * "not a calendar edit," and `chat-cli.ts` reports it distinctly rather than
- * silently answering the line as general chat. A genuine API/transport
- * failure also propagates as a thrown error (AD-8); `chat-cli.ts` treats
- * both throw cases the same way.
+ * "not a calendar edit," and `app/calendar-edit.ts` reports it distinctly
+ * rather than silently answering the line as general chat. A genuine
+ * API/transport failure also propagates as a thrown error (AD-8);
+ * `app/calendar-edit.ts` treats both throw cases the same way.
  */
 export async function draftCalendarEditRequest(
   client: AnthropicMessagesClient,
