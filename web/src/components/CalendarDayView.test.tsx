@@ -453,4 +453,55 @@ describe("CalendarDayView", () => {
       expect(Number.parseFloat(first!.style.height)).toBeGreaterThan(3);
     });
   });
+
+  // -------------------------------------------------------------------
+  // Real-use fixes plan, Task 4 ("pick any day in Month to see its
+  // calendar"): `isToday={false}` governs the now-line and the mount-time
+  // auto-scroll target; every test above (no `isToday` prop) proves the
+  // default (`true`) is unchanged.
+  // -------------------------------------------------------------------
+  describe("isToday: false (a non-today shown date)", () => {
+    it("never shows the now-line, even when 'now' falls within the 6am-11pm window", () => {
+      render(<CalendarDayView blocks={[]} timeZone={UTC} now={NOON_UTC} isToday={false} />);
+      expect(screen.queryByTestId("calendar-now-line")).not.toBeInTheDocument();
+    });
+
+    it("with events, auto-scrolls to the first event's start rather than 'now'", () => {
+      // "Now" (8pm) would ordinarily scroll deep into the day; the first
+      // event is much earlier (9am) — isToday: false anchors there instead.
+      render(
+        <CalendarDayView
+          timeZone={UTC}
+          now={() => new Date("2026-09-25T20:00:00.000Z")}
+          isToday={false}
+          blocks={[block({ id: "b1", kind: "work", start: "2026-09-25T09:00:00.000Z", end: "2026-09-25T10:00:00.000Z" })]}
+        />,
+      );
+      const view = screen.getByTestId("calendar-day-view");
+      // (9am - 6am) * 72px/hour = 216px, minus a third of the (jsdom, 0px) clientHeight.
+      expect(view.scrollTop).toBeCloseTo(216, 0);
+    });
+
+    it("with no events, auto-scrolls to a plain 8am anchor rather than 'now'", () => {
+      render(<CalendarDayView blocks={[]} timeZone={UTC} now={() => new Date("2026-09-25T20:00:00.000Z")} isToday={false} />);
+      const view = screen.getByTestId("calendar-day-view");
+      // (8am - 6am) * 72px/hour = 144px.
+      expect(view.scrollTop).toBeCloseTo(144, 0);
+    });
+
+    it("an empty non-today day says 'Nothing on the calendar'", () => {
+      render(<CalendarDayView blocks={[]} timeZone={UTC} now={NOON_UTC} isToday={false} />);
+      expect(screen.getByTestId("calendar-day-empty")).toHaveTextContent("Nothing on the calendar");
+    });
+
+    it("a non-empty non-today day never shows the empty message", () => {
+      render(<CalendarDayView blocks={[block({ id: "b1", kind: "work" })]} timeZone={UTC} now={NOON_UTC} isToday={false} />);
+      expect(screen.queryByTestId("calendar-day-empty")).not.toBeInTheDocument();
+    });
+
+    it("isToday defaults to true: an empty TODAY view never shows the non-today empty message", () => {
+      render(<CalendarDayView blocks={[]} timeZone={UTC} now={NOON_UTC} />);
+      expect(screen.queryByTestId("calendar-day-empty")).not.toBeInTheDocument();
+    });
+  });
 });

@@ -18,6 +18,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import HomePage from "./Home.tsx";
 import * as homeViewModule from "../lib/homeView.ts";
+import * as calendarDayModule from "../lib/calendarDay.ts";
 import { __resetReadinessForTests, useAppReady } from "../lib/readiness.ts";
 import { renderHook } from "@testing-library/react";
 import type { HomeViewResponse } from "../../../src/types/api.ts";
@@ -227,5 +228,105 @@ describe("HomePage", () => {
     expect(screen.getByRole("heading", { name: "Today's Plan" }).closest('[data-wheel-nav="off"]')).not.toBeNull();
     expect(screen.getByRole("complementary", { name: "Calendar" })).toHaveAttribute("data-wheel-nav", "off");
     expect(screen.getByTestId("home-greeting").closest('[data-wheel-nav="off"]')).toBeNull();
+  });
+
+  // ---------------------------------------------------------------------
+  // Real-use fixes plan, Task 4 (2026-09-27, "I cant see my google calendar
+  // on other days when i select a day on the month view. it just reverts
+  // back to day"): clicking a Month day now switches Day to THAT date,
+  // fetched via `lib/calendarDay.ts` (mocked here — its own behavior is
+  // covered by `calendarDay.test.ts`).
+  // ---------------------------------------------------------------------
+
+  it("shows the Day header's own short date label, even for today, with no prev/next/Today controls", () => {
+    mockState(loaded({ today: "2026-09-27" }));
+    render(<HomePage />);
+    expect(screen.getByText("Sun, Sep 27")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Previous day" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Next day" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Today" })).not.toBeInTheDocument();
+  });
+
+  it("clicking a non-today day in Month switches to Day for that date, showing its own header and prev/next/Today controls", () => {
+    vi.spyOn(calendarDayModule, "useCalendarDay").mockImplementation((date) =>
+      date === "2026-09-15" ? { status: "loaded", value: { date: "2026-09-15", blocks: [], timeZone: "America/New_York" } } : { status: "loading" },
+    );
+    mockState(loaded({ today: "2026-09-27" }));
+    render(<HomePage />);
+    fireEvent.click(screen.getByRole("button", { name: "Month" }));
+    fireEvent.click(screen.getByLabelText("September 15"));
+
+    expect(screen.getByRole("button", { name: "Day" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("Tue, Sep 15")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Previous day" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Next day" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Today" })).toBeInTheDocument();
+    expect(screen.getByTestId("calendar-day-view")).toBeInTheDocument();
+  });
+
+  it("shows a skeleton (never a static spinner) while a non-today date is loading", () => {
+    vi.spyOn(calendarDayModule, "useCalendarDay").mockReturnValue({ status: "loading" });
+    mockState(loaded({ today: "2026-09-27" }));
+    render(<HomePage />);
+    fireEvent.click(screen.getByRole("button", { name: "Month" }));
+    fireEvent.click(screen.getByLabelText("September 15"));
+    expect(screen.getByTestId("calendar-day-loading-skeleton")).toBeInTheDocument();
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+  });
+
+  it("shows a plain 'Couldn't load that day' line with a Retry button on error; Retry re-fetches that exact date", () => {
+    vi.spyOn(calendarDayModule, "useCalendarDay").mockReturnValue({ status: "error", message: "network down" });
+    const retrySpy = vi.spyOn(calendarDayModule, "retryCalendarDay").mockImplementation(() => {});
+    mockState(loaded({ today: "2026-09-27" }));
+    render(<HomePage />);
+    fireEvent.click(screen.getByRole("button", { name: "Month" }));
+    fireEvent.click(screen.getByLabelText("September 15"));
+
+    expect(screen.getByText("Couldn't load that day")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(retrySpy).toHaveBeenCalledWith("2026-09-15");
+  });
+
+  it("clicking Today returns to today's own live Day view, dropping the prev/next/Today controls again", () => {
+    vi.spyOn(calendarDayModule, "useCalendarDay").mockReturnValue({ status: "loading" });
+    mockState(loaded({ today: "2026-09-27" }));
+    render(<HomePage />);
+    fireEvent.click(screen.getByRole("button", { name: "Month" }));
+    fireEvent.click(screen.getByLabelText("September 15"));
+    fireEvent.click(screen.getByRole("button", { name: "Today" }));
+
+    expect(screen.queryByRole("button", { name: "Today" })).not.toBeInTheDocument();
+    expect(screen.getByText("Sun, Sep 27")).toBeInTheDocument();
+    expect(screen.getByTestId("calendar-day-view")).toBeInTheDocument();
+  });
+
+  it("prev/next-day arrows step the shown date by exactly one calendar day", () => {
+    vi.spyOn(calendarDayModule, "useCalendarDay").mockImplementation((date) => ({ status: "loaded", value: { date: date ?? "", blocks: [], timeZone: "America/New_York" } }));
+    mockState(loaded({ today: "2026-09-27" }));
+    render(<HomePage />);
+    fireEvent.click(screen.getByRole("button", { name: "Month" }));
+    fireEvent.click(screen.getByLabelText("September 15"));
+    expect(screen.getByText("Tue, Sep 15")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Next day" }));
+    expect(screen.getByText("Wed, Sep 16")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Previous day" }));
+    fireEvent.click(screen.getByRole("button", { name: "Previous day" }));
+    expect(screen.getByText("Mon, Sep 14")).toBeInTheDocument();
+  });
+
+  it("the shown date resets to today on a fresh mount (a 'full reload'), even after Month navigated elsewhere", () => {
+    vi.spyOn(calendarDayModule, "useCalendarDay").mockReturnValue({ status: "loading" });
+    mockState(loaded({ today: "2026-09-27" }));
+    const { unmount } = render(<HomePage />);
+    fireEvent.click(screen.getByRole("button", { name: "Month" }));
+    fireEvent.click(screen.getByLabelText("September 15"));
+    expect(screen.getByText("Tue, Sep 15")).toBeInTheDocument();
+    unmount();
+
+    render(<HomePage />);
+    expect(screen.getByText("Sun, Sep 27")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Today" })).not.toBeInTheDocument();
   });
 });

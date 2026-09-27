@@ -193,6 +193,19 @@ export interface TimeBudgetRequest {
   readonly totalMinutes: number;
 }
 
+/** `GET /api/calendar/day`'s query (real-use fixes plan, Task 4): "pick any day in Month to see its calendar" — `date` is a plain `YYYY-MM-DD` string, validated at the route (a malformed value is a 400 validation envelope, never reaches `app/calendar-day.ts`). */
+export interface CalendarDayRequest {
+  readonly date: string;
+}
+
+/** `GET /api/calendar/day`'s value — the same `HomeCalendarBlock[]` shape `HomeViewResponse.calendar.blocks` already carries, for any date rather than just today. */
+export interface CalendarDayResponse {
+  readonly date: string;
+  readonly blocks: readonly HomeCalendarBlock[];
+  /** The host timezone (AD-17) this date's blocks are computed in — same value as `HomeViewResponse.timeZone`, repeated here so a per-date fetch never needs today's `/api/home` response just to know it. */
+  readonly timeZone: string;
+}
+
 /** `POST /api/time-budget`'s value (Task 6A) — `declareTimeBudget`'s own `DeclareTimeBudgetOutput`, mirrored here per the wire-shapes convention (C2). */
 export interface TimeBudgetResponse {
   readonly receipt: string;

@@ -103,6 +103,30 @@ const homeView: NonNullable<ServerDeps["homeView"]> = {
   readTasks: async () => ({ tasks: tasks() }),
   timeZone: TIME_ZONE,
 };
+
+/**
+ * Task 4 ("pick any day in Month to see its calendar"): a fixed event on a
+ * NON-today date, so `web/e2e/home-layout.spec.ts` has something real to
+ * assert on after clicking a different day in Month. `today + 3 days`
+ * (never crosses more than one calendar month forward, since no month is
+ * shorter than 28 days) — computed the same way here and in the spec
+ * (real UTC "now", `TIME_ZONE` is `"UTC"`), so both land on the identical
+ * date without the fixture and the test ever talking to each other.
+ */
+function addUtcDays(date: string, delta: number): string {
+  const [y, m, d] = date.split("-").map(Number) as [number, number, number];
+  return new Date(Date.UTC(y, m - 1, d + delta)).toISOString().slice(0, 10);
+}
+export const FIXTURE_OTHER_DAY_DATE = addUtcDays(today, 3);
+export const FIXTURE_OTHER_DAY_EVENT_TITLE = "Team Sync";
+const otherDayEvents = [
+  { id: "e2e-other-day", title: FIXTURE_OTHER_DAY_EVENT_TITLE, start: `${FIXTURE_OTHER_DAY_DATE}T15:00:00.000Z`, end: `${FIXTURE_OTHER_DAY_DATE}T16:00:00.000Z` },
+];
+const calendarDay: NonNullable<ServerDeps["calendarDay"]> = {
+  store,
+  timeZone: TIME_ZONE,
+  readCalendarEventsForDate: async (date) => (date === FIXTURE_OTHER_DAY_DATE ? otherDayEvents : []),
+};
 const checkOff: NonNullable<ServerDeps["checkOff"]> = {
   store,
   timeZone: TIME_ZONE,
@@ -289,7 +313,7 @@ const handle = startServer(
         return url.pathname === "/__fixture/state" ? fixtureState(url) : options.fetch(request);
       },
     }),
-  { homeView, checkOff, chat, tasks: tasksPage, research },
+  { homeView, calendarDay, checkOff, chat, tasks: tasksPage, research },
 );
 const sweep = startCheckOffCommitSweep({ connection, ...checkOff, now: () => new Date() }, { log: quiet });
 

@@ -50,6 +50,7 @@
 import { getCurrentTimeBudget, getPlan } from "../adapters/memory-store.ts";
 import { listCompletedTaskIdsOnDate } from "../adapters/completion-log.ts";
 import { resolveTodayTimeBudget } from "../core/time-budget.ts";
+import { sortBlocksByStart, toFixedBlock, toOwnedBlock } from "../core/calendar-blocks.ts";
 import type { SqliteConnection } from "../adapters/sqlite.ts";
 import type { MemoryStore } from "../adapters/memory-store.ts";
 import { localIsoDate } from "../rituals/ritual-shared.ts";
@@ -73,10 +74,6 @@ export interface HomeViewDeps {
 
 function describeError(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
-}
-
-function toFixedBlock(event: CalendarEvent, nowMs: number): HomeCalendarBlock {
-  return { id: event.id, kind: "fixed", label: event.title, start: event.start, end: event.end, completed: false, past: Date.parse(event.end) < nowMs };
 }
 
 /** Whole minutes between two ISO timestamps — rows/blocks always carry whole-minute boundaries in practice, but rounding guards against any fractional drift. */
@@ -160,9 +157,9 @@ export async function getHomeView(deps: HomeViewDeps, _input: Record<string, nev
 
   const ownedBlocks: HomeCalendarBlock[] = stored.data.blocks
     .filter((b): b is PlanBlock & { kind: "work" | "break" } => b.kind === "work" || b.kind === "break")
-    .map((b) => ({ id: b.id, kind: b.kind, label: b.label, start: b.start, end: b.end, completed: isCompleted(b), past: Date.parse(b.end) < nowMs }));
+    .map((b) => toOwnedBlock(b, isCompleted(b), nowMs));
 
-  const blocks = [...ownedBlocks, ...fixedBlocks].sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
+  const blocks = sortBlocksByStart([...ownedBlocks, ...fixedBlocks]);
 
   return {
     ok: true,

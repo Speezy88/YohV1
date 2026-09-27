@@ -35,21 +35,33 @@ describe("MiniMonth", () => {
     expect(screen.getByText("January 2027")).toBeInTheDocument();
   });
 
-  // Polish-2: this task's brief — "Clicking a day in Month switches back to
-  // Day"; only today's data exists client-side, so any day click just
-  // means "go back to Day," never a fake other-day view.
-  it("clicking today's day cell calls onSelectDay", () => {
+  // Task 4 (2026-09-27, "I cant see my google calendar on other days when i
+  // select a day on the month view. it just reverts back to day"):
+  // `onSelectDay` now carries the clicked day's own ISO date, not a no-arg
+  // "go back to Day" signal.
+  it("clicking today's day cell calls onSelectDay with today's own ISO date", () => {
     const onSelectDay = vi.fn();
     render(<MiniMonth today="2026-09-27" onSelectDay={onSelectDay} />);
     fireEvent.click(screen.getByLabelText("Today, September 27"));
     expect(onSelectDay).toHaveBeenCalledTimes(1);
+    expect(onSelectDay).toHaveBeenCalledWith("2026-09-27");
   });
 
-  it("clicking a non-today day cell ALSO calls onSelectDay — a click never fakes another day's data", () => {
+  it("clicking a non-today day cell calls onSelectDay with THAT day's ISO date", () => {
     const onSelectDay = vi.fn();
     render(<MiniMonth today="2026-09-27" onSelectDay={onSelectDay} />);
     fireEvent.click(screen.getByLabelText("September 15"));
     expect(onSelectDay).toHaveBeenCalledTimes(1);
+    expect(onSelectDay).toHaveBeenCalledWith("2026-09-15");
+  });
+
+  it("clicking a day cell in a navigated (non-current) month calls onSelectDay with that month's own ISO date", () => {
+    const onSelectDay = vi.fn();
+    render(<MiniMonth today="2026-09-27" onSelectDay={onSelectDay} />);
+    fireEvent.click(screen.getByRole("button", { name: "Next month" }));
+    fireEvent.click(screen.getByLabelText("October 15"));
+    expect(onSelectDay).toHaveBeenCalledTimes(1);
+    expect(onSelectDay).toHaveBeenCalledWith("2026-10-15");
   });
 
   it("with no onSelectDay given, a day click doesn't throw", () => {

@@ -101,6 +101,7 @@ import { chatTurn, type ChatTurnDeps } from "../app/chat-turn.ts";
 import type { ChatSession } from "../app/chat-session.ts";
 import type { SearchFn } from "../app/web-search.ts";
 import { getHomeView, type HomeViewDeps } from "../app/home-view.ts";
+import { getCalendarDay, type CalendarDayDeps } from "../app/calendar-day.ts";
 import { declareTimeBudget } from "../app/time-budget.ts";
 import {
   CHECK_OFF_COMMIT_TICK_MS,
@@ -120,6 +121,7 @@ import { listResearch, type ResearchListDeps } from "../app/research-list.ts";
 import type {
   AnswerOpenItemRequest,
   ApiResult,
+  CalendarDayRequest,
   ChatStreamEvent,
   ChatTurnRequest,
   ChatTurnResponse,
@@ -456,6 +458,15 @@ export interface ServerDeps {
    */
   readonly homeView?: Omit<HomeViewDeps, "now" | "connection"> & { readonly now?: () => Date };
   /**
+   * Real-use fixes plan, Task 4: `GET /api/calendar/day`'s dependencies —
+   * optional for the same reason as `homeView` (absent, e.g. Notion/Google
+   * not yet configured, the route reports a clear `unreachable` error
+   * rather than crashing). A separate bucket from `homeView` (its own
+   * `readCalendarEventsForDate`, not `homeView.readCalendarEvents`) since
+   * it reads any date, not just today.
+   */
+  readonly calendarDay?: Omit<CalendarDayDeps, "now" | "log"> & { readonly now?: () => Date };
+  /**
    * Story 7.10: the check-off routes' dependencies (`connection` comes from
    * this object's own). Optional for the same reason as `homeView` —
    * absent, the routes report a clear `unreachable` error.
@@ -508,6 +519,9 @@ export interface ServerDeps {
 
 /** A failure envelope typed without `ApiResult<never>`'s impossible `{ok: true}` arm, so the RPC client's response type stays exact. */
 type ApiFailure = Extract<ApiResult<never>, { ok: false }>;
+
+/** `GET /api/calendar/day`'s own `date` query shape check — a plain `YYYY-MM-DD` string shape, not a full calendar-validity check (the same small, deliberate duplication `core/time-budget.ts`'s/`adapters/calendar-adapter.ts`'s own `ISO_DATE_RE` already represent elsewhere in this codebase). */
+const ISO_DATE_ONLY_SHAPE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 // Review fix: these two constants are handed straight to `c.json(...)` at
 // their call sites below, never through `wire()` — so each maps its own
@@ -713,6 +727,34 @@ export function createApp(deps: ServerDeps) {
         );
         return c.json(result, httpStatus(result));
       })
+      // Real-use fixes plan, Task 4 ("pick any day in Month to see its
+      // calendar"): a read-only per-date sibling of `GET /api/home`'s
+      // Calendar Day View — same route shape (wire()/httpStatus(),
+      // `deps.calendarDay` absent -> a clear `unreachable` error), just for
+      // ANY date, not just today. `date` is validated here (a 400
+      // validation envelope for a missing/malformed value) before ever
+      // reaching `app/calendar-day.ts`.
+      .get(
+        "/api/calendar/day",
+        validator("query", (value, c) => {
+          const date = typeof value["date"] === "string" ? value["date"] : undefined;
+          if (date === undefined || !ISO_DATE_ONLY_SHAPE_RE.test(date)) {
+            const invalid: ApiFailure = { ok: false, error: { kind: "validation", message: "calendar/day: missing or invalid date" } };
+            return c.json(invalid, httpStatus(invalid));
+          }
+          return { date } satisfies CalendarDayRequest;
+        }),
+        async (c) => {
+          if (!deps.calendarDay) {
+            const result: ApiResult<never> = { ok: false, error: { kind: "unreachable", message: "server: calendar-day dependencies not configured" } };
+            return c.json(result, httpStatus(result));
+          }
+          const result = wire(
+            await getCalendarDay({ ...deps.calendarDay, now: deps.calendarDay.now ?? (() => new Date()), log }, c.req.valid("query")),
+          );
+          return c.json(result, httpStatus(result));
+        },
+      )
       // Task 6A: Home's Time Budget widget, click-to-edit in place, over
       // the existing `app/time-budget.ts` `declareTimeBudget` — the same
       // store/timeZone `GET /api/home` already uses (`deps.homeView`), so
@@ -998,8 +1040,8 @@ export function startServer(
   connection: SqliteConnection,
   env: Readonly<Record<string, string | undefined>> = process.env,
   serveFn: ServeFn = (options) => serve({ ...options }),
-  /** Story 7.8's `homeView`, Story 7.10's `checkOff`, Story 8.5's `chat`, and Task 6C's `research`, threaded through the same way `connection` already is. */
-  features: Pick<ServerDeps, "homeView" | "checkOff" | "chat" | "tasks" | "research"> = {},
+  /** Story 7.8's `homeView`, Story 7.10's `checkOff`, Story 8.5's `chat`, Task 6C's `research`, and Task 4's `calendarDay`, threaded through the same way `connection` already is. */
+  features: Pick<ServerDeps, "homeView" | "calendarDay" | "checkOff" | "chat" | "tasks" | "research"> = {},
 ): ServerHandle {
   const port = parsePort(env["YOH_SERVER_PORT"]);
   // Contract C3: one ChatSession per server process, shared by every chat route.
@@ -1008,6 +1050,7 @@ export function startServer(
     connection,
     chatSession,
     ...(features.homeView ? { homeView: features.homeView } : {}),
+    ...(features.calendarDay ? { calendarDay: features.calendarDay } : {}),
     ...(features.checkOff ? { checkOff: features.checkOff } : {}),
     ...(features.chat ? { chat: features.chat } : {}),
     ...(features.tasks ? { tasks: features.tasks } : {}),
@@ -1097,6 +1140,36 @@ function buildHomeViewDeps(notion: NotionFeatureConfig, env: Readonly<Record<str
     writeStructuredLog({
       level: "warn",
       event: "server.home-view-not-configured",
+      detail: { message: err instanceof Error ? err.message : String(err) },
+    });
+    return undefined;
+  }
+}
+
+/**
+ * Real-use fixes plan, Task 4: `GET /api/calendar/day`'s real
+ * dependencies — same lazy Google client construction/degrade-only-this-
+ * feature convention as `buildHomeViewDeps` just above, bound to a per-date
+ * read (`readCalendarEvents`'s own `date` field) instead of "today only." A
+ * separate `TokenStore`/read client instance from `buildHomeViewDeps`'s own
+ * (and from `buildChatDeps`'s `readCalendarEventsForDate`, below) — the
+ * same duplication precedent those two already establish, since each
+ * optional feature bucket is independently guarded against Google OAuth not
+ * being configured.
+ */
+function buildCalendarDayDeps(notion: NotionFeatureConfig, env: Readonly<Record<string, string | undefined>>): ServerDeps["calendarDay"] {
+  try {
+    const tokenStore = createTokenStore(loadGoogleOAuthConfigFromEnv(env));
+    const calendarClient = createCalendarReadClient(tokenStore.getOAuth2Client() as unknown as Parameters<typeof createCalendarReadClient>[0]);
+    return {
+      store: notion.store,
+      timeZone: notion.timeZone,
+      readCalendarEventsForDate: (date) => readCalendarEvents(calendarClient, { timeZone: notion.timeZone, date }),
+    };
+  } catch (err) {
+    writeStructuredLog({
+      level: "warn",
+      event: "server.calendar-day-not-configured",
       detail: { message: err instanceof Error ? err.message : String(err) },
     });
     return undefined;
@@ -1433,12 +1506,14 @@ if (import.meta.main) {
   const heartbeat = startHeartbeatWriter(connection);
   const notion = loadNotionFeatureConfig(connection, process.env);
   const homeView = notion ? buildHomeViewDeps(notion, process.env) : undefined;
+  const calendarDay = notion ? buildCalendarDayDeps(notion, process.env) : undefined;
   const checkOff = notion ? buildCheckOffDeps(notion) : undefined;
   const chat = buildChatDeps(connection, notion, process.env);
   const tasks = notion ? buildTasksDeps(notion, process.env, chat?.llmClient) : undefined;
   const research = buildResearchDeps(notion, process.env);
   const handle = startServer(connection, process.env, undefined, {
     ...(homeView ? { homeView } : {}),
+    ...(calendarDay ? { calendarDay } : {}),
     ...(checkOff ? { checkOff } : {}),
     ...(chat ? { chat } : {}),
     ...(tasks ? { tasks } : {}),

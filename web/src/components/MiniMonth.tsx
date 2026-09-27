@@ -16,12 +16,15 @@
  * card above the Calendar Day View — `Home.tsx` now hosts ONE calendar
  * panel with a Day/Month toggle, and this component is that panel's Month
  * content, sized to fill whatever space the panel gives it (`h-full`, no
- * own card chrome/shadow) rather than a small fixed-size widget. `onSelectDay`
- * (optional, for backward compat with any other caller/test) fires on any
- * day-cell click — since only today's data exists client-side, Day view
- * always shows today regardless of which day was clicked (this task's own
- * brief: "do not fake other days' events"), so a click just means "switch
- * back to Day."
+ * own card chrome/shadow) rather than a small fixed-size widget.
+ *
+ * Real-use fixes plan, Task 4 (2026-09-27, "I cant see my google calendar
+ * on other days when i select a day on the month view. it just reverts
+ * back to day"): `onSelectDay` now carries the CLICKED day's own ISO date
+ * (`YYYY-MM-DD`) — polish-2 deliberately dropped it because only today's
+ * data existed client-side; `Home.tsx` now fetches any date's calendar
+ * server-side (`lib/calendarDay.ts`), so a click switches Day to the
+ * clicked date instead of always reverting to today.
  */
 import { useState } from "react";
 
@@ -44,8 +47,15 @@ const MONTH_NAMES = [
 export interface MiniMonthProps {
   /** ISO-8601 `YYYY-MM-DD`, the server's "today" (AD-17). */
   readonly today: string;
-  /** Polish-2: called on any day-cell click — the Month view's own signal to switch back to Day (see this file's doc comment). */
-  readonly onSelectDay?: () => void;
+  /** Task 4: called with the clicked day's own ISO `YYYY-MM-DD` date — Home's signal to switch to Day view for THAT date (see this file's doc comment). */
+  readonly onSelectDay?: (date: string) => void;
+}
+
+/** Zero-padded `YYYY-MM-DD` for a grid cell — `month` 0-based, matching `buildMonthGrid`. */
+function isoDateForCell(year: number, month: number, day: number): string {
+  const mm = String(month + 1).padStart(2, "0");
+  const dd = String(day).padStart(2, "0");
+  return `${year}-${mm}-${dd}`;
 }
 
 /** Every calendar day-of-month cell for `(year, month)` (`month` 0-based), padded with `undefined` so the grid always starts on the correct weekday column. */
@@ -112,7 +122,7 @@ export function MiniMonth({ today, onSelectDay }: MiniMonthProps): React.JSX.Ele
             <button
               key={i}
               type="button"
-              onClick={() => onSelectDay?.()}
+              onClick={() => onSelectDay?.(isoDateForCell(viewed.year, viewed.month, day))}
               aria-label={isViewingCurrentMonth && day === todayDay ? `Today, ${MONTH_NAMES[viewed.month]} ${day}` : `${MONTH_NAMES[viewed.month]} ${day}`}
               className="flex items-center justify-center"
             >

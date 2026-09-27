@@ -102,6 +102,18 @@
  * (`BREAK_LABEL_MIN_HEIGHT_PX`); 4. the mount-time auto-scroll now targets
  * "now" (or the first event, if it starts earlier) sitting about a third
  * of the way down the panel, rather than a fixed lead above the top edge.
+ *
+ * Real-use fixes plan, Task 4 (2026-09-27, "I cant see my google calendar
+ * on other days when i select a day on the month view"): `isToday`
+ * (defaults to `true` — every existing caller/test is unaffected) governs
+ * two rules for a date that ISN'T today: no now-line at all (there's no
+ * "current moment" to mark on a day that isn't today), and the mount-time
+ * auto-scroll targets the first event's start, or 8am on a genuinely empty
+ * day, rather than "now." An empty non-today day also says so plainly
+ * ("Nothing on the calendar") rather than showing a bare, contentless grid.
+ * `Home.tsx`'s header (the shown date + prev/next-day/Today controls) lives
+ * one level up, in `CalendarColumn` — this component only ever renders the
+ * timeline itself.
  */
 import { useLayoutEffect, useRef } from "react";
 import type { HomeCalendarBlock } from "../../../src/types/api.ts";
@@ -268,15 +280,22 @@ export interface CalendarDayViewProps {
   readonly timeZone: string;
   /** Test seam for the live "now" line/scroll position; defaults to the real clock. */
   readonly now?: () => Date;
+  /** Task 4: whether the shown date is today — governs the now-line and the mount-time auto-scroll target (see this file's doc comment). Defaults to `true`, the pre-Task-4 behavior every existing caller relies on. */
+  readonly isToday?: boolean;
 }
 
-export function CalendarDayView({ blocks, timeZone, now = () => new Date() }: CalendarDayViewProps): React.JSX.Element {
+/** 8am, this component's own fallback auto-scroll target for a genuinely empty non-today day (no "now" line to anchor to instead). */
+const EMPTY_DAY_ANCHOR_MINUTES = (8 - DAY_START_HOUR) * 60;
+
+export function CalendarDayView({ blocks, timeZone, now = () => new Date(), isToday = true }: CalendarDayViewProps): React.JSX.Element {
   const hours = Array.from({ length: DAY_END_HOUR - DAY_START_HOUR + 1 }, (_, i) => DAY_START_HOUR + i);
   const scrollRef = useRef<HTMLDivElement>(null);
   const nowValue = now();
   const nowMinutes = localMinutesSinceMidnight(nowValue, timeZone) - DAY_START_HOUR * 60;
   const nowTopPx = offsetPx(nowMinutes);
-  const nowVisible = nowMinutes >= 0 && nowMinutes <= WINDOW_MINUTES;
+  // Task 4: a non-today date has no "current moment" of its own to mark.
+  const nowVisible = isToday && nowMinutes >= 0 && nowMinutes <= WINDOW_MINUTES;
+  const isEmpty = blocks.length === 0;
   // Polish-1: one pure layout pass over every block's HOST-timezone pixel
   // interval, up front — `layoutOverlappingIntervals` (lib/calendarLayout.ts)
   // never re-sorts/re-derives the blocks themselves (AD-17 stays server's
@@ -290,11 +309,17 @@ export function CalendarDayView({ blocks, timeZone, now = () => new Date() }: Ca
   // the way down the panel, not pinned to the very top. A layout effect
   // (before paint) so there is no visible jump from "top of day" to this
   // position.
+  //
+  // Task 4: a non-today date has no "now" to anchor to at all — the target
+  // is the first event's start, or (a genuinely empty day) a plain 8am
+  // anchor instead.
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     const firstBlockTopPx = blocks.length > 0 ? Math.min(...blocks.map((b) => isoOffsetPx(b.start, timeZone))) : undefined;
-    const anchorPx = firstBlockTopPx === undefined ? nowTopPx : Math.min(nowTopPx, firstBlockTopPx);
+    const anchorPx = isToday
+      ? (firstBlockTopPx === undefined ? nowTopPx : Math.min(nowTopPx, firstBlockTopPx))
+      : (firstBlockTopPx ?? offsetPx(EMPTY_DAY_ANCHOR_MINUTES));
     el.scrollTop = Math.max(0, anchorPx - el.clientHeight / 3);
     // Mount-only: this is where the view OPENS, not something that should
     // fight Spencer's own later scrolling as time passes.
@@ -303,6 +328,11 @@ export function CalendarDayView({ blocks, timeZone, now = () => new Date() }: Ca
 
   return (
     <div ref={scrollRef} data-testid="calendar-day-view" className="relative h-full overflow-y-auto overflow-x-hidden rounded-lg">
+      {!isToday && isEmpty && (
+        <p data-testid="calendar-day-empty" className="pointer-events-none absolute inset-x-0 top-4 z-10 px-4 text-center font-body text-small text-ink-secondary" style={{ left: HOUR_LABEL_WIDTH_PX }}>
+          Nothing on the calendar
+        </p>
+      )}
       <div className="relative" style={{ height: CONTENT_HEIGHT_PX }}>
         {/* The vertical rail sits at the label/content boundary, not the
             component's own left edge — a dedicated gutter, not a shared lane. */}

@@ -31,9 +31,20 @@
  * and have the option to switch to monthly view": Day is the default,
  * remembered per browser (`lib/calendarView.ts`); clicking a day in Month
  * switches back to Day (only today's data exists client-side).
+ *
+ * Real-use fixes plan, Task 4 (2026-09-27, "I cant see my google calendar
+ * on other days when i select a day on the month view. it just reverts
+ * back to day"): that limitation is lifted — clicking a Month day now
+ * switches Day to THAT date. `CalendarColumn` tracks a `shownDate` (resets
+ * to `today` on every mount/full reload — never persisted, unlike the
+ * Day/Month mode itself). Today keeps using `GET /api/home`'s own live
+ * `calendar.blocks`; any other date fetches `GET /api/calendar/day`
+ * (`lib/calendarDay.ts`, cached per date for the session, invalidated on
+ * that date's own "plan" hint).
  */
 import { useEffect, useState } from "react";
 import { startHomeViewStream, useHomeView } from "../lib/homeView.ts";
+import { retryCalendarDay, useCalendarDay } from "../lib/calendarDay.ts";
 import { useReadinessGate } from "../lib/readiness.ts";
 import { CalendarDayView } from "../components/CalendarDayView.tsx";
 import { Confetti } from "../components/Confetti.tsx";
@@ -48,6 +59,19 @@ function formatDateHeading(isoDate: string): string {
   const [year, month, day] = isoDate.split("-").map(Number);
   const date = new Date(Date.UTC(year!, month! - 1, day));
   return date.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: "UTC" }).toUpperCase();
+}
+
+/** "Tue, Sep 29" — the Day header's own short date label (Task 4's brief, verbatim). Plain calendar-date math (`Date.UTC` + a forced "UTC" formatter), never the browser's own zone — there's no wall-clock instant here to get wrong, just a `YYYY-MM-DD` label. */
+function formatShortDate(isoDate: string): string {
+  const [year, month, day] = isoDate.split("-").map(Number);
+  const date = new Date(Date.UTC(year!, month! - 1, day));
+  return date.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
+}
+
+/** One calendar day added to (or subtracted from) `isoDate` — pure `YYYY-MM-DD` string arithmetic, same "no real timezone involved" reasoning as `formatShortDate` above. */
+function addDays(isoDate: string, delta: number): string {
+  const [year, month, day] = isoDate.split("-").map(Number);
+  return new Date(Date.UTC(year!, month! - 1, day! + delta)).toISOString().slice(0, 10);
 }
 
 function greetingForHour(hour: number): string {
@@ -179,14 +203,101 @@ interface CalendarColumnProps {
 }
 
 /**
+ * Task 4: the Day view's own secondary header — the shown date (always
+ * visible) plus prev/next-day arrows and a "Today" button, shown only when
+ * the shown date ISN'T today (this task's brief, verbatim).
+ */
+function DayNavHeader({
+  shownDate,
+  isTodayShown,
+  onPrevDay,
+  onNextDay,
+  onToday,
+}: {
+  readonly shownDate: string;
+  readonly isTodayShown: boolean;
+  readonly onPrevDay: () => void;
+  readonly onNextDay: () => void;
+  readonly onToday: () => void;
+}): React.JSX.Element {
+  return (
+    <div className="flex shrink-0 items-center justify-between pb-2">
+      <span className="font-body text-small font-bold text-ink-secondary">{formatShortDate(shownDate)}</span>
+      {!isTodayShown && (
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            aria-label="Previous day"
+            onClick={onPrevDay}
+            className="flex size-[28px] items-center justify-center rounded-md border-[length:var(--rim-width)] border-rim-interactive text-ink-primary shadow-extruded-sm focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid"
+          >
+            <svg aria-hidden="true" viewBox="0 0 24 24" width={14} height={14} fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round">
+              <path d="M15 5l-7 7 7 7" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            aria-label="Next day"
+            onClick={onNextDay}
+            className="flex size-[28px] items-center justify-center rounded-md border-[length:var(--rim-width)] border-rim-interactive text-ink-primary shadow-extruded-sm focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid"
+          >
+            <svg aria-hidden="true" viewBox="0 0 24 24" width={14} height={14} fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round">
+              <path d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            onClick={onToday}
+            className="rounded-md px-2.5 py-1 font-body text-caption-lg font-bold text-ink-secondary hover:text-ink-primary focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid"
+          >
+            Today
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** `lib/calendarDay.ts`'s loading/error states for a non-today shown date — a skeleton while it loads, a plain line + Retry on error (this task's brief, verbatim); never a static spinner. */
+function OtherDayPanel({ shownDate, timeZone }: { readonly shownDate: string; readonly timeZone: string }): React.JSX.Element {
+  const state = useCalendarDay(shownDate);
+
+  if (state.status === "loading") {
+    return <div data-testid="calendar-day-loading-skeleton" className="h-full animate-pulse rounded-lg bg-surface-sunken" />;
+  }
+  if (state.status === "error") {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3">
+        <p className="font-body text-body text-ink-secondary">Couldn't load that day</p>
+        <button
+          type="button"
+          onClick={() => retryCalendarDay(shownDate)}
+          className="rounded-md border-[length:var(--rim-width)] border-rim-interactive px-3 py-1.5 font-body text-small text-ink-primary shadow-extruded-sm focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+  return <CalendarDayView blocks={state.value.blocks} timeZone={timeZone} isToday={false} />;
+}
+
+/**
  * Polish-2: the right column is now ONE calendar panel that fills the
  * whole column height (`min-h-0 flex-1`, no fixed pixel heights) — a
  * header (title + the Day/Month toggle) plus ONE content area that's
  * either the Calendar Day View or `MiniMonth`, never both. Day is the
  * default; the choice is remembered per browser (`lib/calendarView.ts`).
+ *
+ * Task 4: `shownDate` (today by default, reset on every mount — point 4 of
+ * this task's brief: "the shown date resets to today on a full reload,"
+ * unlike the Day/Month mode) is this column's own state; a Month day click
+ * sets it and switches to Day.
  */
 function CalendarColumn({ today, blocks, timeZone }: CalendarColumnProps): React.JSX.Element {
   const [view, setView] = useState<CalendarView>(loadCalendarView);
+  const [shownDate, setShownDate] = useState<string>(today);
+  const isTodayShown = shownDate === today;
 
   const changeView = (next: CalendarView): void => {
     setView(next);
@@ -201,14 +312,30 @@ function CalendarColumn({ today, blocks, timeZone }: CalendarColumnProps): React
         <h2 className="m-0 font-body text-heading font-bold text-ink-primary">Calendar</h2>
         <CalendarViewToggle view={view} onChange={changeView} />
       </header>
+      {view === "day" && (
+        <DayNavHeader
+          shownDate={shownDate}
+          isTodayShown={isTodayShown}
+          onPrevDay={() => setShownDate((d) => addDays(d, -1))}
+          onNextDay={() => setShownDate((d) => addDays(d, 1))}
+          onToday={() => setShownDate(today)}
+        />
+      )}
       <div className="min-h-0 flex-1">
         {view === "day" ? (
-          <CalendarDayView blocks={blocks} timeZone={timeZone} />
+          isTodayShown ? (
+            <CalendarDayView blocks={blocks} timeZone={timeZone} />
+          ) : (
+            <OtherDayPanel shownDate={shownDate} timeZone={timeZone} />
+          )
         ) : (
-          // Only today's data exists client-side (this task's own brief):
-          // a day click never fakes another day's events — it just returns
-          // to Day, which always shows today.
-          <MiniMonth today={today} onSelectDay={() => changeView("day")} />
+          <MiniMonth
+            today={today}
+            onSelectDay={(date) => {
+              setShownDate(date);
+              changeView("day");
+            }}
+          />
         )}
       </div>
     </aside>
