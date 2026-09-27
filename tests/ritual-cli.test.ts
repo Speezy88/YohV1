@@ -828,6 +828,24 @@ test("createMorningRitualDeps wires a real writeCalendarPlan function (final who
   store.close();
 });
 
+test("createMorningRitualDeps delivers the morning Plan in the app only — sendNotification makes no Pushover call (Spencer, 2026-09-27)", async () => {
+  const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
+  const deps = createMorningRitualDeps(store, BASE_ENV);
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  globalThis.fetch = (async () => {
+    fetchCalls++;
+    throw new Error("no network call expected");
+  }) as typeof fetch;
+  try {
+    await deps.sendNotification({ title: "Yoh", message: "today's Plan" });
+  } finally {
+    globalThis.fetch = originalFetch;
+    store.close();
+  }
+  assert.equal(fetchCalls, 0, "the morning Plan must never be pushed to Pushover");
+});
+
 test("AD-5: ritual-cli.ts never waits for input — it reads no stdin at all", () => {
   const source = readFileSync(join(import.meta.dirname, "..", "src", "shell", "ritual-cli.ts"), "utf8");
   assert.doesNotMatch(source, /node:readline/, "a one-shot cron entry point must not open a readline interface");
