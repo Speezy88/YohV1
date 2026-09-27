@@ -6,11 +6,14 @@
  *
  * Yoh-owned (`work`/`break`) blocks render filled with the accent
  * gradient. `fixed` (non-Yoh) blocks render cross-hatched,
- * `event-fixed-ink`, no shadow, label suffixed " (fixed)" — drag behavior
- * is Epic 10, out of scope here. Past or completed blocks are visibly
+ * `event-fixed-ink`, no shadow, label suffixed " · fixed" *(fix round 2,
+ * 2026-09-27 review finding 2: was " (fixed)" — DESIGN.md's own literal
+ * suggestion — until a narrow, long fixed block was found clipping its own
+ * text; see this file's later fix-round doc block)* — drag behavior is
+ * Epic 10, out of scope here. Past or completed blocks are visibly
  * read-only (`aria-disabled`, reduced opacity, a struck-through label for a
  * completed work block) — including a past FIXED block, which keeps its
- * cross-hatch/ink/no-shadow/"(fixed)" treatment but dims the same way a
+ * cross-hatch/ink/no-shadow/"· fixed" treatment but dims the same way a
  * past Yoh-owned block does.
  *
  * Task 6A (2026-09-27, Google-Calendar-style day view): the whole day
@@ -42,11 +45,55 @@
  *
  * Untitled or punctuation-only labels read as "(No title)" (`labels.ts`),
  * shared with `PlanChecklist.tsx`.
+ *
+ * Polish-1 (2026-09-27) fix round, two more real bugs from the live app:
+ * 3. Overlapping events used to render full-lane-width, on top of one
+ *    another (every block was `left: CONTENT_LEFT_PX, right: 8px`,
+ *    regardless of what else occupied the same time range). Blocks now
+ *    share the lane in side-by-side columns, Google-Calendar-style, via
+ *    `lib/calendarLayout.ts`'s pure `layoutOverlappingIntervals` — a
+ *    non-overlapping block still gets the full lane (unchanged), an
+ *    overlapping one gets `1/columnCount` of it at `column/columnCount`
+ *    offset. Column 0's `left` stays the same literal `CONTENT_LEFT_PX`
+ *    pixel number as before (existing tests read it directly); a non-zero
+ *    column's `left`/`width` are `calc()` expressions against the lane's
+ *    actual (fluid) rendered width, since that width isn't known ahead of
+ *    real layout.
+ * 4. A block's label now scales down with how much room it has: under
+ *    `TITLE_ONLY_MINUTES` (~20min) shows just the truncated title (no
+ *    room for anything else); under `VERY_SHORT_MINUTES` (~45min) shows a
+ *    one-line "Title · 10:30" (`hostTime.ts`'s `formatClockTime`,
+ *    HOST-timezone, same as every other position/format in this file); at
+ *    or above that, the existing full label (unchanged).
+ *
+ * Fix round (2026-09-27 review of the above): finding 2 — the old minimum
+ * height (`HOUR_HEIGHT_PX / 4` = 14px) was smaller than a block's own
+ * padding + one line of text, so a very short block's title was clipped
+ * away entirely rather than truncated. `capBlockHeight` now bumps a short
+ * block up to `MIN_BLOCK_HEIGHT_PX` (enough for one compact line), capped so
+ * it never grows past where the NEXT block anywhere in the day starts —
+ * never overlapping another block's own rendered text — and a single-line
+ * block gets reduced vertical padding (`py-0.5` + `items-center`, not the
+ * normal block's `py-1.5`) so that minimum height is actually enough.
+ *
+ * Fix round 2 (2026-09-27 review, finding 2): a FIXED (cross-hatched)
+ * anchor's own duration doesn't determine how NARROW its column is (that's
+ * `layoutOverlappingIntervals`'s job, driven by how many OTHER events it
+ * overlaps) — a long-but-narrow fixed block was still wrapping onto more
+ * lines than its (duration-derived, not room-capped) height could show,
+ * clipping the tail of its own label. `blockLabelContent`'s new
+ * `alwaysSingleLine` parameter (`isFixed`, always true for a fixed anchor)
+ * skips the duration tiers entirely and always renders compact/
+ * single-line/truncated, the same treatment a very-short block gets. The
+ * "(fixed)" suffix is also now the shorter "· fixed" (matching the
+ * "Title · 10:30" separator convention already used elsewhere in this
+ * file) so it reliably fits alongside the title before truncating.
  */
 import { useLayoutEffect, useRef } from "react";
 import type { HomeCalendarBlock } from "../../../src/types/api.ts";
 import { displayLabel } from "../lib/labels.ts";
-import { localMinutesSinceMidnight } from "../lib/hostTime.ts";
+import { formatClockTime, localMinutesSinceMidnight } from "../lib/hostTime.ts";
+import { layoutOverlappingIntervals } from "../lib/calendarLayout.ts";
 
 const DAY_START_HOUR = 6;
 const DAY_END_HOUR = 23;
@@ -60,6 +107,23 @@ const SCROLL_LEAD_PX = HOUR_HEIGHT_PX;
 const HOUR_LABEL_WIDTH_PX = 52;
 /** Where blocks/the now-line start — clear of the label gutter, plus a small gap (mockup: labels end ~62px, blocks start ~70px). */
 const CONTENT_LEFT_PX = HOUR_LABEL_WIDTH_PX + 12;
+/** The lane's own right-edge gap, matching the `right-2` Tailwind class (0.5rem = 8px) every block already used. */
+const CONTENT_RIGHT_PX = 8;
+/** Gap between side-by-side columns of overlapping blocks, in px. */
+const COLUMN_GAP_PX = 3;
+/** Polish-1: a block shorter than this shows just its (truncated) title — no time, no room for anything else. */
+const TITLE_ONLY_MINUTES = 20;
+/** Polish-1: a block shorter than this (but at/above `TITLE_ONLY_MINUTES`) shows a single-line "Title · 10:30" label instead of the full multi-line treatment. */
+const VERY_SHORT_MINUTES = 45;
+/**
+ * Fix round (review finding 2): the old floor (`HOUR_HEIGHT_PX / 4` = 14px)
+ * was smaller than the compact single-line block's own padding + text, so a
+ * very short block's title was clipped away entirely — a 10-minute block at
+ * `HOUR_HEIGHT_PX` = 56px/hour rendered at just ~9px tall. 22px comfortably
+ * fits one `text-small` line plus the compact block's own minimal vertical
+ * padding (`py-0.5`, see the single-line className below).
+ */
+const MIN_BLOCK_HEIGHT_PX = 22;
 
 /** Pixels from the top of the full-day content, clamped — an event or the now-line outside 6am-11pm visually pins to an edge rather than disappearing or scrolling off into nothing. */
 function offsetPx(minutesFromStart: number): number {
@@ -77,6 +141,76 @@ function hourLabel(hour: number): string {
   return `${twelveHour}${hour < 12 ? "AM" : "PM"}`;
 }
 
+/**
+ * `left`/`width` for a block at `column` of `columnCount` within the
+ * day-content lane (`CONTENT_LEFT_PX` to `right: CONTENT_RIGHT_PX`). A
+ * non-overlapping block (`columnCount` 1) keeps the exact literal
+ * `CONTENT_LEFT_PX` px number `left` value the pre-existing tests read
+ * directly, and no `width` override — it still relies on the `right-2`
+ * Tailwind class for full-lane width, unchanged from before this fix. A
+ * genuinely shared lane needs an explicit `calc()` against the lane's own
+ * (fluid) rendered width, which isn't known ahead of real layout — column 0
+ * of a shared lane still starts at the literal `CONTENT_LEFT_PX` (0 of any
+ * fraction is 0), so only `column > 0` needs the `calc()` for `left`.
+ */
+function columnStyle(column: number, columnCount: number): { left: number | string; width?: string } {
+  if (columnCount <= 1) {
+    return { left: CONTENT_LEFT_PX };
+  }
+  const laneWidth = `(100% - ${CONTENT_LEFT_PX}px - ${CONTENT_RIGHT_PX}px)`;
+  const left = column === 0 ? CONTENT_LEFT_PX : `calc(${CONTENT_LEFT_PX}px + ${laneWidth} * ${column} / ${columnCount})`;
+  const width = `calc(${laneWidth} / ${columnCount} - ${COLUMN_GAP_PX}px)`;
+  return { left, width };
+}
+
+/**
+ * Fix round (review finding 2): a very short block's rendered height is
+ * bumped up to `MIN_BLOCK_HEIGHT_PX` so its (now compact, single-line) title
+ * actually has room to show — but never past where the NEXT block anywhere
+ * in the day starts, so a bumped-up box can never visually run into (and
+ * clip/overlap) another block's own text. `positions` is every OTHER
+ * block's own natural (un-bumped) `{top, bottom}`; the cap is the nearest
+ * `top` at or after `naturalBottom`, or the end of the rendered day if none.
+ * The result is always >= `naturalBottom - top` (never shrinks a block
+ * below its own real duration) — `desired` and `cap` are both floored by
+ * that in `capBlockHeight`'s single `Math.min`/`Math.max` combination.
+ */
+function capBlockHeight(top: number, naturalBottom: number, positions: readonly { readonly id: string; readonly top: number }[], selfId: string): number {
+  const rawHeight = naturalBottom - top;
+  const desired = Math.max(rawHeight, MIN_BLOCK_HEIGHT_PX);
+  let nextBoundary = CONTENT_HEIGHT_PX;
+  for (const p of positions) {
+    if (p.id === selfId) continue;
+    if (p.top >= naturalBottom && p.top < nextBoundary) nextBoundary = p.top;
+  }
+  const room = Math.max(rawHeight, nextBoundary - top);
+  return Math.min(desired, room);
+}
+
+/**
+ * A block's label scales down with how much room it has (this task's own
+ * brief): under `TITLE_ONLY_MINUTES` shows just the (truncated) title, no
+ * time; under `VERY_SHORT_MINUTES` shows a single-line "Title · 10:30"; at
+ * or above that, the full `baseLabel` unchanged (multi-line if it wraps).
+ *
+ * Fix round 2 (review finding 2): `alwaysSingleLine` (fixed/cross-hatched
+ * anchors — see `columnStyle`'s own doc comment: a fixed anchor can land in
+ * a NARROW column purely from how many other events it happens to overlap,
+ * independent of its own duration) skips the duration-based tiers entirely
+ * and always renders compact/single-line/truncated — a fixed block that
+ * happens to be both long AND narrow used to wrap onto more lines than its
+ * (duration-derived) height could show, clipping the tail of its own label.
+ */
+function blockLabelContent(baseLabel: string, durationMinutes: number, startIso: string, timeZone: string, alwaysSingleLine: boolean): { text: string; singleLine: boolean } {
+  if (alwaysSingleLine || durationMinutes < TITLE_ONLY_MINUTES) {
+    return { text: baseLabel, singleLine: true };
+  }
+  if (durationMinutes < VERY_SHORT_MINUTES) {
+    return { text: `${baseLabel} · ${formatClockTime(new Date(startIso), timeZone)}`, singleLine: true };
+  }
+  return { text: baseLabel, singleLine: false };
+}
+
 export interface CalendarDayViewProps {
   readonly blocks: readonly HomeCalendarBlock[];
   /** The host timezone (`HomeViewResponse.timeZone`, AD-17) every position below is computed in. */
@@ -92,6 +226,13 @@ export function CalendarDayView({ blocks, timeZone, now = () => new Date() }: Ca
   const nowMinutes = localMinutesSinceMidnight(nowValue, timeZone) - DAY_START_HOUR * 60;
   const nowTopPx = offsetPx(nowMinutes);
   const nowVisible = nowMinutes >= 0 && nowMinutes <= WINDOW_MINUTES;
+  // Polish-1: one pure layout pass over every block's HOST-timezone pixel
+  // interval, up front — `layoutOverlappingIntervals` (lib/calendarLayout.ts)
+  // never re-sorts/re-derives the blocks themselves (AD-17 stays server's
+  // job), it only decides how many columns an overlapping cluster shares.
+  const columns = layoutOverlappingIntervals(blocks.map((b) => ({ id: b.id, start: isoOffsetPx(b.start, timeZone), end: isoOffsetPx(b.end, timeZone) })));
+  // Every block's own natural (un-bumped) top, for `capBlockHeight`'s "don't grow past where the next block starts" guard.
+  const naturalTops = blocks.map((b) => ({ id: b.id, top: isoOffsetPx(b.start, timeZone) }));
 
   // Opens already scrolled to the current time — a layout effect (before
   // paint) so there is no visible jump from "top of day" to "now".
@@ -131,8 +272,24 @@ export function CalendarDayView({ blocks, timeZone, now = () => new Date() }: Ca
           const readOnly = b.past || b.completed;
           const isFixed = b.kind === "fixed";
           const label = displayLabel(b.label);
+          // Fix round 2 (review finding 2): "· fixed" (short, always fits
+          // one truncated line with the label) instead of " (fixed)" (long
+          // enough that a narrow column could wrap/clip it) — see
+          // `blockLabelContent`'s own doc comment.
+          const baseLabel = isFixed ? `${label} · fixed` : label;
           const top = isoOffsetPx(b.start, timeZone);
-          const height = Math.max(HOUR_HEIGHT_PX / 4, isoOffsetPx(b.end, timeZone) - top);
+          const bottom = isoOffsetPx(b.end, timeZone);
+          const height = capBlockHeight(top, bottom, naturalTops, b.id);
+          const placement = columns.get(b.id) ?? { column: 0, columnCount: 1 };
+          const { left, width } = columnStyle(placement.column, placement.columnCount);
+          const durationMinutes = (new Date(b.end).getTime() - new Date(b.start).getTime()) / 60_000;
+          const content = blockLabelContent(baseLabel, durationMinutes, b.start, timeZone, isFixed);
+          // Fix round (review finding 2): a compact single-line block gets
+          // minimal vertical padding plus flex-centering (so its one line of
+          // text stays vertically centered regardless of exactly how much
+          // `capBlockHeight` could grant it) instead of the normal block's
+          // fixed top-anchored padding.
+          const layoutClasses = content.singleLine ? "flex items-center py-0.5" : "py-1.5";
           return (
             <div
               key={b.id}
@@ -143,11 +300,11 @@ export function CalendarDayView({ blocks, timeZone, now = () => new Date() }: Ca
                 (isFixed
                   ? "border border-rim-structural bg-[repeating-linear-gradient(45deg,var(--color-event-fixed-stripe-a),var(--color-event-fixed-stripe-a)_6px,var(--color-event-fixed-stripe-b)_6px,var(--color-event-fixed-stripe-b)_12px)] text-event-fixed-ink"
                   : "bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end text-on-accent-solid shadow-extruded-sm") +
-                ` absolute right-2 overflow-hidden rounded-sm px-3 py-1.5 font-body text-small ${readOnly ? "opacity-60" : ""} ${b.completed ? "line-through" : ""}`
+                ` absolute right-2 overflow-hidden rounded-sm px-3 ${layoutClasses} font-body text-small ${readOnly ? "opacity-60" : ""} ${b.completed ? "line-through" : ""} ${content.singleLine ? "truncate whitespace-nowrap" : ""}`
               }
-              style={{ top, height, left: CONTENT_LEFT_PX }}
+              style={{ top, height, left, ...(width !== undefined ? { width } : {}) }}
             >
-              {isFixed ? `${label} (fixed)` : label}
+              {content.text}
             </div>
           );
         })}

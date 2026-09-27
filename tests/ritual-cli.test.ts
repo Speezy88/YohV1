@@ -16,7 +16,16 @@ import { initCompletionLogSchema, recordCompletion } from "../src/adapters/compl
 import { initNotificationStoreSchema, listUnreadNotifications } from "../src/adapters/notification-store.ts";
 import { computeSlipBumpLevels } from "../src/core/slip-bump.ts";
 import {
+  buildDegradedAlertBody,
+  buildDegradedAlertTitle,
+  buildFailedAlertBody,
+  buildFailedAlertTitle,
+  buildHeartbeatStaleAlertBody,
+  buildHeartbeatStaleAlertTitle,
+  buildMissedRunAlertBody,
+  buildMissedRunAlertTitle,
   checkDailyRitualMissedRun,
+  formatDayCount,
   checkMorningPlanGenerationDegraded,
   checkSelfCheckMissedRun,
   createOperationalNotifier,
@@ -586,8 +595,7 @@ test("`morning` sends exactly one distinctly-worded failure alert when the ritua
   assert.equal(code, 1);
   assert.equal(s.alerts.length, 1);
   const alert = s.alerts[0]!;
-  assert.match(alert.title, /morning/i);
-  assert.match(alert.title, /fail/i);
+  assert.equal(alert.title, "Morning Plan failed");
   assert.ok(!NORMAL_NOTIFICATION_TITLES.includes(alert.title), "failure alert title must be distinct from a normal Plan/close-out/Self-Check notification title");
   assert.match(alert.message, /could not read Notion Tasks/);
 });
@@ -598,8 +606,7 @@ test("`morning` sends the failure alert and exits non-zero when runMorning THROW
 
   assert.equal(code, 1);
   assert.equal(s.alerts.length, 1);
-  assert.match(s.alerts[0]!.title, /morning/i);
-  assert.match(s.alerts[0]!.title, /fail/i);
+  assert.equal(s.alerts[0]!.title, "Morning Plan failed");
   assert.match(s.alerts[0]!.message, /unexpected crash/);
 });
 
@@ -625,8 +632,7 @@ test("`night-prompt` sends exactly one distinctly-worded failure alert when the 
   assert.equal(code, 1);
   assert.equal(s.alerts.length, 1);
   const alert = s.alerts[0]!;
-  assert.match(alert.title, /night-prompt/i);
-  assert.match(alert.title, /fail/i);
+  assert.equal(alert.title, "Night check-in failed");
   assert.ok(!NORMAL_NOTIFICATION_TITLES.includes(alert.title), "failure alert title must be distinct from a normal Plan/close-out/Self-Check notification title");
   assert.match(alert.message, /could not persist the close-out prompt/);
 });
@@ -637,8 +643,7 @@ test("`night-prompt` sends the failure alert and exits non-zero when runNightPro
 
   assert.equal(code, 1);
   assert.equal(s.alerts.length, 1);
-  assert.match(s.alerts[0]!.title, /night-prompt/i);
-  assert.match(s.alerts[0]!.title, /fail/i);
+  assert.equal(s.alerts[0]!.title, "Night check-in failed");
   assert.match(s.alerts[0]!.message, /unexpected crash/);
 });
 
@@ -661,8 +666,7 @@ test("`night-escalate` sends exactly one distinctly-worded failure alert when th
   assert.equal(code, 1);
   assert.equal(s.alerts.length, 1);
   const alert = s.alerts[0]!;
-  assert.match(alert.title, /night-escalate/i);
-  assert.match(alert.title, /fail/i);
+  assert.equal(alert.title, "Night reminder failed");
   assert.ok(!NORMAL_NOTIFICATION_TITLES.includes(alert.title), "failure alert title must be distinct from a normal Plan/close-out/Self-Check notification title");
   assert.match(alert.message, /could not send the escalation email/);
 });
@@ -673,8 +677,7 @@ test("`night-escalate` sends the failure alert and exits non-zero when runNightE
 
   assert.equal(code, 1);
   assert.equal(s.alerts.length, 1);
-  assert.match(s.alerts[0]!.title, /night-escalate/i);
-  assert.match(s.alerts[0]!.title, /fail/i);
+  assert.equal(s.alerts[0]!.title, "Night reminder failed");
   assert.match(s.alerts[0]!.message, /unexpected crash/);
 });
 
@@ -700,8 +703,7 @@ test("`self-check` sends exactly one distinctly-worded failure alert when the ri
   assert.equal(code, 1);
   assert.equal(s.alerts.length, 1);
   const alert = s.alerts[0]!;
-  assert.match(alert.title, /self-check/i);
-  assert.match(alert.title, /fail/i);
+  assert.equal(alert.title, "Self-check failed");
   assert.ok(!NORMAL_NOTIFICATION_TITLES.includes(alert.title), "failure alert title must be distinct from a normal Plan/close-out/Self-Check notification title");
   assert.match(alert.message, /could not persist the Self-Check prompt/);
 });
@@ -712,8 +714,7 @@ test("`self-check` sends the failure alert and exits non-zero when runSelfCheck 
 
   assert.equal(code, 1);
   assert.equal(s.alerts.length, 1);
-  assert.match(s.alerts[0]!.title, /self-check/i);
-  assert.match(s.alerts[0]!.title, /fail/i);
+  assert.equal(s.alerts[0]!.title, "Self-check failed");
   assert.match(s.alerts[0]!.message, /unexpected crash/);
 });
 
@@ -726,24 +727,28 @@ test("`self-check` sends NO failure alert on a successful run", async () => {
 
 // ---- cross-cutting: the four alert titles are mutually distinguishable, not just distinct from normal notifications ----
 
-test("the four subcommands' failure alerts each name their OWN subcommand, not a generic shared title", async () => {
+test("the four subcommands' failure alerts each get their own plain title, not a generic shared one (AD-7: mutually distinguishable, even though none names the raw subcommand id anymore — polish-1 fix round)", async () => {
   const titles = new Set<string>();
 
   const sMorning = sink();
   await runRitualCli(["morning"], deps({ ok: false, error: { kind: "unreachable", message: "x" } }, sMorning));
   titles.add(sMorning.alerts[0]!.title);
+  assert.equal(sMorning.alerts[0]!.title, "Morning Plan failed");
 
   const sNightPrompt = sink();
   await runRitualCli(["night-prompt"], nightPromptDeps({ ok: false, error: { kind: "unreachable", message: "x" } }, sNightPrompt));
   titles.add(sNightPrompt.alerts[0]!.title);
+  assert.equal(sNightPrompt.alerts[0]!.title, "Night check-in failed");
 
   const sNightEscalate = sink();
   await runRitualCli(["night-escalate"], nightEscalateDeps({ ok: false, error: { kind: "unreachable", message: "x" } }, sNightEscalate));
   titles.add(sNightEscalate.alerts[0]!.title);
+  assert.equal(sNightEscalate.alerts[0]!.title, "Night reminder failed");
 
   const sSelfCheck = sink();
   await runRitualCli(["self-check"], selfCheckDeps({ ok: false, error: { kind: "unreachable", message: "x" } }, sSelfCheck));
   titles.add(sSelfCheck.alerts[0]!.title);
+  assert.equal(sSelfCheck.alerts[0]!.title, "Self-check failed");
 
   assert.equal(titles.size, 4, "each subcommand's failure alert title must be distinguishable from the other three");
 });
@@ -873,15 +878,25 @@ const hoursAgo = (h: number) => new Date(CHECK_NOW.getTime() - h * 60 * 60 * 100
 
 // ---- checkDailyRitualMissedRun (morning / night-prompt / night-escalate) ----
 
+// Fix round 2 (review finding 1): the detail no longer names the raw
+// subcommand id — it uses `missedRunSubject`'s plain per-subcommand phrase
+// ("morning Plan", "night check-in", "night reminder") — so this pins the
+// exact detail per subcommand instead of a generic subcommand-id regex.
+const DAILY_MISSED_RUN_EXPECTED_DETAIL: Record<string, string> = {
+  morning: "morning Plan hasn't run in about 2 days",
+  "night-prompt": "night check-in hasn't run in about 2 days",
+  "night-escalate": "night reminder hasn't run in about 2 days",
+};
+
 for (const subcommand of ["morning", "night-prompt", "night-escalate"]) {
-  test(`checkDailyRitualMissedRun("${subcommand}"): a RitualInvocation older than the ${DAILY_RITUAL_MISSED_RUN_GRACE_HOURS}h grace threshold is a missed run`, () => {
+  test(`checkDailyRitualMissedRun("${subcommand}"): a RitualInvocation older than the ${DAILY_RITUAL_MISSED_RUN_GRACE_HOURS}h grace threshold is a missed run, with the exact plain-language detail`, () => {
     const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
-    putRitualInvocation(store, subcommand, { at: hoursAgo(DAILY_RITUAL_MISSED_RUN_GRACE_HOURS + 12) });
+    putRitualInvocation(store, subcommand, { at: hoursAgo(DAILY_RITUAL_MISSED_RUN_GRACE_HOURS + 12) }); // 48h since -> "about 2 days"
 
     const result = checkDailyRitualMissedRun(store, subcommand, () => CHECK_NOW);
 
     assert.equal(result.missed, true);
-    assert.match(result.detail ?? "", new RegExp(subcommand));
+    assert.equal(result.detail, DAILY_MISSED_RUN_EXPECTED_DETAIL[subcommand]);
     store.close();
   });
 }
@@ -912,14 +927,14 @@ test("checkDailyRitualMissedRun: true first-ever cold start (no RitualInvocation
 // (keyed `"self-check"`), NOT `SelfCheckState.nextDueDate` — see the
 // "unanswered prompt" regression tests further below for why that mattered.
 
-test(`checkSelfCheckMissedRun: a RitualInvocation older than the ${SELF_CHECK_MISSED_RUN_GRACE_DAYS}-day grace threshold is a missed run`, () => {
+test(`checkSelfCheckMissedRun: a RitualInvocation older than the ${SELF_CHECK_MISSED_RUN_GRACE_DAYS}-day grace threshold is a missed run, with the exact plain-language detail`, () => {
   const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
-  putRitualInvocation(store, "self-check", { at: hoursAgo(SELF_CHECK_MISSED_RUN_GRACE_DAYS * 24 + 12) });
+  putRitualInvocation(store, "self-check", { at: hoursAgo(SELF_CHECK_MISSED_RUN_GRACE_DAYS * 24 + 12) }); // 132h since -> rounds to "about 6 days"
 
   const result = checkSelfCheckMissedRun(store, () => CHECK_NOW);
 
   assert.equal(result.missed, true);
-  assert.match(result.detail ?? "", /self-check/i);
+  assert.equal(result.detail, "self-check hasn't run in about 6 days");
   store.close();
 });
 
@@ -988,8 +1003,7 @@ test("REVIEW FIX (Critical): checkMissedRun() throwing does not suppress Task 25
 
   assert.equal(code, 1);
   assert.equal(s.alerts.length, 1, "Task 25's own failure alert must still fire even though the missed-run check itself threw — this is the exact regression: before the fix, the throw escaped BEFORE Task 25's try/catch and suppressed this alert entirely");
-  assert.match(s.alerts[0]!.title, /failed/i);
-  assert.doesNotMatch(s.alerts[0]!.title, /missed/i);
+  assert.equal(s.alerts[0]!.title, "Morning Plan failed");
 });
 
 // ---- IMPORTANT review-fix: a quiet-but-successful no-op day must not false-alarm ----
@@ -1168,18 +1182,16 @@ test("`morning` sends a distinctly-worded missed-run alert (not the 'failed' wor
   assert.equal(code, 0, "the subcommand's own outcome still governs the exit code — the missed-run check never overrides it");
   assert.equal(s.alerts.length, 1);
   const alert = s.alerts[0]!;
-  assert.match(alert.title, /morning/i);
-  assert.match(alert.title, /missed/i);
-  assert.doesNotMatch(alert.title, /failed/i, "a missed-run alert must be worded distinctly from the 'subcommand failed' alert (Task 25)");
+  assert.equal(alert.title, "Morning Plan didn't run", "a missed-run alert must be worded distinctly from the 'subcommand failed' alert (Task 25)");
   assert.ok(!NORMAL_NOTIFICATION_TITLES.includes(alert.title));
   assert.match(alert.message, /morning/i);
   assert.match(alert.message, /3\.2 days ago/);
 });
 
-test("`night-prompt`/`night-escalate`/`self-check` each send their own distinctly-worded missed-run alert naming their own subcommand", async () => {
-  const cases: Array<{ label: string; run: (s: Sink) => Promise<number> }> = [
+test("`night-prompt`/`night-escalate`/`self-check` each send their own distinctly-worded, plain-titled missed-run alert", async () => {
+  const cases: Array<{ title: string; run: (s: Sink) => Promise<number> }> = [
     {
-      label: "night-prompt",
+      title: "Night check-in didn't run",
       run: (s) =>
         runRitualCli(
           ["night-prompt"],
@@ -1187,7 +1199,7 @@ test("`night-prompt`/`night-escalate`/`self-check` each send their own distinctl
         ),
     },
     {
-      label: "night-escalate",
+      title: "Night reminder didn't run",
       run: (s) =>
         runRitualCli(
           ["night-escalate"],
@@ -1195,19 +1207,18 @@ test("`night-prompt`/`night-escalate`/`self-check` each send their own distinctl
         ),
     },
     {
-      label: "self-check",
+      title: "Self-check didn't run",
       run: (s) =>
         runRitualCli(["self-check"], selfCheckDeps({ ok: true, value: { status: "not-due", date: TODAY, nextDueDate: TODAY } }, s, undefined, () => ({ missed: true, detail: "x" }))),
     },
   ];
 
-  for (const { label, run } of cases) {
+  for (const { title, run } of cases) {
     const s = sink();
     const code = await run(s);
     assert.equal(code, 0);
-    assert.equal(s.alerts.length, 1, `${label}: expected exactly one missed-run alert`);
-    assert.match(s.alerts[0]!.title, new RegExp(label, "i"));
-    assert.match(s.alerts[0]!.title, /missed/i);
+    assert.equal(s.alerts.length, 1, `${title}: expected exactly one missed-run alert`);
+    assert.equal(s.alerts[0]!.title, title);
   }
 });
 
@@ -1232,8 +1243,8 @@ test("a missed-run alert AND a same-run Result failure both fire — two distinc
 
   assert.equal(code, 1);
   assert.equal(s.alerts.length, 2, "expected one missed-run alert AND one failure alert");
-  assert.match(s.alerts[0]!.title, /missed/i, "the missed-run check runs FIRST, before runSubcommand");
-  assert.match(s.alerts[1]!.title, /failed/i);
+  assert.equal(s.alerts[0]!.title, "Morning Plan didn't run", "the missed-run check runs FIRST, before runSubcommand");
+  assert.equal(s.alerts[1]!.title, "Morning Plan failed");
 });
 
 // ---- the critical property: self-healing, not cascading ----
@@ -1294,7 +1305,7 @@ test("SELF-HEALING: after a missed-run alert fires for `morning`, the ritual sti
   // The missed-run alert fired...
   assert.equal(code, 0);
   assert.equal(s.alerts.length, 1);
-  assert.match(s.alerts[0]!.title, /missed/i);
+  assert.equal(s.alerts[0]!.title, "Morning Plan didn't run");
 
   // ...but self-healing held: the ritual's own work still ran...
   assert.equal(ownWorkRan, true, "the missed-run alert must not gate or skip the subcommand's own work");
@@ -1461,7 +1472,7 @@ test("checkMorningPlanGenerationDegraded: under the threshold is not degraded", 
   assert.deepEqual(result, { degraded: false });
 });
 
-test("checkMorningPlanGenerationDegraded: over the threshold is degraded, with a detail naming the duration", () => {
+test("checkMorningPlanGenerationDegraded: over the threshold is degraded, with a plain-language detail naming the duration — no internal span name", () => {
   const result = checkMorningPlanGenerationDegraded({
     status: "delivered",
     date: TODAY,
@@ -1472,8 +1483,10 @@ test("checkMorningPlanGenerationDegraded: over the threshold is degraded, with a
     planGenerationMs: PLAN_GENERATION_DEGRADED_THRESHOLD_MS + 1234,
   });
   assert.equal(result.degraded, true);
-  assert.match(result.detail ?? "", /Data-Completeness Gate/);
-  assert.match(result.detail ?? "", /Work\/Break fitting/);
+  assert.match(result.detail ?? "", /6\.2s|6\.23s/, "names roughly the actual duration");
+  assert.match(result.detail ?? "", /usually under/);
+  assert.doesNotMatch(result.detail ?? "", /Data-Completeness Gate/, "polish-1: no internal span name in the alert copy");
+  assert.doesNotMatch(result.detail ?? "", /Work\/Break fitting/, "polish-1: no internal span name in the alert copy");
 });
 
 test("checkMorningPlanGenerationDegraded: outcomes with no planGenerationMs (already-ran, nothing-to-plan) are never degraded", () => {
@@ -1491,10 +1504,7 @@ test("`morning` exceeding the Plan-generation threshold sends a distinctly-worde
 
   assert.equal(s.alerts.length, 1, "exactly one degraded-performance alert");
   const alert = s.alerts[0]!;
-  assert.match(alert.title, /morning/i);
-  assert.match(alert.title, /slow|degrad/i);
-  assert.doesNotMatch(alert.title, /failed/i, "must be worded distinctly from the 'subcommand failed' alert (Task 25)");
-  assert.doesNotMatch(alert.title, /missed/i, "must be worded distinctly from the missed-run alert (Task 26)");
+  assert.equal(alert.title, "Morning Plan was slow", "must be worded distinctly from the 'subcommand failed'/missed-run alert titles (Tasks 25/26)");
   assert.ok(!NORMAL_NOTIFICATION_TITLES.includes(alert.title));
   assert.match(alert.message, /8\.0s|8s/, "names roughly the actual duration");
 });
@@ -1527,7 +1537,7 @@ test("a nothing-fits outcome exceeding the threshold also raises the degraded al
   );
   assert.equal(code, 0);
   assert.equal(s.alerts.length, 1);
-  assert.match(s.alerts[0]!.title, /slow|degrad/i);
+  assert.equal(s.alerts[0]!.title, "Morning Plan was slow");
 });
 
 test("an already-ran outcome (no planGenerationMs at all) never triggers the degraded check, even though it's the same subcommand", async () => {
@@ -1545,8 +1555,8 @@ test("a degraded Plan-generation run and a missed-run alert both fire independen
   );
   assert.equal(code, 0);
   assert.equal(s.alerts.length, 2, "one missed-run alert AND one degraded-performance alert");
-  assert.match(s.alerts[0]!.title, /missed/i, "the missed-run check runs first");
-  assert.match(s.alerts[1]!.title, /slow|degrad/i);
+  assert.equal(s.alerts[0]!.title, "Morning Plan didn't run", "the missed-run check runs first");
+  assert.equal(s.alerts[1]!.title, "Morning Plan was slow");
 });
 
 test("the degraded-performance check is `morning`-only — night-prompt/night-escalate/self-check never raise it even on a successful run", async () => {
@@ -1595,7 +1605,7 @@ test("a missed-run alert for night-prompt also calls notifyOperational, matching
   await runRitualCli(["night-prompt"], testDeps);
 
   assert.equal(s.alerts.length, 1);
-  assert.match(s.alerts[0]!.title, /missed/i);
+  assert.equal(s.alerts[0]!.title, "Night check-in didn't run");
   assert.deepEqual(notified, [{ title: s.alerts[0]!.title, message: s.alerts[0]!.message }]);
 });
 
@@ -1634,8 +1644,7 @@ test("morning sends a distinctly-worded alert when checkServerHeartbeatStale rep
   assert.equal(code, 0, "a stale heartbeat must never turn a successful morning run into a failure exit code");
   assert.equal(planRan, true);
   assert.equal(s.alerts.length, 1);
-  assert.match(s.alerts[0]!.title, /down/i);
-  assert.doesNotMatch(s.alerts[0]!.title, /failed|missed a run|running slow/i, "worded distinctly from the other three AD-7 alerts");
+  assert.equal(s.alerts[0]!.title, "Server isn't checking in", "worded distinctly from the other three AD-7 alerts");
 });
 
 test("morning sends no stale-heartbeat alert when checkServerHeartbeatStale reports fresh", async () => {
@@ -1700,4 +1709,196 @@ test("createOperationalNotifier writes a real `operational` in-app notification 
   assert.equal(unread[0]!.body, "The Yoh server's heartbeat is stale.");
   assert.equal(unread[0]!.deepLink, null);
   connection.close();
+});
+
+// ============================================================================
+// Polish-1: plain-language alert copy — the four pure `buildXAlertBody`
+// functions, pinned to their exact output, one test per alert kind (this
+// task's own brief: "put the copy builders in one place per alert kind,
+// pure where possible, with tests pinning each exact string").
+// ============================================================================
+
+const BANNED_ALERT_JARGON = [/AD-7/, /Data-Completeness Gate/, /Work\/Break fitting/, /self-healing/i, /grace:\s*\d/i, /"morning"/, /"night-prompt"/, /"night-escalate"/, /"self-check"/, /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/];
+
+function assertNoJargon(text: string): void {
+  for (const pattern of BANNED_ALERT_JARGON) {
+    assert.doesNotMatch(text, pattern, `alert copy must not contain internal jargon: ${text}`);
+  }
+}
+
+test("buildFailedAlertBody: pins the exact plain-language copy per subcommand", () => {
+  assert.equal(
+    buildFailedAlertBody("morning", "morning-ritual: could not reach Notion"),
+    'This morning\'s Plan couldn\'t finish: morning-ritual: could not reach Notion. It will try again at the next scheduled time, or type "/plan".',
+  );
+  assert.equal(
+    buildFailedAlertBody("night-prompt", "boom"),
+    'Tonight\'s close-out check-in couldn\'t finish: boom. It will try again at the next scheduled time, or type "/night".',
+  );
+  assert.equal(buildFailedAlertBody("night-escalate", "boom"), "Tonight's reminder email couldn't finish: boom. It will try again at the next scheduled time.");
+  assert.equal(buildFailedAlertBody("self-check", "boom"), "Today's Self-Check couldn't finish: boom. It will try again at the next scheduled time.");
+  for (const subcommand of ["morning", "night-prompt", "night-escalate", "self-check"]) {
+    assertNoJargon(buildFailedAlertBody(subcommand, "x"));
+  }
+});
+
+test("buildMissedRunAlertBody: pins the exact plain-language copy — fix round 2's simpler wording (review finding 1)", () => {
+  assert.equal(
+    buildMissedRunAlertBody("morning Plan hasn't run in about 4 days"),
+    "The morning Plan hasn't run in about 4 days — your Mac may have been asleep or off. It'll run again at its next scheduled time.",
+  );
+  assert.equal(
+    buildMissedRunAlertBody("self-check hasn't run in about 10 days"),
+    "The self-check hasn't run in about 10 days — your Mac may have been asleep or off. It'll run again at its next scheduled time.",
+  );
+});
+
+// ---- fix round (review finding 1): plain, distinct, per-subcommand TITLES ----
+
+test("buildFailedAlertTitle: pins the exact plain title per subcommand, each mutually distinct (AD-7)", () => {
+  assert.equal(buildFailedAlertTitle("morning"), "Morning Plan failed");
+  assert.equal(buildFailedAlertTitle("night-prompt"), "Night check-in failed");
+  assert.equal(buildFailedAlertTitle("night-escalate"), "Night reminder failed");
+  assert.equal(buildFailedAlertTitle("self-check"), "Self-check failed");
+  const titles = ["morning", "night-prompt", "night-escalate", "self-check"].map(buildFailedAlertTitle);
+  assert.equal(new Set(titles).size, 4);
+});
+
+test("buildMissedRunAlertTitle: pins the exact plain title per subcommand, each mutually distinct (AD-7)", () => {
+  assert.equal(buildMissedRunAlertTitle("morning"), "Morning Plan didn't run");
+  assert.equal(buildMissedRunAlertTitle("night-prompt"), "Night check-in didn't run");
+  assert.equal(buildMissedRunAlertTitle("night-escalate"), "Night reminder didn't run");
+  assert.equal(buildMissedRunAlertTitle("self-check"), "Self-check didn't run");
+  const titles = ["morning", "night-prompt", "night-escalate", "self-check"].map(buildMissedRunAlertTitle);
+  assert.equal(new Set(titles).size, 4);
+});
+
+test("buildDegradedAlertTitle: pins the exact plain title (morning is the only real caller — checkMorningPlanGenerationDegraded's own doc comment)", () => {
+  assert.equal(buildDegradedAlertTitle("morning"), "Morning Plan was slow");
+});
+
+test("buildHeartbeatStaleAlertTitle: pins the exact plain title, no 'heartbeat' terminology, distinct from all three ritual-alert title families", () => {
+  const title = buildHeartbeatStaleAlertTitle();
+  assert.equal(title, "Server isn't checking in");
+  assert.doesNotMatch(title, /heartbeat/i);
+  for (const subcommand of ["morning", "night-prompt", "night-escalate", "self-check"]) {
+    assert.notEqual(title, buildFailedAlertTitle(subcommand));
+    assert.notEqual(title, buildMissedRunAlertTitle(subcommand));
+  }
+  assert.notEqual(title, buildDegradedAlertTitle("morning"));
+});
+
+test("every alert title is free of the raw subcommand id and of internal jargon (titles now render in-app, NotificationOverlay.tsx)", () => {
+  for (const subcommand of ["morning", "night-prompt", "night-escalate", "self-check"]) {
+    assertNoJargon(buildFailedAlertTitle(subcommand));
+    assertNoJargon(buildMissedRunAlertTitle(subcommand));
+  }
+  assertNoJargon(buildDegradedAlertTitle("morning"));
+  assertNoJargon(buildHeartbeatStaleAlertTitle());
+});
+
+// ---- fix round (review finding 3): whole-day counts, never a decimal ----
+
+test("checkDailyRitualMissedRun/checkSelfCheckMissedRun: the real detail names a WHOLE day count, never a decimal, using the plain per-subcommand subject (fix round 2, review finding 1)", () => {
+  const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
+  // 48h since last invocation, 36h grace -> 48h/24 = exactly 2 days.
+  putRitualInvocation(store, "morning", { at: hoursAgo(48) });
+  // 5 days + 12h grace + a further 240h (10 days) since -> 15 days total.
+  putRitualInvocation(store, "self-check", { at: hoursAgo(SELF_CHECK_MISSED_RUN_GRACE_DAYS * 24 + 24 * 10) }); // 15 days since
+
+  const daily = checkDailyRitualMissedRun(store, "morning", () => CHECK_NOW);
+  const selfCheck = checkSelfCheckMissedRun(store, () => CHECK_NOW);
+
+  assert.equal(daily.detail, "morning Plan hasn't run in about 2 days");
+  assert.equal(selfCheck.detail, "self-check hasn't run in about 15 days");
+  assert.doesNotMatch(daily.detail ?? "", /\d+\.\d/, "no decimal day count");
+  assert.doesNotMatch(selfCheck.detail ?? "", /\d+\.\d/, "no decimal day count");
+  store.close();
+});
+
+test("buildMissedRunAlertBody composed with the real detail: pins the exact end-to-end sentence for morning and self-check (the reviewer's own two worked examples)", () => {
+  const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
+  putRitualInvocation(store, "morning", { at: hoursAgo(24 * 4) }); // exactly 4 days since, well past the 36h grace
+  putRitualInvocation(store, "self-check", { at: hoursAgo(SELF_CHECK_MISSED_RUN_GRACE_DAYS * 24 + 24 * 5) }); // 10 days since
+
+  const daily = checkDailyRitualMissedRun(store, "morning", () => CHECK_NOW);
+  const selfCheck = checkSelfCheckMissedRun(store, () => CHECK_NOW);
+
+  assert.equal(
+    buildMissedRunAlertBody(daily.detail ?? ""),
+    "The morning Plan hasn't run in about 4 days — your Mac may have been asleep or off. It'll run again at its next scheduled time.",
+  );
+  assert.equal(
+    buildMissedRunAlertBody(selfCheck.detail ?? ""),
+    "The self-check hasn't run in about 10 days — your Mac may have been asleep or off. It'll run again at its next scheduled time.",
+  );
+  store.close();
+});
+
+test("formatDayCount: pins whole-day, correctly-pluralized output — the pure function `checkInvocationStaleness` builds its detail clause from", () => {
+  assert.equal(formatDayCount(24), "about 1 day", "singular, never '1 days'");
+  assert.equal(formatDayCount(23), "about 1 day", "rounds down to the nearest whole day");
+  assert.equal(formatDayCount(30), "about 1 day", "rounds down (1.25 days)");
+  assert.equal(formatDayCount(36), "about 2 days", "rounds up (1.5 days) — plural");
+  assert.equal(formatDayCount(48), "about 2 days");
+  assert.equal(formatDayCount(24 * 10 + 2), "about 10 days", "the reviewer's own worked example: ~10.1 days -> 'about 10 days', never a decimal");
+  assert.doesNotMatch(formatDayCount(24 * 10 + 2), /\d+\.\d/);
+});
+
+test("buildDegradedAlertBody: pins the exact plain-language copy, matching the brief's own worked example register", () => {
+  assert.equal(
+    buildDegradedAlertBody("This morning's Plan took 8.0s to build (usually under 5.0s)"),
+    "This morning's Plan took 8.0s to build (usually under 5.0s). Nothing to do — it's just slower than normal.",
+  );
+});
+
+test("buildHeartbeatStaleAlertBody: pins the exact plain-language copy, no 'heartbeat' terminology", () => {
+  assert.equal(buildHeartbeatStaleAlertBody(), "The Yoh server on your Mac hasn't checked in recently — it may be off or asleep. This doesn't affect your Plan.");
+  assert.doesNotMatch(buildHeartbeatStaleAlertBody(), /heartbeat/i);
+});
+
+test("checkDailyRitualMissedRun/checkSelfCheckMissedRun: the real (non-mocked) missed-run detail is plain — no ISO timestamp, no 'grace: Nh', no quoted ritual id", () => {
+  const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
+  putRitualInvocation(store, "morning", { at: hoursAgo(DAILY_RITUAL_MISSED_RUN_GRACE_HOURS + 12) });
+  putRitualInvocation(store, "self-check", { at: hoursAgo(SELF_CHECK_MISSED_RUN_GRACE_DAYS * 24 + 12) });
+
+  const daily = checkDailyRitualMissedRun(store, "morning", () => CHECK_NOW);
+  const selfCheck = checkSelfCheckMissedRun(store, () => CHECK_NOW);
+
+  assertNoJargon(buildMissedRunAlertBody(daily.detail ?? ""));
+  assertNoJargon(buildMissedRunAlertBody(selfCheck.detail ?? ""));
+  store.close();
+});
+
+test("checkMorningPlanGenerationDegraded: the real (non-mocked) degraded detail is plain — no internal span name, matches the brief's own register", () => {
+  const result = checkMorningPlanGenerationDegraded({
+    status: "delivered",
+    date: TODAY,
+    plan: PLAN,
+    rendered: "x",
+    deferredTaskIds: [],
+    incompleteTaskIds: [],
+    planGenerationMs: 8000,
+  });
+  assert.equal(result.degraded, true);
+  assert.equal(buildDegradedAlertBody(result.detail ?? ""), "This morning's Plan took 8.0s to build (usually under 5.0s). Nothing to do — it's just slower than normal.");
+  assertNoJargon(buildDegradedAlertBody(result.detail ?? ""));
+});
+
+test("end-to-end: a real failed/missed/degraded morning run's alert bodies contain no internal jargon, ISO timestamps, or quoted ritual ids", async () => {
+  const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
+  putRitualInvocation(store, "morning", { at: hoursAgo(DAILY_RITUAL_MISSED_RUN_GRACE_HOURS + 24) });
+  const s = sink();
+
+  const code = await runRitualCli(
+    ["morning"],
+    deps(deliveredOutcome(PLAN_GENERATION_DEGRADED_THRESHOLD_MS + 3000), s, undefined, () => checkDailyRitualMissedRun(store, "morning", () => CHECK_NOW)),
+  );
+
+  assert.equal(code, 0);
+  assert.equal(s.alerts.length, 2, "one missed-run alert and one degraded-performance alert");
+  for (const alert of s.alerts) {
+    assertNoJargon(alert.message);
+  }
+  store.close();
 });

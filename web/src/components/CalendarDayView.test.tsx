@@ -91,20 +91,21 @@ describe("CalendarDayView", () => {
     expect(el.textContent).toBe("Draft the memo");
   });
 
-  it("a non-Yoh fixed anchor renders cross-hatched, event-fixed-ink, no gradient/shadow, suffixed '(fixed)'", () => {
+  it("a non-Yoh fixed anchor renders cross-hatched, event-fixed-ink, no gradient/shadow, suffixed '· fixed', always compact/single-line/truncated (fix round 2, review finding 2)", () => {
     render(<CalendarDayView blocks={[block({ id: "e1", kind: "fixed", label: "Soccer practice" })]} timeZone={UTC} now={NOON_UTC} />);
     const el = screen.getByTestId("calendar-block");
     expect(el).toHaveClass("text-event-fixed-ink");
     expect(el).not.toHaveClass("bg-gradient-to-br");
     expect(el.className).not.toMatch(/shadow-/);
-    expect(el.textContent).toBe("Soccer practice (fixed)");
+    expect(el.textContent).toBe("Soccer practice · fixed");
+    expect(el).toHaveClass("truncate");
   });
 
   it("an untitled or punctuation-only label shows (No title)", () => {
     render(<CalendarDayView blocks={[block({ id: "b1", kind: "work", label: "   " }), block({ id: "e1", kind: "fixed", label: "--" })]} timeZone={UTC} now={NOON_UTC} />);
     const [work, fixed] = screen.getAllByTestId("calendar-block");
     expect(work!.textContent).toBe("(No title)");
-    expect(fixed!.textContent).toBe("(No title) (fixed)");
+    expect(fixed!.textContent).toBe("(No title) · fixed");
   });
 
   it("a completed block is visibly read-only: aria-disabled and struck through", () => {
@@ -119,13 +120,13 @@ describe("CalendarDayView", () => {
     expect(screen.getByTestId("calendar-block")).toHaveAttribute("aria-disabled", "true");
   });
 
-  it("a PAST fixed (non-Yoh) anchor is visibly read-only, while keeping its cross-hatch/event-fixed-ink/'(fixed)' treatment", () => {
+  it("a PAST fixed (non-Yoh) anchor is visibly read-only, while keeping its cross-hatch/event-fixed-ink/'· fixed' treatment", () => {
     render(<CalendarDayView blocks={[block({ id: "e1", kind: "fixed", label: "Soccer practice", past: true })]} timeZone={UTC} now={NOON_UTC} />);
     const el = screen.getByTestId("calendar-block");
     expect(el).toHaveAttribute("aria-disabled", "true");
     expect(el).toHaveClass("opacity-60");
     expect(el).toHaveClass("text-event-fixed-ink");
-    expect(el.textContent).toBe("Soccer practice (fixed)");
+    expect(el.textContent).toBe("Soccer practice · fixed");
   });
 
   it("a current (not past, not completed) fixed anchor is NOT dimmed", () => {
@@ -145,7 +146,9 @@ describe("CalendarDayView", () => {
         now={NOON_UTC}
         blocks={[
           block({ id: "b2", kind: "work", label: "Second", start: "2026-09-25T14:00:00.000Z", end: "2026-09-25T15:00:00.000Z" }),
-          block({ id: "b1", kind: "work", label: "First", start: "2026-09-25T13:00:00.000Z", end: "2026-09-25T13:30:00.000Z" }),
+          // A full hour (not the old 30min) — this test is about render
+          // ORDER, not the polish-1 short-block label tiers covered below.
+          block({ id: "b1", kind: "work", label: "First", start: "2026-09-25T13:00:00.000Z", end: "2026-09-25T14:00:00.000Z" }),
         ]}
       />,
     );
@@ -167,5 +170,217 @@ describe("CalendarDayView", () => {
     render(<CalendarDayView blocks={[]} timeZone={UTC} now={() => new Date("2026-09-25T20:00:00.000Z")} />); // 8pm UTC
     const view = screen.getByTestId("calendar-day-view");
     expect(view.scrollTop).toBeGreaterThan(0);
+  });
+
+  // ---------------------------------------------------------------------
+  // Polish-1 — "side-by-side calendar events": overlapping blocks share the
+  // lane in columns instead of drawing directly on top of one another.
+  // ---------------------------------------------------------------------
+
+  describe("side-by-side overlapping events", () => {
+    it("a single (non-overlapping) block still starts at the literal CONTENT_LEFT_PX pixel offset — unchanged from before this fix", () => {
+      render(<CalendarDayView blocks={[block({ id: "b1", kind: "work" })]} timeZone={UTC} now={NOON_UTC} />);
+      const el = screen.getByTestId("calendar-block") as HTMLElement;
+      expect(el.style.left).toBe("64px");
+      expect(el.style.width).toBe("");
+    });
+
+    it("two overlapping blocks get DIFFERENT left offsets and an explicit shared width — never the same full-lane position", () => {
+      render(
+        <CalendarDayView
+          timeZone={UTC}
+          now={NOON_UTC}
+          blocks={[
+            block({ id: "a", kind: "work", label: "A", start: "2026-09-25T13:00:00.000Z", end: "2026-09-25T14:00:00.000Z" }),
+            block({ id: "b", kind: "work", label: "B", start: "2026-09-25T13:30:00.000Z", end: "2026-09-25T14:30:00.000Z" }),
+          ]}
+        />,
+      );
+      const [a, b] = screen.getAllByTestId("calendar-block") as HTMLElement[];
+      expect(a!.style.left).not.toBe(b!.style.left);
+      // Column 0 keeps the literal pixel left; column 1 is a calc() expression against the lane's real rendered width.
+      expect(a!.style.left).toBe("64px");
+      expect(b!.style.left).toMatch(/^calc\(/);
+      // Both share an equal, explicit width (never the old implicit full-lane sizing).
+      expect(a!.style.width).toMatch(/^calc\(/);
+      expect(b!.style.width).toMatch(/^calc\(/);
+      expect(a!.style.width).toBe(b!.style.width);
+    });
+
+    it("three mutually overlapping blocks each get their own column, all sharing one 3-way width", () => {
+      render(
+        <CalendarDayView
+          timeZone={UTC}
+          now={NOON_UTC}
+          blocks={[
+            block({ id: "a", kind: "work", label: "A", start: "2026-09-25T13:00:00.000Z", end: "2026-09-25T14:00:00.000Z" }),
+            block({ id: "b", kind: "work", label: "B", start: "2026-09-25T13:10:00.000Z", end: "2026-09-25T14:10:00.000Z" }),
+            block({ id: "c", kind: "work", label: "C", start: "2026-09-25T13:20:00.000Z", end: "2026-09-25T14:20:00.000Z" }),
+          ]}
+        />,
+      );
+      const [a, b, c] = screen.getAllByTestId("calendar-block") as HTMLElement[];
+      const lefts = new Set([a!.style.left, b!.style.left, c!.style.left]);
+      expect(lefts.size).toBe(3); // three distinct columns
+      expect(a!.style.width).toBe(b!.style.width);
+      expect(b!.style.width).toBe(c!.style.width);
+      // 3-way width divides the lane further than a 2-way split would (jsdom
+      // reserializes calc() into a multiplication factor, e.g. "* 0.333…"
+      // rather than "/ 3" literally, so this checks the fraction, not the
+      // exact operator text).
+      expect(a!.style.width).toMatch(/0\.333/);
+    });
+
+    it("two touching (not overlapping) blocks — one ends exactly when the next starts — both keep the full-lane literal left, not a shared column", () => {
+      render(
+        <CalendarDayView
+          timeZone={UTC}
+          now={NOON_UTC}
+          blocks={[
+            block({ id: "a", kind: "work", label: "A", start: "2026-09-25T13:00:00.000Z", end: "2026-09-25T14:00:00.000Z" }),
+            block({ id: "b", kind: "work", label: "B", start: "2026-09-25T14:00:00.000Z", end: "2026-09-25T15:00:00.000Z" }),
+          ]}
+        />,
+      );
+      const [a, b] = screen.getAllByTestId("calendar-block") as HTMLElement[];
+      expect(a!.style.left).toBe("64px");
+      expect(b!.style.left).toBe("64px");
+      expect(a!.style.width).toBe("");
+      expect(b!.style.width).toBe("");
+    });
+  });
+
+  // ---------------------------------------------------------------------
+  // Polish-1 — short blocks scale their label down: under ~20min shows
+  // just the truncated title; under ~45min shows a one-line "Title · h:mm".
+  // ---------------------------------------------------------------------
+
+  describe("short-block label tiers", () => {
+    it("a block under ~20min shows just the title, truncated single-line, no time", () => {
+      render(
+        <CalendarDayView
+          blocks={[block({ id: "b1", kind: "work", label: "Quick sync", start: "2026-09-25T13:00:00.000Z", end: "2026-09-25T13:15:00.000Z" })]}
+          timeZone={UTC}
+          now={NOON_UTC}
+        />,
+      );
+      const el = screen.getByTestId("calendar-block");
+      expect(el.textContent).toBe("Quick sync");
+      expect(el).toHaveClass("truncate");
+    });
+
+    it("a 'very short' block (20-45min) shows a one-line 'Title · h:mm' label", () => {
+      render(
+        <CalendarDayView
+          blocks={[block({ id: "b1", kind: "work", label: "Standup", start: "2026-09-25T13:00:00.000Z", end: "2026-09-25T13:30:00.000Z" })]}
+          timeZone={UTC}
+          now={NOON_UTC}
+        />,
+      );
+      const el = screen.getByTestId("calendar-block");
+      expect(el.textContent).toBe("Standup · 1:00");
+      expect(el).toHaveClass("truncate");
+    });
+
+    it("a normal-length block (>=45min) shows just the title, not single-line-truncated", () => {
+      render(<CalendarDayView blocks={[block({ id: "b1", kind: "work", label: "Draft the memo" })]} timeZone={UTC} now={NOON_UTC} />); // default 1hr
+      const el = screen.getByTestId("calendar-block");
+      expect(el.textContent).toBe("Draft the memo");
+      expect(el).not.toHaveClass("truncate");
+    });
+
+    it("a very short FIXED block still shows the title only, truncated — the ' · fixed' suffix is part of the truncated text, not dropped", () => {
+      render(
+        <CalendarDayView
+          blocks={[block({ id: "e1", kind: "fixed", label: "Soccer", start: "2026-09-25T13:00:00.000Z", end: "2026-09-25T13:10:00.000Z" })]}
+          timeZone={UTC}
+          now={NOON_UTC}
+        />,
+      );
+      expect(screen.getByTestId("calendar-block").textContent).toBe("Soccer · fixed");
+    });
+
+    it("a NORMAL-length (>=45min) FIXED block is still compact/single-line/truncated — a fixed anchor never gets the multi-line treatment, since its column width (not its duration) is what risks clipping it (fix round 2, review finding 2)", () => {
+      render(
+        <CalendarDayView
+          blocks={[block({ id: "e1", kind: "fixed", label: "Soccer practice", start: "2026-09-25T13:00:00.000Z", end: "2026-09-25T14:00:00.000Z" })]} // 1hr — well above VERY_SHORT_MINUTES
+          timeZone={UTC}
+          now={NOON_UTC}
+        />,
+      );
+      const el = screen.getByTestId("calendar-block");
+      expect(el.textContent).toBe("Soccer practice · fixed");
+      expect(el).toHaveClass("truncate");
+      expect(el).toHaveClass("items-center");
+      expect(el).not.toHaveClass("py-1.5");
+    });
+
+    it("a NORMAL-length WORK block (not fixed) still gets the full multi-line treatment, unaffected by the fixed-anchor-only compact rule", () => {
+      render(<CalendarDayView blocks={[block({ id: "b1", kind: "work", label: "Draft the memo" })]} timeZone={UTC} now={NOON_UTC} />); // default 1hr
+      const el = screen.getByTestId("calendar-block");
+      expect(el).not.toHaveClass("truncate");
+      expect(el).not.toHaveClass("items-center");
+    });
+
+    // ---------------------------------------------------------------------
+    // Fix round (review finding 2): the old 14px floor was smaller than a
+    // block's own padding + one line of text, so a very short block's title
+    // was clipped away entirely. The rendered height must now be tall
+    // enough to actually show one compact line, and the title text itself
+    // must render (not just be present but visually clipped to nothing).
+    // ---------------------------------------------------------------------
+
+    it("a 10-minute block renders its title, at a height tall enough for one compact line — not clipped to nothing", () => {
+      render(
+        <CalendarDayView
+          blocks={[block({ id: "b1", kind: "work", label: "Quick standup", start: "2026-09-25T13:00:00.000Z", end: "2026-09-25T13:10:00.000Z" })]}
+          timeZone={UTC}
+          now={NOON_UTC}
+        />,
+      );
+      const el = screen.getByTestId("calendar-block") as HTMLElement;
+      expect(el.textContent).toBe("Quick standup");
+      // 10min at 56px/hour is ~9.3px raw — well under one readable line.
+      expect(Number.parseFloat(el.style.height)).toBeGreaterThanOrEqual(20);
+      // Compact single-line layout: reduced padding + vertical centering, not the normal block's top-anchored py-1.5.
+      expect(el).toHaveClass("py-0.5");
+      expect(el).toHaveClass("items-center");
+      expect(el).not.toHaveClass("py-1.5");
+    });
+
+    it("a bumped-up short block's height never grows past where the very next block (anywhere) starts — never overlapping its text", () => {
+      render(
+        <CalendarDayView
+          timeZone={UTC}
+          now={NOON_UTC}
+          blocks={[
+            // A 4-minute block immediately followed (8 minutes later) by another block — MIN_BLOCK_HEIGHT_PX would ordinarily push the first block's box well past the second's own start.
+            block({ id: "b1", kind: "work", label: "Ping the team", start: "2026-09-25T13:00:00.000Z", end: "2026-09-25T13:04:00.000Z" }),
+            block({ id: "b2", kind: "work", label: "Next thing", start: "2026-09-25T13:08:00.000Z", end: "2026-09-25T14:00:00.000Z" }),
+          ]}
+        />,
+      );
+      const [first, second] = screen.getAllByTestId("calendar-block") as HTMLElement[];
+      const firstTop = Number.parseFloat(first!.style.top);
+      const firstHeight = Number.parseFloat(first!.style.height);
+      const secondTop = Number.parseFloat(second!.style.top);
+      expect(firstTop + firstHeight).toBeLessThanOrEqual(secondTop);
+    });
+
+    it("a bumped-up short block's height still never shrinks below its own real duration, even when capped by a close neighbor", () => {
+      render(
+        <CalendarDayView
+          timeZone={UTC}
+          now={NOON_UTC}
+          blocks={[
+            block({ id: "b1", kind: "work", label: "Ping the team", start: "2026-09-25T13:00:00.000Z", end: "2026-09-25T13:04:00.000Z" }),
+            block({ id: "b2", kind: "work", label: "Right after", start: "2026-09-25T13:04:00.000Z", end: "2026-09-25T14:00:00.000Z" }),
+          ]}
+        />,
+      );
+      const [first] = screen.getAllByTestId("calendar-block") as HTMLElement[];
+      // 4min at 56px/hour ≈ 3.7px — the true floor even when there's no room to grow.
+      expect(Number.parseFloat(first!.style.height)).toBeGreaterThan(3);
+    });
   });
 });

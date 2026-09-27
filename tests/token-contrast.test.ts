@@ -182,12 +182,13 @@ test("detector: the shimmer check catches a pair that passes unshimmered but not
   assert.ok(worstShimmerContrast(secondary.light, surface.light, start.light, end.light, shimmerOpacity()) < 4.5);
 });
 
-// ink-primary/ink-secondary/rim-interactive "on glass" — glass-fill (55%/6%
-// white) alpha-blended over surface-raised, recomputed here for Task 6A's
-// brighter cool-white palette (was the pre-2026-09-27 warm palette's
-// composite): light = white*.55 + #EEF2F8*.45 ≈ #F7F9FC; dark = white*.06 +
-// #1E2430*.94 ≈ #2C313C.
-const GLASS_COMPOSITE = { light: "#f7f9fc", dark: "#2c313c" };
+// ink-primary/ink-secondary/rim-interactive "on glass" — polish-1 fix round
+// (2026-09-27 review, finding 4): --color-glass-fill is now FULLY opaque
+// (alpha 1) and set to exactly --color-surface-raised's own RGB, so there is
+// no alpha blend left to compute at all — the composite IS surface-raised:
+// #EEF2F8 light, #1E2430 dark (a 92% near-opaque fill still let the
+// calendar's digits faintly show through in a real screenshot).
+const GLASS_COMPOSITE = { light: "#eef2f8", dark: "#1e2430" };
 
 test("ink-primary/ink-secondary/rim-interactive on the glass composite meet their thresholds in both themes", () => {
   const glass = GLASS_COMPOSITE;
@@ -201,5 +202,21 @@ test("ink-primary/ink-secondary/rim-interactive on the glass composite meet thei
     const darkRatio = contrastRatio(fg.dark, glass.dark);
     assert.ok(lightRatio >= threshold, `${name} on glass (light): ${lightRatio.toFixed(2)} < ${threshold}`);
     assert.ok(darkRatio >= threshold, `${name} on glass (dark): ${darkRatio.toFixed(2)} < ${threshold}`);
+  }
+});
+
+test("polish-1 fix round (review finding 4): --color-glass-fill is fully opaque (alpha 1) in both themes — no underlying page content can show through the notification card, with or without backdrop-filter support", () => {
+  // Not `readToken` (below): its `[^,]+` split assumes each light-dark()
+  // argument has no INTERNAL comma, which holds for every other token
+  // (hex colors) but not this rgba()-with-commas one — matched directly here instead.
+  const match = /--color-glass-fill:\s*light-dark\(\s*rgba?\(([^)]+)\)\s*,\s*rgba?\(([^)]+)\)\s*\)/.exec(css);
+  assert.ok(match, "--color-glass-fill: expected light-dark(rgba(...), rgba(...))");
+  for (const [label, args] of [
+    ["light", match![1]!],
+    ["dark", match![2]!],
+  ] as const) {
+    const parts = args.split(",").map((s) => Number(s.trim()));
+    const alpha = parts.length === 4 ? parts[3]! : 1;
+    assert.equal(alpha, 1, `--color-glass-fill (${label}) must be fully opaque (alpha 1), got ${alpha}`);
   }
 });

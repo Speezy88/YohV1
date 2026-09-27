@@ -36,7 +36,17 @@
   --color-rim-highlight: light-dark(rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.06));
   --color-shadow-light: light-dark(rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0.07));
   --color-shadow-dark: light-dark(rgba(163, 177, 198, 0.5), rgba(0, 0, 0, 0.6));
-  --color-glass-fill: light-dark(rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.06));
+  /* Polish-1 fix round (2026-09-27 review, finding 4): raised again, from a
+     92%/90% near-opaque fill to FULLY opaque (alpha 1) — at 92% the
+     calendar's own digits still faintly showed through in a real
+     screenshot. Now exactly `--color-surface-raised`'s own RGB (not a
+     separate literal), so a card looks identical whether or not
+     `backdrop-filter` is supported (the base, non-`@supports` rule below
+     already uses `--color-surface-raised` directly) — the `@supports` block
+     still applies blur/saturate on top (kept for the "glass" material/depth
+     cue DESIGN.md calls for), but with a fully opaque fill under it, no
+     underlying page content can ever show through either way. */
+  --color-glass-fill: light-dark(rgba(238, 242, 248, 1), rgba(30, 36, 48, 1));
   --color-accent-gradient-start: light-dark(#7fc1f5, #8fcbfa);
   --color-accent-gradient-end: light-dark(#1e6fd9, #3e8cf0);
   --color-accent-solid: light-dark(#1e6fd9, #3e8cf0);

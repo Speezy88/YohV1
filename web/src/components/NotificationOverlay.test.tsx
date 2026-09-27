@@ -129,4 +129,66 @@ describe("NotificationOverlay", () => {
     expect(screen.queryByTestId("notification-card")).not.toBeInTheDocument();
     expect(screen.getByRole("status")).toBeEmptyDOMElement();
   });
+
+  // ---------------------------------------------------------------------
+  // Polish-1 — "readable notification cards": opaque/solid-backdrop glass
+  // (fixed in tokens.css, not this file) plus a subtle shadow, a real title
+  // line, a 3-line clamp with "Show more" for a long body, and a "+N more"
+  // affordance beyond the 3 visible cards.
+  // ---------------------------------------------------------------------
+
+  it("the card has a subtle shadow on top of the (now solid-backed) glass surface", () => {
+    renderWithNav([{ id: "n1", kind: "operational", title: "x", body: "x", createdAt: "2026-01-01T00:00:00.000Z", deepLink: null }]);
+    expect(screen.getByTestId("notification-card")).toHaveClass("shadow-extruded-sm");
+  });
+
+  it("shows a bold title line separate from the body when they differ", () => {
+    renderWithNav([
+      { id: "n1", kind: "operational", title: "Yoh: morning running slow", body: "This morning's Plan took 8.0s to build.", createdAt: "2026-01-01T00:00:00.000Z", deepLink: null },
+    ]);
+    expect(screen.getByText("Yoh: morning running slow")).toBeInTheDocument();
+    expect(screen.getByText("This morning's Plan took 8.0s to build.")).toBeInTheDocument();
+  });
+
+  it("does not duplicate the line when title and body are identical (most fixtures, and some real notification kinds, use the same string for both)", () => {
+    renderWithNav([{ id: "n1", kind: "sandbox-complete", title: "Saved 3 Tasks", body: "Saved 3 Tasks", createdAt: "2026-01-01T00:00:00.000Z", deepLink: "/tasks" }]);
+    expect(screen.getAllByText("Saved 3 Tasks")).toHaveLength(1);
+  });
+
+  it("a long body gets a 'Show more' toggle that expands it without dismissing or navigating", () => {
+    const dismiss = vi.spyOn(notificationsModule, "dismissNotification");
+    const longBody = "A".repeat(200);
+    const { goTo } = renderWithNav([{ id: "n1", kind: "operational", title: "Yoh: something", body: longBody, createdAt: "2026-01-01T00:00:00.000Z", deepLink: null }]);
+
+    const toggle = screen.getByRole("button", { name: "Show more" });
+    fireEvent.click(toggle);
+
+    expect(screen.getByRole("button", { name: "Show less" })).toBeInTheDocument();
+    expect(dismiss).not.toHaveBeenCalled();
+    expect(goTo).not.toHaveBeenCalled();
+    // The full text was always in the DOM (CSS-only clamp) — toggling just swaps the clamp class, never the text itself.
+    expect(screen.getByText(longBody)).toBeInTheDocument();
+  });
+
+  it("a short body never shows a 'Show more' toggle", () => {
+    renderWithNav([{ id: "n1", kind: "operational", title: "x", body: "A short message.", createdAt: "2026-01-01T00:00:00.000Z", deepLink: null }]);
+    expect(screen.queryByRole("button", { name: /show more/i })).not.toBeInTheDocument();
+  });
+
+  it("shows a '+N more' affordance when the store holds more than 3, beyond the 3 visible cards", () => {
+    renderWithNav([
+      { id: "n5", kind: "operational", title: "5", body: "5", createdAt: "2026-01-01T00:00:04.000Z", deepLink: null },
+      { id: "n4", kind: "operational", title: "4", body: "4", createdAt: "2026-01-01T00:00:03.000Z", deepLink: null },
+      { id: "n3", kind: "operational", title: "3", body: "3", createdAt: "2026-01-01T00:00:02.000Z", deepLink: null },
+      { id: "n2", kind: "operational", title: "2", body: "2", createdAt: "2026-01-01T00:00:01.000Z", deepLink: null },
+      { id: "n1", kind: "operational", title: "1", body: "1", createdAt: "2026-01-01T00:00:00.000Z", deepLink: null },
+    ]);
+    expect(screen.getAllByTestId("notification-card")).toHaveLength(3);
+    expect(screen.getByTestId("notification-more-indicator")).toHaveTextContent("+2 more");
+  });
+
+  it("shows no '+N more' affordance when the store holds 3 or fewer", () => {
+    renderWithNav([{ id: "n1", kind: "operational", title: "x", body: "x", createdAt: "2026-01-01T00:00:00.000Z", deepLink: null }]);
+    expect(screen.queryByTestId("notification-more-indicator")).not.toBeInTheDocument();
+  });
 });

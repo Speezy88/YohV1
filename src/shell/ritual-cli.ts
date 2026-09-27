@@ -515,7 +515,7 @@ async function withFailureAlert<T>(
   } catch (err) {
     safeRecordInvocation(recordInvocation, subcommand, io);
     const message = err instanceof Error ? err.message : String(err);
-    await sendAlertSafely(subcommand, `thrown error — ${message}`, io, sendFailureAlert, notifyOperational);
+    await sendAlertSafely(subcommand, message, io, sendFailureAlert, notifyOperational);
     io.writeError(
       JSON.stringify({
         level: "error",
@@ -530,7 +530,7 @@ async function withFailureAlert<T>(
   safeRecordInvocation(recordInvocation, subcommand, io);
 
   if (!result.ok) {
-    await sendAlertSafely(subcommand, `${result.error.kind} — ${result.error.message}`, io, sendFailureAlert, notifyOperational);
+    await sendAlertSafely(subcommand, result.error.message, io, sendFailureAlert, notifyOperational);
   } else if (checkDegraded) {
     const degradedCheck = checkDegraded(result.value);
     if (degradedCheck.degraded) {
@@ -669,23 +669,181 @@ async function sendPushoverAlertSafely(
 }
 
 /**
- * Builds the "this run failed" alert's title/body (worded distinctly from a
- * normal Plan/close-out/Self-Check notification — see `handleMorningResult`'s
+ * Polish-1 fix round (review finding 1): a TITLE now renders in-app too
+ * (`web/src/components/NotificationOverlay.tsx`'s new title line), so it can
+ * no longer read as a developer-facing tag like `Yoh: night-prompt missed a
+ * run` — it needs the same plain-English treatment as the body. `titleSubject`
+ * gives every alert kind a short, plain, per-subcommand NOUN PHRASE ("Morning
+ * Plan", "Night check-in", "Night reminder", "Self-check") that keeps titles
+ * mutually distinct (AD-7) without the raw subcommand id or a "Yoh:" prefix.
+ * `ritualSubject` (below) is the SEPARATE, longer sentence-subject phrasing
+ * ("This morning's Plan") used inside body text, where a full sentence reads
+ * better than a title-cased noun phrase — the two are deliberately different
+ * registers for the same subcommand.
+ *
+ * `ritualSubject`/`ritualRetryHint` give the FAILED alert's BODY its
+ * friendly, per-subcommand phrasing (the brief's own worked example: "This
+ * morning's Plan couldn't be built: couldn't reach Notion. It'll try again at
+ * the next scheduled time, or type /plan.") — only the failed alert needs a
+ * "what do I type to retry" hint, so only it reaches for these.
+ */
+function titleSubject(subcommand: string): string {
+  switch (subcommand) {
+    case "morning":
+      return "Morning Plan";
+    case "night-prompt":
+      return "Night check-in";
+    case "night-escalate":
+      return "Night reminder";
+    case "self-check":
+      return "Self-check";
+    default:
+      return subcommand;
+  }
+}
+
+/** The "this run failed" alert's title — e.g. "Morning Plan failed". */
+export function buildFailedAlertTitle(subcommand: string): string {
+  return `${titleSubject(subcommand)} failed`;
+}
+
+/** The dead-man's-switch missed-run alert's title — e.g. "Night check-in didn't run". */
+export function buildMissedRunAlertTitle(subcommand: string): string {
+  return `${titleSubject(subcommand)} didn't run`;
+}
+
+/** The degraded-performance alert's title — e.g. "Morning Plan was slow" (in practice, `morning` is the only caller — see `checkMorningPlanGenerationDegraded`'s own doc comment). */
+export function buildDegradedAlertTitle(subcommand: string): string {
+  return `${titleSubject(subcommand)} was slow`;
+}
+
+/** The stale-heartbeat alert's title — no "heartbeat" (this file's own internal mechanism name), and no per-subcommand distinction needed: this is about the SERVER process, not any one ritual. */
+export function buildHeartbeatStaleAlertTitle(): string {
+  return "Server isn't checking in";
+}
+
+function ritualSubject(subcommand: string): string {
+  switch (subcommand) {
+    case "morning":
+      return "This morning's Plan";
+    case "night-prompt":
+      return "Tonight's close-out check-in";
+    case "night-escalate":
+      return "Tonight's reminder email";
+    case "self-check":
+      return "Today's Self-Check";
+    default:
+      return `Yoh's ${subcommand}`;
+  }
+}
+
+/** A plain "what to do about it, if anything" clause for the FAILED alert — `/plan` and `/night` are real slash commands (`app/commands.ts`); the other two subcommands have no manual on-demand equivalent, so they only name the next scheduled time. */
+function ritualRetryHint(subcommand: string): string {
+  switch (subcommand) {
+    case "morning":
+      return 'It will try again at the next scheduled time, or type "/plan".';
+    case "night-prompt":
+      return 'It will try again at the next scheduled time, or type "/night".';
+    default:
+      return "It will try again at the next scheduled time.";
+  }
+}
+
+/**
+ * The "this run failed" alert's body (worded distinctly from a normal
+ * Plan/close-out/Self-Check notification — see `handleMorningResult`'s
  * `NOTIFICATION_TITLE`, `NIGHT_PROMPT_NOTIFICATION_TITLE`, and
  * `SELF_CHECK_NOTIFICATION_TITLE`, none of which mention the word "failed"
- * or the subcommand's own name) and sends it via `sendPushoverAlertSafely`.
+ * or the subcommand's own name). `message` is the underlying `YohError`'s
+ * own message (or a caught throw's) — already a plain sentence fragment
+ * from the layer that produced it — relayed as-is, just no longer wrapped
+ * in `The "${subcommand}" ritual failed and needs attention: ${kind} —
+ * ${message}` jargon.
+ */
+export function buildFailedAlertBody(subcommand: string, message: string): string {
+  return `${ritualSubject(subcommand)} couldn't finish: ${message}. ${ritualRetryHint(subcommand)}`;
+}
+
+/**
+ * Fix round 2 (review finding 1): the plain, lower-case, MID-sentence noun
+ * phrase the MISSED-RUN alert's body embeds inside "The ${…} hasn't run in
+ * …" — "morning Plan", "night check-in", "night reminder", "self-check".
+ * Deliberately a THIRD register, distinct from both `titleSubject` (Title
+ * Case, the alert TITLE) and `ritualSubject` (a full sentence-subject
+ * phrase like "This morning's Plan", the FAILED alert's body) — each
+ * fitted to where it's actually read.
+ */
+function missedRunSubject(subcommand: string): string {
+  switch (subcommand) {
+    case "morning":
+      return "morning Plan";
+    case "night-prompt":
+      return "night check-in";
+    case "night-escalate":
+      return "night reminder";
+    case "self-check":
+      return "self-check";
+    default:
+      return subcommand;
+  }
+}
+
+/**
+ * The dead-man's-switch "this subcommand's own previous scheduled occurrence
+ * never recorded a successful run" alert's body (Task 26 / Story 5.2, AD-7) —
+ * worded distinctly from BOTH a normal notification AND
+ * `buildFailedAlertBody`'s "failed" wording above (this run itself hasn't
+ * failed — or even started yet — a PRIOR one appears to have never
+ * happened). `detail` (built by `checkDailyRitualMissedRun`/
+ * `checkSelfCheckMissedRun`, below, using `missedRunSubject` above) is
+ * already the full lower-case "‹subject› hasn't run in ‹N days›" clause —
+ * this only adds the leading "The " (the one capital letter in the whole
+ * sentence) and the trailing reassurance, so it reads as one calm sentence:
+ * "The self-check hasn't run in about 10 days — your Mac may have been
+ * asleep or off. It'll run again at its next scheduled time." Fix round 2
+ * (review finding 1): simpler than round 1's wording — drops "shown a
+ * successful run" for just "run", and "it's running now, as normal" for
+ * "It'll run again at its next scheduled time" (this alert fires BEFORE
+ * `runSubcommand`, so "it's running now" was never quite accurate anyway).
+ */
+export function buildMissedRunAlertBody(detail: string): string {
+  return `The ${detail} — your Mac may have been asleep or off. It'll run again at its next scheduled time.`;
+}
+
+/**
+ * The "Plan generation is running degraded" alert's body (Task 27 / Story
+ * 5.3, AD-7). Worded distinctly from BOTH `buildFailedAlertBody`'s "failed"
+ * wording and `buildMissedRunAlertBody`'s "didn't run" wording: this run
+ * neither failed nor was skipped — it completed and its own Plan was
+ * delivered normally, it just took unusually long. `detail` (built by
+ * `checkMorningPlanGenerationDegraded`, below) already names roughly how
+ * long it took, in plain terms.
+ */
+export function buildDegradedAlertBody(detail: string): string {
+  return `${detail}. Nothing to do — it's just slower than normal.`;
+}
+
+/** Worded distinctly from all three alert bodies above — this run neither failed nor was skipped; a DIFFERENT process (the server) appears down. No mention of "heartbeat" — that's this file's own internal mechanism name, not something Spencer needs to know. */
+export function buildHeartbeatStaleAlertBody(): string {
+  return "The Yoh server on your Mac hasn't checked in recently — it may be off or asleep. This doesn't affect your Plan.";
+}
+
+/**
+ * Sends the "this run failed" alert via `sendPushoverAlertSafely`. `message`
+ * is the raw `YohError.message` (or caught-throw message) — see
+ * `buildFailedAlertBody`'s own doc comment for why it's relayed as-is.
  */
 async function sendAlertSafely(
   subcommand: string,
-  detail: string,
+  message: string,
   io: RitualCliIo,
   sendFailureAlert: (notification: PlanNotification) => Promise<void>,
   notifyOperational: (title: string, message: string) => void,
 ): Promise<void> {
   return sendPushoverAlertSafely(
     "ritual-cli.failure-alert-send-failed",
-    `Yoh: ${subcommand} failed`,
-    `The "${subcommand}" ritual failed and needs attention: ${detail}`,
+    buildFailedAlertTitle(subcommand),
+    buildFailedAlertBody(subcommand, message),
     subcommand,
     io,
     sendFailureAlert,
@@ -693,17 +851,7 @@ async function sendAlertSafely(
   );
 }
 
-/**
- * Builds the dead-man's-switch "this subcommand's own previous scheduled
- * occurrence never recorded a successful run" alert's title/body (Task 26 /
- * Story 5.2, AD-7) — worded distinctly from BOTH a normal notification AND
- * `sendAlertSafely`'s "failed" wording above (this run itself hasn't failed
- * — or even started yet — a PRIOR one appears to have never happened) and
- * sends it via the same `sendPushoverAlertSafely` primitive. Names the
- * subcommand and `detail` (roughly how long it's been, built by
- * `checkDailyRitualMissedRun`/`checkSelfCheckMissedRun`) in the body, per
- * this task's own brief.
- */
+/** Sends the dead-man's-switch missed-run alert via `sendPushoverAlertSafely`. */
 async function sendMissedRunAlertSafely(
   subcommand: string,
   detail: string,
@@ -713,8 +861,8 @@ async function sendMissedRunAlertSafely(
 ): Promise<void> {
   return sendPushoverAlertSafely(
     "ritual-cli.missed-run-alert-send-failed",
-    `Yoh: ${subcommand} missed a run`,
-    `The "${subcommand}" ritual's previous scheduled occurrence does not show a successful run recently enough: ${detail}. This run is proceeding with its own normal work regardless (self-healing, per AD-7) — this alert is only a signal, not a block.`,
+    buildMissedRunAlertTitle(subcommand),
+    buildMissedRunAlertBody(detail),
     subcommand,
     io,
     sendFailureAlert,
@@ -722,18 +870,7 @@ async function sendMissedRunAlertSafely(
   );
 }
 
-/**
- * Builds the "Plan generation is running degraded" alert's title/body (Task
- * 27 / Story 5.3, AD-7) and sends it via the same `sendPushoverAlertSafely`
- * primitive (AD-9: one alert-sending mechanism reused for all THREE AD-7
- * signals now — a failed run, a missed prior run, and a degraded-but-
- * successful one — never a parallel one). Worded distinctly from BOTH
- * `sendAlertSafely`'s "failed" wording and `sendMissedRunAlertSafely`'s
- * "missed a run" wording: this run neither failed nor was skipped — it
- * completed and its own Plan/notification was delivered normally, it just
- * took unusually long. `detail` (built by `checkMorningPlanGenerationDegraded`)
- * names roughly how long it took and against what threshold.
- */
+/** Sends the degraded-performance alert via `sendPushoverAlertSafely` (AD-9: one alert-sending mechanism reused for all THREE AD-7 signals — a failed run, a missed prior run, and a degraded-but-successful one — never a parallel one). */
 async function sendDegradedAlertSafely(
   subcommand: string,
   detail: string,
@@ -743,8 +880,8 @@ async function sendDegradedAlertSafely(
 ): Promise<void> {
   return sendPushoverAlertSafely(
     "ritual-cli.degraded-alert-send-failed",
-    `Yoh: ${subcommand} running slow`,
-    `The "${subcommand}" ritual completed and delivered normally, but is running degraded: ${detail}. This is a performance signal only, not a failure — nothing needs recovering.`,
+    buildDegradedAlertTitle(subcommand),
+    buildDegradedAlertBody(detail),
     subcommand,
     io,
     sendFailureAlert,
@@ -752,7 +889,7 @@ async function sendDegradedAlertSafely(
   );
 }
 
-/** Worded distinctly from `sendAlertSafely`'s "failed", `sendMissedRunAlertSafely`'s "missed a run", and `sendDegradedAlertSafely`'s "running slow" — this run neither failed nor was skipped; a DIFFERENT process (the server) appears down. */
+/** Sends the stale-heartbeat alert via `sendPushoverAlertSafely`. */
 async function sendHeartbeatStaleAlertSafely(
   subcommand: string,
   io: RitualCliIo,
@@ -761,8 +898,8 @@ async function sendHeartbeatStaleAlertSafely(
 ): Promise<void> {
   return sendPushoverAlertSafely(
     "ritual-cli.heartbeat-alert-send-failed",
-    "Yoh: server is down",
-    "The Yoh server's heartbeat is stale — it hasn't checked in recently and may be down. This does not block your Morning Plan.",
+    buildHeartbeatStaleAlertTitle(),
+    buildHeartbeatStaleAlertBody(),
     subcommand,
     io,
     sendFailureAlert,
@@ -832,6 +969,20 @@ export const SELF_CHECK_MISSED_RUN_GRACE_DAYS = 5;
  * ordinary state of a brand-new install, not a missed occurrence; this
  * returns `{ missed: false }` for it, never an alert.
  */
+/**
+ * Polish-1 fix round (review finding 3): a WHOLE day count — "about 10
+ * days", "about 1 day" — never a decimal ("about 10.1 day(s)" reads like a
+ * debug value, not something a person would ever say). Rounds rather than
+ * floors/ceils so "just over" or "just under" a whole day both read as the
+ * nearest whole day, and `Math.max(1, …)` keeps a sub-24h-past-grace gap
+ * (impossible today, since every grace threshold is itself >= 24h, but kept
+ * as a floor for robustness) from ever reading as "about 0 days".
+ */
+export function formatDayCount(hoursSince: number): string {
+  const days = Math.max(1, Math.round(hoursSince / 24));
+  return `about ${days} day${days === 1 ? "" : "s"}`;
+}
+
 function checkInvocationStaleness(store: MemoryStore, subcommand: string, now: () => Date, graceHours: number): MissedRunCheckResult {
   const lastInvocation = getRitualInvocation(store, subcommand);
   if (!lastInvocation) {
@@ -843,7 +994,14 @@ function checkInvocationStaleness(store: MemoryStore, subcommand: string, now: (
   }
   return {
     missed: true,
-    detail: `no invocation of "${subcommand}" has been observed since ${lastInvocation.data.at} (~${(hoursSince / 24).toFixed(1)} days ago; grace: ${graceHours}h)`,
+    // Polish-1: plain-language — a rough WHOLE day count, never the raw ISO
+    // timestamp, a decimal, or the "grace: Nh" internal threshold literal.
+    // Fix round 2 (review finding 1): `missedRunSubject`, not the raw
+    // subcommand id — "morning Plan hasn't run in about 4 days", not
+    // "morning hasn't shown a successful run in about 4 days". Entirely
+    // lower-case (a mid-sentence clause) — `buildMissedRunAlertBody` wraps
+    // it with the leading "The " capital letter and the trailing sentence.
+    detail: `${missedRunSubject(subcommand)} hasn't run in ${formatDayCount(hoursSince)}`,
   };
 }
 
@@ -914,7 +1072,10 @@ export function checkMorningPlanGenerationDegraded(outcome: MorningRitualOutcome
   }
   return {
     degraded: true,
-    detail: `Plan generation (Data-Completeness Gate through Work/Break fitting) took ${(ms / 1000).toFixed(1)}s, over the ${(PLAN_GENERATION_DEGRADED_THRESHOLD_MS / 1000).toFixed(1)}s threshold`,
+    // Polish-1: plain-language — no "Data-Completeness Gate through
+    // Work/Break fitting" internal span name, just the duration and the
+    // usual threshold, both already in whole seconds.
+    detail: `${ritualSubject("morning")} took ${(ms / 1000).toFixed(1)}s to build (usually under ${(PLAN_GENERATION_DEGRADED_THRESHOLD_MS / 1000).toFixed(1)}s)`,
   };
 }
 
