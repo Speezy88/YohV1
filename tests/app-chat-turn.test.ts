@@ -17,7 +17,7 @@ import assert from "node:assert/strict";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { createMemoryStore, getCurrentTimeBudget, getPlan, putOpenInteractionRequest, putPlan, putTimeBudget, type MemoryStore } from "../src/adapters/memory-store.ts";
 import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
-import { chatTurn, MAX_CHAT_HISTORY_TURNS, STATUS_THINKING, type ChatTurnDeps } from "../src/app/chat-turn.ts";
+import { CALENDAR_DELETE_NOT_SUPPORTED_REPLY, chatTurn, MAX_CHAT_HISTORY_TURNS, STATUS_THINKING, type ChatTurnDeps } from "../src/app/chat-turn.ts";
 import { COMMANDS } from "../src/app/commands.ts";
 import type { AnthropicMessagesClient } from "../src/adapters/llm-adapter.ts";
 import type { ChatSession } from "../src/app/chat-session.ts";
@@ -148,7 +148,7 @@ test("Story 8.4: a recognized Plan-view command never reaches classifyChatIntent
   assert.equal((llmClient as any).calls.length, 0, "a Task-4 recognizer match must short-circuit BEFORE classifyChatIntent ever runs");
 });
 
-test("chatTurn falls through to answerQuestion for an unmatched line, costing exactly three LLM calls (Story 8.8: chatTurn's own detectTaskCapture, then classifyChatIntent, then answerQuestion's own call)", async () => {
+test("chatTurn falls through to answerQuestion for an unmatched line, costing exactly three LLM calls (chatTurn's own classifyCapture, then classifyChatIntent, then answerQuestion's own call)", async () => {
   const llmClient = makeFakeLlmClient("It's sunny where you are, probably.");
   const deps = baseDeps({ llmClient });
 
@@ -160,7 +160,7 @@ test("chatTurn falls through to answerQuestion for an unmatched line, costing ex
   assert.equal(
     (llmClient as any).calls.length,
     3,
-    "expected exactly three Claude calls for the unmatched input: detectTaskCapture, classifyChatIntent, then the general-qa answer",
+    "expected exactly three Claude calls for the unmatched input: classifyCapture, classifyChatIntent, then the general-qa answer",
   );
 });
 
@@ -180,7 +180,7 @@ test("chatTurn trims an untrimmed history down to MAX_CHAT_HISTORY_TURNS before 
 
   await chatTurn(deps, { message: "turn-49", history: longHistory });
 
-  // calls[0] is chatTurn's own detectTaskCapture call (Story 8.8), calls[1]
+  // calls[0] is chatTurn's own classifyCapture call, calls[1]
   // is its classifyChatIntent call (Story 8.4, sent only the current line,
   // not the history); calls[2] is answerQuestion's own call, the one this
   // test is actually about.
@@ -210,7 +210,7 @@ test("Story 8.6 (Task 7): trimming drops a leading assistant turn if one slips t
 
   await chatTurn(deps, { message: "turn-49", history });
 
-  // calls[0] is detectTaskCapture, calls[1] is classifyChatIntent, calls[2] is answerQuestion (see the test above).
+  // calls[0] is classifyCapture, calls[1] is classifyChatIntent, calls[2] is answerQuestion (see the test above).
   const sentMessages = (llmClient as any).calls[2].messages as ReadonlyArray<{ role: string; content: string }>;
   assert.equal(sentMessages[0]!.role, "user", "the trimmed history handed to the Messages API must never start with 'assistant'");
 });
@@ -324,15 +324,15 @@ test("Review Focus #4: a calendar-edit line whose draft is NONE falls through to
   assert.equal(result.ok, true);
   if (!result.ok) return;
   // draftCalendarEditRequest's own call returns "NONE" -> proposeCalendarEdit
-  // returns the empty fall-through convention -> detectTaskCapture (Story
-  // 8.8, also "NONE") -> classifyChatIntent (also "NONE", not "SEARCH: ...",
+  // returns the empty fall-through convention -> classifyCapture (also
+  // "NONE") -> classifyChatIntent (also "NONE", not "SEARCH: ...",
   // so GENERAL) -> answerQuestion, which answers with this same fake
   // client's fixed response text.
   assert.equal(result.value.reply, "NONE");
   assert.equal(
     (llmClient as any).calls.length,
     4,
-    "expected draftCalendarEditRequest, then detectTaskCapture, then classifyChatIntent, then answerQuestion — the empty fall-through must never be handed back to Spencer as a real (blank) answer",
+    "expected draftCalendarEditRequest, then classifyCapture, then classifyChatIntent, then answerQuestion — the empty fall-through must never be handed back to Spencer as a real (blank) answer",
   );
 });
 
@@ -541,8 +541,24 @@ test("command matching is case-insensitive, and a trailing word after the comman
 // be captured.
 // ============================================================================
 
-/** Dispatches a fake client's response by a distinguishing substring of the system prompt — detectTaskCapture's, draftNotionPageFields', and classifyChatIntent's system prompts are each worded distinctly (mirrors how each real function's own prompt already reads distinctly to a human). */
-function fakeCaptureRoutingClient(capture: "CAPTURE" | "NONE", draftFields = "title=Lab report draft") {
+/**
+ * Dispatches a fake client's response by a distinguishing substring of the
+ * system prompt — classifyCapture's, draftNotionPageFields',
+ * draftCalendarEditRequest's, and classifyChatIntent's system prompts are
+ * each worded distinctly (mirrors how each real function's own prompt
+ * already reads distinctly to a human). `capture` drives classifyCapture's
+ * own response ("TASK"/"EVENT"/"NONE" — real-use fixes plan, Task 2's 3-way
+ * classifier); `calendarDraft` drives draftCalendarEditRequest's response,
+ * for tests that exercise the "event" -> calendar-create fallback.
+ */
+function fakeCaptureRoutingClient(opts: {
+  readonly capture?: "TASK" | "EVENT" | "NONE";
+  readonly draftFields?: string;
+  readonly calendarDraft?: string;
+} = {}) {
+  const capture = opts.capture ?? "NONE";
+  const draftFields = opts.draftFields ?? "title=Lab report draft";
+  const calendarDraft = opts.calendarDraft ?? "NONE";
   const calls: any[] = [];
   return {
     calls,
@@ -550,7 +566,13 @@ function fakeCaptureRoutingClient(capture: "CAPTURE" | "NONE", draftFields = "ti
       create: async (params: any) => {
         calls.push(params);
         const system = typeof params.system === "string" ? params.system : "";
-        const text = system.includes("task-capture detector") ? capture : system.includes("structured draft for a new") ? draftFields : "GENERAL";
+        const text = system.includes("task/event-capture classifier")
+          ? capture
+          : system.includes("structured draft for a new")
+            ? draftFields
+            : system.includes("structured Calendar edit")
+              ? calendarDraft
+              : "GENERAL";
         return {
           id: "msg_test",
           container: null,
@@ -599,7 +621,7 @@ function fakeTasksNotionCreateClient() {
 }
 
 test("chatTurn routes a captured Task description through draftItem's Tasks-database path, not general chat", async () => {
-  const llmClient = fakeCaptureRoutingClient("CAPTURE");
+  const llmClient = fakeCaptureRoutingClient({ capture: "TASK" });
   const deps = baseDeps({
     llmClient,
     getNotionCreatePageBinding: () => ({
@@ -622,7 +644,7 @@ test("chatTurn routes a captured Task description through draftItem's Tasks-data
 });
 
 test("chatTurn does NOT capture a question — it falls through to the ordinary chat/search path", async () => {
-  const llmClient = fakeCaptureRoutingClient("NONE");
+  const llmClient = fakeCaptureRoutingClient({ capture: "NONE" });
   const deps = baseDeps({ llmClient });
   const result = await chatTurn(deps, {
     message: "What's my next meeting?",
@@ -634,7 +656,7 @@ test("chatTurn does NOT capture a question — it falls through to the ordinary 
 });
 
 test("chatTurn does NOT capture an ordinary statement", async () => {
-  const llmClient = fakeCaptureRoutingClient("NONE");
+  const llmClient = fakeCaptureRoutingClient({ capture: "NONE" });
   const deps = baseDeps({ llmClient });
   const result = await chatTurn(deps, {
     message: "That lecture ran long today.",
@@ -646,10 +668,252 @@ test("chatTurn does NOT capture an ordinary statement", async () => {
 });
 
 test("chatTurn's capture check runs AFTER every deterministic recognizer — an explicit time-budget line never reaches any LLM call, capture included", async () => {
-  const llmClient = fakeCaptureRoutingClient("NONE");
+  const llmClient = fakeCaptureRoutingClient({ capture: "NONE" });
   const deps = baseDeps({ llmClient });
   await chatTurn(deps, { message: "time budget 6h", history: [] });
   assert.equal((llmClient as any).calls.length, 0, "a deterministic time-budget line must never reach any LLM call, capture included");
+});
+
+// ============================================================================
+// Real-use fixes plan, Task 2: calendar requests create calendar events,
+// never a Notion Task. The incident: "make a event at 10:45 am tommorow to
+// meet with alex. itll go for an hour and a half" fell through the old,
+// narrower isCalendarEditCommand trigger and was captured as a Notion Task
+// whose Due Date ended up as the literal (unresolved) text "tomorrow at
+// 10:45 AM". These pin the fix at chatTurn's own dispatch level: the
+// broadened deterministic recognizer catches the incident line and its
+// siblings BEFORE any LLM call, each with a correct ISO start/end for a
+// fixed `now`/timeZone; "Lab report draft, due Thursday" (no calendar shape
+// at all) still routes to a Task via classifyCapture.
+// ============================================================================
+
+/** A fake LLM client that only ever answers draftCalendarEditRequest's own CREATE line — every other call (there should be none, for a line the deterministic recognizer catches) throws, so an accidental capture-classifier call surfaces loudly instead of silently. */
+function fakeCalendarCreateClient(createLine: string) {
+  const calls: any[] = [];
+  return {
+    calls,
+    messages: {
+      create: async (params: any) => {
+        calls.push(params);
+        const system = typeof params.system === "string" ? params.system : "";
+        if (!system.includes("structured Calendar edit")) {
+          throw new Error(`unexpected LLM call for a deterministically-recognized calendar line — system prompt: ${system.slice(0, 80)}`);
+        }
+        return {
+          id: "msg_test",
+          container: null,
+          content: [{ type: "text", text: createLine, citations: null }],
+          model: params.model,
+          role: "assistant",
+          stop_details: null,
+          stop_reason: "end_turn",
+          stop_sequence: null,
+          type: "message",
+          usage: { input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: null, cache_read_input_tokens: null, server_tool_use: null, service_tier: null },
+        };
+      },
+    },
+  } as unknown as AnthropicMessagesClient & { readonly calls: any[] };
+}
+
+// baseDeps()'s pinned `now` (2026-08-22T18:00:00.000Z) is 2026-08-22 14:00
+// local in America/New_York (EDT) — Saturday, so "today" = 2026-08-22 and
+// "tomorrow" = 2026-08-23 (Sunday) for every line below.
+test("the broadened deterministic calendar recognizer routes the incident line and its siblings straight to calendar create — zero LLM calls beyond draftCalendarEditRequest itself, with a correct ISO start/end", async () => {
+  const cases: ReadonlyArray<{ readonly message: string; readonly createLine: string; readonly start: string; readonly end: string }> = [
+    {
+      message: "make a event at 10:45 am tommorow to meet with alex. itll go for an hour and a half",
+      createLine: "CREATE: Meet with Alex | 2026-08-23T14:45:00.000Z | 2026-08-23T16:15:00.000Z | EXPLICIT",
+      start: "2026-08-23T14:45:00.000Z",
+      end: "2026-08-23T16:15:00.000Z",
+    },
+    {
+      message: "schedule a meeting with Alex tomorrow at 3",
+      createLine: "CREATE: Meeting with Alex | 2026-08-23T19:00:00.000Z | 2026-08-23T20:00:00.000Z | ASSUMED",
+      start: "2026-08-23T19:00:00.000Z",
+      end: "2026-08-23T20:00:00.000Z",
+    },
+    {
+      message: "add dentist appointment Friday 2pm",
+      createLine: "CREATE: Dentist appointment | 2026-08-28T18:00:00.000Z | 2026-08-28T19:00:00.000Z | ASSUMED",
+      start: "2026-08-28T18:00:00.000Z",
+      end: "2026-08-28T19:00:00.000Z",
+    },
+    {
+      message: "put a study block at 4 today",
+      createLine: "CREATE: Study block | 2026-08-22T20:00:00.000Z | 2026-08-22T21:00:00.000Z | ASSUMED",
+      start: "2026-08-22T20:00:00.000Z",
+      end: "2026-08-22T21:00:00.000Z",
+    },
+    {
+      message: "create an event for coffee with Sam tomorrow at 9am",
+      createLine: "CREATE: Coffee with Sam | 2026-08-23T13:00:00.000Z | 2026-08-23T14:00:00.000Z | ASSUMED",
+      start: "2026-08-23T13:00:00.000Z",
+      end: "2026-08-23T14:00:00.000Z",
+    },
+  ];
+
+  for (const { message, createLine, start, end } of cases) {
+    const llmClient = fakeCalendarCreateClient(createLine);
+    const deps = baseDeps({
+      llmClient,
+      readCalendarEventsFn: async () => [],
+      proposeNewCalendarEventFn: (change) => ({
+        id: `calendar-create-${change.title}`,
+        kind: "calendar-edit",
+        entityId: "new-event",
+        entityVersion: "new",
+        suggested: { kind: "create", calendarId: change.calendarId, title: change.title, start: change.start, end: change.end },
+        reason: "adapter reason",
+        createdAt: "2026-08-22T18:00:00.000Z",
+      }),
+    });
+
+    const result = await chatTurn(deps, { message, history: [] });
+
+    assert.equal(result.ok, true, `expected "${message}" to succeed`);
+    if (!result.ok) continue;
+    assert.ok(result.value.question, `expected "${message}" to open a calendar-create confirm question`);
+    const proposal = result.value.question!.proposal as { readonly suggested: { readonly kind: string; readonly start: string; readonly end: string } };
+    assert.equal(proposal.suggested.kind, "create");
+    assert.equal(proposal.suggested.start, start, `expected "${message}" to resolve to the correct ISO start`);
+    assert.equal(proposal.suggested.end, end, `expected "${message}" to resolve to the correct ISO end`);
+    assert.equal((llmClient as any).calls.length, 1, `expected exactly one LLM call (draftCalendarEditRequest) for "${message}" — the deterministic recognizer must short-circuit classifyCapture`);
+    // The system prompt gets today's host-TZ date and timezone, not the browser/UTC clock.
+    const system = (llmClient as any).calls[0].system as string;
+    assert.match(system, /2026-08-22/, `expected "${message}"'s draft call to be anchored on today's host-TZ date`);
+    assert.match(system, /America\/New_York/);
+  }
+});
+
+test("'Lab report draft, due Thursday' still routes to a Task, not a calendar event — no calendar shape at all", async () => {
+  const llmClient = fakeCaptureRoutingClient({ capture: "TASK" });
+  const deps = baseDeps({
+    llmClient,
+    getNotionCreatePageBinding: () => ({
+      ok: true,
+      value: {
+        client: fakeTasksNotionCreateClient(),
+        config: { tasksDataSourceId: "tasks-ds", projectsDataSourceId: "projects-ds", researchVaultDataSourceId: "vault-ds" },
+      },
+    }),
+  });
+
+  const result = await chatTurn(deps, { message: "Lab report draft, due Thursday", history: [] });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.match(result.value.question?.text ?? "", /Here's what I'll create in Tasks/);
+  const proposal = result.value.question!.proposal as { readonly kind: string };
+  assert.equal(proposal.kind, "notion-page-draft");
+});
+
+test("classifyCapture's 'event' outcome is the backstop for a calendar-shaped line that slips past the deterministic recognizer — it still routes to calendar create, never a Task", async () => {
+  const llmClient = fakeCaptureRoutingClient({
+    capture: "EVENT",
+    calendarDraft: "CREATE: Dinner with Jamie | 2026-08-23T23:00:00.000Z | 2026-08-24T00:00:00.000Z | ASSUMED",
+  });
+  const deps = baseDeps({
+    llmClient,
+    readCalendarEventsFn: async () => [],
+    proposeNewCalendarEventFn: (change) => ({
+      id: "calendar-create-1",
+      kind: "calendar-edit",
+      entityId: "new-event",
+      entityVersion: "new",
+      suggested: { kind: "create", calendarId: change.calendarId, title: change.title, start: change.start, end: change.end },
+      reason: "adapter reason",
+      createdAt: "2026-08-22T18:00:00.000Z",
+    }),
+  });
+
+  // Deliberately outside isCalendarEditCommand's own trigger shapes (no
+  // create-verb-at-start, no event/meeting/appointment/call/block noun, no
+  // "meet with"/"meeting with") — this is exactly the free-text case
+  // classifyCapture's "event" outcome exists to catch.
+  const result = await chatTurn(deps, { message: "dinner with Jamie tomorrow night", history: [] });
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.ok(result.value.question, "expected the 'event' classification to open a calendar-create confirm question");
+  const proposal = result.value.question!.proposal as { readonly suggested: { readonly kind: string } };
+  assert.equal(proposal.suggested.kind, "create");
+});
+
+test("classifyCapture's 'event' outcome falls through to general chat (never a blank reply) when draftCalendarEditRequest itself comes back NONE", async () => {
+  const llmClient = fakeCaptureRoutingClient({ capture: "EVENT", calendarDraft: "NONE" });
+  const deps = baseDeps({ llmClient, readCalendarEventsFn: async () => [] });
+
+  const result = await chatTurn(deps, {
+    message: "dinner with Jamie tomorrow night",
+    history: [{ role: "user", content: "dinner with Jamie tomorrow night" }],
+  });
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.value.question, undefined);
+  assert.notEqual(result.value.reply, "", "a double-miss (event, then NONE draft) must never surface a blank reply");
+});
+
+// ============================================================================
+// Post-review fix, Important #1 (AD-13): a cancel/delete/remove/clear
+// Calendar request gets a plain, honest reply — no draft, and (this is the
+// point of the fix) no LLM call at all, not even classifyCapture's own
+// "event" backstop. A fake LLM client that throws on ANY call proves this.
+// ============================================================================
+
+function throwingLlmClient(): AnthropicMessagesClient {
+  return {
+    messages: {
+      create: (async () => {
+        throw new Error("unexpected LLM call for a deterministically-recognized cancel/delete request");
+      }) as AnthropicMessagesClient["messages"]["create"],
+    },
+  };
+}
+
+test("a cancel/delete/remove Calendar request gets a plain 'can't delete' reply, with zero LLM calls and no draft", async () => {
+  for (const message of ["delete my meeting with Alex tomorrow at 3", "cancel the meeting with Alex tomorrow", "remove my meeting with Alex at 3pm"]) {
+    const deps = baseDeps({ llmClient: throwingLlmClient() });
+
+    const result = await chatTurn(deps, { message, history: [] });
+
+    assert.equal(result.ok, true, `expected "${message}" to succeed`);
+    if (!result.ok) continue;
+    assert.equal(result.value.reply, CALENDAR_DELETE_NOT_SUPPORTED_REPLY, `expected "${message}" to get the plain can't-delete reply`);
+    assert.equal(result.value.question, undefined, `expected "${message}" to open no draft/confirm question`);
+  }
+});
+
+test("'add a task to email Alex tomorrow', 'create a project for the science fair', and 'remind me to call Alex' do NOT route to Calendar", async () => {
+  const cases: ReadonlyArray<{ readonly message: string; readonly capture: "TASK" | "NONE" }> = [
+    { message: "add a task to email Alex tomorrow", capture: "TASK" },
+    { message: "create a project for the science fair", capture: "TASK" },
+    { message: "remind me to call Alex", capture: "TASK" },
+  ];
+  for (const { message, capture } of cases) {
+    const llmClient = fakeCaptureRoutingClient({ capture });
+    const deps = baseDeps({
+      llmClient,
+      getNotionCreatePageBinding: () => ({
+        ok: true,
+        value: {
+          client: fakeTasksNotionCreateClient(),
+          config: { tasksDataSourceId: "tasks-ds", projectsDataSourceId: "projects-ds", researchVaultDataSourceId: "vault-ds" },
+        },
+      }),
+    });
+
+    const result = await chatTurn(deps, { message, history: [] });
+
+    assert.equal(result.ok, true, `expected "${message}" to succeed`);
+    if (!result.ok) continue;
+    assert.notEqual(result.value.reply, CALENDAR_DELETE_NOT_SUPPORTED_REPLY, `expected "${message}" NOT to get the can't-delete reply`);
+    if (result.value.question) {
+      const proposal = result.value.question.proposal as { readonly kind?: string; readonly suggested?: { readonly kind?: string } } | undefined;
+      assert.notEqual(proposal?.suggested?.kind, "create", `expected "${message}" NOT to open a calendar-create confirm question`);
+      assert.notEqual(proposal?.suggested?.kind, "move", `expected "${message}" NOT to open a calendar-edit confirm question`);
+    }
+  }
 });
 
 // --- Review Focus #4: /morning's formatted reply must never leak a raw proposal object ---

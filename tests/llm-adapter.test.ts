@@ -15,8 +15,8 @@ import assert from "node:assert/strict";
 import Anthropic from "@anthropic-ai/sdk";
 import {
   answerGeneralQuestion,
+  classifyCapture,
   classifyChatIntent,
-  detectTaskCapture,
   draftCalendarEditRequest,
   draftNotionPageFields,
   loadLlmAdapterConfigFromEnv,
@@ -386,39 +386,49 @@ test("classifyChatIntent defaults to general-question for any unrecognized respo
 });
 
 // ============================================================================
-// detectTaskCapture (Story 8.8 / FR-26 extended) — a free-text Task
-// description ("Lab report draft, due Thursday") doesn't match
-// parseCreateItemCommand's explicit "create/add/new a ___" phrasing or its
-// Notion-mention heuristic, so capture needs its own classifier.
+// classifyCapture (real-use fixes plan, Task 2 — replaces the old two-way
+// detectTaskCapture) — a free-text description ("Lab report draft, due
+// Thursday", or a calendar request that slipped past isCalendarEditCommand's
+// broadened but still deterministic trigger) doesn't match
+// parseCreateItemCommand's explicit "create/add/new a ___" phrasing, its
+// Notion-mention heuristic, or isCalendarEditCommand's own trigger, so
+// capture needs its own 3-way classifier: "event" (a time-bound thing to
+// attend), "task" (something to do or produce), or "none".
 // ============================================================================
 
-test("detectTaskCapture returns the line as a draft request when Claude confirms it describes a new Task", async () => {
-  const { calls, client } = fakeClient(textMessage("CAPTURE"));
-  const result = await detectTaskCapture(client, "Lab report draft, due Thursday");
-  assert.deepEqual(result, { request: "Lab report draft, due Thursday" });
+test("classifyCapture returns 'task' when Claude confirms the line describes a new Task", async () => {
+  const { calls, client } = fakeClient(textMessage("TASK"));
+  const result = await classifyCapture(client, "Lab report draft, due Thursday");
+  assert.equal(result, "task");
   assert.equal(calls[0]!.params.messages[0]!.content, "Lab report draft, due Thursday");
   assert.equal(calls[0]!.params.model, CLAUDE_CHAT_MODEL_FAST);
 });
 
-test("detectTaskCapture returns undefined for a question", async () => {
-  const { client } = fakeClient(textMessage("NONE"));
-  const result = await detectTaskCapture(client, "What's my next meeting?");
-  assert.equal(result, undefined);
+test("classifyCapture returns 'event' when Claude confirms the line describes a time-bound thing to attend", async () => {
+  const { client } = fakeClient(textMessage("EVENT"));
+  const result = await classifyCapture(client, "coffee with Sam tomorrow at 9");
+  assert.equal(result, "event");
 });
 
-test("detectTaskCapture returns undefined for an ordinary statement", async () => {
+test("classifyCapture returns 'none' for a question", async () => {
   const { client } = fakeClient(textMessage("NONE"));
-  const result = await detectTaskCapture(client, "That lecture ran long today.");
-  assert.equal(result, undefined);
+  const result = await classifyCapture(client, "What's my next meeting?");
+  assert.equal(result, "none");
 });
 
-test("detectTaskCapture defaults to undefined for any unrecognized response, never throwing", async () => {
+test("classifyCapture returns 'none' for an ordinary statement", async () => {
+  const { client } = fakeClient(textMessage("NONE"));
+  const result = await classifyCapture(client, "That lecture ran long today.");
+  assert.equal(result, "none");
+});
+
+test("classifyCapture defaults to 'none' for any unrecognized response, never throwing", async () => {
   const { client } = fakeClient(textMessage("I'm not totally sure what you mean."));
-  const result = await detectTaskCapture(client, "hmm");
-  assert.equal(result, undefined);
+  const result = await classifyCapture(client, "hmm");
+  assert.equal(result, "none");
 });
 
-test("detectTaskCapture propagates a transport failure (AD-8) rather than swallowing it as 'not a capture'", async () => {
+test("classifyCapture propagates a transport failure (AD-8) rather than swallowing it as 'none'", async () => {
   const client: AnthropicMessagesClient = {
     messages: {
       create: (async () => {
@@ -426,7 +436,7 @@ test("detectTaskCapture propagates a transport failure (AD-8) rather than swallo
       }) as AnthropicMessagesClient["messages"]["create"],
     },
   };
-  await assert.rejects(() => detectTaskCapture(client, "anything"), /network down/);
+  await assert.rejects(() => classifyCapture(client, "anything"), /network down/);
 });
 
 // ============================================================================
@@ -445,10 +455,50 @@ test("draftCalendarEditRequest parses a RESIZE response", async () => {
   assert.deepEqual(result, { kind: "resize", eventTitle: "Team sync", newEnd: "2026-09-18T17:30:00.000Z" });
 });
 
-test("draftCalendarEditRequest parses a CREATE response", async () => {
+test("draftCalendarEditRequest parses a CREATE response with no duration marker — defaults durationAssumed to false", async () => {
   const { client } = fakeClient(textMessage("CREATE: Focus block | 2026-09-18T14:00:00.000Z | 2026-09-18T15:00:00.000Z"));
   const result = await draftCalendarEditRequest(client, "block off 2-3pm for focus time", "2026-09-18", "America/New_York", []);
-  assert.deepEqual(result, { kind: "create", title: "Focus block", start: "2026-09-18T14:00:00.000Z", end: "2026-09-18T15:00:00.000Z" });
+  assert.deepEqual(result, { kind: "create", title: "Focus block", start: "2026-09-18T14:00:00.000Z", end: "2026-09-18T15:00:00.000Z", durationAssumed: false });
+});
+
+// Real-use fixes plan, Task 2: the trailing ASSUMED/EXPLICIT marker records
+// whether draftCalendarEditRequest had to default the 60-minute duration
+// itself (no explicit end time or duration phrase in Spencer's line) — the
+// incident line ("make a event at 10:45 am tommorow to meet with alex...
+// itll go for an hour and a half") gives an EXPLICIT 90-minute duration, so
+// pin both shapes.
+test("draftCalendarEditRequest parses a CREATE response with an EXPLICIT duration marker", async () => {
+  const { client } = fakeClient(textMessage("CREATE: Meet with Alex | 2026-09-28T14:45:00.000Z | 2026-09-28T16:15:00.000Z | EXPLICIT"));
+  const result = await draftCalendarEditRequest(client, "make a event at 10:45 am tommorow to meet with alex. itll go for an hour and a half", "2026-09-27", "America/New_York", []);
+  assert.deepEqual(result, {
+    kind: "create",
+    title: "Meet with Alex",
+    start: "2026-09-28T14:45:00.000Z",
+    end: "2026-09-28T16:15:00.000Z",
+    durationAssumed: false,
+  });
+});
+
+test("draftCalendarEditRequest parses a CREATE response with an ASSUMED duration marker — no explicit end/duration was given", async () => {
+  const { client } = fakeClient(textMessage("CREATE: Meeting with Alex | 2026-09-28T19:00:00.000Z | 2026-09-28T20:00:00.000Z | ASSUMED"));
+  const result = await draftCalendarEditRequest(client, "schedule a meeting with Alex tomorrow at 3", "2026-09-27", "America/New_York", []);
+  assert.deepEqual(result, {
+    kind: "create",
+    title: "Meeting with Alex",
+    start: "2026-09-28T19:00:00.000Z",
+    end: "2026-09-28T20:00:00.000Z",
+    durationAssumed: true,
+  });
+});
+
+test("draftCalendarEditRequest's system prompt instructs duration-phrase resolution and the ASSUMED/EXPLICIT marker", async () => {
+  const { calls, client } = fakeClient(textMessage("NONE"));
+  await draftCalendarEditRequest(client, "hmm", "2026-09-18", "America/New_York", []);
+  const system = calls[0]!.params.system as string;
+  assert.match(system, /an hour and a half.*90 minutes/i);
+  assert.match(system, /default the duration to exactly 60 minutes/i);
+  assert.match(system, /ASSUMED/);
+  assert.match(system, /EXPLICIT/);
 });
 
 test("draftCalendarEditRequest returns undefined for a NONE response", async () => {

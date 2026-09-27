@@ -24,6 +24,7 @@ import {
 } from "../src/adapters/memory-store.ts";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
+import type { CalendarEditProposal } from "../src/app/calendar-edit.ts";
 import { confirmProposal, type ConfirmProposalDeps } from "../src/app/confirm-proposal.ts";
 import type { CalendarEditChange, FieldValueSuggestion, NotionPageDraft, Proposal, TimeBudget } from "../src/types/domain.ts";
 
@@ -325,7 +326,12 @@ test("confirmProposal(notion-page-draft): decline never calls createPage", async
 
 // ---- calendar-edit (FR-27) --------------------------------------------------
 
-function makeCalendarEditProposal(overrides: Partial<Proposal<CalendarEditChange>> = {}): Proposal<CalendarEditChange> {
+// Post-review fix (re-review, AD-9): `CalendarEditProposal` (`app/calendar-
+// edit.ts`) is an ADDITIVE type (`Proposal<CalendarEditChange> &
+// { receiptText }`) — never a widened `Proposal<T>` — so this fixture
+// builds THAT type, not `Proposal<CalendarEditChange>` (which no longer
+// carries `receiptText` at all).
+function makeCalendarEditProposal(overrides: Partial<CalendarEditProposal> = {}): CalendarEditProposal {
   return {
     id: "calendar-edit-1",
     kind: "calendar-edit",
@@ -333,6 +339,10 @@ function makeCalendarEditProposal(overrides: Partial<Proposal<CalendarEditChange
     entityVersion: "etag-1",
     suggested: { kind: "move", eventId: "evt-1", calendarId: "primary", newStart: "2026-09-18T18:00:00.000Z", newEnd: "2026-09-18T18:30:00.000Z" },
     reason: 'Move "Team sync" to Fri, Sep 18, 2026, 6:00 PM–6:30 PM',
+    // Post-review fix, Important #2: `app/calendar-edit.ts` always sets its
+    // own past-tense `receiptText`, distinct from the future-tense `reason`
+    // above — this fixture mirrors that real shape.
+    receiptText: 'Moved "Team sync" to Fri, Sep 18, 6:00 PM–6:30 PM.',
     createdAt: NOW,
     ...overrides,
   };
@@ -375,6 +385,69 @@ test("confirmProposal(calendar-edit): decline never calls applyCalendarEdit", as
   const result = await confirmProposal({ store, applyCalendarEdit }, { proposal: makeCalendarEditProposal(), accept: false });
   assert.equal(result.ok, true);
   assert.equal(called, false);
+  store.close();
+});
+
+// ============================================================================
+// Post-review fix, Important #2: the receipt Spencer sees after saying yes
+// is `proposal.receiptText` (past tense) — NEVER `proposal.reason` (the
+// future-tense, "?"-suffixed confirm question he already answered). Pinned
+// for both a move/resize-shaped proposal and a create-shaped one.
+// ============================================================================
+
+test("confirmProposal(calendar-edit): the receipt is the past-tense receiptText, never the future-tense (still-\"?\"-suffixed) reason — move/resize shape", async () => {
+  const store = tempStore();
+  const applyCalendarEdit: ConfirmProposalDeps["applyCalendarEdit"] = async () => ({ ok: true, value: { eventId: "evt-1", calendarId: "primary" } });
+  const proposal = makeCalendarEditProposal({
+    reason: 'Move "Team sync" to Fri, Sep 18, 2026, 6:00 PM–6:30 PM',
+    receiptText: 'Moved "Team sync" to Fri, Sep 18, 6:00 PM–6:30 PM.',
+  });
+  const result = await confirmProposal({ store, applyCalendarEdit }, { proposal, accept: true });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.deepEqual(result.value.receipts, ['Moved "Team sync" to Fri, Sep 18, 6:00 PM–6:30 PM.']);
+  assert.notEqual(result.value.receipts[0], proposal.reason, "the receipt must never be the future-tense confirm question");
+  store.close();
+});
+
+test("confirmProposal(calendar-edit): the receipt is the past-tense receiptText, never the future-tense reason — create shape (the exact incident-adjacent wording)", async () => {
+  const store = tempStore();
+  const applyCalendarEdit: ConfirmProposalDeps["applyCalendarEdit"] = async () => ({ ok: true, value: { eventId: "calendar-create-1", calendarId: "primary" } });
+  const proposal = makeCalendarEditProposal({
+    entityId: "calendar-create-1",
+    suggested: { kind: "create", calendarId: "primary", title: "Meet with Alex", start: "2026-09-28T14:45:00.000Z", end: "2026-09-28T16:15:00.000Z" },
+    reason: 'Create "Meet with Alex" on Mon, Sep 28, 10:45 AM–12:15 PM?',
+    receiptText: 'Added "Meet with Alex" to Google Calendar — Mon, Sep 28, 10:45 AM–12:15 PM.',
+  });
+  const result = await confirmProposal({ store, applyCalendarEdit }, { proposal, accept: true });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.deepEqual(result.value.receipts, ['Added "Meet with Alex" to Google Calendar — Mon, Sep 28, 10:45 AM–12:15 PM.']);
+  assert.notEqual(result.value.receipts[0], proposal.reason, "the receipt must never be the future-tense confirm question");
+  assert.doesNotMatch(result.value.receipts[0]!, /\?$/, "a receipt is a statement, never a question");
+  store.close();
+});
+
+test("confirmProposal(calendar-edit): falls back to reason when receiptText is absent — a proposal persisted before this fix landed (a plain Proposal<CalendarEditChange>, never a CalendarEditProposal)", async () => {
+  const store = tempStore();
+  const applyCalendarEdit: ConfirmProposalDeps["applyCalendarEdit"] = async () => ({ ok: true, value: { eventId: "evt-1", calendarId: "primary" } });
+  // A genuinely OLDER-shaped stored proposal — built as `Proposal<CalendarEditChange>`
+  // directly (never `CalendarEditProposal`), so it has no `receiptText` at
+  // all, exactly as one persisted before this fix landed would round-trip
+  // back out of the store.
+  const proposal: Proposal<CalendarEditChange> = {
+    id: "calendar-edit-legacy",
+    kind: "calendar-edit",
+    entityId: "evt-1",
+    entityVersion: "etag-1",
+    suggested: { kind: "move", eventId: "evt-1", calendarId: "primary", newStart: "2026-09-18T18:00:00.000Z", newEnd: "2026-09-18T18:30:00.000Z" },
+    reason: 'Move "Team sync" to Fri, Sep 18, 2026, 6:00 PM–6:30 PM',
+    createdAt: NOW,
+  };
+  const result = await confirmProposal({ store, applyCalendarEdit }, { proposal, accept: true });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.deepEqual(result.value.receipts, [proposal.reason]);
   store.close();
 });
 

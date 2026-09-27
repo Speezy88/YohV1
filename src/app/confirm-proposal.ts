@@ -37,6 +37,7 @@ import {
   type MemoryStore,
 } from "../adapters/memory-store.ts";
 import { parsePlanningFieldValue, PLANNING_FIELD_LABELS } from "../core/planning-field-value.ts";
+import type { CalendarEditProposal } from "./calendar-edit.ts";
 import type {
   CalendarEditChange,
   FieldValueSuggestion,
@@ -318,7 +319,20 @@ export async function confirmProposal(
     const applied = await deps.applyCalendarEdit(proposal as Proposal<CalendarEditChange>);
     clearRequestIfGiven(deps.store, requestId);
     if (!applied.ok) return applied;
-    return { ok: true, value: { applied: true, receipts: [proposal.reason] } };
+    // Post-review fix, Important #2 (re-review, AD-9): `proposal.reason` is
+    // the FUTURE-tense confirm question ("Create "..." on ...–...?") —
+    // reusing it verbatim here showed Spencer his own question back as if
+    // it were a receipt. `app/calendar-edit.ts` now always sets
+    // `receiptText` (a real, past-tense statement) on every "calendar-edit"
+    // proposal it persists, via the ADDITIVE `CalendarEditProposal` type
+    // (never a widened `Proposal<T>` — AD-9 forbids that) — this cast reads
+    // it back the same way the `Proposal<CalendarEditChange>` cast just
+    // above already does for `suggested`. The `?? proposal.reason` fallback
+    // is a genuine, non-defensive-only path: a proposal persisted before
+    // this fix landed (or a hand-built one in a test) may still have no
+    // `receiptText` at all.
+    const calendarProposal = proposal as CalendarEditProposal;
+    return { ok: true, value: { applied: true, receipts: [calendarProposal.receiptText ?? proposal.reason] } };
   }
 
   clearRequestIfGiven(deps.store, requestId);

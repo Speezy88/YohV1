@@ -8,18 +8,21 @@
  * Plan-view, Mid-Day Re-Flow, Blocker report, why-prioritized (Story 8.3),
  * then save-search-result, create-item, calendar-edit (Story 8.4, F6/Epic 6
  * retro order) — then, once every deterministic recognizer above has
- * failed, a `detectTaskCapture` call (Story 8.8, FR-26 extended: a
- * free-text Task description with none of the above phrasing routes
- * through the SAME `draftItem` create-path an explicit "create a task ..."
- * line uses) — then a `classifyChatIntent` call for a `"search-trigger"`
- * vs. everything else, and only once NONE of the above matched does it fall
- * through to `app/general-question.ts`'s `answerQuestion` as the final,
- * unconditional fallback. This restores the original, pre-Epic-8 dispatch
- * order (every deterministic recognizer checked before either paid
- * classifier call) and its two invariants: a recognized command costs ZERO
- * Claude calls, and a truly unmatched line costs exactly three
- * (`detectTaskCapture`, then `classifyChatIntent`, then the general-qa
- * answer). It never itself emits a `"done"`/`"error"` stream event — only
+ * failed, a `classifyCapture` call (real-use fixes plan, Task 2 — replaces
+ * the old two-way `detectTaskCapture`, Story 8.8, FR-26 extended: a
+ * free-text description with none of the above phrasing is classified as
+ * `"event"`, `"task"`, or `"none"` — an `"event"` routes through the SAME
+ * calendar-create path `isCalendarEditCommand` uses, `"task"` through the
+ * SAME `draftItem` create-path an explicit "create a task ..." line uses)
+ * — then a `classifyChatIntent` call for a `"search-trigger"` vs. everything
+ * else, and only once NONE of the above matched does it fall through to
+ * `app/general-question.ts`'s `answerQuestion` as the final, unconditional
+ * fallback. This restores the original, pre-Epic-8 dispatch order (every
+ * deterministic recognizer checked before either paid classifier call) and
+ * its two invariants: a recognized command costs ZERO Claude calls, and a
+ * truly unmatched line costs exactly three (`classifyCapture`, then
+ * `classifyChatIntent`, then the general-qa answer). It never itself emits
+ * a `"done"`/`"error"` stream event — only
  * `"status"` and (relayed from `answerQuestion`) `"delta"`. The caller that
  * owns the stream's terminal event (a future server) builds it from this
  * function's own returned `Result`, after the last delta.
@@ -34,6 +37,7 @@
  */
 import {
   isBlockerReportCommand,
+  isCalendarDeleteRequestCommand,
   isCalendarEditCommand,
   isMidDayReflowCommand,
   isPlanDayCommand,
@@ -43,7 +47,7 @@ import {
   parseTimeBudgetCommand,
   parseWhyPrioritizedCommand,
 } from "../core/chat-commands.ts";
-import { classifyChatIntent, detectTaskCapture } from "../adapters/llm-adapter.ts";
+import { classifyCapture, classifyChatIntent } from "../adapters/llm-adapter.ts";
 import { reportBlocker } from "./blocker-report.ts";
 import { RECENT_MESSAGES_WINDOW, type ChatSession } from "./chat-session.ts";
 import { proposeCalendarEdit, type CalendarEditDeps } from "./calendar-edit.ts";
@@ -64,7 +68,7 @@ import type { LogEntry } from "../adapters/logger.ts";
 import type { AnthropicMessagesClient } from "../adapters/llm-adapter.ts";
 import type { MemoryStore } from "../adapters/memory-store.ts";
 import type { ChatStreamEvent, ChatTurnRequest, ChatTurnResponse, MorningViewResponse } from "../types/api.ts";
-import type { ChatIntent, ChatTurn, ExternalId, PlanBlock, Result, Task, YohError } from "../types/domain.ts";
+import type { ChatIntent, ChatTurn, ExternalId, IsoDate, PlanBlock, Result, Task, YohError } from "../types/domain.ts";
 
 /**
  * The largest number of `ChatTurn`s `chatTurn` will ever send to Claude —
@@ -88,6 +92,15 @@ export const STATUS_THINKING = "Thinking…";
  * initial `STATUS_THINKING`.
  */
 export const STATUS_CHECKING_TASKS = "Checking your Tasks…";
+
+/**
+ * Real-use fixes plan, Task 2 (post-review fix, Important #1, AD-13): the
+ * plain, honest reply for a recognized cancel/delete/remove/clear Calendar
+ * request (`isCalendarDeleteRequestCommand`) — deliberately reached
+ * BEFORE any LLM call (no draft, nothing drafted, nothing persisted), since
+ * AD-13 says there is no delete variant for Yoh to attempt at all.
+ */
+export const CALENDAR_DELETE_NOT_SUPPORTED_REPLY = "I can't delete or cancel calendar events for you — you'll need to do that directly in Google Calendar.";
 
 export interface ChatTurnDeps extends CreateItemDeps, CalendarEditDeps, WebSearchDeps, SaveSearchResultDeps {
   readonly store: MemoryStore;
@@ -167,6 +180,23 @@ function trimHistory(history: readonly ChatTurn[]): readonly ChatTurn[] {
 
 function emitStatus(deps: ChatTurnDeps, text: string): void {
   deps.emit?.({ type: "status", text });
+}
+
+/**
+ * Calls `proposeCalendarEdit` and applies its own "empty fall-through"
+ * convention (`app/calendar-edit.ts`'s doc comment): `{reply: "", receipts:
+ * [], question: undefined}` means the line only LOOKED like a calendar edit
+ * (the LLM draft came back NONE), not a real error or a real confirm
+ * question. Returns `undefined` for exactly that shape so both call sites
+ * below (the deterministic `isCalendarEditCommand` branch, and
+ * `classifyCapture`'s `"event"` branch) fall through to the next dispatch
+ * step identically, rather than ever handing Spencer back a blank reply.
+ */
+async function tryCalendarCreate(deps: ChatTurnDeps, line: string, today: IsoDate): Promise<Result<ChatTurnResponse, YohError> | undefined> {
+  const result = await proposeCalendarEdit(deps, { line, today });
+  if (!result.ok) return result;
+  const isEmptyFallThrough = result.value.reply === "" && result.value.receipts.length === 0 && result.value.question === undefined;
+  return isEmptyFallThrough ? undefined : result;
 }
 
 /**
@@ -250,38 +280,63 @@ export async function chatTurn(deps: ChatTurnDeps, input: ChatTurnRequest): Prom
   const createItemCommand = parseCreateItemCommand(input.message);
   if (createItemCommand) return draftItem(deps, createItemCommand);
 
+  // Post-review fix, Important #1 (AD-13): checked BEFORE isCalendarEditCommand
+  // (and before any LLM call) — a cancel/delete/remove/clear Calendar
+  // request gets a plain, honest answer instead of a draft nothing should
+  // ever attempt. See core/chat-commands.ts's isCalendarDeleteRequestCommand
+  // doc comment for why this can't just be folded into isCalendarEditCommand
+  // returning false: chatTurn must actually REPLY here, not merely decline
+  // to match, or the line would otherwise fall through to classifyCapture's
+  // own "event" backstop (an LLM call) and risk drafting a real MOVE/RESIZE/
+  // CREATE against a request that was never asking for one.
+  if (isCalendarDeleteRequestCommand(input.message)) {
+    return { ok: true, value: { reply: CALENDAR_DELETE_NOT_SUPPORTED_REPLY, receipts: [] } };
+  }
+
   if (isCalendarEditCommand(input.message)) {
     const today = localIsoDate(deps.now(), deps.timeZone);
-    const calendarResult = await proposeCalendarEdit(deps, { line: input.message, today });
-    if (!calendarResult.ok) return calendarResult;
-    const isEmptyFallThrough = calendarResult.value.reply === "" && calendarResult.value.receipts.length === 0 && calendarResult.value.question === undefined;
-    if (!isEmptyFallThrough) return calendarResult;
+    const calendarResult = await tryCalendarCreate(deps, input.message, today);
+    if (calendarResult) return calendarResult;
     // else: not actually a calendar edit ("move on to the next topic") —
     // fall through to the classify/general-chat path below.
   }
 
-  // Story 8.8 (FR-26 extended): "Lab report draft, due Thursday" matches
-  // none of the deterministic recognizers above (no "create/add/new", no
-  // Notion mention) — one more LLM call, but ONLY once every deterministic
-  // check has already failed, mirroring classifyChatIntent's own AD-14 cost
-  // discipline immediately below. A hit routes through the SAME
-  // confirm-then-write pipeline an explicit "create a task ..." command
-  // uses — draftItem persists its Proposal via openProposal and returns it
-  // as this turn's `question`; nothing is written yet. `detectTaskCapture`
-  // is a bare adapter call (unlike every other capability above, which is
-  // itself an `app/*.ts` function that already converts a thrown adapter
-  // failure into a `Result`), so this try/catch is what keeps AD-8's "app/
-  // catches and converts" contract true for `chatTurn` as a whole — a
-  // transport failure here must never block the ordinary chat turn, same
-  // as `classifyChatIntent`'s own catch immediately below.
-  let captured: { readonly request: string } | undefined;
+  // Real-use fixes plan, Task 2 (replaces Story 8.8's two-way
+  // detectTaskCapture): "Lab report draft, due Thursday" matches none of the
+  // deterministic recognizers above (no "create/add/new", no Notion
+  // mention, no calendar-create shape) — one more LLM call, but ONLY once
+  // every deterministic check has already failed, mirroring
+  // classifyChatIntent's own AD-14 cost discipline immediately below. A
+  // "task" hit routes through the SAME confirm-then-write pipeline an
+  // explicit "create a task ..." command uses — draftItem persists its
+  // Proposal via openProposal and returns it as this turn's `question`;
+  // nothing is written yet. An "event" hit routes through the SAME
+  // draft-then-confirm calendar-create path `isCalendarEditCommand` uses
+  // just above — this is the backstop for a time-bound request that slipped
+  // past that broadened but still deterministic regex, so it still never
+  // reaches Notion as a Task (the incident this task fixes: a calendar
+  // request captured as a Task with an unresolved literal-text due date).
+  // `classifyCapture` is a bare adapter call (unlike every other capability
+  // above, which is itself an `app/*.ts` function that already converts a
+  // thrown adapter failure into a `Result`), so this try/catch is what keeps
+  // AD-8's "app/ catches and converts" contract true for `chatTurn` as a
+  // whole — a transport failure here must never block the ordinary chat
+  // turn, same as `classifyChatIntent`'s own catch immediately below.
+  let captured: "task" | "event" | "none" = "none";
   try {
-    captured = await detectTaskCapture(deps.llmClient, input.message);
+    captured = await classifyCapture(deps.llmClient, input.message);
   } catch {
-    captured = undefined;
+    captured = "none";
   }
-  if (captured) {
-    return draftItem(deps, { database: "Tasks", request: captured.request });
+  if (captured === "event") {
+    const today = localIsoDate(deps.now(), deps.timeZone);
+    const calendarResult = await tryCalendarCreate(deps, input.message, today);
+    if (calendarResult) return calendarResult;
+    // else: classifyCapture said "event" but draftCalendarEditRequest
+    // itself came back NONE (a rare double-miss) — fall through to
+    // classify/general-chat below rather than ever returning a blank reply.
+  } else if (captured === "task") {
+    return draftItem(deps, { database: "Tasks", request: input.message });
   }
 
   let chatIntent: ChatIntent = { kind: "general-question" };

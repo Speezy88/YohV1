@@ -8,6 +8,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   isBlockerReportCommand,
+  isCalendarDeleteRequestCommand,
   isCalendarEditCommand,
   isMidDayReflowCommand,
   isPlanDayCommand,
@@ -303,5 +304,62 @@ test("isCalendarEditCommand recognizes move/reschedule/resize/extend/schedule/bl
 test("isCalendarEditCommand returns false for unrelated input — including a delete request, which has no trigger at all", () => {
   for (const line of ["what's my plan", "create a task to buy boots", "search for the weather", "delete my team sync", "remove the 3pm meeting"]) {
     assert.equal(isCalendarEditCommand(line), false, `expected "${line}" NOT to be recognized`);
+  }
+});
+
+// ============================================================================
+// isCalendarEditCommand broadening (real-use fixes plan, Task 2) — the
+// incident line ("make a event at 10:45 am tommorow to meet with alex...")
+// and its sibling phrasings must all route to the calendar-edit CREATE path,
+// never fall through to detectTaskCapture/classifyCapture and be mistaken
+// for a Notion Task.
+// ============================================================================
+
+test("isCalendarEditCommand recognizes the broadened create-verb + event-noun and 'meet with' + time/date phrasings (Task 2)", () => {
+  for (const line of [
+    "make a event at 10:45 am tommorow to meet with alex. itll go for an hour and a half",
+    "schedule a meeting with Alex tomorrow at 3",
+    "add dentist appointment Friday 2pm",
+    "put a study block at 4 today",
+    "create an event for coffee with Sam tomorrow at 9am",
+  ]) {
+    assert.equal(isCalendarEditCommand(line), true, `expected "${line}" to be recognized`);
+  }
+});
+
+test("isCalendarEditCommand's broadened create-verb/noun and 'meet with' shapes still don't swallow an unrelated Task-capture line", () => {
+  for (const line of ["Lab report draft, due Thursday", "add milk to the shopping list", "let's catch up sometime"]) {
+    assert.equal(isCalendarEditCommand(line), false, `expected "${line}" NOT to be recognized`);
+  }
+});
+
+// ============================================================================
+// Post-review fix, Important #1 (AD-13): the broadened "meet with"/"meeting
+// with" + time/date shape above is verb-agnostic, so — unexcluded — it also
+// matched a cancel/delete/remove request. isCalendarDeleteRequestCommand
+// recognizes these, and isCalendarEditCommand excludes them.
+// ============================================================================
+
+test("isCalendarDeleteRequestCommand recognizes a cancel/delete/remove/clear request naming an event-ish noun or 'meet(ing) with'", () => {
+  for (const line of [
+    "delete my meeting with Alex tomorrow at 3",
+    "cancel the meeting with Alex tomorrow",
+    "remove my meeting with Alex at 3pm",
+    "cancel my dentist appointment",
+    "clear the 4pm block",
+  ]) {
+    assert.equal(isCalendarDeleteRequestCommand(line), true, `expected "${line}" to be recognized as a delete/cancel request`);
+  }
+});
+
+test("isCalendarDeleteRequestCommand returns false for unrelated input, including an ordinary create-shaped line", () => {
+  for (const line of ["schedule a meeting with Alex tomorrow at 3", "add a task to email Alex tomorrow", "remind me to call Alex", "what's my plan"]) {
+    assert.equal(isCalendarDeleteRequestCommand(line), false, `expected "${line}" NOT to be recognized as a delete/cancel request`);
+  }
+});
+
+test("isCalendarEditCommand excludes a cancel/delete/remove/clear request even though it names 'meet(ing) with' + a time — AD-13, no delete variant at all", () => {
+  for (const line of ["delete my meeting with Alex tomorrow at 3", "cancel the meeting with Alex tomorrow", "remove my meeting with Alex at 3pm"]) {
+    assert.equal(isCalendarEditCommand(line), false, `expected "${line}" NOT to be recognized by isCalendarEditCommand (AD-13)`);
   }
 });

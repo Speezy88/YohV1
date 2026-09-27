@@ -518,44 +518,59 @@ export async function classifyChatIntent(client: AnthropicMessagesClient, line: 
 }
 
 // ============================================================================
-// detectTaskCapture (Story 8.8 / FR-26 extended, AD-14's cost discipline) —
-// chat-turn.ts calls this ONLY after every deterministic recognizer
-// (time-budget, plan-view, mid-day-reflow, blocker, why-prioritized,
-// save-search-result, create-item's explicit Notion mention, calendar-edit)
-// has already failed to match — never on every message unconditionally. It
-// answers one question only: "does this line describe something Spencer
-// wants tracked as a new Task?" It does NOT draft the Task's fields itself —
-// a hit is handed off to the existing draftNotionPageFields/createPage
-// pipeline via app/create-item.ts's draftItem, unchanged, so a captured Task
-// goes through the exact same confirm-then-write trust boundary as an
-// explicit "create a task ..." command. Controller ruling: `ChatIntent`
-// (domain.ts) is not widened for this — this is its own function/shape.
+// classifyCapture (real-use fixes plan, Task 2 — replaces the old
+// two-way detectTaskCapture, Story 8.8 / FR-26 extended, AD-14's cost
+// discipline) — chat-turn.ts calls this ONLY after every deterministic
+// recognizer (time-budget, plan-view, mid-day-reflow, blocker,
+// why-prioritized, save-search-result, create-item's explicit Notion
+// mention, calendar-edit) has already failed to match — never on every
+// message unconditionally.
+//
+// The incident this fixes: "make a event at 10:45 am tommorow to meet with
+// alex..." fell through `isCalendarEditCommand`'s old, narrower trigger and
+// was captured as a Notion Task by the old `detectTaskCapture` (which only
+// ever answered CAPTURE/NONE) — its Due Date ended up as the literal text
+// "tomorrow at 10:45 AM", which Notion rejected. `isCalendarEditCommand` is
+// broadened (`core/chat-commands.ts`) so this exact line is now caught
+// deterministically BEFORE this function ever runs; this function is the
+// backstop for whatever free-text phrasing still slips past that broadened
+// regex — a genuinely time-bound thing to attend (a meeting, appointment,
+// call, class, or event at a time) must still route to the calendar-create
+// path, never to a Task.
+//
+// Answers one question: is `line` (a) a time-bound thing to ATTEND (an
+// "event"), (b) something to DO or produce later (a "task"), or (c)
+// neither ("none")? It does NOT draft either one's fields itself — an
+// "event" hit is hedged to `app/calendar-edit.ts`'s `proposeCalendarEdit`
+// (the same draft-then-confirm pipeline `isCalendarEditCommand` uses), and a
+// "task" hit is handed to the existing draftNotionPageFields/createPage
+// pipeline via `app/create-item.ts`'s `draftItem`, unchanged — so either hit
+// goes through the exact same confirm-then-write trust boundary an explicit
+// "create a task ..."/"create an event ..." command uses. Controller ruling:
+// `ChatIntent` (domain.ts) is not widened for this — this is its own
+// function/shape.
 // ============================================================================
 
-const DETECT_TASK_CAPTURE_MAX_TOKENS = 16;
+const CLASSIFY_CAPTURE_MAX_TOKENS = 16;
 
-const DETECT_TASK_CAPTURE_SYSTEM_PROMPT = [
-  "You are Yoh's task-capture detector. Decide whether Spencer's message describes something he needs to DO or produce later — a new Task he wants tracked (an assignment, an errand, a chore, a deliverable, with or without a stated due date) — as opposed to a question he's asking, a status update, or ordinary conversation.",
-  "If it clearly describes a new Task to track, respond with exactly: CAPTURE",
-  "Otherwise (a question, a greeting, a status update, small talk, or anything ambiguous) respond with exactly: NONE",
+const CLASSIFY_CAPTURE_SYSTEM_PROMPT = [
+  "You are Yoh's task/event-capture classifier. Decide which of these Spencer's message describes:",
+  '(a) a TIME-BOUND thing to ATTEND at a particular time or date — a meeting, appointment, call, class, or other event (e.g. "meet with Alex tomorrow at 3", "dentist appointment Friday 2pm") — respond with exactly: EVENT',
+  "(b) something he needs to DO or PRODUCE later — a new Task to track (an assignment, an errand, a chore, a deliverable, with or without a stated due date, and NOT itself an appointment to attend) — respond with exactly: TASK",
+  "(c) anything else (a question, a greeting, a status update, small talk, or anything ambiguous) — respond with exactly: NONE",
 ].join("\n");
 
 /**
- * Returns `{request: line}` (the ONE input `app/create-item.ts`'s `draftItem`
- * needs — the same shape `parseCreateItemCommand` already returns as
- * `.request`) when Claude confidently says `line` describes a new Task, else
- * `undefined`. Never throws for "not a capture" — only a genuine API/
- * transport failure propagates (AD-8), exactly like
+ * Classifies `line` into `"event"`, `"task"`, or `"none"`. Never throws for
+ * an unrecognized/ambiguous response — those default to `"none"` — only a
+ * genuine API/transport failure propagates (AD-8), exactly like
  * `classifyChatIntent`/`draftCalendarEditRequest` above.
  */
-export async function detectTaskCapture(
-  client: AnthropicMessagesClient,
-  line: string,
-): Promise<{ readonly request: string } | undefined> {
+export async function classifyCapture(client: AnthropicMessagesClient, line: string): Promise<"task" | "event" | "none"> {
   const message = await client.messages.create({
     model: CLAUDE_CHAT_MODEL_FAST,
-    max_tokens: DETECT_TASK_CAPTURE_MAX_TOKENS,
-    system: DETECT_TASK_CAPTURE_SYSTEM_PROMPT,
+    max_tokens: CLASSIFY_CAPTURE_MAX_TOKENS,
+    system: CLASSIFY_CAPTURE_SYSTEM_PROMPT,
     messages: [{ role: "user", content: line }],
   });
 
@@ -565,7 +580,9 @@ export async function detectTaskCapture(
     .join("\n")
     .trim();
 
-  return /^CAPTURE\b/i.test(text) ? { request: line } : undefined;
+  if (/^EVENT\b/i.test(text)) return "event";
+  if (/^TASK\b/i.test(text)) return "task";
+  return "none";
 }
 
 // ============================================================================
@@ -581,7 +598,21 @@ export async function detectTaskCapture(
 export type DraftedCalendarEditRequest =
   | { readonly kind: "move"; readonly eventTitle: string; readonly newStart: string }
   | { readonly kind: "resize"; readonly eventTitle: string; readonly newEnd: string }
-  | { readonly kind: "create"; readonly title: string; readonly start: string; readonly end: string };
+  | {
+      readonly kind: "create";
+      readonly title: string;
+      readonly start: string;
+      readonly end: string;
+      /**
+       * Real-use fixes plan, Task 2: `true` when Spencer gave neither an
+       * explicit end time nor a duration phrase, so the 60-minute default
+       * was assumed rather than read from the request — `app/calendar-
+       * edit.ts`'s confirm question says so ("…10:45–11:45 AM (1 hour, I
+       * assumed)") so the assumption is visible before Spencer confirms,
+       * never silently baked into the draft.
+       */
+      readonly durationAssumed: boolean;
+    };
 
 const DRAFT_CALENDAR_EDIT_MAX_TOKENS = 256;
 
@@ -602,13 +633,14 @@ function buildDraftCalendarEditSystemPrompt(
       : "  (none)";
   return [
     "You are helping Yoh, Spencer's personal planning assistant, turn a chat request into a structured Calendar edit.",
-    `Today's date is ${today}, Spencer's timezone is ${timeZone}. Resolve any relative time Spencer gives (e.g. "4pm", "in an hour") into a full ISO-8601 UTC datetime with a "Z" suffix (e.g. "2026-09-18T20:00:00.000Z") — always include the date, time and "Z"; never a bare date or a time without an offset.`,
+    `Today's date is ${today}, Spencer's timezone is ${timeZone}. Resolve any relative date or time Spencer gives (e.g. "4pm", "tomorrow", "Friday", "in an hour") into a full ISO-8601 UTC datetime with a "Z" suffix (e.g. "2026-09-18T20:00:00.000Z") — always include the date, time and "Z"; never a bare date or a time without an offset.`,
+    "For a CREATE request, compute the event's END time precisely from whatever Spencer said: an explicit end time (\"till 4\", \"until 4pm\") ends there; a duration phrase (\"an hour and a half\" = 90 minutes, \"half an hour\" = 30 minutes, \"for 45 minutes\"/\"for 45 mins\" = 45 minutes) ends that many minutes after the start. If Spencer gave NEITHER an explicit end time NOR a duration at all, default the duration to exactly 60 minutes.",
     "Today's known calendar events (for matching an event Spencer refers to by name):",
     eventsList,
     "Respond on ONE line, in exactly one of these forms:",
     "MOVE: <exact event title> | <new start, ISO-8601 UTC>",
     "RESIZE: <exact event title> | <new end, ISO-8601 UTC>",
-    "CREATE: <title> | <start, ISO-8601 UTC> | <end, ISO-8601 UTC>",
+    "CREATE: <title> | <start, ISO-8601 UTC> | <end, ISO-8601 UTC> | <ASSUMED if you defaulted the 60-minute duration yourself, else EXPLICIT>",
     "or, if you cannot confidently determine this:",
     "NONE",
   ].join("\n");
@@ -675,7 +707,11 @@ export async function draftCalendarEditRequest(
     return { kind: "resize", eventTitle, newEnd: normalizeIsoDateTime(newEnd) };
   }
 
-  const createMatch = /^CREATE:\s*(.+?)\s*\|\s*(.+?)\s*\|\s*(.+)$/i.exec(text);
+  // The trailing `| ASSUMED`/`| EXPLICIT` marker is optional in PARSING (not
+  // in the system prompt's own spec above) so an older-shaped response with
+  // only three fields still parses — it just can't say whether the duration
+  // was assumed, so it defaults to EXPLICIT (not flagged as assumed).
+  const createMatch = /^CREATE:\s*(.+?)\s*\|\s*(.+?)\s*\|\s*(.+?)\s*(?:\|\s*(ASSUMED|EXPLICIT)\s*)?$/i.exec(text);
   if (createMatch) {
     const title = createMatch[1]!.trim();
     const start = createMatch[2]!.trim();
@@ -689,7 +725,8 @@ export async function draftCalendarEditRequest(
     if (normalizedEnd <= normalizedStart) {
       throw new Error(`llm-adapter: CREATE response has an end not after start: start="${normalizedStart}" end="${normalizedEnd}"`);
     }
-    return { kind: "create", title, start: normalizedStart, end: normalizedEnd };
+    const durationAssumed = (createMatch[4] ?? "EXPLICIT").toUpperCase() === "ASSUMED";
+    return { kind: "create", title, start: normalizedStart, end: normalizedEnd, durationAssumed };
   }
 
   // Matched a recognized keyword prefix but neither sub-pattern parsed the rest of the line — malformed, not "not a calendar edit."

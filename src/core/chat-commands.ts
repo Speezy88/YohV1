@@ -317,10 +317,70 @@ export function isSaveSearchResultCommand(line: string): boolean {
 // actual move/resize/create parsing is draftCalendarEditRequest's job (an
 // LLM call, in llm-adapter.ts). There is deliberately no "delete" trigger
 // (AD-13).
+//
+// Real-use fixes plan, Task 2 (the incident: "make a event at 10:45 am
+// tommorow to meet with alex..." fell through every trigger below and was
+// captured as a Notion Task instead): broadened from the original narrow set
+// of verbs into three independent shapes, any one of which is enough —
+// - an EXISTING-event verb at the start of the line (move/reschedule/
+//   resize/extend/shorten/"block off") — unchanged from the original
+//   trigger, since these only make sense against something already on the
+//   calendar;
+// - a CREATE verb (create/make/add/schedule/"set up"/book/put) at the
+//   START of the line, together with an event-ish noun (event/meeting/
+//   appointment/call/block) ANYWHERE in the line — deliberately not
+//   requiring the noun to sit immediately after the verb ("add DENTIST
+//   APPOINTMENT Friday 2pm", "put a STUDY BLOCK at 4 today");
+// - "meet with"/"meeting with" together with a time-or-date hint anywhere
+//   in the line, even with no create verb at all ("meet with Alex
+//   tomorrow at 3").
+// Still no "delete" shape at all (AD-13) — a delete request never matches
+// any of the three.
 // ============================================================================
 
-const CALENDAR_EDIT_TRIGGER_RE = /^(move|reschedule|resize|extend|shorten|schedule a|block off|create (a|an) (time )?(block|event))\b/i;
+const CALENDAR_EDIT_EXISTING_EVENT_VERB_RE = /^(move|reschedule|resize|extend|shorten|block\s+off)\b/i;
+const CALENDAR_CREATE_VERB_RE = /^(create|make|add|schedule|set\s*up|book|put)\b/i;
+const CALENDAR_CREATE_NOUN_RE = /\b(events?|meetings?|appointments?|calls?|blocks?)\b/i;
+const MEET_WITH_RE = /\bmeet(?:ing)?\s+with\b/i;
+const TIME_OR_DATE_HINT_RE =
+  /\b(\d{1,2}(:\d{2})?\s*(am|pm)|at\s+\d{1,2}(:\d{2})?\b|tomorrow|tonight|today|next\s+\w+|mon(day)?|tue(sday)?|wed(nesday)?|thu(rsday)?|fri(day)?|sat(urday)?|sun(day)?)\b/i;
+
+/**
+ * Post-review fix (Important #1, AD-13): the "meet with"/"meeting with" +
+ * time-or-date shape above is verb-agnostic by design (it has to be, to
+ * catch "meet with Alex tomorrow at 3" with no leading create verb at all)
+ * — which means, unbroadened, it ALSO matched "delete my meeting with Alex
+ * tomorrow at 3", "cancel the meeting with Alex tomorrow", and "remove my
+ * meeting with Alex at 3pm", routing a cancel/delete request into the
+ * calendar-edit drafter. AD-13 says there is no delete variant AT ALL —
+ * `isCalendarEditCommand` below excludes any line this recognizes, and
+ * `app/chat-turn.ts` checks this FIRST (before `isCalendarEditCommand`, and
+ * before any LLM call) to give Spencer a plain, honest answer instead of
+ * silently falling through or — worse — letting `draftCalendarEditRequest`
+ * (or `classifyCapture`'s own "event" backstop) attempt to act on it.
+ *
+ * Recognizes a cancel/delete/remove/clear verb ANYWHERE in the line,
+ * together with either an event-ish noun (reusing `CALENDAR_CREATE_NOUN_RE`
+ * above) or "meet with"/"meeting with" — the same deliberately-simple,
+ * documented starting heuristic every other recognizer in this file uses
+ * (NOT real NLU).
+ */
+const CALENDAR_DELETE_VERB_RE = /\b(cancel|delete|remove|clear)\b/i;
+
+export function isCalendarDeleteRequestCommand(line: string): boolean {
+  const trimmed = line.trim();
+  if (!CALENDAR_DELETE_VERB_RE.test(trimmed)) return false;
+  return CALENDAR_CREATE_NOUN_RE.test(trimmed) || MEET_WITH_RE.test(trimmed);
+}
 
 export function isCalendarEditCommand(line: string): boolean {
-  return CALENDAR_EDIT_TRIGGER_RE.test(line.trim());
+  const trimmed = line.trim();
+  // AD-13 (post-review fix, Important #1): never route a cancel/delete/
+  // remove/clear request into the edit/create drafter — checked FIRST, so
+  // it overrides every shape below, including "meet with"/"meeting with".
+  if (isCalendarDeleteRequestCommand(trimmed)) return false;
+  if (CALENDAR_EDIT_EXISTING_EVENT_VERB_RE.test(trimmed)) return true;
+  if (CALENDAR_CREATE_VERB_RE.test(trimmed) && CALENDAR_CREATE_NOUN_RE.test(trimmed)) return true;
+  if (MEET_WITH_RE.test(trimmed) && TIME_OR_DATE_HINT_RE.test(trimmed)) return true;
+  return false;
 }

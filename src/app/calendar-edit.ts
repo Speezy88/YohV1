@@ -22,6 +22,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { draftCalendarEditRequest, type AnthropicMessagesClient, type DraftedCalendarEditRequest } from "../adapters/llm-adapter.ts";
+import { lineStatesDurationOrEnd } from "../core/calendar-duration.ts";
 import { openProposal, type OpenProposalDeps } from "./open-proposal.ts";
 import type { ChatTurnResponse } from "../types/api.ts";
 import type { CalendarEditChange, CalendarEvent, ExternalId, IsoDate, Proposal, Result, YohError } from "../types/domain.ts";
@@ -47,6 +48,21 @@ export type ProposeNewCalendarEventFn = (change: {
   readonly end: string;
 }) => Proposal<CalendarEditChange>;
 
+/**
+ * Post-review fix (re-review, AD-9): a `"calendar-edit"` Proposal, ADDITIVELY
+ * extended with its own past-tense `receiptText` — never widen the SHARED
+ * `Proposal<T>` in `types/domain.ts` itself (AD-9: "no file may locally
+ * redeclare, widen, or shadow a type `domain.ts` already exports" — the
+ * first-round fix did exactly that, adding an optional `receiptText?` field
+ * to `Proposal<T>` for every kind, which this type replaces). This file
+ * builds the value (`proposeCalendarEdit` below); `openProposal` still
+ * accepts it structurally as a `Proposal<unknown>` (an intersection with
+ * extra own properties is always assignable to a narrower — here, wider —
+ * shape it's a superset of); `confirm-proposal.ts`'s `"calendar-edit"`
+ * branch asserts `proposal as CalendarEditProposal` to read it back.
+ */
+export type CalendarEditProposal = Proposal<CalendarEditChange> & { readonly receiptText: string };
+
 export interface CalendarEditDeps extends OpenProposalDeps {
   readonly llmClient: AnthropicMessagesClient;
   readonly timeZone: string;
@@ -68,15 +84,78 @@ function formatLocalTime(iso: string, timeZone: string): string {
   return new Intl.DateTimeFormat("en-US", { timeZone, weekday: "short", year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(iso));
 }
 
-/** Future-tense preview only — the past-tense receipt is `app/confirm-proposal.ts`'s own job (Story 8.2, built before this file existed — its receipt for `"calendar-edit"` is `proposal.reason` verbatim, i.e. this exact preview string). */
-function describeCalendarEditPreview(change: CalendarEditChange, eventTitle: string, timeZone: string): string {
+/** `iso`'s local weekday + month + day (no year, no time) — real-use fixes plan, Task 2's "create" confirm names the day once, then a single local time range, rather than repeating the full date on both ends. */
+function formatLocalDay(iso: string, timeZone: string): string {
+  return new Intl.DateTimeFormat("en-US", { timeZone, weekday: "short", month: "short", day: "numeric" }).format(new Date(iso));
+}
+
+/** `iso`'s local wall-clock time only (no date) — paired with `formatLocalDay` for a "create" confirm's time range. */
+function formatLocalClock(iso: string, timeZone: string): string {
+  return new Intl.DateTimeFormat("en-US", { timeZone, hour: "numeric", minute: "2-digit" }).format(new Date(iso));
+}
+
+/** The "(N hour(s), I assumed)"/"(N min, I assumed)" note appended to a "create" confirm when `draftCalendarEditRequest` had to default the duration (Task 2) — computed from the actual start/end rather than hardcoded, though today that default is always exactly 60 minutes. */
+function formatAssumedDurationNote(start: string, end: string): string {
+  const minutes = Math.round((new Date(end).getTime() - new Date(start).getTime()) / 60000);
+  const label = minutes > 0 && minutes % 60 === 0 ? `${minutes / 60} hour${minutes === 60 ? "" : "s"}` : `${minutes} min`;
+  return ` (${label}, I assumed)`;
+}
+
+/**
+ * Future-tense preview only — a real, distinct QUESTION (always ends "?"
+ * for "create"; unchanged, no "?" for move/resize, matching how those two
+ * read before this task). The past-tense RECEIPT (below,
+ * `describeCalendarEditReceipt`) is a separate string, computed here (where
+ * `eventTitle`/`timeZone` are both already in hand) and carried on the
+ * persisted proposal as `CalendarEditProposal.receiptText` (Task 2,
+ * post-review fix, Important #2 — and, re-review, built as an ADDITIVE type
+ * rather than a new field on the shared `Proposal<T>`, per AD-9) —
+ * `app/confirm-proposal.ts`'s `"calendar-edit"` branch reads THAT, never
+ * `proposal.reason`, for what Spencer sees after he says yes. (Before this
+ * fix, confirm-proposal.ts reused `proposal.reason` verbatim as the receipt
+ * too, so confirming showed Spencer back his own still-future-tense,
+ * still-"?"-suffixed confirm question instead of a real receipt.)
+ *
+ * Real-use fixes plan, Task 2: a "create" preview names the event, the
+ * local day, and the local time range on one line (e.g. 'Create "Meet with
+ * Alex" on Sat Sep 28, 10:45 AM–12:15 PM?'), and says so when the duration
+ * was assumed rather than stated (`durationAssumed` — only ever set for
+ * `change.kind === "create"`, via `draftCalendarEditRequest`'s own
+ * `durationAssumed` flag, cross-checked against Spencer's own line by
+ * `proposeCalendarEdit` below — see Important #3's fix).
+ */
+function describeCalendarEditPreview(change: CalendarEditChange, eventTitle: string, timeZone: string, durationAssumed = false): string {
   switch (change.kind) {
     case "move":
       return `Move "${eventTitle}" to ${formatLocalTime(change.newStart, timeZone)}–${formatLocalTime(change.newEnd, timeZone)}`;
     case "resize":
       return `Resize "${eventTitle}" to end at ${formatLocalTime(change.newEnd, timeZone)}`;
+    case "create": {
+      const day = formatLocalDay(change.start, timeZone);
+      const startTime = formatLocalClock(change.start, timeZone);
+      const endTime = formatLocalClock(change.end, timeZone);
+      const assumedNote = durationAssumed ? formatAssumedDurationNote(change.start, change.end) : "";
+      return `Create "${eventTitle}" on ${day}, ${startTime}–${endTime}${assumedNote}?`;
+    }
+  }
+}
+
+/**
+ * Past-tense receipt (Task 2, post-review fix, Important #2) — what Spencer
+ * sees AFTER he says yes, via `confirm-proposal.ts`'s `"calendar-edit"`
+ * branch reading this `CalendarEditProposal`'s own `receiptText` (never
+ * `proposal.reason`, which stays the future-tense confirm question, still
+ * ending "?" for "create"). A statement, never a question — no trailing "?"
+ * on any branch.
+ */
+function describeCalendarEditReceipt(change: CalendarEditChange, eventTitle: string, timeZone: string): string {
+  switch (change.kind) {
+    case "move":
+      return `Moved "${eventTitle}" to ${formatLocalDay(change.newStart, timeZone)}, ${formatLocalClock(change.newStart, timeZone)}–${formatLocalClock(change.newEnd, timeZone)}.`;
+    case "resize":
+      return `Resized "${eventTitle}" — now ends ${formatLocalDay(change.newEnd, timeZone)}, ${formatLocalClock(change.newEnd, timeZone)}.`;
     case "create":
-      return `Create "${eventTitle}" from ${formatLocalTime(change.start, timeZone)} to ${formatLocalTime(change.end, timeZone)}`;
+      return `Added "${eventTitle}" to Google Calendar — ${formatLocalDay(change.start, timeZone)}, ${formatLocalClock(change.start, timeZone)}–${formatLocalClock(change.end, timeZone)}.`;
   }
 }
 
@@ -141,8 +220,33 @@ export async function proposeCalendarEdit(deps: CalendarEditDeps, input: Calenda
   // THAT is the one case `openProposal`'s conflict rule should actually fire
   // for (Review Focus #1).
   const entityId = draft.kind === "create" ? `calendar-create-${randomUUID()}` : proposal.entityId;
-  const preview = describeCalendarEditPreview(proposal.suggested, eventTitle, deps.timeZone);
-  const opened = await openProposal(deps, { proposal: { ...proposal, entityId, reason: preview } });
+
+  // Post-review fix, Important #3: `draft.durationAssumed` (the model's own
+  // optional ASSUMED/EXPLICIT marker on the CREATE response line) is never
+  // trusted unconditionally — `lineStatesDurationOrEnd` is a deterministic,
+  // pure cross-check (`core/calendar-duration.ts`) over Spencer's OWN line.
+  // If his line states neither a duration nor an explicit end at all, the
+  // duration is ALWAYS treated as assumed, regardless of what the marker
+  // claims (a model that forgets to say ASSUMED must never silently
+  // understate that a 60-minute default was applied). If his line DOES
+  // state a duration or an end, the marker (and the drafted end itself) is
+  // trusted as-is.
+  const durationAssumed = draft.kind === "create" ? (lineStatesDurationOrEnd(input.line) ? draft.durationAssumed : true) : false;
+
+  const preview = describeCalendarEditPreview(proposal.suggested, eventTitle, deps.timeZone, durationAssumed);
+  // Post-review fix, Important #2 (re-review: additive type, not a widened
+  // shared Proposal<T>, per AD-9): the past-tense receipt is a SEPARATE
+  // string from `preview` (the future-tense confirm question) — computed
+  // here, where `eventTitle`/`timeZone` are both in hand, and carried on the
+  // persisted proposal (as a `CalendarEditProposal`) so `confirm-proposal.ts`
+  // never has to (and never again reuses `proposal.reason`, a future-tense,
+  // "?"-suffixed question, as if it were a receipt). `openProposal` still
+  // accepts this structurally as a `Proposal<unknown>` — the extra
+  // `receiptText` field rides along through `memory-store.ts`'s plain
+  // JSON persistence untouched (pinned by this file's own round-trip test).
+  const receiptText = describeCalendarEditReceipt(proposal.suggested, eventTitle, deps.timeZone);
+  const proposalWithReceipt: CalendarEditProposal = { ...proposal, entityId, reason: preview, receiptText };
+  const opened = await openProposal(deps, { proposal: proposalWithReceipt });
   if (!opened.ok) {
     // Review Focus #1 — openProposal's own conflict rule (Story 8.2, C4) —
     // reachable only for the move/resize (existing-entity) branch above.

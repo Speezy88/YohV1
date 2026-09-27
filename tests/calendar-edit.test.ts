@@ -11,11 +11,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { openSqliteConnection, type SqliteConnection } from "../src/adapters/sqlite.ts";
-import { createMemoryStore } from "../src/adapters/memory-store.ts";
+import { createMemoryStore, getOpenInteractionRequest } from "../src/adapters/memory-store.ts";
 import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
-import { proposeCalendarEdit, type CalendarEditDeps } from "../src/app/calendar-edit.ts";
+import { proposeCalendarEdit, type CalendarEditDeps, type CalendarEditProposal } from "../src/app/calendar-edit.ts";
+import { confirmProposal, type ConfirmProposalDeps } from "../src/app/confirm-proposal.ts";
 import type { AnthropicMessagesClient } from "../src/adapters/llm-adapter.ts";
-import type { CalendarEvent } from "../src/types/domain.ts";
+import type { CalendarEditChange, CalendarEvent, Proposal } from "../src/types/domain.ts";
 
 const TEAM_SYNC: CalendarEvent = { id: "evt-1", title: "Team sync", start: "2026-09-18T15:00:00.000Z", end: "2026-09-18T16:00:00.000Z" };
 const TODAY = "2026-09-18";
@@ -149,6 +150,10 @@ test("a valid move is persisted as an open Proposal and returned as `question`; 
   assert.equal(result.value.reply, "");
   assert.ok(result.value.question, "expected a follow-up confirm question");
   assert.match(result.value.question?.text ?? "", /Move "Team sync" to Fri, Sep 18, 2026, 2:00 PM/);
+  // Post-review fix, Important #2: the persisted Proposal carries its own
+  // past-tense receiptText, distinct from the future-tense question text
+  // above — confirm-proposal.ts reads this, never `question.text`/`reason`.
+  assert.equal((result.value.question?.proposal as CalendarEditProposal | undefined)?.receiptText, 'Moved "Team sync" to Fri, Sep 18, 2:00 PM–3:00 PM.');
   deps.connection.close();
 });
 
@@ -175,6 +180,103 @@ test("a create (no eventId) request skips route resolution and proposes directly
   const result = await proposeCalendarEdit(deps, { line: "create a time block for deep work", today: TODAY });
   assert.equal(result.ok, true);
   if (result.ok) assert.ok(result.value.question);
+  deps.connection.close();
+});
+
+// ============================================================================
+// Real-use fixes plan, Task 2: the "create" confirm question names the
+// event, the local day, and the local time range on one line, and says so
+// when draftCalendarEditRequest had to assume the 60-minute default duration
+// (no explicit end time or duration phrase in Spencer's line).
+// ============================================================================
+
+test("a 'create' confirm question names the event, the local day, and the local time range — an EXPLICIT duration is stated plainly, with no 'I assumed' note", async () => {
+  const deps = tempDeps({ llmResponse: "CREATE: Meet with Alex | 2026-09-28T14:45:00.000Z | 2026-09-28T16:15:00.000Z | EXPLICIT" });
+  const result = await proposeCalendarEdit(deps, {
+    line: "make a event at 10:45 am tommorow to meet with alex. itll go for an hour and a half",
+    today: "2026-09-27",
+  });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.match(result.value.question?.text ?? "", /^Create "Meet with Alex" on Mon, Sep 28, 10:45 AM–12:15 PM\?$/);
+  assert.doesNotMatch(result.value.question?.text ?? "", /I assumed/);
+  // Post-review fix, Important #2: the exact past-tense receipt, distinct
+  // from the future-tense confirm question above.
+  assert.equal((result.value.question?.proposal as CalendarEditProposal | undefined)?.receiptText, 'Added "Meet with Alex" to Google Calendar — Mon, Sep 28, 10:45 AM–12:15 PM.');
+  deps.connection.close();
+});
+
+test("a 'create' confirm question says so when the duration was ASSUMED (no end/duration given) — the exact incident-adjacent wording", async () => {
+  const deps = tempDeps({ llmResponse: "CREATE: Meeting with Alex | 2026-09-28T19:00:00.000Z | 2026-09-28T20:00:00.000Z | ASSUMED" });
+  const result = await proposeCalendarEdit(deps, { line: "schedule a meeting with Alex tomorrow at 3", today: "2026-09-27" });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.match(result.value.question?.text ?? "", /\(1 hour, I assumed\)\?$/);
+  deps.connection.close();
+});
+
+test("a 'create' draft with no duration marker at all (older/malformed response shape), but Spencer's OWN line states a duration, is never reported as assumed — the deterministic cross-check (Important #3) trusts the drafted end because the line itself states the duration", async () => {
+  const deps = tempDeps({ llmResponse: "CREATE: Deep work | 2026-09-18T14:00:00.000Z | 2026-09-18T16:00:00.000Z" });
+  const result = await proposeCalendarEdit(deps, { line: "create a time block for deep work for 2 hours", today: TODAY });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.doesNotMatch(result.value.question?.text ?? "", /I assumed/);
+  deps.connection.close();
+});
+
+// ============================================================================
+// Post-review fix, Important #3: draftCalendarEditRequest's own optional
+// ASSUMED/EXPLICIT marker is never trusted unconditionally — `proposeCalendarEdit`
+// cross-checks it against Spencer's OWN line (core/calendar-duration.ts's
+// `lineStatesDurationOrEnd`). A line with no duration/end at all is ALWAYS
+// reported as assumed, even if the model's marker (wrongly) says EXPLICIT.
+// ============================================================================
+
+test("Important #3: a line with NO duration or end at all is always reported as assumed, even when the model's own marker (wrongly) says EXPLICIT", async () => {
+  const deps = tempDeps({ llmResponse: "CREATE: Study block | 2026-09-18T20:00:00.000Z | 2026-09-18T21:00:00.000Z | EXPLICIT" });
+  const result = await proposeCalendarEdit(deps, { line: "put a study block at 4 today", today: TODAY });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.match(result.value.question?.text ?? "", /\(1 hour, I assumed\)\?$/);
+  deps.connection.close();
+});
+
+// ============================================================================
+// Post-review fix (re-review, AD-9): `receiptText` lives on the ADDITIVE
+// `CalendarEditProposal` type, never a widened `Proposal<T>` — this must
+// still survive the REAL round trip: `openProposal` persists it into
+// `memory-store.ts` (plain JSON), a later re-read (`getOpenInteractionRequest`
+// — the same call `answerOpenItem` makes on a later turn) gets it back, and
+// `confirmProposal` reads it off that RE-READ object, not the original
+// in-memory one.
+// ============================================================================
+
+test("Important #2 (re-review): receiptText survives the real interaction-request store round-trip — persist (proposeCalendarEdit -> openProposal), re-read (getOpenInteractionRequest), confirm (confirmProposal)", async () => {
+  const deps = tempDeps({ llmResponse: "CREATE: Meet with Alex | 2026-09-28T14:45:00.000Z | 2026-09-28T16:15:00.000Z | EXPLICIT" });
+
+  const proposed = await proposeCalendarEdit(deps, {
+    line: "make a event at 10:45 am tommorow to meet with alex. itll go for an hour and a half",
+    today: "2026-09-27",
+  });
+  assert.equal(proposed.ok, true);
+  if (!proposed.ok) return;
+  const requestId = proposed.value.question?.requestId;
+  assert.ok(requestId, "expected proposeCalendarEdit to persist an open interaction request");
+
+  // Re-read fresh from the REAL store — a genuinely separate read from the
+  // in-memory `proposed.value.question.proposal` object above, exercising
+  // the same JSON persist/parse round-trip `answerOpenItem` relies on.
+  const record = getOpenInteractionRequest(deps.store, requestId!);
+  assert.ok(record, "expected the interaction request to be re-readable from the store");
+  const detail = record!.data.detail as { readonly proposal?: CalendarEditProposal };
+  assert.ok(detail.proposal, "expected the re-read record to carry the persisted proposal");
+  assert.equal(detail.proposal!.receiptText, 'Added "Meet with Alex" to Google Calendar — Mon, Sep 28, 10:45 AM–12:15 PM.', "receiptText must survive the store round-trip byte-for-byte");
+
+  const applyCalendarEdit: ConfirmProposalDeps["applyCalendarEdit"] = async () => ({ ok: true, value: { eventId: "calendar-create-1", calendarId: "primary" } });
+  const confirmed = await confirmProposal({ store: deps.store, applyCalendarEdit }, { proposal: detail.proposal as Proposal<CalendarEditChange>, accept: true, requestId: requestId! });
+  assert.equal(confirmed.ok, true);
+  if (!confirmed.ok) return;
+  assert.deepEqual(confirmed.value.receipts, ['Added "Meet with Alex" to Google Calendar — Mon, Sep 28, 10:45 AM–12:15 PM.']);
   deps.connection.close();
 });
 
