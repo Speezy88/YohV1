@@ -19,12 +19,19 @@
  * succession each get their own pending record and commit independently;
  * the toast shows only the most recent, and its Undo undoes only that one.
  * An earlier one stays dissolved and commits silently once superseded.
+ *
+ * Fix round (2026-09-27 review): each row shows its local time range (e.g.
+ * "9:00–10:30"), formatted in the HOST timezone (`timeZone`, required —
+ * `HomeViewResponse.timeZone`) via `hostTime.ts`, never the browser's own
+ * zone (AD-17).
  */
 import { useState } from "react";
 import type { HomePlanRow } from "../../../src/types/api.ts";
 import { useReducedMotion } from "../hooks/useReducedMotion.ts";
 import { remainingMs, requestCheckOff, requestUndo } from "../lib/checkOff.ts";
 import { addLocalFailureNotice } from "../lib/notifications.ts";
+import { displayLabel } from "../lib/labels.ts";
+import { formatClockTime } from "../lib/hostTime.ts";
 import { Checkbox } from "./Checkbox.tsx";
 import { UndoToast } from "./UndoToast.tsx";
 
@@ -40,9 +47,11 @@ interface ToastState {
 
 export interface PlanChecklistProps {
   readonly rows: readonly HomePlanRow[];
+  /** The host timezone (`HomeViewResponse.timeZone`, AD-17) each row's start–end range is formatted in — never the browser's own zone. */
+  readonly timeZone: string;
 }
 
-export function PlanChecklist({ rows }: PlanChecklistProps): React.JSX.Element {
+export function PlanChecklist({ rows, timeZone }: PlanChecklistProps): React.JSX.Element {
   const reducedMotion = useReducedMotion();
   const [local, setLocal] = useState<ReadonlyMap<string, LocalCheck>>(new Map());
   const [toast, setToast] = useState<ToastState | undefined>(undefined);
@@ -92,10 +101,13 @@ export function PlanChecklist({ rows }: PlanChecklistProps): React.JSX.Element {
             aria-disabled={readOnly}
             hidden={localCheck === "gone"}
             onAnimationEnd={localCheck === "dissolving" ? () => setLocalCheck(row.taskId, "gone") : undefined}
-            className={`flex items-center gap-2 rounded-md bg-surface-raised px-3 py-2 font-body text-body text-ink-primary ${checked ? "line-through opacity-50" : ""} ${row.past && !checked ? "opacity-70" : ""} ${motion}`}
+            className={`flex h-16 items-center gap-4 rounded-lg bg-surface-raised px-5 font-body text-body text-ink-primary shadow-extruded-sm ${checked ? "line-through opacity-50" : ""} ${row.past && !checked ? "opacity-70" : ""} ${motion}`}
           >
-            <Checkbox label={row.label} checked={checked} disabled={readOnly} onCheck={() => void check(row)} />
-            {row.label}
+            <Checkbox label={displayLabel(row.label)} checked={checked} disabled={readOnly} onCheck={() => void check(row)} />
+            <span className="flex-1">{displayLabel(row.label)}</span>
+            <span className="font-body text-small text-ink-secondary">
+              {formatClockTime(new Date(row.start), timeZone)}–{formatClockTime(new Date(row.end), timeZone)}
+            </span>
           </div>
         );
       })}

@@ -14,7 +14,7 @@ import { hc } from "hono/client";
 import type { LogEntry } from "../src/adapters/logger.ts";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { createNotification, initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
-import { createMemoryStore, putPlan } from "../src/adapters/memory-store.ts";
+import { createMemoryStore, getCurrentTimeBudget, putPlan } from "../src/adapters/memory-store.ts";
 import { initCompletionLogSchema } from "../src/adapters/completion-log.ts";
 import type { AppType, HealthResponse } from "../src/types/api.ts";
 import { createApp, startServer, type ServeOptions, type ServerDeps } from "../src/shell/server.ts";
@@ -280,6 +280,73 @@ test("GET /api/home returns a clear error when homeView deps are not configured"
   const body = (await res.json()) as { ok: boolean; error: { kind: string } };
   assert.equal(body.ok, false);
   assert.equal(body.error.kind, "unreachable");
+  connection.close();
+});
+
+test("Task 6A: POST /api/time-budget declares today's Time Budget over the existing app/time-budget.ts function, reflected by a later GET /api/home", async () => {
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db);
+  initCompletionLogSchema(connection.db);
+  const store = createMemoryStore(connection);
+  const app = createApp({
+    connection,
+    homeView: {
+      store,
+      readCalendarEvents: async () => [],
+      readTasks: async () => ({ tasks: [] }),
+      timeZone: "UTC",
+      now: () => new Date("2026-09-25T12:00:00.000Z"),
+    },
+  });
+  const res = await app.request("/api/time-budget", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ totalMinutes: 360 }),
+  });
+  assert.equal(res.status, 200);
+  const body = (await res.json()) as { ok: boolean; value: { receipt: string } };
+  assert.equal(body.ok, true);
+  assert.match(body.value.receipt, /6h/);
+  assert.equal(getCurrentTimeBudget(store)?.data.totalMinutes, 360);
+
+  const homeRes = await app.request("/api/home");
+  const homeBody = (await homeRes.json()) as { ok: boolean; value: { timeBudget: { totalMinutes: number } | undefined } };
+  assert.equal(homeBody.value.timeBudget?.totalMinutes, 360);
+  connection.close();
+});
+
+test("POST /api/time-budget returns a clear error when homeView deps are not configured", async () => {
+  const { app, connection } = tempApp();
+  const res = await app.request("/api/time-budget", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ totalMinutes: 360 }),
+  });
+  assert.equal(res.status, 503);
+  const body = (await res.json()) as { ok: boolean; error: { kind: string } };
+  assert.equal(body.ok, false);
+  assert.equal(body.error.kind, "unreachable");
+  connection.close();
+});
+
+test("POST /api/time-budget rejects a malformed body with 400", async () => {
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db);
+  const app = createApp({
+    connection,
+    homeView: {
+      store: createMemoryStore(connection),
+      readCalendarEvents: async () => [],
+      readTasks: async () => ({ tasks: [] }),
+      timeZone: "UTC",
+    },
+  });
+  const res = await app.request("/api/time-budget", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  assert.equal(res.status, 400);
   connection.close();
 });
 

@@ -21,8 +21,8 @@ const TURNS = 30;
 
 async function openChat(page: Page): Promise<void> {
   await page.goto("/");
-  await page.getByRole("button", { name: "Chat" }).click();
-  await expect(page.getByTestId("page-chat")).not.toHaveAttribute("aria-hidden", "true");
+  await page.getByRole("button", { name: /ask yoh/i }).click();
+  await expect(page.getByTestId("chat-panel")).toBeVisible();
 }
 
 /**
@@ -56,7 +56,7 @@ async function sendTurnAndAwaitReply(input: Locator, stream: Locator, line: stri
 test("a long conversation never lets the stream, open items, or the last message overlap the Chat Input", async ({ page }) => {
   test.setTimeout(120_000);
   await openChat(page);
-  const chat = page.getByTestId("page-chat");
+  const chat = page.getByTestId("chat-panel");
 
   // The fixture's one seeded open item is still here (see file comment) —
   // Task 0's "plus an open item" case, covered without touching it.

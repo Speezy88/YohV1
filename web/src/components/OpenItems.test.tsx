@@ -41,6 +41,18 @@ describe("OpenItems", () => {
     expect(screen.getByText("What area is Draft the memo?")).toBeInTheDocument();
   });
 
+  // Fix round (2026-09-27 review): the approved mockup's "WAITING ON YOU"
+  // eyebrow, accessible as a real heading.
+  it("shows a 'Waiting on you' heading above the list", () => {
+    render(<OpenItems items={[ITEM]} />);
+    expect(screen.getByRole("heading", { name: "Waiting on you" })).toBeInTheDocument();
+  });
+
+  it("shows no heading when there are no open items", () => {
+    render(<OpenItems items={[]} />);
+    expect(screen.queryByRole("heading", { name: "Waiting on you" })).not.toBeInTheDocument();
+  });
+
   it("picking a chip calls submitOpenItemAnswer with the request/question ids and the chip's value, then records the exchange", async () => {
     vi.spyOn(openItemsLib, "submitOpenItemAnswer").mockResolvedValue({
       ok: true,

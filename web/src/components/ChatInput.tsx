@@ -35,16 +35,16 @@ export function ChatInput(): React.JSX.Element {
   return (
     <div
       data-testid="chat-input"
-      className="notification-glass relative flex w-full items-end gap-2 rounded-full px-4 py-2 focus-within:shadow-focus-glow"
+      className="notification-glass relative flex w-full items-center gap-3 rounded-full py-1.5 pl-5 pr-1.5 focus-within:shadow-focus-glow"
     >
       {showPalette && <CommandPalette {...commandPaletteProps} />}
       <textarea
         rows={1}
         value={draft}
         aria-label="Message Yoh"
-        placeholder="Ask Yoh anything"
+        placeholder="Ask Yoh, or type / for commands"
         aria-activedescendant={activeDescendant}
-        className="field-sizing-content max-h-32 min-w-0 flex-1 resize-none bg-transparent py-1 font-body text-body text-ink-primary outline-none placeholder:text-ink-secondary"
+        className="field-sizing-content max-h-32 min-w-0 flex-1 resize-none self-center bg-transparent py-2.5 font-body text-body text-ink-primary outline-none placeholder:text-ink-secondary"
         onChange={(e) => handleChange(e.target.value)}
         onKeyDown={(e) => {
           if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing) return;
@@ -56,9 +56,12 @@ export function ChatInput(): React.JSX.Element {
         type="button"
         disabled={!canSend}
         onClick={submit}
-        className="shrink-0 rounded-full px-3 py-1 font-body text-body font-bold text-accent-solid focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid disabled:text-ink-secondary"
+        aria-label="Send"
+        className="flex size-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end text-on-accent-solid focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid disabled:opacity-40"
       >
-        Send
+        <svg aria-hidden="true" viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
+          <path d="M5 12h14M13 6l6 6-6 6" />
+        </svg>
       </button>
     </div>
   );

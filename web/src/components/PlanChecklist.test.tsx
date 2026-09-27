@@ -6,6 +6,12 @@
  * server's `commitAt`, held while hovered/focused), Undo, the visible
  * failure paths, and rapid successive check-offs. The API calls are mocked
  * at `lib/checkOff.ts`; `remainingMs` stays real.
+ *
+ * Fix round (2026-09-27 review): rows now show a local time range, formatted
+ * in the given `timeZone` — fixtures use real ISO timestamps (not the
+ * former `start: "x", end: "y"` placeholders, which never round-tripped
+ * through a real `Date` and would throw once the component started reading
+ * them).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
@@ -19,10 +25,17 @@ vi.mock("../lib/checkOff.ts", async (importOriginal) => {
   return { ...actual, requestCheckOff: vi.fn(), requestUndo: vi.fn(), requestHold: vi.fn(), requestRelease: vi.fn() };
 });
 
+const TZ = "UTC";
+
 const rows: HomePlanRow[] = [
-  { blockId: "b1", taskId: "t1", label: "Draft the memo", start: "x", end: "y", completed: false, past: false },
-  { blockId: "b2", taskId: "t2", label: "Call the dentist", start: "x", end: "y", completed: false, past: false },
+  { blockId: "b1", taskId: "t1", label: "Draft the memo", start: "2026-09-25T09:00:00.000Z", end: "2026-09-25T10:30:00.000Z", completed: false, past: false },
+  { blockId: "b2", taskId: "t2", label: "Call the dentist", start: "2026-09-25T10:30:00.000Z", end: "2026-09-25T10:45:00.000Z", completed: false, past: false },
 ];
+
+/** Renders `PlanChecklist` with the fixture timezone — every call site below needs the same `timeZone`, so this is the one place that's spelled out. */
+function renderChecklist(rowsArg: readonly HomePlanRow[]): ReturnType<typeof render> {
+  return render(<PlanChecklist rows={rowsArg} timeZone={TZ} />);
+}
 
 function pending(id: string, taskId: string, windowMs = 5000, held = false): PendingCheckOffResponse {
   return { id, taskId, commitAt: new Date(Date.parse("2026-09-25T18:00:00.000Z") + windowMs).toISOString(), asOf: "2026-09-25T18:00:00.000Z", held };
@@ -65,14 +78,22 @@ describe("PlanChecklist", () => {
   });
 
   it("renders every row in the given order, each with an accessible Checkbox", () => {
-    render(<PlanChecklist rows={rows} />);
-    expect(screen.getAllByTestId("plan-row").map((r) => r.textContent)).toEqual(["Draft the memo", "Call the dentist"]);
+    renderChecklist(rows);
+    expect(screen.getAllByTestId("plan-row").map((r) => r.textContent)).toEqual(["Draft the memo9:00–10:30", "Call the dentist10:30–10:45"]);
     expect(screen.getByRole("checkbox", { name: "Draft the memo" })).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("shows each row's local time range, formatted in the given timeZone (fix round 2026-09-27)", () => {
+    // 09:00Z-10:30Z is 2:00-3:30am in America/Los_Angeles (PDT, UTC-7) — a
+    // different zone renders different clock digits, proving the value
+    // actually came from the given `timeZone`, not a fixed UTC read.
+    render(<PlanChecklist rows={[rows[0]!]} timeZone="America/Los_Angeles" />);
+    expect(screen.getByText("2:00–3:30")).toBeInTheDocument();
   });
 
   it("checking a row shows checkmark + strikethrough + 50% opacity and starts the dissolve BEFORE any server response", () => {
     mocked.checkOff.mockReturnValue(new Promise(() => {})); // never resolves
-    render(<PlanChecklist rows={rows} />);
+    renderChecklist(rows);
     fireEvent.click(screen.getByRole("checkbox", { name: "Draft the memo" }));
     expect(screen.getByRole("checkbox", { name: "Draft the memo" })).toHaveAttribute("aria-checked", "true");
     expect(row("t1")).toHaveClass("line-through", "opacity-50", "check-off-dissolve");
@@ -83,14 +104,14 @@ describe("PlanChecklist", () => {
   it("under reduced motion the checked row is hidden instantly, with no dissolve animation", () => {
     setReducedMotion(true);
     mocked.checkOff.mockReturnValue(new Promise(() => {}));
-    render(<PlanChecklist rows={rows} />);
+    renderChecklist(rows);
     fireEvent.click(screen.getByRole("checkbox", { name: "Draft the memo" }));
     expect(row("t1")).not.toBeVisible();
     expect(row("t1")).not.toHaveClass("check-off-dissolve");
   });
 
   it("the dissolve ends with the row hidden", async () => {
-    render(<PlanChecklist rows={rows} />);
+    renderChecklist(rows);
     fireEvent.click(screen.getByRole("checkbox", { name: "Draft the memo" }));
     fireEvent.animationEnd(row("t1"));
     expect(row("t1")).not.toBeVisible();
@@ -98,7 +119,7 @@ describe("PlanChecklist", () => {
   });
 
   it("shows the Undo Toast — 'Checked off {Task} · Undo', polite live region, Secondary Undo button — once the server confirms", async () => {
-    render(<PlanChecklist rows={rows} />);
+    renderChecklist(rows);
     fireEvent.click(screen.getByRole("checkbox", { name: "Draft the memo" }));
     await flush();
     const toast = screen.getByTestId("undo-toast");
@@ -111,7 +132,7 @@ describe("PlanChecklist", () => {
 
   it("the toast stays visible until the server's commitAt (commitAt - asOf), then closes; the row stays dissolved", async () => {
     vi.useFakeTimers();
-    render(<PlanChecklist rows={rows} />);
+    renderChecklist(rows);
     fireEvent.click(screen.getByRole("checkbox", { name: "Draft the memo" }));
     await flush();
     await act(async () => vi.advanceTimersByTime(4999));
@@ -122,7 +143,7 @@ describe("PlanChecklist", () => {
   });
 
   it("Undo deletes the pending record, closes the toast, and the row returns", async () => {
-    render(<PlanChecklist rows={rows} />);
+    renderChecklist(rows);
     fireEvent.click(screen.getByRole("checkbox", { name: "Draft the memo" }));
     fireEvent.animationEnd(row("t1"));
     await flush();
@@ -138,7 +159,7 @@ describe("PlanChecklist", () => {
   it("a failed Undo is visible: the toast closes, the row stays checked, and a failure notice names the Task", async () => {
     const notice = vi.spyOn(notifications, "addLocalFailureNotice").mockImplementation(() => {});
     mocked.undo.mockResolvedValue({ ok: false, message: "check-off: undo: p1 is no longer pending" });
-    render(<PlanChecklist rows={rows} />);
+    renderChecklist(rows);
     fireEvent.click(screen.getByRole("checkbox", { name: "Draft the memo" }));
     await flush();
     fireEvent.click(screen.getByRole("button", { name: "Undo" }));
@@ -151,7 +172,7 @@ describe("PlanChecklist", () => {
   it("a failed check-off is visible: the row returns and a failure notice names the Task (no toast)", async () => {
     const notice = vi.spyOn(notifications, "addLocalFailureNotice").mockImplementation(() => {});
     mocked.checkOff.mockResolvedValue({ ok: false, message: "offline" });
-    render(<PlanChecklist rows={rows} />);
+    renderChecklist(rows);
     fireEvent.click(screen.getByRole("checkbox", { name: "Draft the memo" }));
     await flush();
     expect(notice).toHaveBeenCalledWith("Couldn't check off Draft the memo");
@@ -161,7 +182,7 @@ describe("PlanChecklist", () => {
 
   it("hovering the toast holds the pending record (the timer pauses); leaving releases it and resumes with the server's remaining time", async () => {
     vi.useFakeTimers();
-    render(<PlanChecklist rows={rows} />);
+    renderChecklist(rows);
     fireEvent.click(screen.getByRole("checkbox", { name: "Draft the memo" }));
     await flush();
     const toast = screen.getByTestId("undo-toast");
@@ -184,7 +205,7 @@ describe("PlanChecklist", () => {
   it("focusing inside the toast holds it; moving focus within it doesn't release; focus leaving releases it", async () => {
     render(
       <>
-        <PlanChecklist rows={rows} />
+        <PlanChecklist rows={rows} timeZone={TZ} />
         <button type="button">elsewhere</button>
       </>,
     );
@@ -201,7 +222,7 @@ describe("PlanChecklist", () => {
   it("hover and focus together hold once and release once, when both have ended", async () => {
     render(
       <>
-        <PlanChecklist rows={rows} />
+        <PlanChecklist rows={rows} timeZone={TZ} />
         <button type="button">elsewhere</button>
       </>,
     );
@@ -220,7 +241,7 @@ describe("PlanChecklist", () => {
 
   it("a toast replaced while held releases its hold; one closed by Undo doesn't (the record is being deleted)", async () => {
     mocked.checkOff.mockResolvedValueOnce({ ok: true, value: pending("p1", "t1") }).mockResolvedValueOnce({ ok: true, value: pending("p2", "t2") });
-    render(<PlanChecklist rows={rows} />);
+    renderChecklist(rows);
     fireEvent.click(screen.getByRole("checkbox", { name: "Draft the memo" }));
     await flush();
     fireEvent.mouseEnter(screen.getByTestId("undo-toast"));
@@ -238,7 +259,7 @@ describe("PlanChecklist", () => {
   it("rapid check-offs: each gets its own pending record, the toast shows the most recent, and its Undo undoes only that one", async () => {
     mocked.checkOff.mockResolvedValueOnce({ ok: true, value: pending("p1", "t1") }).mockResolvedValueOnce({ ok: true, value: pending("p2", "t2") });
     mocked.undo.mockResolvedValue({ ok: true, value: { id: "p2" } });
-    render(<PlanChecklist rows={rows} />);
+    renderChecklist(rows);
     fireEvent.click(screen.getByRole("checkbox", { name: "Draft the memo" }));
     await flush();
     fireEvent.click(screen.getByRole("checkbox", { name: "Call the dentist" }));
@@ -255,14 +276,10 @@ describe("PlanChecklist", () => {
   });
 
   it("only completed rows are read-only; a past, incomplete row keeps its past cue but stays checkable (Ruling R18)", () => {
-    render(
-      <PlanChecklist
-        rows={[
-          { ...rows[0]!, completed: true, past: true },
-          { ...rows[1]!, past: true },
-        ]}
-      />,
-    );
+    renderChecklist([
+      { ...rows[0]!, completed: true, past: true },
+      { ...rows[1]!, past: true },
+    ]);
     expect(screen.getByRole("checkbox", { name: "Draft the memo" })).toBeDisabled();
     expect(screen.getByRole("checkbox", { name: "Draft the memo" })).toHaveAttribute("aria-checked", "true");
     expect(row("t1")).toHaveAttribute("aria-disabled", "true");
@@ -273,7 +290,7 @@ describe("PlanChecklist", () => {
 
   it("a past, incomplete row can be checked off (Ruling R18)", async () => {
     mocked.checkOff.mockResolvedValue({ ok: true, value: pending("p2", "t2") });
-    render(<PlanChecklist rows={[rows[0]!, { ...rows[1]!, past: true }]} />);
+    renderChecklist([rows[0]!, { ...rows[1]!, past: true }]);
     fireEvent.click(screen.getByRole("checkbox", { name: "Call the dentist" }));
     expect(row("t2")).toHaveClass("line-through", "opacity-50", "check-off-dissolve");
     expect(row("t2")).not.toHaveClass("opacity-70");
@@ -283,11 +300,11 @@ describe("PlanChecklist", () => {
   });
 
   it("a checked row stays dissolved when the server's refetch later reports it completed (it never pops back)", async () => {
-    const { rerender } = render(<PlanChecklist rows={rows} />);
+    const { rerender } = renderChecklist(rows);
     fireEvent.click(screen.getByRole("checkbox", { name: "Draft the memo" }));
     fireEvent.animationEnd(row("t1"));
     await flush();
-    rerender(<PlanChecklist rows={[{ ...rows[0]!, completed: true }, rows[1]!]} />);
+    rerender(<PlanChecklist rows={[{ ...rows[0]!, completed: true }, rows[1]!]} timeZone={TZ} />);
     expect(row("t1")).not.toBeVisible();
   });
 });

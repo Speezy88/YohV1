@@ -153,12 +153,49 @@ export interface HomeCalendarBlock {
   readonly past: boolean;
 }
 
+/**
+ * Task 6A (real-use fixes + UI refresh, 2026-09-27): today's Time Budget as
+ * Home's widget needs it — the declared budget plus how much of it the
+ * Plan actually uses and how much is done so far. `undefined` when Spencer
+ * has never declared a Time Budget at all (Home then shows the default and
+ * "Set today's budget").
+ */
+export interface HomeTimeBudget {
+  readonly totalMinutes: number;
+  /** Sum of the stored Plan's own "work" block durations (minutes) — 0 with no Plan yet today. */
+  readonly plannedMinutes: number;
+  /** Sum of completed "work" block durations (minutes) so far today. */
+  readonly doneMinutes: number;
+  /** True when this budget was declared on an earlier day and hasn't been changed since (`core/time-budget.ts`'s `resolveTodayTimeBudget`). */
+  readonly carriedForward: boolean;
+}
+
 export interface HomeViewResponse {
   /** The host-timezone date this response is "today" for (Consistency Conventions: never the browser's date) — also what the client's Feb-19 confetti check reads, never `new Date()`. */
   readonly today: string;
   /** `undefined` when no Plan has been generated yet today. */
   readonly plan: { readonly rows: readonly HomePlanRow[] } | undefined;
   readonly calendar: { readonly blocks: readonly HomeCalendarBlock[] };
+  /** `undefined` when Spencer has never declared a Time Budget (Task 6A). */
+  readonly timeBudget: HomeTimeBudget | undefined;
+  /**
+   * Fix round (2026-09-27): the IANA zone id (e.g. "America/Los_Angeles")
+   * `today`/every block's completion math is computed in — the client
+   * positions and formats Calendar Day View blocks and Plan row times in
+   * THIS zone, never the browser's own (AD-17). `today` stays a plain date
+   * string (unaffected); this is for wall-clock positioning within the day.
+   */
+  readonly timeZone: string;
+}
+
+/** `POST /api/time-budget`'s body (Task 6A): click-to-edit on Home's Time Budget widget, over the existing `app/time-budget.ts` `declareTimeBudget`. */
+export interface TimeBudgetRequest {
+  readonly totalMinutes: number;
+}
+
+/** `POST /api/time-budget`'s value (Task 6A) — `declareTimeBudget`'s own `DeclareTimeBudgetOutput`, mirrored here per the wire-shapes convention (C2). */
+export interface TimeBudgetResponse {
+  readonly receipt: string;
 }
 
 // ============================================================================

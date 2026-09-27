@@ -17,8 +17,18 @@
  * — the answer becomes an ordinary later turn, and this turn's own chips
  * hide once answered (`answered` state), independent of whichever OTHER
  * turn or top-of-Chat item is mid-answer.
+ *
+ * Task 6A (2026-09-27): the panel renders Yoh's replies as markdown (bold,
+ * lists, etc. — the approved mockup's "what's happening tomorrow" reply)
+ * via the bundled `react-markdown` — never raw HTML (its default pipeline
+ * has no `rehype-raw`, so an embedded `<script>`/`<img onerror>` in a reply
+ * renders as inert text, keeping the CSP's `default-src 'self'` meaningful)
+ * — and constrained to a small, safe element set via `allowedElements` so a
+ * reply can't, say, inject an `<iframe>` even if a future markdown
+ * dependency bump added raw-HTML support by accident.
  */
 import { useState } from "react";
+import Markdown from "react-markdown";
 import { ThinkingIndicator } from "./ThinkingIndicator.tsx";
 import { StructuredQuestion } from "./StructuredQuestion.tsx";
 import { HONEST_REJECTION } from "./OpenItems.tsx";
@@ -32,6 +42,9 @@ export interface ChatMessageProps {
 }
 
 const CAPTION = "font-body text-caption text-ink-secondary";
+
+/** The small, safe markdown element set a Yoh reply may use — plain text plus emphasis, lists, and paragraphs. Never `img`/`iframe`/raw HTML. */
+const ALLOWED_MARKDOWN_ELEMENTS = ["p", "strong", "em", "ul", "ol", "li", "br", "code"];
 
 function failureCaption(message: ChatViewMessage): string {
   if (message.text !== "") return "The reply was interrupted.";
@@ -61,12 +74,12 @@ export function ChatMessage({ message }: ChatMessageProps): React.JSX.Element {
   return (
     <div data-testid={`chat-message-${message.id}`} className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
       <div
-        className={`flex max-w-[80%] flex-col gap-1 font-body text-body text-ink-primary ${isUser ? "rounded-lg bg-surface-sunken px-3 py-2" : ""}`}
+        className={`flex max-w-[640px] flex-col gap-1 font-body text-body text-ink-primary [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 ${isUser ? "rounded-tl-lg rounded-tr-lg rounded-bl-lg bg-surface-sunken px-5 py-3.5" : ""}`}
       >
         {thinking ? (
           <ThinkingIndicator statusText={message.statusText ?? ""} />
         ) : (
-          message.text !== "" && <p className="whitespace-pre-wrap break-words">{message.text}</p>
+          message.text !== "" && <Markdown allowedElements={ALLOWED_MARKDOWN_ELEMENTS}>{message.text}</Markdown>
         )}
         {message.receipts.map((receipt, i) => (
           <p key={i} className={CAPTION}>

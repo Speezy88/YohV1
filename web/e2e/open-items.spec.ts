@@ -11,8 +11,8 @@ const FIXTURE_PROPOSAL_TEXT = "Move your Time Budget to 7 hours today?";
 
 async function openChat(page: Page): Promise<void> {
   await page.goto("/");
-  await page.getByRole("button", { name: "Chat" }).click();
-  await expect(page.getByTestId("page-chat")).not.toHaveAttribute("aria-hidden", "true");
+  await page.getByRole("button", { name: /ask yoh/i }).click();
+  await expect(page.getByTestId("chat-panel")).toBeVisible();
 }
 
 // Order matters: the fixture server is one shared process for the whole
@@ -22,7 +22,7 @@ async function openChat(page: Page): Promise<void> {
 
 test("unrelated chat still sends while an open item is visible (Review Focus #5)", async ({ page }) => {
   await openChat(page);
-  const chat = page.getByTestId("page-chat");
+  const chat = page.getByTestId("chat-panel");
   await expect(chat.getByText(FIXTURE_PROPOSAL_TEXT)).toBeVisible();
 
   const input = chat.getByRole("textbox", { name: "Message Yoh" });
@@ -37,7 +37,7 @@ test("unrelated chat still sends while an open item is visible (Review Focus #5)
 
 test("an open item seeded before the page loads renders at the top of Chat, and a chip pick answers it", async ({ page }) => {
   await openChat(page);
-  const chat = page.getByTestId("page-chat");
+  const chat = page.getByTestId("chat-panel");
   await expect(chat.getByText(FIXTURE_PROPOSAL_TEXT)).toBeVisible();
 
   await chat.getByRole("button", { name: "Yes" }).click();

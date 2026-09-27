@@ -24,6 +24,12 @@
  * anything below. Once there are more than `COLLAPSE_ITEM_THRESHOLD` open
  * items, a toggle collapses the whole list behind a one-line summary,
  * leaving Chat's top region small again.
+ *
+ * Fix round (2026-09-27 review): carries the approved mockup's "WAITING ON
+ * YOU" eyebrow label (an `<h2>`, so it's accessible as a real heading, not
+ * just styled text) above the list — token-driven caption styling (the
+ * same `text-caption`/`uppercase`/`tracking-wide` convention DESIGN.md's
+ * other captions already use), never literal capitalized source text.
  */
 import { useState } from "react";
 import type { OpenItem } from "../../../src/types/api.ts";
@@ -80,6 +86,7 @@ export function OpenItems({ items }: OpenItemsProps): React.JSX.Element | null {
 
   return (
     <div data-testid="open-items" className="flex flex-col gap-2 border-b-[length:var(--rim-width)] border-rim-structural pb-3">
+      <h2 className="m-0 font-body text-caption font-bold uppercase tracking-wide text-ink-secondary">Waiting on you</h2>
       {isCollapsible && (
         <button
           type="button"

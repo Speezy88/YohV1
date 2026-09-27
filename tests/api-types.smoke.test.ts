@@ -115,11 +115,13 @@ test("NotificationRecord matches AD-18's {id, kind, title, body, deepLink, creat
 });
 
 test("Story 7.8 HomeViewResponse: plan is undefined when no Plan exists; calendar block kind is the closed work/break/fixed union", () => {
-  const noPlanYet: HomeViewResponse = { today: "2026-09-25", plan: undefined, calendar: { blocks: [] } };
+  const noPlanYet: HomeViewResponse = { today: "2026-09-25", plan: undefined, calendar: { blocks: [] }, timeBudget: undefined, timeZone: "America/New_York" };
   const withPlan: HomeViewResponse = {
     today: "2026-09-25",
     plan: { rows: [{ blockId: "b1", taskId: "t1", label: "Draft the memo", start: "x", end: "y", completed: false, past: false }] },
     calendar: { blocks: [{ id: "b1", kind: "work", label: "Draft the memo", start: "x", end: "y", completed: false, past: false }] },
+    timeBudget: { totalMinutes: 360, plannedMinutes: 60, doneMinutes: 0, carriedForward: false },
+    timeZone: "America/New_York",
   };
   const fixed: HomeCalendarBlock = { id: "e1", kind: "fixed", label: "Soccer practice", start: "x", end: "y", completed: false, past: false };
   // @ts-expect-error — HomeCalendarBlock.kind is closed to work/break/fixed; a raw Calendar-anchor label never leaks onto the wire.

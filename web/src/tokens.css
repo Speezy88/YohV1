@@ -22,17 +22,20 @@
 @import "tailwindcss";
 
 @theme {
-  /* Colors — DESIGN.md `colors` / "Colors" table. */
-  --color-surface-base: light-dark(#e7e1d7, #201c17);
-  --color-surface-raised: light-dark(#e7e1d7, #241f19);
-  --color-surface-sunken: light-dark(#ddd6c9, #1b1712);
-  --color-ink-primary: light-dark(#262220, #ede7dc);
-  --color-ink-secondary: light-dark(#6a645a, #a69c8c);
-  --color-rim-interactive: light-dark(#807c72, #7a7367);
-  --color-rim-structural: light-dark(#807c72, #6e675b);
+  /* Colors — DESIGN.md `colors` front matter (amended 2026-09-27, Task 6A):
+     a brighter cool-white `#EEF2F8` family, no warm off-white, confirmed
+     against the approved "Yoh UI Refresh" mockup (Main/Chat/Tasks.dc.html —
+     `.raised`/`.raised-sm`/`.inset`/`.grad` helmet recipes). */
+  --color-surface-base: light-dark(#eef2f8, #1a1f29);
+  --color-surface-raised: light-dark(#eef2f8, #1e2430);
+  --color-surface-sunken: light-dark(#e3e9f2, #161b24);
+  --color-ink-primary: light-dark(#20242c, #edf1f8);
+  --color-ink-secondary: light-dark(#5b6472, #a8b3c4);
+  --color-rim-interactive: light-dark(#7c8798, #7a8699);
+  --color-rim-structural: light-dark(#7c8798, #6a7688);
   --color-rim-highlight: light-dark(rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.06));
-  --color-shadow-light: light-dark(rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0.05));
-  --color-shadow-dark: light-dark(rgba(163, 150, 130, 0.45), rgba(0, 0, 0, 0.55));
+  --color-shadow-light: light-dark(rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0.07));
+  --color-shadow-dark: light-dark(rgba(163, 177, 198, 0.5), rgba(0, 0, 0, 0.6));
   --color-glass-fill: light-dark(rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.06));
   --color-accent-gradient-start: light-dark(#7fc1f5, #8fcbfa);
   --color-accent-gradient-end: light-dark(#1e6fd9, #3e8cf0);
@@ -43,13 +46,31 @@
   --color-event-fixed-stripe-b: light-dark(#d2c8b4, #282219);
   --color-event-fixed-ink: light-dark(#4a4235, #c9bda8);
 
-  /* Radii — DESIGN.md `rounded`. */
+  /* Radii — DESIGN.md `rounded`, plus `--radius-2xl` (Task 6A): the
+     mockup's page-surface/chat-panel corner (28-30px) sits a step above
+     `--radius-xl` (24px) — tuned by eye against the mockup, the same
+     latitude DESIGN.md's own motion constants document. */
   --radius-xs: 5px;
   --radius-sm: 8px;
   --radius-md: 10px;
   --radius-lg: 16px;
   --radius-xl: 24px;
+  --radius-2xl: 28px;
   --radius-full: 9999px;
+
+  /* Type sizes (Task 6A, DESIGN.md typography table amended 2026-09-27:
+     "bigger scale overall — body 17-18px, headings ~40px, controls
+     44-64px"). --text-caption is unchanged (7.5's small uppercase labels);
+     --text-body moves up from 13.5px to the amended 17.5px. The rest are
+     new, tuned against the approved mockup. */
+  --text-display: 40px;
+  --text-heading: 24px;
+  --text-title: 20px;
+  --text-label: 11.5px;
+  --text-numerals: 13.6px;
+  --text-caption: 10.6px;
+  --text-body: 17.5px;
+  --text-small: 15px;
 
   /* Spacing — DESIGN.md `spacing` (4px base, [ASSUMPTION] per DESIGN.md). */
   --spacing-1: 4px;
@@ -65,32 +86,27 @@
   --font-body: "Figtree", "Figtree Fallback", sans-serif;
   --font-wordmark: "Montserrat", "Figtree Fallback", sans-serif;
 
-  /* Type sizes — DESIGN.md "Typography" table. Story 7.8 is the first page
-     that needs a real caption/body size distinction (Calendar Day View's
-     hour labels vs. Plan Row text), so these are added here rather than
-     each component reaching for an arbitrary Tailwind size. Weight/
-     letterspacing/case are plain Tailwind utilities (font-bold, uppercase,
-     tracking-wide), composed at each call site, since Tailwind v4's
-     `--text-*` theme key carries only font-size. This also gives
-     `NotificationOverlay.tsx`'s existing `text-body` class (Story 7.7) a
-     real size for the first time — it was previously an undefined utility. */
-  --text-caption: 10.6px;
-  --text-body: 13.5px;
-
-  /* Elevation — DESIGN.md "Elevation & Depth" (UX-DR24). Light source
-     top-left, 135°, built entirely from the --color-shadow-* tokens above
-     (no new hard-coded color). Inset's offsets are identical between
-     themes — only the shadow color changes — so it's one light-dark()
-     declaration. Extruded-sm/md/lg differ in offset AND blur radius
-     between themes (DESIGN.md's own table), which light-dark() cannot
-     express (it resolves only a <color>, never a whole box-shadow), so
-     their dark values are an explicit override below, keyed off
-     [data-theme="dark"] and the OS default, mirroring the color-scheme
-     switch above. */
-  --shadow-inset: inset 1px 1px 3px light-dark(var(--color-shadow-dark), rgba(0, 0, 0, 0.5));
-  --shadow-extruded-sm: 3px 3px 7px var(--color-shadow-dark), -3px -3px 7px var(--color-shadow-light);
-  --shadow-extruded-md: 4px 4px 10px var(--color-shadow-dark), -4px -4px 10px var(--color-shadow-light);
-  --shadow-extruded-lg: 7px 7px 14px var(--color-shadow-dark), -7px -7px 14px var(--color-shadow-light);
+  /* Elevation — DESIGN.md "Elevation & Depth" (UX-DR24), Task 6A: recipes
+     ported from the approved mockup's `.raised`/`.raised-sm`/`.inset`
+     helmet classes (white highlight top-left, `#a3b1c6`-family shadow
+     bottom-right — built entirely from the --color-shadow-* tokens above,
+     no new hard-coded color). Inset is now the mockup's double-sided inset
+     (dark shadow AND a soft white counter-highlight), which is why the
+     highlight half is ALSO wrapped in its own light-dark() so its dark-mode
+     value comes from a flat, dimmer literal rather than the (in dark mode,
+     much brighter) --color-shadow-light token. Extruded-sm/md/lg differ in
+     offset AND blur radius between themes (DESIGN.md's own table), which
+     light-dark() cannot express (it resolves only a <color>, never a whole
+     box-shadow), so their dark values are an explicit override below,
+     keyed off [data-theme="dark"] and the OS default, mirroring the
+     color-scheme switch above. sm = mockup `.raised-sm` (buttons, arrow
+     buttons, chips, calendar blocks); md = the Ask Yoh pill, toasts,
+     command palette; lg = mockup `.raised` (page cards, the chat panel). */
+  --shadow-inset: inset 5px 5px 11px light-dark(var(--color-shadow-dark), rgba(0, 0, 0, 0.5)), inset -5px -5px 11px
+      light-dark(var(--color-shadow-light), rgba(255, 255, 255, 0.04));
+  --shadow-extruded-sm: -5px -5px 12px var(--color-shadow-light), 5px 5px 14px var(--color-shadow-dark);
+  --shadow-extruded-md: -7px -7px 18px var(--color-shadow-light), 7px 7px 20px var(--color-shadow-dark);
+  --shadow-extruded-lg: -10px -10px 24px var(--color-shadow-light), 10px 10px 26px var(--color-shadow-dark);
   /* Story 8.5, DESIGN.md `chat-input`/`chat-bubble` focus: a 2px
      accent-solid ring plus the soft accent glow. Its colors are already
      light-dark() tokens, so one declaration covers both themes. */
@@ -166,18 +182,18 @@
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --shadow-extruded-sm: 3px 3px 8px var(--color-shadow-dark), -2px -2px 6px var(--color-shadow-light);
-  --shadow-extruded-md: 4px 4px 12px var(--color-shadow-dark), -2px -2px 8px var(--color-shadow-light);
-  --shadow-extruded-lg: 7px 7px 16px var(--color-shadow-dark), -3px -3px 10px var(--color-shadow-light);
+  --shadow-extruded-sm: -3px -3px 9px var(--color-shadow-light), 5px 5px 16px var(--color-shadow-dark);
+  --shadow-extruded-md: -4px -4px 14px var(--color-shadow-light), 6px 6px 20px var(--color-shadow-dark);
+  --shadow-extruded-lg: -5px -5px 18px var(--color-shadow-light), 10px 10px 28px var(--color-shadow-dark);
   --blur-glass: 18px;
 }
 /* No explicit [data-theme] yet (first launch, before the Theme Toggle is
    ever clicked, UX-DR27): follow the OS the same way the colors above do. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]) {
-    --shadow-extruded-sm: 3px 3px 8px var(--color-shadow-dark), -2px -2px 6px var(--color-shadow-light);
-    --shadow-extruded-md: 4px 4px 12px var(--color-shadow-dark), -2px -2px 8px var(--color-shadow-light);
-    --shadow-extruded-lg: 7px 7px 16px var(--color-shadow-dark), -3px -3px 10px var(--color-shadow-light);
+    --shadow-extruded-sm: -3px -3px 9px var(--color-shadow-light), 5px 5px 16px var(--color-shadow-dark);
+    --shadow-extruded-md: -4px -4px 14px var(--color-shadow-light), 6px 6px 20px var(--color-shadow-dark);
+    --shadow-extruded-lg: -5px -5px 18px var(--color-shadow-light), 10px 10px 28px var(--color-shadow-dark);
     --blur-glass: 18px;
   }
 }

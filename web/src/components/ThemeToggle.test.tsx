@@ -29,4 +29,32 @@ describe("ThemeToggle", () => {
     render(<ThemeToggle />);
     expect(screen.getByRole("button")).toHaveAccessibleName();
   });
+
+  // Fix round (2026-09-27 review): the visible label names the action
+  // (what clicking does next), matching the aria-label — not the current
+  // state.
+  it("while light, the visible label reads 'Dark mode' and the aria-label says 'Switch to dark theme'", () => {
+    localStorage.setItem("yoh-theme", "light");
+    render(<ThemeToggle />);
+    const button = screen.getByRole("button");
+    expect(button).toHaveTextContent("Dark mode");
+    expect(button).toHaveAccessibleName("Switch to dark theme");
+  });
+
+  it("while dark, the visible label reads 'Light mode' and the aria-label says 'Switch to light theme'", () => {
+    localStorage.setItem("yoh-theme", "dark");
+    render(<ThemeToggle />);
+    const button = screen.getByRole("button");
+    expect(button).toHaveTextContent("Light mode");
+    expect(button).toHaveAccessibleName("Switch to light theme");
+  });
+
+  it("clicking flips the visible label to name the NEW action", () => {
+    localStorage.setItem("yoh-theme", "light");
+    render(<ThemeToggle />);
+    const button = screen.getByRole("button");
+    fireEvent.click(button);
+    expect(button).toHaveTextContent("Light mode");
+    expect(button).toHaveAccessibleName("Switch to light theme");
+  });
 });

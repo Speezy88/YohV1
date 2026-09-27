@@ -33,7 +33,7 @@ describe("StructuredQuestion", () => {
     render(<StructuredQuestion text="Q" options={[{ label: "Yes", value: "yes" }]} allowsFreeText={false} onAnswer={onAnswer} />);
     fireEvent.click(screen.getByRole("button", { name: "Yes" }));
     expect(onAnswer).toHaveBeenCalledWith("yes");
-    expect(screen.getByRole("button", { name: "Yes" })).toHaveClass("bg-accent-solid");
+    expect(screen.getByRole("button", { name: "Yes" })).toHaveClass("bg-gradient-to-br", "from-accent-gradient-start", "to-accent-gradient-end");
   });
 
   it("chips and Other are native <button>/<input> — reachable by Tab, activatable by Enter/Space with no custom handling", () => {

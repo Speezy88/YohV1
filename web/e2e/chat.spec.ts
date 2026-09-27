@@ -4,6 +4,9 @@
  * `runChatTurn` seam, never a real Claude call) emits a status event,
  * pauses, then streams FIXTURE_CHAT_REPLY in three deltas over the real
  * `POST /api/chat` SSE response.
+ *
+ * Task 6A (2026-09-27) rewrite: Chat is a panel, not a page — opened via
+ * the Ask Yoh pill or ⌘K, closed via Esc/the Close button/the backdrop.
  */
 import { expect, test, type Page } from "@playwright/test";
 
@@ -11,13 +14,13 @@ const FIXTURE_CHAT_REPLY = "Hello, Spencer. This is a fixture reply, streamed in
 
 async function openChat(page: Page): Promise<void> {
   await page.goto("/");
-  await page.getByRole("button", { name: "Chat" }).click();
-  await expect(page.getByTestId("page-chat")).not.toHaveAttribute("aria-hidden", "true");
+  await page.getByRole("button", { name: /ask yoh/i }).click();
+  await expect(page.getByTestId("chat-panel")).toBeVisible();
 }
 
 test("Enter shows Spencer's turn and the Thinking Indicator at once, then Yoh's reply streams in over POST /api/chat", async ({ page }) => {
   await openChat(page);
-  const chat = page.getByTestId("page-chat");
+  const chat = page.getByTestId("chat-panel");
   const input = chat.getByRole("textbox", { name: "Message Yoh" });
   await input.fill("Hello Yoh");
 
@@ -33,29 +36,30 @@ test("Enter shows Spencer's turn and the Thinking Indicator at once, then Yoh's 
 
   await expect(chat.getByText(FIXTURE_CHAT_REPLY)).toBeVisible({ timeout: 5_000 });
   await expect(chat.getByTestId("thinking-indicator")).toHaveCount(0);
-  // Scoped to the Chat Input's own Send button, not just any "Send" in the
-  // page — the fixture server's `webServer` process is shared across every
-  // spec file in the suite (Story 8.6's own `open-items.spec.ts` may leave
-  // its seeded proposal's Structured Question — which also has a "Send"
-  // button, for its free-text "Other" field — open or answered depending on
-  // run order).
   await expect(chat.getByTestId("chat-input").getByRole("button", { name: "Send" })).toBeDisabled(); // blank draft, turn finished
 });
 
-test("the unsent draft and the transcript survive a swipe to another page and back", async ({ page }) => {
+test("Esc closes the Chat panel; the unsent draft and the transcript survive close and reopen", async ({ page }) => {
   await openChat(page);
-  const chat = page.getByTestId("page-chat");
+  const chat = page.getByTestId("chat-panel");
   const input = chat.getByRole("textbox", { name: "Message Yoh" });
   await input.fill("First message");
   await input.press("Enter");
   await expect(chat.getByText(FIXTURE_CHAT_REPLY)).toBeVisible({ timeout: 5_000 });
 
   await input.fill("Draft that never got sent");
-  await page.getByRole("button", { name: "Home" }).click();
-  await expect(chat).toHaveAttribute("aria-hidden", "true");
-  await page.getByRole("button", { name: "Chat" }).click();
+  await page.keyboard.press("Escape");
+  await expect(chat).not.toBeVisible();
 
+  await page.getByRole("button", { name: /ask yoh/i }).click();
   await expect(input).toHaveValue("Draft that never got sent");
   await expect(chat.getByText("First message")).toBeVisible();
   await expect(chat.getByText(FIXTURE_CHAT_REPLY)).toBeVisible();
+});
+
+test("the Close button closes the panel; focus returns to the Ask Yoh pill", async ({ page }) => {
+  await openChat(page);
+  await page.getByRole("button", { name: "Close chat" }).click();
+  await expect(page.getByTestId("chat-panel")).not.toBeVisible();
+  await expect(page.getByRole("button", { name: /ask yoh/i })).toBeFocused();
 });

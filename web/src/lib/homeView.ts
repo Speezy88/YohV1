@@ -48,6 +48,16 @@ export function useHomeView(): HomeViewState {
 }
 
 /**
+ * Task 6A: a manual re-fetch for a direct outcome of Spencer's own action
+ * (saving the Time Budget widget's inline edit) — not a new polling
+ * mechanism, and not a substitute for the "plan" hint above, which still
+ * covers every server-side Plan change.
+ */
+export function refetchHomeView(): Promise<void> {
+  return refetch();
+}
+
+/**
  * Starts this store's subscription to the shared event bus. Call once, near
  * Home's own mount; returns a stop function.
  */

@@ -1,18 +1,23 @@
 /**
  * web/src/lib/pages.ts
  *
- * Story 7.6: the ONE definition of page order and labels. Every navigation
- * mechanism (swipe, click, arrow key, a notification deep-link in Story
- * 7.7) addresses a page through this array's index, never a re-derived
- * literal.
+ * Task 6A (Spencer's information-architecture decisions, 2026-09-27): the
+ * ONE definition of page order and labels. There is no Chat page — Chat is
+ * a panel available on every page (`ChatPanel.tsx`, opened from the Ask Yoh
+ * pill / ⌘K), so it is deliberately absent from this array. Every
+ * navigation mechanism (the sidebar, on-screen up/down arrow buttons,
+ * ↑/↓/Page Up/Page Down, an edge-aware mouse wheel) addresses a page
+ * through this array's index, never a re-derived literal. Side swipe is
+ * retired everywhere (`web/src/lib/swipe.ts` is deleted); the page stack is
+ * now vertical, not horizontal.
  */
 import { useCallback, useState } from "react";
 
 export const PAGES = [
   { id: "home", label: "Home" },
-  { id: "chat", label: "Chat" },
   { id: "tasks", label: "Tasks" },
   { id: "desk", label: "Desk" },
+  { id: "research", label: "Research Hub" },
 ] as const;
 
 export type PageId = (typeof PAGES)[number]["id"];
@@ -37,9 +42,9 @@ export function usePageNavigation(initialIndex = 0): PageNavigation {
 }
 
 /**
- * True when `element` is text-editable — arrow keys must not navigate pages
- * while typing (`<input>`, `<textarea>`, or a `contenteditable` element such
- * as a future rich-text Chat composer).
+ * True when `element` is text-editable — arrow/Page Up/Page Down keys must
+ * not navigate pages while typing (`<input>`, `<textarea>`, or a
+ * `contenteditable` element such as the Chat Input).
  */
 export function isTextFieldFocused(element: Element | null): boolean {
   if (!element) return false;

@@ -47,14 +47,15 @@
  * NOT counted — the client dissolves that row itself, and Undo restores it
  * with no server round trip to wait on.
  */
-import { getPlan } from "../adapters/memory-store.ts";
+import { getCurrentTimeBudget, getPlan } from "../adapters/memory-store.ts";
 import { listCompletedTaskIdsOnDate } from "../adapters/completion-log.ts";
+import { resolveTodayTimeBudget } from "../core/time-budget.ts";
 import type { SqliteConnection } from "../adapters/sqlite.ts";
 import type { MemoryStore } from "../adapters/memory-store.ts";
 import { localIsoDate } from "../rituals/ritual-shared.ts";
 import type { LogEntry } from "../adapters/logger.ts";
 import type { CalendarEvent, ExternalId, PlanBlock, Result, Task, YohError } from "../types/domain.ts";
-import type { HomeCalendarBlock, HomePlanRow, HomeViewResponse } from "../types/api.ts";
+import type { HomeCalendarBlock, HomePlanRow, HomeTimeBudget, HomeViewResponse } from "../types/api.ts";
 
 export interface HomeViewDeps {
   /** The process's one connection — read for today's Completion Log entries (Story 7.10). */
@@ -78,6 +79,27 @@ function toFixedBlock(event: CalendarEvent, nowMs: number): HomeCalendarBlock {
   return { id: event.id, kind: "fixed", label: event.title, start: event.start, end: event.end, completed: false, past: Date.parse(event.end) < nowMs };
 }
 
+/** Whole minutes between two ISO timestamps — rows/blocks always carry whole-minute boundaries in practice, but rounding guards against any fractional drift. */
+function durationMinutes(start: string, end: string): number {
+  return Math.round((Date.parse(end) - Date.parse(start)) / 60_000);
+}
+
+/**
+ * Task 6A: Home's Time Budget widget needs the declared budget plus how
+ * much of it the Plan actually uses (`plannedMinutes`, every "work" row,
+ * regardless of completion) and how much is done so far
+ * (`doneMinutes`, completed "work" rows only) — `undefined` when Spencer
+ * has never declared a Time Budget.
+ */
+function buildTimeBudget(store: MemoryStore, today: string, rows: readonly HomePlanRow[]): HomeTimeBudget | undefined {
+  const stored = getCurrentTimeBudget(store);
+  const resolved = resolveTodayTimeBudget(stored?.data, today);
+  if (!resolved) return undefined;
+  const plannedMinutes = rows.reduce((sum, r) => sum + durationMinutes(r.start, r.end), 0);
+  const doneMinutes = rows.filter((r) => r.completed).reduce((sum, r) => sum + durationMinutes(r.start, r.end), 0);
+  return { totalMinutes: resolved.budget.totalMinutes, plannedMinutes, doneMinutes, carriedForward: resolved.carriedForward };
+}
+
 /** Home's one server-computed view (AD-17): every order and placement below is decided here, never re-sorted or re-derived client-side. */
 export async function getHomeView(deps: HomeViewDeps, _input: Record<string, never>): Promise<Result<HomeViewResponse, YohError>> {
   const log = deps.log ?? ((): void => {});
@@ -99,7 +121,10 @@ export async function getHomeView(deps: HomeViewDeps, _input: Record<string, nev
 
   const stored = getPlan(deps.store, today);
   if (!stored) {
-    return { ok: true, value: { today, plan: undefined, calendar: { blocks: fixedBlocks } } };
+    return {
+      ok: true,
+      value: { today, plan: undefined, calendar: { blocks: fixedBlocks }, timeBudget: buildTimeBudget(deps.store, today, []), timeZone: deps.timeZone },
+    };
   }
 
   let tasksById = new Map<ExternalId, Task>();
@@ -139,5 +164,8 @@ export async function getHomeView(deps: HomeViewDeps, _input: Record<string, nev
 
   const blocks = [...ownedBlocks, ...fixedBlocks].sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
 
-  return { ok: true, value: { today, plan: { rows }, calendar: { blocks } } };
+  return {
+    ok: true,
+    value: { today, plan: { rows }, calendar: { blocks }, timeBudget: buildTimeBudget(deps.store, today, rows), timeZone: deps.timeZone },
+  };
 }

@@ -99,6 +99,7 @@ import { chatTurn, type ChatTurnDeps } from "../app/chat-turn.ts";
 import type { ChatSession } from "../app/chat-session.ts";
 import type { SearchFn } from "../app/web-search.ts";
 import { getHomeView, type HomeViewDeps } from "../app/home-view.ts";
+import { declareTimeBudget } from "../app/time-budget.ts";
 import {
   CHECK_OFF_COMMIT_TICK_MS,
   checkOff,
@@ -119,6 +120,7 @@ import type {
   CheckOffRequest,
   EventHint,
   HealthResponse,
+  TimeBudgetRequest,
 } from "../types/api.ts";
 import type { CalendarEvent, ChatTurn, ExternalId, IsoDate, Result, Task, YohError, YohErrorKind } from "../types/domain.ts";
 
@@ -656,6 +658,35 @@ export function createApp(deps: ServerDeps) {
         );
         return c.json(result, httpStatus(result));
       })
+      // Task 6A: Home's Time Budget widget, click-to-edit in place, over
+      // the existing `app/time-budget.ts` `declareTimeBudget` — the same
+      // store/timeZone `GET /api/home` already uses (`deps.homeView`), so
+      // this reports the same clear `unreachable` error when Notion/Google
+      // aren't configured, rather than a new deps bucket of its own.
+      .post(
+        "/api/time-budget",
+        validator("json", (value, c) => {
+          const totalMinutes = (value as { totalMinutes?: unknown } | null)?.totalMinutes;
+          if (typeof totalMinutes !== "number") {
+            const invalid: ApiFailure = { ok: false, error: { kind: "validation", message: "time-budget: missing totalMinutes" } };
+            return c.json(invalid, httpStatus(invalid));
+          }
+          return { totalMinutes } satisfies TimeBudgetRequest;
+        }),
+        async (c) => {
+          if (!deps.homeView) {
+            const result: ApiResult<never> = { ok: false, error: { kind: "unreachable", message: "server: home-view dependencies not configured" } };
+            return c.json(result, httpStatus(result));
+          }
+          const result = wire(
+            await declareTimeBudget(
+              { store: deps.homeView.store, timeZone: deps.homeView.timeZone, now: deps.homeView.now ?? (() => new Date()) },
+              c.req.valid("json"),
+            ),
+          );
+          return c.json(result, httpStatus(result));
+        },
+      )
       // Story 7.10, AD-20: check-off with undo. The body carries only the
       // Task id (Ruling R7); everything else is looked up server-side.
       .post(

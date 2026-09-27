@@ -175,11 +175,12 @@ test("detector: the shimmer check catches a pair that passes unshimmered but not
   assert.ok(worstShimmerContrast(secondary.light, surface.light, start.light, end.light, shimmerOpacity()) < 4.5);
 });
 
-// ink-primary/ink-secondary/rim-interactive "on glass" use DESIGN.md's own
-// pre-composited hex (glass-fill alpha-blended over surface-raised, already
-// computed in DESIGN.md's own table) rather than re-deriving alpha
-// compositing here — DESIGN.md is the source of truth for the composite.
-const GLASS_COMPOSITE = { light: "#f4f2ed", dark: "#2d2a25" };
+// ink-primary/ink-secondary/rim-interactive "on glass" — glass-fill (55%/6%
+// white) alpha-blended over surface-raised, recomputed here for Task 6A's
+// brighter cool-white palette (was the pre-2026-09-27 warm palette's
+// composite): light = white*.55 + #EEF2F8*.45 ≈ #F7F9FC; dark = white*.06 +
+// #1E2430*.94 ≈ #2C313C.
+const GLASS_COMPOSITE = { light: "#f7f9fc", dark: "#2c313c" };
 
 test("ink-primary/ink-secondary/rim-interactive on the glass composite meet their thresholds in both themes", () => {
   const glass = GLASS_COMPOSITE;

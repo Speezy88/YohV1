@@ -1,0 +1,152 @@
+/**
+ * web/src/components/ChatPanel.tsx
+ *
+ * Task 6A, Spencer's information-architecture decisions (2026-09-27): Chat
+ * moves from `pages/Chat.tsx` into a panel shared by every page, opened
+ * from the Ask Yoh pill or ⌘K (`PageShell.tsx`). The panel is large: it
+ * covers the whole content area to the right of the sidebar, inset ~24px,
+ * with only the sidebar still visible — the page behind is dimmed context,
+ * not functional (`PageShell.tsx` marks it `inert`/`aria-hidden` while this
+ * is open). Everything Epic 8 built keeps working unchanged, just moved:
+ * streaming, the Thinking Indicator, open items + Structured Questions, the
+ * Command Palette, receipts, the three-region no-overlap layout (Task 0),
+ * and the draft/transcript surviving a panel close (`chatStore.ts` is
+ * untouched — this component only mounts/unmounts around it).
+ *
+ * Esc closes the panel (unless the Command Palette is open and consumes it
+ * first, via its own capture-phase document listener + `stopPropagation` —
+ * this component's Esc handler is a plain bubble-phase `onKeyDown`, so it
+ * never fires once the palette has already stopped the event). Opening
+ * focuses the Chat Input; closing returns focus to wherever it was
+ * (`chatPanel.ts`).
+ */
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useChatStore } from "../lib/chatStore.ts";
+import { startOpenItemsStream, useOpenItems } from "../lib/openItems.ts";
+import { useChatPanel, closeChatPanel } from "../lib/chatPanel.ts";
+import { useReducedMotion } from "../hooks/useReducedMotion.ts";
+import { ChatMessage } from "./ChatMessage.tsx";
+import { ChatInput } from "./ChatInput.tsx";
+import { OpenItems } from "./OpenItems.tsx";
+
+/** Once within this many px of the stream's bottom, it still counts as "at the bottom" — avoids auto-scroll flapping off/on from sub-pixel rounding while text streams in. */
+const AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 48;
+
+export function ChatPanel(): React.JSX.Element | null {
+  const { open } = useChatPanel();
+  const { messages } = useChatStore();
+  const openItems = useOpenItems();
+  const reducedMotion = useReducedMotion();
+  const panelRef = useRef<HTMLDivElement>(null);
+  const streamRef = useRef<HTMLDivElement>(null);
+  const [autoScroll, setAutoScroll] = useState(true);
+
+  useEffect(() => startOpenItemsStream(), []);
+
+  useEffect(() => {
+    if (!open) return;
+    // Focus the Chat Input the instant the panel opens (capture flow: click
+    // the pill/⌘K, type, Enter — this is what makes "type" possible without
+    // a fourth action). Scoped to the Chat Input's own textarea specifically
+    // — a generic "first textarea or input" would instead grab a seeded
+    // Structured Question's free-text field when one renders above it in
+    // the open-items region.
+    panelRef.current?.querySelector<HTMLElement>('textarea[aria-label="Message Yoh"]')?.focus();
+  }, [open]);
+
+  useLayoutEffect(() => {
+    const stream = streamRef.current;
+    if (!stream || !autoScroll || !open) return;
+    if (typeof stream.scrollTo === "function") {
+      stream.scrollTo({ top: stream.scrollHeight, behavior: reducedMotion ? "auto" : "smooth" });
+    } else {
+      stream.scrollTop = stream.scrollHeight;
+    }
+  }, [messages, autoScroll, reducedMotion, open]);
+
+  const handleScroll = useCallback((): void => {
+    const stream = streamRef.current;
+    if (!stream) return;
+    const distanceFromBottom = stream.scrollHeight - stream.scrollTop - stream.clientHeight;
+    setAutoScroll(distanceFromBottom <= AUTO_SCROLL_BOTTOM_THRESHOLD_PX);
+  }, []);
+
+  const jumpToLatest = useCallback((): void => setAutoScroll(true), []);
+
+  if (!open) return null;
+
+  const hasOpenItems = openItems.status === "loaded" && openItems.items.length > 0;
+
+  return (
+    <>
+      <div
+        data-testid="chat-panel-backdrop"
+        aria-hidden="true"
+        onClick={closeChatPanel}
+        className={`fixed inset-0 z-30 bg-ink-primary/30 ${reducedMotion ? "" : "transition-opacity"}`}
+      />
+      <div
+        ref={panelRef}
+        data-testid="chat-panel"
+        role="dialog"
+        aria-label="Chat with Yoh"
+        aria-modal="true"
+        onKeyDown={(e) => {
+          if (e.key !== "Escape") return;
+          e.preventDefault();
+          closeChatPanel();
+        }}
+        className="fixed bottom-6 left-[268px] right-6 top-6 z-30 flex flex-col gap-4 rounded-2xl border-[length:var(--rim-width)] border-rim-structural bg-surface-raised p-8 shadow-extruded-lg"
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <span aria-hidden="true" className="size-[34px] rounded-md bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end" />
+            <span className="font-body text-title font-bold text-ink-primary">Yoh</span>
+          </div>
+          <button
+            type="button"
+            aria-label="Close chat"
+            onClick={closeChatPanel}
+            className="flex size-[42px] items-center justify-center rounded-md border-[length:var(--rim-width)] border-rim-interactive text-ink-secondary shadow-extruded-sm hover:text-ink-primary"
+          >
+            <svg aria-hidden="true" viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round">
+              <path d="M6 6l12 12M18 6L6 18" />
+            </svg>
+          </button>
+        </div>
+
+        {hasOpenItems && (
+          <div data-testid="open-items-region" className="mx-auto w-full max-w-2xl shrink-0">
+            <OpenItems items={openItems.status === "loaded" ? openItems.items : []} />
+          </div>
+        )}
+
+        <div className="relative min-h-0 flex-1">
+          <div ref={streamRef} data-testid="chat-stream" onScroll={handleScroll} className="h-full min-h-0 flex-1 overflow-y-auto">
+            <div className="mx-auto flex min-h-full w-full max-w-2xl flex-col justify-end gap-4 px-1 py-2">
+              {messages.map((message) => (
+                <ChatMessage key={message.id} message={message} />
+              ))}
+            </div>
+          </div>
+          {!autoScroll && (
+            <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
+              <button
+                type="button"
+                data-testid="jump-to-latest"
+                onClick={jumpToLatest}
+                className="notification-glass pointer-events-auto rounded-full px-4 py-1 font-body text-small font-bold text-ink-primary"
+              >
+                Jump to latest
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div data-testid="chat-input-region" className="mx-auto w-full max-w-2xl">
+          <ChatInput />
+        </div>
+      </div>
+    </>
+  );
+}

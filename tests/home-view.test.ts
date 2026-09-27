@@ -8,7 +8,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
-import { createMemoryStore, putPlan } from "../src/adapters/memory-store.ts";
+import { createMemoryStore, putPlan, putTimeBudget } from "../src/adapters/memory-store.ts";
 import { initCompletionLogSchema, recordCompletion } from "../src/adapters/completion-log.ts";
 import { getHomeView, type HomeViewDeps } from "../src/app/home-view.ts";
 import type { LogEntry } from "../src/adapters/logger.ts";
@@ -248,6 +248,60 @@ test("a Plan work block whose taskId is no longer present in a fresh Notion read
     assert.equal(result.value.plan?.rows.length, 1);
     assert.equal(result.value.plan?.rows[0]!.completed, false);
   }
+  deps.store.close();
+});
+
+// ---------------------------------------------------------------------------
+// Task 6A: Home's Time Budget widget.
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Fix round (2026-09-27): the host timeZone rides along on every response so
+// the client can position/format wall-clock times in it, never the
+// browser's own zone.
+// ---------------------------------------------------------------------------
+
+test("Fix round: HomeViewResponse carries the deps' host timeZone verbatim", async () => {
+  const deps = tempDeps({ timeZone: "Asia/Kolkata" });
+  const result = await getHomeView(deps, {});
+  assert.equal(result.ok, true);
+  if (result.ok) assert.equal(result.value.timeZone, "Asia/Kolkata");
+  deps.store.close();
+});
+
+test("Task 6A: no Time Budget ever declared returns timeBudget: undefined", async () => {
+  const deps = tempDeps();
+  const result = await getHomeView(deps, {});
+  assert.equal(result.ok, true);
+  if (result.ok) assert.equal(result.value.timeBudget, undefined);
+  deps.store.close();
+});
+
+test("Task 6A: a declared Time Budget reports plannedMinutes from the Plan's work rows and doneMinutes from completed ones only", async () => {
+  const deps = tempDeps({
+    readTasks: async () => ({ tasks: [{ id: "t1", title: "Draft the memo", status: "completed", createdAt: "x", updatedAt: "x" }] }),
+  });
+  putTimeBudget(deps.store, { date: "2026-09-25", totalMinutes: 360, workMinutes: 70, breakMinutes: 15 });
+  putPlan(deps.store, makePlan({
+    blocks: [
+      { id: "b1", kind: "work", start: "2026-09-25T13:00:00.000Z", end: "2026-09-25T14:00:00.000Z", taskId: "t1", label: "Draft the memo" }, // 60 min, completed
+      { id: "b2", kind: "work", start: "2026-09-25T14:00:00.000Z", end: "2026-09-25T14:30:00.000Z", taskId: "t2", label: "Call the dentist" }, // 30 min, not completed
+    ],
+  }));
+
+  const result = await getHomeView(deps, {});
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.deepEqual(result.value.timeBudget, { totalMinutes: 360, plannedMinutes: 90, doneMinutes: 60, carriedForward: false });
+  deps.store.close();
+});
+
+test("Task 6A: a Time Budget declared on an earlier day still shows, marked carriedForward", async () => {
+  const deps = tempDeps();
+  putTimeBudget(deps.store, { date: "2026-09-20", totalMinutes: 300, workMinutes: 70, breakMinutes: 15 });
+  const result = await getHomeView(deps, {});
+  assert.equal(result.ok, true);
+  if (result.ok) assert.deepEqual(result.value.timeBudget, { totalMinutes: 300, plannedMinutes: 0, doneMinutes: 0, carriedForward: true });
   deps.store.close();
 });
 

@@ -67,8 +67,8 @@ export function StructuredQuestion({ text, options, allowsFreeText, busy = false
   };
 
   return (
-    <div data-testid="structured-question" className="flex flex-col gap-2 rounded-md bg-surface-raised p-3 font-body text-body text-ink-primary">
-      <p>{text}</p>
+    <div data-testid="structured-question" className="flex flex-col gap-3 rounded-lg bg-surface-sunken p-4 font-body text-body text-ink-primary shadow-inset">
+      <p className="m-0 font-medium">{text}</p>
       {options.length > 0 && (
         <div className="flex flex-wrap gap-2" role="group" aria-label="Answer options">
           {options.map((option, i) => {
@@ -82,9 +82,11 @@ export function StructuredQuestion({ text, options, allowsFreeText, busy = false
                 aria-pressed={selected}
                 onClick={() => pick(option.value)}
                 className={
-                  "rounded-sm border-[length:var(--rim-width)] px-3 py-1 font-bold " +
+                  "h-[42px] rounded-full border-[length:var(--rim-width)] px-5 font-bold shadow-extruded-sm " +
                   "focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid " +
-                  (selected ? "border-transparent bg-accent-solid text-on-accent-solid" : "border-rim-interactive bg-transparent text-ink-primary")
+                  (selected
+                    ? "border-transparent bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end text-on-accent-solid"
+                    : "border-rim-interactive bg-surface-raised text-ink-primary")
                 }
               >
                 {option.label}
@@ -109,7 +111,7 @@ export function StructuredQuestion({ text, options, allowsFreeText, busy = false
               }
             }}
             className={
-              "min-w-0 flex-1 rounded-sm border-[length:var(--rim-width)] border-rim-interactive bg-surface-sunken px-3 py-1 text-ink-primary " +
+              "h-[42px] min-w-0 flex-1 rounded-full border-[length:var(--rim-width)] border-rim-interactive bg-surface-raised px-5 text-ink-primary shadow-extruded-sm " +
               "focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid"
             }
           />
@@ -118,7 +120,7 @@ export function StructuredQuestion({ text, options, allowsFreeText, busy = false
             disabled={busy || freeText.trim() === ""}
             onClick={submitFreeText}
             className={
-              "rounded-sm border-[length:var(--rim-width)] border-rim-interactive bg-transparent px-3 py-1 font-bold text-ink-primary " +
+              "h-[42px] rounded-full border-[length:var(--rim-width)] border-rim-interactive bg-surface-raised px-5 font-bold text-ink-primary shadow-extruded-sm " +
               "focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid"
             }
           >

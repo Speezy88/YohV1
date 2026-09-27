@@ -52,7 +52,7 @@ describe("NotificationOverlay", () => {
     const dismiss = vi.spyOn(notificationsModule, "dismissNotification");
     const { goTo } = renderWithNav([{ id: "n1", kind: "sandbox-complete", title: "Saved 3 Tasks", body: "Saved 3 Tasks", createdAt: "2026-01-01T00:00:00.000Z", deepLink: "/tasks" }]);
     fireEvent.click(screen.getByText("Saved 3 Tasks"));
-    expect(goTo).toHaveBeenCalledWith(2); // PAGES index of "tasks"
+    expect(goTo).toHaveBeenCalledWith(1); // PAGES index of "tasks"
     expect(dismiss).toHaveBeenCalledWith("n1");
   });
 
@@ -82,17 +82,17 @@ describe("NotificationOverlay", () => {
 
   it("is keyboard-operable: Enter on the focused card activates it, same as a click (UX-DR51: every control keyboard-reachable)", () => {
     const dismiss = vi.spyOn(notificationsModule, "dismissNotification");
-    const { goTo } = renderWithNav([{ id: "n1", kind: "sandbox-complete", title: "Saved 3 Tasks", body: "Saved 3 Tasks", createdAt: "2026-01-01T00:00:00.000Z", deepLink: "/chat" }]);
+    const { goTo } = renderWithNav([{ id: "n1", kind: "sandbox-complete", title: "Saved 3 Tasks", body: "Saved 3 Tasks", createdAt: "2026-01-01T00:00:00.000Z", deepLink: "/desk" }]);
     const card = screen.getByTestId("notification-card");
     card.focus();
     fireEvent.keyDown(card, { key: "Enter" });
-    expect(goTo).toHaveBeenCalledWith(1); // PAGES index of "chat"
+    expect(goTo).toHaveBeenCalledWith(2); // PAGES index of "desk"
     expect(dismiss).toHaveBeenCalledWith("n1");
   });
 
   it("Enter while the nested dismiss button has focus only dismisses — it does not also activate the card", () => {
     const dismiss = vi.spyOn(notificationsModule, "dismissNotification");
-    const { goTo } = renderWithNav([{ id: "n1", kind: "sandbox-complete", title: "Saved 3 Tasks", body: "Saved 3 Tasks", createdAt: "2026-01-01T00:00:00.000Z", deepLink: "/chat" }]);
+    const { goTo } = renderWithNav([{ id: "n1", kind: "sandbox-complete", title: "Saved 3 Tasks", body: "Saved 3 Tasks", createdAt: "2026-01-01T00:00:00.000Z", deepLink: "/desk" }]);
     fireEvent.click(screen.getByRole("button", { name: /dismiss/i }));
     expect(dismiss).toHaveBeenCalledTimes(1);
     expect(goTo).not.toHaveBeenCalled();

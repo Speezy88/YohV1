@@ -1,9 +1,12 @@
 // web/src/components/ThemeToggle.tsx — Story 7.5, DESIGN.md `theme-toggle`.
 // UX-DR27's sanctioned exception to FR-46's no-redundant-buttons rule: no
-// slash command sets the theme, so a persistent corner control is warranted.
-// DESIGN.md `theme-toggle`: 30px circle, 1px accent-solid border, sun/moon
-// glyph stroked in ink-primary — rendered with the shared Icon convention
-// (UX-DR47), never emoji.
+// slash command sets the theme, so a persistent control is warranted.
+//
+// Task 6A (2026-09-27, "Corner chrome lives in the nav sidebar"): the
+// Theme Toggle moves from a fixed top-right corner circle into the bottom
+// of `Sidebar.tsx`, styled per the approved mockup as a full-width raised
+// pill with a sun/moon glyph plus a "Dark mode"/"Light mode" label —
+// rendered with the shared Icon convention (UX-DR47), never emoji.
 import { useState } from "react";
 import { effectiveTheme, setStoredTheme, type Theme } from "../lib/theme.ts";
 import { Icon } from "./icons/Icon.tsx";
@@ -23,19 +26,26 @@ export function ThemeToggle(): React.JSX.Element {
     setTheme(next);
   };
 
+  // Fix round (2026-09-27 review): the visible label names the ACTION
+  // (what clicking does), matching the aria-label and the mockup — "Dark
+  // mode" while the CURRENT theme is light (click to enter dark mode), not
+  // "Dark mode" while already dark (which would describe current state,
+  // the opposite of what was shipped first).
   const label = theme === "dark" ? "Switch to light theme" : "Switch to dark theme";
+  const modeText = theme === "dark" ? "Light mode" : "Dark mode";
 
   return (
     <button
       type="button"
       onClick={flip}
       aria-label={label}
-      className="flex size-[30px] items-center justify-center rounded-full border border-accent-solid bg-surface-raised text-ink-primary shadow-extruded-sm"
+      className="flex h-[50px] items-center gap-3 rounded-lg border-[length:var(--rim-width)] border-rim-interactive px-4.5 font-body text-small font-medium text-ink-secondary shadow-extruded-sm"
     >
       {/* DESIGN.md specifies ink-primary for this one glyph; the shared Icon
           convention's neutral/active coloring (ink-secondary/accent-solid)
-          is for the general icon set, not this specific corner control. */}
+          is for the general icon set, not this specific control. */}
       <Icon path={theme === "dark" ? MOON_PATH : SUN_PATH} label={label} strokeClassName="stroke-ink-primary" />
+      {modeText}
     </button>
   );
 }
