@@ -31,6 +31,7 @@ import {
   DEFAULT_TASK_PROPERTY_NAMES,
   loadTaskPropertyNamesFromEnv,
   readNotionTasks,
+  readResearchVault,
   resolveNotionPageDraftProperties,
   setTaskStatus,
   updateTaskField,
@@ -761,6 +762,78 @@ test("DEFAULT_RESEARCH_VAULT_PROPERTY_NAMES matches Spencer's confirmed live Res
     openQuestions: "Open Questions",
     linkedProject: "Linked Project",
   });
+});
+
+// ============================================================================
+// readResearchVault (Task 6C, FR-43)
+// ============================================================================
+
+function makeResearchVaultPage(overrides: { id: string; title: string; date?: string | null; sources?: string | null; url?: string }): PageObjectResponse {
+  const richTextFor = (content: string) => [
+    {
+      type: "text" as const,
+      text: { content, link: null },
+      plain_text: content,
+      href: null,
+      annotations: { bold: false, italic: false, strikethrough: false, underline: false, code: false, color: "default" as const },
+    },
+  ];
+  return {
+    object: "page",
+    id: overrides.id,
+    created_time: "2026-09-01T09:00:00.000Z",
+    last_edited_time: "2026-09-01T09:00:00.000Z",
+    in_trash: false,
+    archived: false,
+    is_archived: false,
+    is_locked: false,
+    url: overrides.url ?? `https://notion.so/${overrides.id}`,
+    public_url: null,
+    parent: { type: "data_source_id", data_source_id: "research-vault-ds", database_id: "research-vault-db" },
+    icon: null,
+    cover: null,
+    created_by: FAKE_USER,
+    last_edited_by: FAKE_USER,
+    properties: {
+      "Research Title": { id: "title", type: "title", title: richTextFor(overrides.title) },
+      Date: { id: "date", type: "date", date: overrides.date == null ? null : { start: overrides.date, end: null, time_zone: null } },
+      Sources: { id: "sources", type: "rich_text", rich_text: overrides.sources == null ? [] : richTextFor(overrides.sources) },
+    },
+  } as unknown as PageObjectResponse;
+}
+
+test("readResearchVault maps title, date, source count (one per line), and the page's own url", async () => {
+  const client = new FakeNotionClient({
+    "research-vault-ds": [
+      [makeResearchVaultPage({ id: "rv-1", title: "AP Bio registration deadline", date: "2026-09-20", sources: "https://a.example\nhttps://b.example" })],
+    ],
+  });
+  const result = await readResearchVault(client, { researchVaultDataSourceId: "research-vault-ds" });
+  assert.equal(result.length, 1);
+  assert.deepEqual(result[0], {
+    id: "rv-1",
+    title: "AP Bio registration deadline",
+    date: "2026-09-20",
+    sourceCount: 2,
+    url: "https://notion.so/rv-1",
+  });
+});
+
+test("readResearchVault leaves date undefined when unset, and reports 0 sources for an unset Sources property", async () => {
+  const client = new FakeNotionClient({
+    "research-vault-ds": [[makeResearchVaultPage({ id: "rv-2", title: "Bare research" })]],
+  });
+  const result = await readResearchVault(client, { researchVaultDataSourceId: "research-vault-ds" });
+  assert.equal(result[0]?.date, undefined);
+  assert.equal(result[0]?.sourceCount, 0);
+});
+
+test("readResearchVault ignores blank lines when counting sources", async () => {
+  const client = new FakeNotionClient({
+    "research-vault-ds": [[makeResearchVaultPage({ id: "rv-3", title: "Blank-line sources", sources: "https://a.example\n\n   \nhttps://b.example\n" })]],
+  });
+  const result = await readResearchVault(client, { researchVaultDataSourceId: "research-vault-ds" });
+  assert.equal(result[0]?.sourceCount, 2);
 });
 
 // ============================================================================

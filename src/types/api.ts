@@ -447,6 +447,25 @@ export interface RenameTaskResponse {
 }
 
 // ============================================================================
+// Research Hub (Task 6C, FR-43) — new shapes only.
+// ============================================================================
+
+/** One row on the Research Hub page's list — read-only, links straight to its own Notion page. */
+export interface ResearchListItem {
+  readonly id: string;
+  readonly title: string;
+  /** Absent when the Research Vault row has no Date set. */
+  readonly date?: IsoDate;
+  readonly sourceCount: number;
+  readonly url: string;
+}
+
+/** `GET /api/research`'s value: the most recent Research Vault items, newest first, server-limited (AD-17). */
+export interface ResearchListResponse {
+  readonly items: readonly ResearchListItem[];
+}
+
+// ============================================================================
 // Server route type (Ruling R2, AD-17)
 // ============================================================================
 

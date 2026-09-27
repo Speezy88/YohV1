@@ -35,6 +35,7 @@ import {
   bindNotionTaskWrites,
   createPage as notionCreatePage,
   readNotionTasks,
+  readResearchVault,
   readTaskFieldOptions,
   type NotionCreatePageConfig,
 } from "../../src/adapters/notion-adapter.ts";
@@ -249,6 +250,48 @@ const tasksPage: NonNullable<ServerDeps["tasks"]> = {
   ...bindNotionTaskWrites(() => ({ ok: true, value: { client: tasksDb.client, config: TASKS_CONFIG } })),
 };
 
+// Task 6C: the Research Hub page's fake Research Vault data source — just
+// `dataSources.query` (the one call `readResearchVault` makes), seeded with
+// a couple of rows so `web/e2e/research-hub.spec.ts` can see the list
+// render, each with a real "Sources" rich_text value (one URL per line, the
+// same shape `app/save-search-result.ts` writes) so `sourceCount` is
+// genuine, not zero.
+function researchVaultPage(id: string, title: string, date: string, sources: readonly string[]): Record<string, unknown> {
+  const richText = (content: string) => [{ type: "text", plain_text: content, text: { content } }];
+  return {
+    object: "page",
+    id,
+    url: `https://notion.so/${id}`,
+    created_time: "2026-09-01T09:00:00.000Z",
+    last_edited_time: "2026-09-01T09:00:00.000Z",
+    in_trash: false,
+    archived: false,
+    properties: {
+      "Research Title": { id: "title", type: "title", title: richText(title) },
+      Date: { id: "date", type: "date", date: { start: date, end: null, time_zone: null } },
+      Sources: { id: "sources", type: "rich_text", rich_text: richText(sources.join("\n")) },
+    },
+  };
+}
+const researchVaultRows = [
+  researchVaultPage("rv-ap-bio", "AP Bio registration deadline", "2026-09-20", ["https://example.com/ap-bio-1", "https://example.com/ap-bio-2"]),
+  researchVaultPage("rv-hiking", "Best hiking boots under $150", "2026-09-10", ["https://example.com/hiking"]),
+];
+const researchVaultClient = {
+  dataSources: {
+    query: async (params: { data_source_id: string }) => ({
+      object: "list",
+      type: "page_or_data_source",
+      results: params.data_source_id === "research-vault-ds" ? researchVaultRows : [],
+      has_more: false,
+      next_cursor: null,
+    }),
+  },
+} as unknown as Parameters<typeof readResearchVault>[0];
+const research: NonNullable<ServerDeps["research"]> = {
+  readResearchVault: () => readResearchVault(researchVaultClient, { researchVaultDataSourceId: "research-vault-ds" }),
+};
+
 function fixtureState(url: URL): Response {
   const taskId = url.searchParams.get("taskId") ?? "";
   const body = {
@@ -274,7 +317,7 @@ const handle = startServer(
         return url.pathname === "/__fixture/state" ? fixtureState(url) : options.fetch(request);
       },
     }),
-  { homeView, checkOff, chat, tasks: tasksPage },
+  { homeView, checkOff, chat, tasks: tasksPage, research },
 );
 const sweep = startCheckOffCommitSweep({ connection, ...checkOff, now: () => new Date() }, { log: quiet });
 

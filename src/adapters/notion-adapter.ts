@@ -103,6 +103,7 @@ import type {
   NotionDatabaseTarget,
   PlanningFieldNames,
   Project,
+  ResearchVaultRecord,
   Result,
   Task,
   TaskFieldOption,
@@ -499,6 +500,33 @@ export async function readTaskFieldOptions(
     energy: mapOptions(liveOptionNames(names.energy) ?? [], (label) => normalizeEnergy(label, energyOptionNames)),
     status: mapOptions(liveOptionNames(names.status) ?? [], (label) => normalizeStatus(label, statusOptionNames)),
   };
+}
+
+// ============================================================================
+// readResearchVault (Task 6C, FR-43) — the Research Hub page's one read. A
+// read, like readNotionTasks/readTaskFieldOptions: it lets SDK/network
+// errors propagate (AD-8), and writes nothing.
+// ============================================================================
+
+/** `readResearchVault`'s config — just the two fields it needs, the same narrow-config convention `NotionStatusWriteConfig` etc. already establish. */
+export type NotionResearchVaultReadConfig = Pick<NotionCreatePageConfig, "researchVaultDataSourceId" | "researchVaultPropertyNames">;
+
+/**
+ * Reads every current Research Vault page and maps it to the minimal shape
+ * the Research Hub page's list shows (`ResearchVaultRecord`): title, date
+ * (absent if unset), how many source lines the "Sources" rich_text property
+ * holds, and the page's own Notion url (so a row can link straight to it).
+ * Always queries live (no caching layer in this file), and paginates
+ * through every result page via the same `queryAllPages` helper
+ * `readNotionTasks` uses.
+ */
+export async function readResearchVault(
+  client: NotionDataSourceClient,
+  config: NotionResearchVaultReadConfig,
+): Promise<readonly ResearchVaultRecord[]> {
+  const names = config.researchVaultPropertyNames ?? DEFAULT_RESEARCH_VAULT_PROPERTY_NAMES;
+  const pages = await queryAllPages(client, config.researchVaultDataSourceId);
+  return pages.map((page) => toResearchVaultRecord(page, names));
 }
 
 // ============================================================================
@@ -1221,6 +1249,22 @@ function toProject(page: PageObjectResponse, names: NotionProjectPropertyNames):
   };
 }
 
+/** How many non-empty, trimmed lines `raw` (the "Sources" rich_text value) holds — `save-search-result.ts` writes one citation URL per line (`citations.join("\n")`). */
+function countSourceLines(raw: string): number {
+  return raw.split("\n").filter((line) => line.trim().length > 0).length;
+}
+
+function toResearchVaultRecord(page: PageObjectResponse, names: NotionResearchVaultPropertyNames): ResearchVaultRecord {
+  const dateStart = getDateStart(page, names.date);
+  return {
+    id: page.id,
+    title: getTitle(page, names.title),
+    ...(dateStart !== undefined ? { date: toIsoDateOnly(dateStart) } : {}),
+    sourceCount: countSourceLines(getRichText(page, names.sources)),
+    url: page.url,
+  };
+}
+
 // ============================================================================
 // Property extraction helpers
 // ============================================================================
@@ -1255,6 +1299,15 @@ function getStatusName(page: PageObjectResponse, propertyName: string): string |
     return prop.status.name;
   }
   return undefined;
+}
+
+/** Plain concatenated text of a `rich_text` property — `""` if unset or the property is some other type. */
+function getRichText(page: PageObjectResponse, propertyName: string): string {
+  const prop = page.properties[propertyName];
+  if (prop?.type === "rich_text") {
+    return prop.rich_text.map((rt) => rt.plain_text).join("");
+  }
+  return "";
 }
 
 /** Area is read from either a `select` (checked first) or a `rich_text` property — see module docstring assumption. */

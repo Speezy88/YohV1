@@ -193,6 +193,26 @@ export interface Project {
 }
 
 /**
+ * ResearchVaultRecord — Task 6C (FR-43, UX-DR43): one row read from
+ * Spencer's live Research Vault database, as `notion-adapter.ts`'s
+ * `readResearchVault` maps it. Deliberately minimal — just what the
+ * Research Hub page's list shows (title, date, how many sources it cites,
+ * and its own Notion page url) — the vault's other fields (Key Findings,
+ * Query, Status, Area, Confidence, Open Questions, Linked Project) are
+ * Story 11.2's job, once the page renders a document's full body rather
+ * than only linking out to it.
+ */
+export interface ResearchVaultRecord {
+  readonly id: ExternalId;
+  readonly title: string;
+  /** Absent when the Notion "Date" property is unset on this row. */
+  readonly date?: IsoDate;
+  /** How many non-empty lines the "Sources" rich_text property holds (Story 8.4 writes one citation per line). */
+  readonly sourceCount: number;
+  readonly url: string;
+}
+
+/**
  * CompleteTask — the shape the Data-Completeness Gate (AD-11) produces.
  * Derived from `Task` by making the planning fields required (via
  * `Required<Pick<...>>`) rather than re-listing them, so `CompleteTask`

@@ -9,6 +9,8 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { saveSearchResult, type SaveSearchResultDeps } from "../src/app/save-search-result.ts";
+import { openSqliteConnection } from "../src/adapters/sqlite.ts";
+import { getMaxOutboxSeq, initNotificationStoreSchema, tailOutboxSince } from "../src/adapters/notification-store.ts";
 import type { NotionCreatePageClient, NotionCreatePageConfig } from "../src/adapters/notion-adapter.ts";
 import type { ChatSession } from "../src/app/chat-session.ts";
 
@@ -111,6 +113,29 @@ test("Controller ruling: files the last search result via the REAL createPage('R
   const props = client.createCalls[0]!.properties as Record<string, unknown>;
   assert.ok("Research Title" in props, "the 'title' internal field must resolve to ResearchVault's real 'Research Title' property");
   assert.ok("Key Findings" in props);
+});
+
+test("Task 6C: a successful file appends one `research` outbox hint, keyed to the created page id", async () => {
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db);
+  const before = getMaxOutboxSeq(connection);
+  const client = fakeResearchVaultClient();
+  const session: ChatSession = { recentMessages: [], lastSearchAnswer: { query: "best hiking boots under $150", answer: { answer: "Salomon and Merrell both test well.", citations: ["https://example.com/a"] } } };
+  const result = await saveSearchResult({ ...tempDeps({ session, client, config: RESEARCH_VAULT_CONFIG }), connection }, {});
+
+  assert.equal(result.ok, true);
+  const hints = tailOutboxSince(connection, before);
+  assert.deepEqual(
+    hints.map((h) => [h.topic, h.entityId]),
+    [["research", "new-page-id"]],
+  );
+});
+
+test("no connection given -> no hint, and saving still succeeds (the same 'tests that don't care' convention as create-task.ts)", async () => {
+  const client = fakeResearchVaultClient();
+  const session: ChatSession = { recentMessages: [], lastSearchAnswer: { query: "best hiking boots under $150", answer: { answer: "Salomon and Merrell both test well.", citations: [] } } };
+  const result = await saveSearchResult(tempDeps({ session, client, config: RESEARCH_VAULT_CONFIG }), {});
+  assert.equal(result.ok, true);
 });
 
 test("Controller ruling: save-search-result.ts never references confirmProposal — FR-29's createPage call site stays a direct write, never routed through the confirm path", () => {

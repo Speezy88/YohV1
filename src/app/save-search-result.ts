@@ -11,8 +11,16 @@
  * (AD-16: only `app/` may) — no `shell/*.ts` file does (Story 8.4 removed
  * `chat-cli.ts` from `SHELL_WRITE_ALLOWLIST`; Story 8.9 then retired the
  * file itself).
+ *
+ * Task 6C: on a successful file, appends one `research` outbox hint (the
+ * same `deps.connection?.writeTx(...)` convention `app/create-task.ts`'s
+ * `tasks` hint already establishes) so the Research Hub page's list
+ * refetches on the shared event bus (AD-18) — never a second EventSource,
+ * and never a client-side poll.
  */
+import { appendOutboxInTx } from "../adapters/notification-store.ts";
 import { createPage } from "../adapters/notion-adapter.ts";
+import type { SqliteConnection } from "../adapters/sqlite.ts";
 import { errorCopy } from "../core/error-copy.ts";
 import { localIsoDate } from "../rituals/ritual-shared.ts";
 import type { NotionCreatePageBindingFn } from "./create-item.ts";
@@ -20,11 +28,16 @@ import type { ChatSession } from "./chat-session.ts";
 import type { ChatTurnResponse } from "../types/api.ts";
 import type { Result, YohError } from "../types/domain.ts";
 
+/** The outbox topic the Research Hub page refetches on. */
+export const RESEARCH_TOPIC = "research";
+
 export interface SaveSearchResultDeps {
   readonly session: ChatSession;
   readonly getNotionCreatePageBinding: NotionCreatePageBindingFn;
   readonly timeZone: string;
   readonly now: () => Date;
+  /** For the one `research` outbox hint after a successful file. Absent: no hint (tests that don't care). */
+  readonly connection?: SqliteConnection;
 }
 
 export async function saveSearchResult(deps: SaveSearchResultDeps, _input: Record<string, never>): Promise<Result<ChatTurnResponse, YohError>> {
@@ -50,6 +63,8 @@ export async function saveSearchResult(deps: SaveSearchResultDeps, _input: Recor
   if (!created.ok) {
     return { ok: true, value: { reply: errorCopy(created.error, { service: "Notion" }), receipts: [] } };
   }
+
+  deps.connection?.writeTx((db) => appendOutboxInTx(db, { topic: RESEARCH_TOPIC, entityId: created.value.pageId }));
 
   return { ok: true, value: { reply: "", receipts: [`Filed "${properties["title"]}" to the Research Vault.`] } };
 }

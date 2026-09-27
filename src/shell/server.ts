@@ -85,6 +85,7 @@ import {
   bindNotionTaskWrites,
   loadTaskPropertyNamesFromEnv,
   readNotionTasks,
+  readResearchVault,
   readTaskFieldOptions,
   type NotionCreatePageBindingFn,
   type NotionTaskPropertyNames,
@@ -115,6 +116,7 @@ import { answerOpenItem, type AnswerOpenItemDeps } from "../app/answer-open-item
 import { listTasks, type TasksViewDeps } from "../app/tasks-view.ts";
 import { createTask, previewQuickAdd, type CreateTaskDeps } from "../app/create-task.ts";
 import { renameTask, updateTask, type UpdateTaskDeps } from "../app/update-task.ts";
+import { listResearch, type ResearchListDeps } from "../app/research-list.ts";
 import type {
   AnswerOpenItemRequest,
   ApiResult,
@@ -495,6 +497,13 @@ export interface ServerDeps {
   readonly tasks?: Omit<TasksViewDeps, "now" | "log"> &
     Omit<CreateTaskDeps, "now" | "connection" | "log" | "timeZone"> &
     Omit<UpdateTaskDeps, "connection" | "log"> & { readonly now?: () => Date };
+  /**
+   * Task 6C: the Research Hub page's one route's dependencies — a live
+   * Notion read of the Research Vault (`readResearchVault`, bound). Optional
+   * for the same reason as `homeView`/`tasks`: absent, `GET /api/research`
+   * reports a clear `unreachable` error.
+   */
+  readonly research?: Omit<ResearchListDeps, "log">;
 }
 
 /** A failure envelope typed without `ApiResult<never>`'s impossible `{ok: true}` arm, so the RPC client's response type stays exact. */
@@ -517,6 +526,12 @@ const OPEN_ITEMS_NOT_CONFIGURED: ApiFailure = {
 
 /** Task 6B: the Tasks page routes' "not configured" failure (Notion isn't set up). */
 const TASKS_NOT_CONFIGURED: ApiFailure = {
+  ok: false,
+  error: { kind: "unreachable", message: "I'm not set up to do that yet — my Notion connection isn't configured." },
+};
+
+/** Task 6C: `GET /api/research`'s "not configured" failure (Notion, or its Research Vault data source id, isn't set up). */
+const RESEARCH_NOT_CONFIGURED: ApiFailure = {
   ok: false,
   error: { kind: "unreachable", message: "I'm not set up to do that yet — my Notion connection isn't configured." },
 };
@@ -585,6 +600,10 @@ export function createApp(deps: ServerDeps) {
   const tasksDeps: (TasksViewDeps & CreateTaskDeps & UpdateTaskDeps) | undefined = deps.tasks
     ? { ...deps.tasks, now: deps.tasks.now ?? (() => new Date()), connection: deps.connection, log }
     : undefined;
+  // Task 6C: the Research Hub page's one deps object — just `deps.research`
+  // plus the shared logger, the same "spread, default `log` in" convention
+  // `tasksDeps` above uses.
+  const researchDeps: ResearchListDeps | undefined = deps.research ? { ...deps.research, log } : undefined;
   // Preflight ruling P2: the ONE merged deps object `/api/chat`,
   // `/api/open-items`, and `/api/open-items/answer` ALL call into `app/`
   // with — never `deps.chat` directly. `runChatTurn` (a test seam, never a
@@ -844,6 +863,18 @@ export function createApp(deps: ServerDeps) {
           return c.json(result, httpStatus(result));
         },
       )
+      // Task 6C (FR-43, UX-DR43): the Research Hub page's one route — pure
+      // transport over `app/research-list.ts`'s `listResearch` (a live
+      // Notion read of the Research Vault, most recent first, server-
+      // limited). `deps.research` is absent until Notion +
+      // NOTION_RESEARCH_VAULT_DATA_SOURCE_ID are configured
+      // (`buildResearchDeps` below), reported as a clear `unreachable`
+      // error rather than a 500.
+      .get("/api/research", async (c) => {
+        if (!researchDeps) return c.json(RESEARCH_NOT_CONFIGURED, httpStatus(RESEARCH_NOT_CONFIGURED));
+        const result = wire(await listResearch(researchDeps, {}));
+        return c.json(result, httpStatus(result));
+      })
       // Story 8.5, AD-18/C5: one chat turn, its reply streamed on this
       // request's own SSE response (separate from GET /api/events). Always
       // ends in exactly one `done` or `error` event (`runChatStream`). A
@@ -958,8 +989,8 @@ export function startServer(
   connection: SqliteConnection,
   env: Readonly<Record<string, string | undefined>> = process.env,
   serveFn: ServeFn = (options) => serve({ ...options }),
-  /** Story 7.8's `homeView`, Story 7.10's `checkOff`, and Story 8.5's `chat`, threaded through the same way `connection` already is. */
-  features: Pick<ServerDeps, "homeView" | "checkOff" | "chat" | "tasks"> = {},
+  /** Story 7.8's `homeView`, Story 7.10's `checkOff`, Story 8.5's `chat`, and Task 6C's `research`, threaded through the same way `connection` already is. */
+  features: Pick<ServerDeps, "homeView" | "checkOff" | "chat" | "tasks" | "research"> = {},
 ): ServerHandle {
   const port = parsePort(env["YOH_SERVER_PORT"]);
   // Contract C3: one ChatSession per server process, shared by every chat route.
@@ -971,6 +1002,7 @@ export function startServer(
     ...(features.checkOff ? { checkOff: features.checkOff } : {}),
     ...(features.chat ? { chat: features.chat } : {}),
     ...(features.tasks ? { tasks: features.tasks } : {}),
+    ...(features.research ? { research: features.research } : {}),
   });
   return serveFn({ fetch: app.fetch, hostname: LOOPBACK_HOST, port });
 }
@@ -1093,6 +1125,21 @@ function buildTasksDeps(notion: NotionFeatureConfig, env: Readonly<Record<string
     }),
     ...bindNotionTaskWrites(() => ({ ok: true, value: { client: notion.notionClient, config } })),
   };
+}
+
+/**
+ * Task 6C: the Research Hub page route's real dependencies — the SAME
+ * shared Notion client Home/Tasks/check-off already use, plus its own
+ * `NOTION_RESEARCH_VAULT_DATA_SOURCE_ID` (the one extra env var this page
+ * needs beyond `NotionFeatureConfig`'s core four). Absent either — no
+ * `notion` (core Notion unconfigured) or no Research Vault id — the page
+ * reports a clear `unreachable` error rather than a 500 (same convention as
+ * `buildHomeViewDeps`/`buildTasksDeps`).
+ */
+function buildResearchDeps(notion: NotionFeatureConfig | undefined, env: Readonly<Record<string, string | undefined>>): ServerDeps["research"] {
+  const researchVaultDataSourceId = env["NOTION_RESEARCH_VAULT_DATA_SOURCE_ID"];
+  if (!notion || !researchVaultDataSourceId) return undefined;
+  return { readResearchVault: () => readResearchVault(notion.notionClient, { researchVaultDataSourceId }) };
 }
 
 function buildCheckOffDeps(notion: NotionFeatureConfig): ServerDeps["checkOff"] {
@@ -1352,11 +1399,13 @@ if (import.meta.main) {
   const checkOff = notion ? buildCheckOffDeps(notion) : undefined;
   const chat = buildChatDeps(connection, notion, process.env);
   const tasks = notion ? buildTasksDeps(notion, process.env) : undefined;
+  const research = buildResearchDeps(notion, process.env);
   const handle = startServer(connection, process.env, undefined, {
     ...(homeView ? { homeView } : {}),
     ...(checkOff ? { checkOff } : {}),
     ...(chat ? { chat } : {}),
     ...(tasks ? { tasks } : {}),
+    ...(research ? { research } : {}),
   });
   // Story 7.10, AD-20: the startup sweep commits anything left overdue by a
   // previous process, then the commit timer takes over.
