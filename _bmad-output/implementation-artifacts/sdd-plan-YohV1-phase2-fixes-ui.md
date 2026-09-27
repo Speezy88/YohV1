@@ -59,6 +59,7 @@ These tasks fix that before Epic 9. **Spencer approved these decisions (2026-09-
 - `/morning` with no Plan now replies "No Plan yet today. Type /plan (or say "plan my day") and I'll build it now." It still never generates a Plan itself (FR-1 stands).
 - The server wires `planDay`'s deps the way `ritual-cli/morning-deps.ts` builds the morning deps (Notion/Calendar/token-store/memory), minus the push. It never names adapter write functions (layering scan), and reuses the adapter binders or the morning-deps builder where possible.
 - Home's empty state (Task 6 restyles it) says: "No Plan yet today. Type /plan to build it now."
+- **The morning Plan reaches Spencer only in the app** (Spencer, 2026-09-27). The scheduled `morning` ritual no longer sends the Pushover Plan push. The Plan appears on Home and via `/morning`, and the in-app Plan view is the delivery. Pushover stays only for AD-7 failure and operational alerts (a ritual failed, the server is down, a missed run). Update the ritual's tests: the delivered outcome no longer depends on push success. The PRD/UX amendment is recorded in Task 8.
 
 **Commit:** `feat(fixes): plan my day on demand (/plan)`
 
@@ -128,34 +129,141 @@ These tasks fix that before Epic 9. **Spencer approved these decisions (2026-09-
 
 ---
 
-## Task 6: UI refresh (after Spencer approves the design mockup)
+## Task 9: Prompt caching + recording what every Claude call costs
 
-**Owns:** `web/src/tokens.css` and every web component/page it affects; `DESIGN.md` amendments; Playwright + Vitest updates. The detailed brief is written into this section once Spencer approves the mockup artifact ("Yoh UI Refresh"). The approved decisions so far:
+**Owns:** `src/adapters/llm-adapter.ts` (every `messages.create` / stream call); a new `src/adapters/llm-usage-store.ts` (a dedicated SQLite table under AD-10, created idempotently: one row per Claude call with `{at, model, purpose, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens}`); a price table as ONE export (per model, input / output / cache-write / cache-read $ per million tokens: Haiku 4.5 $1 / $5, Sonnet 5 $2 / $10, with cache read 0.1× input and cache write 1.25× input); tests.
 
-- A brighter **cool white** base. No warm off-white.
-- Stronger **neumorphism**, using the recipe from the reference Spencer named (`usamamoinakhter/Neumorphism-ui`, React Native, so ported as CSS tokens, not installed): a white highlight top-left and a `#a3b1c6`-family soft shadow bottom-right. Cards are raised, and inputs and pressed states are inset. The hairline-rim contrast rule stays for accessibility.
-- **More blue gradient** (Sky → Azure) on the active nav item, primary buttons, the thinking state, the check-off state, the now-line and headings accents.
-- A **bigger scale overall** (type, controls, spacing). It should look sleek and never cramped.
-- A **left nav sidebar** on every page: Home, Chat, Tasks, Desk with icons + labels, and the active item in the gradient pill. It replaces the tiny page dots.
-- **Page navigation:** the mouse wheel changes pages, but only when the hovered scroll area is already at its edge. Swipe/trackpad is smoother and more reliable. Arrow keys still work.
-- **Home calendar:** a Google-Calendar-style day view (a scrolling hour grid that opens at the current time, with a now-line and rounded event blocks showing title + time) plus a **mini month** above it. It never stretches the whole screen height. Untitled or punctuation-only events show "(No title)".
-- The chat bubble never overlaps content. Every page has a real empty state (Home: "No Plan yet today. Type /plan to build it now."). Chat gets a welcome with example prompts and the "/" hint. Chat replies render **markdown** safely (no raw HTML), with a bundled library, CSP-safe.
+- **Prompt caching (Spencer, 2026-09-27):**
+  - Put `cache_control` breakpoints on every call with a stable prefix: the system prompts (tone, capability list), the few-shot or instruction blocks of the classifiers and drafters, and the growing chat history for general chat. Cache the history prefix so each new turn only pays full price for the new message.
+  - Keep prefixes byte-stable: no timestamps or dates inside the cached system prompt. Pass today's date in the user turn or after the last breakpoint instead.
+  - Respect the model's minimum cacheable prefix. A too-short prefix simply won't cache, and nothing breaks.
+- **Usage recording:** after every call (streaming included), append a row to `llm-usage-store` with `response.usage`. A failed write never breaks the chat turn: log it and continue.
+- **Tests:**
+  - The request bodies carry `cache_control` in the right places, and the cached prefix is identical across two consecutive turns (a byte comparison of the prefix).
+  - Usage rows are written with the right `purpose` (e.g. `classify`, `capture`, `answer`, `draft-notion`, `draft-calendar`, `suggest-field`).
+  - A cost function over rows × the price table gives the right dollars for a fixed fixture.
+- Epic 12's Desk shows **"Claude API spend this month"** from this store. Recording starts now, so there's history by then.
 
-**Commit:** `feat(ui): brighter neumorphic refresh, nav sidebar, Google-style day calendar`
+**Commit:** `feat(llm): prompt caching and per-call usage recording`
+
+---
+
+## Spencer's information-architecture decisions (2026-09-27): these amend the PRD, UX spines and epics (Task 8)
+
+- **Pages, in order:** 1. **Home**, 2. **Tasks** (the task entry area), 3. **Desk**, 4. **Research Hub**. **There is no Chat page.** Chat is a **panel available on every page**, opened from a **small floating "Ask Yoh" pill** fixed bottom-center on every page, like Wispr Flow's pill: compact (~46 px tall), raised, not too low (~30 px above the bottom edge), never covering content (pages reserve room for it). Click the pill or press **⌘K** to open the chat panel with the input already focused. **The panel is large** (Spencer, 2026-09-27): it covers the whole content area to the right of the sidebar, inset about 24 px, with only the sidebar still visible. The page behind is dimmed context, not functional. Messages are up to about 640–700 px wide. Open items and Structured Questions live in that panel, and so do `/`-commands and the Command Palette.
+- **Navigation is a vertical stack.** Pages sit top-to-bottom, and you move between them with **smooth** transitions using:
+  - on-screen **up and down arrow buttons**;
+  - the keyboard **↑ / ↓** (and Page Up / Page Down) when no text field has focus;
+  - the mouse wheel, only when the hovered scroll area is at its edge.
+
+  The sidebar jumps directly to any page. Reduced motion makes transitions instant.
+- **Side swipe is retired, officially and everywhere.** No swipe gesture code remains in `web/`, and every living spec document says so (Task 8).
+- **Tasks must be as easy as Notion, or easier.** It's a standalone page, pulled forward from Epic 11 (Task 6B).
+
+## Task 6A: UI refresh + new app shell (after Spencer approves the updated mockup)
+
+**Owns:** `web/src/tokens.css`, `PageShell` and page navigation (`web/src/lib/pages.ts`, deleting `web/src/lib/swipe.ts` and its tests), the sidebar, the chat panel (moving Chat's contents out of `web/src/pages/Chat.tsx` into a panel component shared by every page), Home, `manifest.webmanifest` + icons, and the Vitest/Playwright updates. The approved mockup is the "Yoh UI Refresh" artifact (https://claude.ai/artifact/1dxqs2AEZU4a2NEcFyoEWi). Its values become tokens.
+
+- **Look:**
+  - A brighter **cool white** base (`#EEF2F8` family), with no warm off-white.
+  - Stronger **neumorphism**, using the recipe from Spencer's reference (`usamamoinakhter/Neumorphism-ui`, React Native, so ported as CSS tokens, not installed): a white highlight top-left and a `#a3b1c6`-family shadow bottom-right. Cards are raised, and inputs and pressed states are inset. The hairline-rim contrast rule stays.
+  - **More blue gradient** (Sky → Azure `#7FC1F5 → #1E6FD9`) on the active nav, primary buttons, checked boxes, today's date, Plan blocks, the thinking text, and accent headings.
+  - A **bigger scale** (body 17–18px, headings ~40px, controls 44–64px).
+  - Dark theme retuned to match.
+- **Shell:**
+  - A left **sidebar**: the Yoh wordmark, then Home, Tasks, Desk, Research Hub (icons + labels, active item in the gradient pill), then the theme toggle.
+  - The **vertical stack** navigation described above, with up/down arrow buttons.
+  - The **"Ask Yoh" pill** (see the IA decisions above) on every page, opening the **chat panel** drawer. ⌘K opens it too, Esc closes it, and focus returns to where it was.
+  - The chat panel carries everything Chat did in Epic 8: streaming, the thinking indicator, open items, Structured Questions, the Command Palette, receipts, the draft surviving panel close, and **markdown rendering** (a bundled library, no raw HTML, CSP-safe). Task 0's no-overlap guarantees hold inside the panel.
+  - Home's capture flow still counts at most 3 actions: click the pill (or ⌘K), type, Enter. The NFR-CaptureSpeed Playwright gate is updated, not weakened.
+- **Home:**
+  - A greeting + host-TZ date.
+  - **Today's Time Budget** (Spencer, 2026-09-27), always visible on Home. It shows the budget, how much of it the Plan uses, and time done so far (e.g. "Time Budget 6 h · 4 h planned · 1 h done"). Click it to change the budget in place, through the existing `app/time-budget.ts`. With no budget set today, it shows the default and "Set today's budget".
+  - A Plan card of raised rows (check-off + Undo as before).
+  - A **mini month** + a **Google-Calendar-style day view** (a scrolling hour grid that opens at the current time, with a now-line and rounded event blocks showing title + time). It never stretches the full screen height.
+  - Untitled or punctuation-only events show "(No title)".
+  - Empty state: "No Plan yet today. Type /plan to build it now."
+- **Installed-app quality:** keep `display: standalone`. Add PNG icons (192, 512, maskable) + an `apple-touch-icon`, and use the new palette in `background_color` / `theme_color`.
+
+**Commit:** `feat(ui): brighter neumorphic shell, vertical page stack, chat panel, Google-style day calendar`
+
+## Task 6B: Tasks page, as easy as Notion or easier
+
+**Owns:** `src/app/tasks-view.ts` (new, `listTasks(deps, {groupBy?, query?}) → Result<TasksViewResponse>`); `src/app/create-task.ts` (new, `createTask(deps, TaskDraftInput) → Result<{task, receipt}>`); `src/app/update-task.ts` (new, `updateTask(deps, {taskId, field, value}) → Result<{receipt}>`); a pure inline quick-add parser in `src/core/` (e.g. `core/quick-add.ts`, reusing Task 5's date resolver and `parsePlanningFieldValue`); routes `GET /api/tasks`, `POST /api/tasks`, `POST /api/tasks/:id/field`; `web/src/pages/Tasks.tsx` + components; tests; the Playwright spec.
+
+- **Quick-add row, always at the top and focused on page arrival.** Type a title and press Enter, and it's created. Inline tokens are parsed live and shown as chips before you press Enter:
+  - "Lab report due fri 90m high" → Due = Friday, Duration = 90, Energy = high;
+  - "#bio" → Area.
+
+  Nothing is guessed silently: each unrecognized token stays in the title.
+- **Ruling (spec amendment, Task 8 records it):** a Task **Spencer types himself** on the Tasks page is a **direct write** (like FR-24), not a Yoh-drafted Proposal. `app/create-task.ts` calls `createPage('Tasks', …)` with the same draft-time + write-time schema validation (AD-12). The Proposal/confirm path stays for anything **Yoh** drafts from chat (FR-26).
+- **The list:**
+  - Every Task, completed ones included (FR-43).
+  - Grouped by default as **Overdue / Today / This week / Later / No date**, switchable to Area or Status.
+  - Search and filter.
+  - Each row shows the checkbox, title, Due, Duration, Area, Energy and Status, with a missing-field badge for anything missing.
+- **Inline editing like Notion:**
+  - Click or Enter on a cell to edit it in place: a date picker for Due, a number with presets for Duration, a select for Area and Energy fed from **live Notion options**, and a select for Status.
+  - Each edit writes through `updateTaskField` (FR-24 direct write, select guard intact) with visual optimism. A failed write reverts, shows a plain error, and gets a receipt.
+  - Checking a box uses the existing check-off + Undo (AD-20).
+- **Keyboard-first:**
+  - `N` or `/` focuses quick-add;
+  - ↑↓ move between rows (inside the list; page navigation only takes ↑↓ when no row or field has focus);
+  - Enter edits, Esc cancels, Tab moves between cells;
+  - `⌘⌫` asks before deleting? **No: nothing is ever deleted (AD-12).** Status changes only.
+- **Speed bar:** creating a Task with title + due date takes ≤ 1 typed line + Enter, with no dialog and no required fields beyond the title. The list reflects it immediately and reconciles with the server on SSE hint or refetch. A Playwright spec asserts: a fresh load → the quick-add is focused → typing "Test task due tomorrow 30m" and Enter makes the Task appear in the list with the right Due and Duration (fake Notion in the fixture).
+- The look follows 6A's tokens: raised rows, inset editors, gradient accents.
+
+**Commit:** `feat(tasks): standalone Tasks page — quick-add, inline editing, grouping`
+
+## Task 6C: Research Hub page (shell)
+
+**Owns:** `web/src/pages/ResearchHub.tsx`; `src/app/research-list.ts` (new, a read-only list of recent Research Vault pages via the existing Notion read path; add a small adapter read function if none exists); `GET /api/research`; tests.
+
+- Shows recent Research Vault items (title, date, source count), each linking to its Notion page.
+- Has an "Ask a research question" box that sends the question into the chat panel (the existing search → "save that" flow).
+- The asynchronous `/research` job queue stays **Epic 11**. The page states what it does today, with no fake features.
+- Empty state: "Nothing saved yet. Ask a question, then say "save that"."
+
+**Commit:** `feat(research): Research Hub page`
+
+## Task 8: Documents amended — page order, chat panel, vertical navigation, swipe retired
+
+**Runs before Task 6A** so the implementers build from updated specs. **Owns (living specs):**
+- `_bmad-output/planning-artifacts/prds/prd-YohV1-2026-08-21/prd.md`
+- `_bmad-output/planning-artifacts/ux-designs/ux-YohV1-2026-08-21/DESIGN.md` + `EXPERIENCE.md`
+- `_bmad-output/planning-artifacts/epics.md`
+- `ARCHITECTURE-SPINE.md` (only where it names pages, navigation, or swipe)
+- `sprint-status.yaml` if the Tasks page moving out of Epic 11 changes story scope
+
+**Changes:**
+- The page order is Home, Tasks, Desk, Research Hub.
+- Chat is a panel on every page; there is no Chat page.
+- Navigation is a vertical stack (smooth up/down arrow buttons, ↑/↓ keys, edge-aware wheel, and a sidebar).
+- **Side swipe is retired.** Remove swipe from every living requirement, UX rule and story AC, and write "Swipe navigation retired 2026-09-27 (Spencer)".
+- The new palette and neumorphism direction (from the approved mockup) replace the warm off-white.
+- The Tasks page moves from Epic 11 into this plan: Epic 11 keeps only the Research Box/`/research` job and the research offer, and Story 11.1 is marked "delivered early in the 2026-09-27 fixes + UI plan".
+- The Research Hub page shell exists now.
+- The direct-create ruling for Spencer-typed Tasks is recorded as an amendment to AD-3/AD-12.
+- **Historical records** (memlogs, reconciliation reviews, past SDD and story plans, brainstorms) are **not rewritten**. Each one that describes swipe or the Chat page gets a one-line note at the top: "Superseded 2026-09-27: swipe retired; Chat is a panel; pages are Home, Tasks, Desk, Research Hub."
+
+**Commit:** `docs: page order, chat panel, vertical navigation; swipe retired`
 
 ---
 
 ## Task 7: Live end-to-end check against Spencer's real data (with Spencer)
 
-**Not a subagent task.** After Tasks 1–6, the controller runs the real server with `--env-file=.env` and walks Spencer through:
+**Not a subagent task.** After Tasks 0–6C, the controller runs the real server with `--env-file=.env` and walks Spencer through:
 
 1. `/plan`, then `/morning`
 2. "what's happening tomorrow"
 3. "make an event at 10:45 am tomorrow to meet with alex for an hour and a half" → the confirm names the right time → the event appears in Google Calendar
-4. "Lab report draft, due Thursday" → Create → it appears in Notion with the right date
-5. answering a missing-field question
-6. checking off a Task on Home, with Undo
-7. `/night`
+4. "Lab report draft, due Thursday" in the chat panel → Create → it appears in Notion with the right date
+5. Tasks page quick-add + inline edits of Due, Duration, Area and Energy → visible in Notion
+6. answering a missing-field question
+7. checking off a Task on Home and on Tasks, with Undo
+8. `/night`
+9. page navigation: the arrows, ↑/↓, the wheel and the sidebar, with no swipe anywhere
 
 Every failure found becomes a fix before the merge. The results are recorded in this section.
 
@@ -163,4 +271,4 @@ Every failure found becomes a fix before the merge. The results are recorded in 
 
 ## Order
 
-Tasks 1 → 2 → 3 → 4 → 5 (the fixes, serial), with the design mockup made and approved in parallel. Then Task 6, then Task 7, then Spencer's merge decision.
+0 → 1 → 2 → 3 → 4 → 5 → 9 (fixes, serial), with the mockup updated for the new structure in parallel. Then **8** (docs), then **6A** (after Spencer approves the mockup), **6B**, **6C**, then **7**, then Spencer's merge decision.
