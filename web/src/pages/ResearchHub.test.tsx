@@ -74,7 +74,11 @@ describe("ResearchHubPage", () => {
     fireEvent.keyDown(input, { key: "Enter" });
 
     expect(openChatPanel).toHaveBeenCalledTimes(1);
-    expect(send).toHaveBeenCalledWith("AP Bio registration deadline");
+    // Real-use fixes plan, Task 5 (Ruling): the ask box always sends an
+    // explicit "search: <question>" line, so it never depends on
+    // classifyChatIntent's classifier — `core/search-intent.ts`'s
+    // `parseSearchIntent` treats a leading "search:" as explicit.
+    expect(send).toHaveBeenCalledWith("search: AP Bio registration deadline");
     expect(input).toHaveValue("");
   });
 

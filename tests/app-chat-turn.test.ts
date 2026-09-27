@@ -160,14 +160,24 @@ test("Story 8.4: a recognized Plan-view command never reaches classifyChatIntent
 });
 
 test("chatTurn falls through to answerQuestion for an unmatched line, costing exactly three LLM calls (chatTurn's own classifyCapture, then classifyChatIntent, then answerQuestion's own call)", async () => {
-  const llmClient = makeFakeLlmClient("It's sunny where you are, probably.");
+  const llmClient = makeFakeLlmClient("Reheat the leftovers, probably.");
   const deps = baseDeps({ llmClient });
 
-  const result = await chatTurn(deps, { message: "what's the weather", history: [{ role: "user", content: "what's the weather" }] });
+  // Real-use fixes plan, Task 5: "what's the weather" now matches
+  // `core/search-intent.ts`'s deterministic pre-check ("weather" is one of
+  // its current-information cues) and short-circuits BEFORE either
+  // classifier ever runs — see the "current-information-cue line" tests
+  // above. This test needs a genuinely unmatched line (no search verb, no
+  // current-info cue, no planning-recognizer shape) to keep pinning the
+  // three-call fall-through it's actually about.
+  const result = await chatTurn(deps, {
+    message: "what should I do about the dishes",
+    history: [{ role: "user", content: "what should I do about the dishes" }],
+  });
 
   assert.equal(result.ok, true);
   if (!result.ok) return;
-  assert.equal(result.value.reply, "It's sunny where you are, probably.");
+  assert.equal(result.value.reply, "Reheat the leftovers, probably.");
   assert.equal(
     (llmClient as any).calls.length,
     3,
@@ -400,6 +410,92 @@ test("Review Focus #5: session is threaded by reference across two chatTurn call
 });
 
 // ============================================================================
+// Real-use fixes plan, Task 5 ("the web search is not working"): a
+// deterministic pre-check (`core/search-intent.ts`'s `parseSearchIntent`),
+// checked AFTER every existing deterministic recognizer and BEFORE
+// classifyCapture/classifyChatIntent — a search-shaped line never spends
+// either paid classifier call at all.
+// ============================================================================
+
+test('chatTurn routes a current-information-cue line ("what\'s the latest AI news") straight to search — ZERO LLM calls (neither classifyCapture nor classifyChatIntent ever runs)', async () => {
+  const llmClient = makeFakeLlmClient("GENERAL");
+  const searchCalls: string[] = [];
+  const deps = baseDeps({
+    llmClient,
+    searchFn: async (query) => {
+      searchCalls.push(query);
+      return { ok: true, value: { answer: "Some AI shipped something.", citations: ["https://example.com/ai-news"] } };
+    },
+  });
+
+  const result = await chatTurn(deps, { message: "what's the latest AI news", history: [] });
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.match(result.value.reply, /Some AI shipped something\./);
+  assert.deepEqual(searchCalls, ["what's the latest AI news"], "the pre-check keeps the whole line as the query for a cue-only match");
+  assert.equal(
+    (llmClient as any).calls.length,
+    0,
+    "a pre-check hit must short-circuit BEFORE classifyCapture or classifyChatIntent ever runs — zero LLM calls",
+  );
+});
+
+test('chatTurn strips the search verb from an explicit-verb line ("search for the best hiking boots" -> query "the best hiking boots") and never calls the classifier', async () => {
+  const llmClient = makeFakeLlmClient("GENERAL");
+  const searchCalls: string[] = [];
+  const deps = baseDeps({
+    llmClient,
+    searchFn: async (query) => {
+      searchCalls.push(query);
+      return { ok: true, value: { answer: "Salomon test well.", citations: [] } };
+    },
+  });
+
+  await chatTurn(deps, { message: "search for the best hiking boots", history: [] });
+
+  assert.deepEqual(searchCalls, ["the best hiking boots"]);
+  assert.equal((llmClient as any).calls.length, 0, "the pre-check must catch this line before classifyCapture/classifyChatIntent");
+});
+
+test('chatTurn treats a leading "search:" prefix (what Research Hub\'s ask box always sends) as an explicit search, query = the rest', async () => {
+  const llmClient = makeFakeLlmClient("GENERAL");
+  const searchCalls: string[] = [];
+  const deps = baseDeps({
+    llmClient,
+    searchFn: async (query) => {
+      searchCalls.push(query);
+      return { ok: true, value: { answer: "AP Bio registers in the fall.", citations: [] } };
+    },
+  });
+
+  await chatTurn(deps, { message: "search: AP Bio registration deadline", history: [] });
+
+  assert.deepEqual(searchCalls, ["AP Bio registration deadline"]);
+  assert.equal((llmClient as any).calls.length, 0, "an explicit search: prefix never depends on the classifier");
+});
+
+test("chatTurn's search pre-check never swallows a planning line that happens to contain a cue word (\"today's plan\") — falls through to the classifier same as before", async () => {
+  const llmClient = makeFakeLlmClient("GENERAL");
+  const searchCalls: string[] = [];
+  const deps = baseDeps({
+    llmClient,
+    searchFn: async (query) => {
+      searchCalls.push(query);
+      return { ok: true, value: { answer: "should never be reached", citations: [] } };
+    },
+  });
+
+  const result = await chatTurn(deps, {
+    message: "today's plan",
+    history: [{ role: "user", content: "today's plan" }],
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(searchCalls.length, 0, '"today\'s plan" must never be treated as a search — it stays on the general/capture path');
+});
+
+// ============================================================================
 // Review fix (real-use fixes plan, Task 5 fix, FR-42): when web search isn't
 // actually configured (no PERPLEXITY_API_KEY), chatTurn must never let a
 // search-trigger line attempt a search, and general chat's capability text
@@ -445,6 +541,12 @@ test("Story 8.4: session.recentMessages records every line that reaches chatTurn
       session,
       llmClient: makeFakeLlmClient("NONE"),
       readCalendarEventsFn: async () => [],
+      // Real-use fixes plan, Task 5: "search for something" now matches
+      // `core/search-intent.ts`'s deterministic pre-check (an explicit
+      // "search for" verb) and reaches `searchWeb` directly — this test is
+      // only about `session.recentMessages`, so a trivial always-succeeds
+      // stub is enough.
+      searchFn: async () => ({ ok: true, value: { answer: "x", citations: [] } }),
     });
     await chatTurn(deps, { message, history: [] });
     assert.deepEqual(session.recentMessages, [message], `expected "${message}" to be recorded into session.recentMessages`);

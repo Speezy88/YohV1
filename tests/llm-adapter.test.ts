@@ -681,6 +681,29 @@ test("classifyChatIntent's system prompt is byte-identical across two separate c
 });
 
 // ============================================================================
+// Real-use fixes plan, Task 5 ("the web search is not working"): the
+// classifier prompt leans toward SEARCH for real-world factual questions,
+// with few-shot examples of both SEARCH and GENERAL, while planning/personal/
+// conversational messages stay GENERAL.
+// ============================================================================
+
+test("classifyChatIntent's system prompt leans toward search for real-world factual questions and includes few-shot examples of both SEARCH and GENERAL", async () => {
+  const { calls, client } = fakeClient(textMessage("GENERAL"));
+  await classifyChatIntent(client, "how's it going");
+  const system: string = (calls[0]!.params.system as Anthropic.TextBlockParam[]).map((b) => b.text).join("\n");
+
+  // Leans toward search for real-world facts (people, companies, events,
+  // prices, current-things) — not just "explicit request"/"unambiguous".
+  assert.match(system, /people|companies|events|prices/i);
+
+  // At least one few-shot SEARCH example and one few-shot GENERAL example.
+  assert.match(system, /SEARCH:/);
+  assert.match(system, /\bGENERAL\b/);
+  const exampleLines = system.split("\n").filter((line) => /^(?:Message:|["“].*["”]\s*(?:->|→))/i.test(line.trim()));
+  assert.ok(exampleLines.length >= 2, "expected at least two few-shot example lines in the prompt");
+});
+
+// ============================================================================
 // classifyCapture (real-use fixes plan, Task 2 — replaces the old two-way
 // detectTaskCapture) — a free-text description ("Lab report draft, due
 // Thursday", or a calendar request that slipped past isCalendarEditCommand's

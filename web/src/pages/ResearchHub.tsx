@@ -63,7 +63,12 @@ function AskResearchBox(): React.JSX.Element {
     const trimmed = text.trim();
     if (trimmed === "") return;
     openChatPanel();
-    void send(trimmed);
+    // Real-use fixes plan, Task 5 (Ruling): always send an explicit
+    // "search: <question>" line — `core/search-intent.ts`'s
+    // `parseSearchIntent` treats a leading "search:" as an explicit search
+    // request, so this ask box never depends on chatTurn's classifier
+    // (`classifyChatIntent`) to actually run a search.
+    void send(`search: ${trimmed}`);
     setText("");
   };
 

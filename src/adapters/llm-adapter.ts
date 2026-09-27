@@ -692,10 +692,21 @@ const CLASSIFY_CHAT_INTENT_MAX_TOKENS = 128;
 
 const CLASSIFY_CHAT_INTENT_SYSTEM_PROMPT = [
   "You are Yoh's chat-intent classifier. Decide whether Spencer's message is:",
-  '(a) an explicit request to search the web (e.g. "search for X", "look up X", "google X"), or an unambiguous factual/research question needing a live, current, or specific factual answer outside Yoh\'s own planning data — respond:',
+  '(a) an explicit request to search the web (e.g. "search for X", "look up X", "google X"), or a real-world factual/informational question — about people, companies, events, prices, scores, weather, current events, definitions of current things, or anything else outside Yoh\'s own planning data that a search engine (rather than Yoh\'s own memory) would answer — respond:',
   "SEARCH: <a clean, focused search query capturing what to look up>",
-  "(b) anything else (ordinary planning, status, or conversational chat) — respond with exactly:",
+  "Lean toward SEARCH whenever the message reads as a genuine question about the world rather than about Spencer's own Tasks/Projects/Calendar/Plan — when in doubt between SEARCH and GENERAL for a real-world factual question, prefer SEARCH.",
+  "(b) anything else (Spencer's own planning/status, something personal to Spencer, or ordinary conversational chat) — respond with exactly:",
   "GENERAL",
+  "",
+  "Examples:",
+  'Message: "who is the CEO of OpenAI" -> SEARCH: current CEO of OpenAI',
+  'Message: "what\'s the capital of France" -> SEARCH: capital of France',
+  'Message: "price of bitcoin" -> SEARCH: current price of bitcoin',
+  'Message: "who won the game last night" -> SEARCH: who won the game last night',
+  'Message: "what\'s my plan for today" -> GENERAL',
+  'Message: "why is my chemistry homework prioritized" -> GENERAL',
+  'Message: "how\'s it going" -> GENERAL',
+  'Message: "should I take a break" -> GENERAL',
 ].join("\n");
 
 /**

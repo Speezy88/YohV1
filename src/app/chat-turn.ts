@@ -49,6 +49,7 @@ import {
   parseWhyPrioritizedCommand,
 } from "../core/chat-commands.ts";
 import { resolveRelativeDate } from "../core/relative-date.ts";
+import { parseSearchIntent } from "../core/search-intent.ts";
 import { classifyCapture, classifyChatIntent } from "../adapters/llm-adapter.ts";
 import { reportBlocker } from "./blocker-report.ts";
 import { RECENT_MESSAGES_WINDOW, type ChatSession } from "./chat-session.ts";
@@ -342,6 +343,18 @@ export async function chatTurn(deps: ChatTurnDeps, input: ChatTurnRequest): Prom
     // else: not actually a calendar edit ("move on to the next topic") —
     // fall through to the classify/general-chat path below.
   }
+
+  // Real-use fixes plan, Task 5 ("the web search is not working"): a
+  // deterministic, zero-API-call pre-check (`core/search-intent.ts`'s
+  // `parseSearchIntent`) — checked AFTER every deterministic recognizer
+  // above (so "price of bitcoin today" is never captured as a Task by
+  // classifyCapture just below, and never mistaken for calendar/create-item/
+  // save-search-result) and BEFORE classifyCapture, so a search-shaped line
+  // never spends either paid classifier call at all. On a hit, this returns
+  // straight from searchWeb — no classifier, no capture call, matching
+  // `classifyChatIntent`'s own SEARCH-trigger contract just below.
+  const searchIntent = parseSearchIntent(input.message);
+  if (searchIntent) return searchWeb(deps, { query: searchIntent.query });
 
   // Real-use fixes plan, Task 2 (replaces Story 8.8's two-way
   // detectTaskCapture): "Lab report draft, due Thursday" matches none of the
