@@ -17,7 +17,6 @@ import {
   writeTodaysPlanToCalendar,
 } from "../../adapters/calendar-adapter.ts";
 import { writeStructuredLog } from "../../adapters/logger.ts";
-import { loadPushoverConfigFromEnv, sendPushoverNotification } from "../../adapters/notification-adapter.ts";
 import { loadTaskPropertyNamesFromEnv, readNotionTasks } from "../../adapters/notion-adapter.ts";
 import { createTokenStore, loadGoogleOAuthConfigFromEnv } from "../../adapters/token-store.ts";
 import { computeSlipBumpLevels } from "../../core/slip-bump.ts";
@@ -104,7 +103,6 @@ export function createMorningRitualDeps(
   const calendarWriteClient = createCalendarWriteClient(
     tokenStore.getOAuth2Client() as unknown as Parameters<typeof createCalendarWriteClient>[0],
   );
-  const pushoverConfig = loadPushoverConfigFromEnv(env);
 
   // The bumpLevels bridge (see the doc comment above): every currently-
   // stored SlipHistory row, turned into a `taskId -> consecutiveSlipCount`
@@ -126,7 +124,14 @@ export function createMorningRitualDeps(
     // `CalendarIdStore`. `blocks` is already `"calendar-anchor"`-filtered by
     // the caller (`runMorningRitual`'s step 12a.5) before this is invoked.
     writeCalendarPlan: (blocks) => writeTodaysPlanToCalendar(calendarWriteClient, tokenStore, blocks, { timeZone }),
-    sendNotification: (notification) => sendPushoverNotification(pushoverConfig, notification),
+    // Spencer, 2026-09-27: the morning Plan reaches him in the app only
+    // (Home + `/morning`), never as a phone push. The stored Plan IS the
+    // delivery, so this seam just records that the Plan is ready. Pushover
+    // stays wired for AD-7 failure/operational alerts, which go through
+    // ritual-cli.ts's separate `sendFailureAlert` path, not this one.
+    sendNotification: async () => {
+      writeStructuredLog({ level: "info", event: "morning-ritual.plan-in-app-only" });
+    },
     now: () => new Date(),
     timeZone,
     bumpLevels,
