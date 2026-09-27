@@ -384,3 +384,49 @@ export function isCalendarEditCommand(line: string): boolean {
   if (MEET_WITH_RE.test(trimmed) && TIME_OR_DATE_HINT_RE.test(trimmed)) return true;
   return false;
 }
+
+// ============================================================================
+// parseDayViewCommand — pure trigger recognition (real-use fixes plan,
+// Task 5: "what's happening tomorrow", read any day's Calendar).
+// ============================================================================
+
+/**
+ * Recognizes a request to see a given day's Calendar (plus that day's own
+ * stored Plan, if any) — "what's happening tomorrow", "what do I have on
+ * Thursday", "what's on my calendar tomorrow", "what's on for Oct 3" — the
+ * same deliberately simple, documented starting heuristic every other
+ * trigger recognizer in this file uses (NOT real NLU).
+ *
+ * Returns the raw TRAILING date phrase verbatim (e.g. "tomorrow",
+ * "Thursday", "Oct 3", "2026-10-05") — NOT a resolved date. This file may
+ * only import `types/` (AD-1), so it cannot itself call
+ * `core/relative-date.ts`'s `resolveRelativeDate`; `app/chat-turn.ts` does
+ * that immediately after this match, and treats an unresolvable phrase (e.g.
+ * "what's on your mind", where "your mind" resolves to nothing) exactly
+ * like a non-match here — falling through to the next recognizer rather
+ * than swallowing an unrelated line.
+ *
+ * Anchored on QUERY verbs ("what's happening" / "what do I have" /
+ * "what's on") that never overlap `isCalendarEditCommand`'s own trigger
+ * verbs (move/reschedule/create/schedule/etc.) or `isCalendarDeleteRequestCommand`'s
+ * cancel/delete/remove/clear verbs — "move my 3pm tomorrow to 4" and "cancel
+ * my meeting with Alex tomorrow" both start with a verb this regex never
+ * matches at all. Nor does it overlap `isPlanViewCommand`'s bare "plan" /
+ * "what's my plan" (that phrase names no Calendar-query verb this regex
+ * requires), and `app/chat-turn.ts` checks `isPlanViewCommand` first in any
+ * case, so the two never race even where a future phrasing happened to
+ * overlap.
+ *
+ * Returns `undefined` (not an error) for any line that doesn't match this
+ * shape at all — including a bare "what's happening"/"what's on" with no
+ * trailing phrase — so `chatTurn` can fall through to the next recognizer
+ * exactly as it already does for an unrecognized line.
+ */
+const DAY_VIEW_COMMAND_RE =
+  /^(?:what(?:'s|\s+is)\s+happening|what\s+do\s+i\s+have|what(?:'s|\s+is)\s+on(?:\s+my\s+(?:calendar|schedule))?)\s+(?:on\s+|for\s+)?(.+?)\??$/i;
+
+export function parseDayViewCommand(line: string): string | undefined {
+  const match = DAY_VIEW_COMMAND_RE.exec(line.trim());
+  const phrase = match?.[1]?.trim();
+  return phrase && phrase.length > 0 ? phrase : undefined;
+}

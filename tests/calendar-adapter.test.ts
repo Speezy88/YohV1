@@ -55,7 +55,7 @@ import {
   type CalendarBroadClient,
   type CalendarIdStore,
 } from "../src/adapters/calendar-adapter.ts";
-import type { CalendarEditChange, PlanBlock } from "../src/types/domain.ts";
+import type { CalendarEditChange, IsoDate, PlanBlock } from "../src/types/domain.ts";
 
 // ============================================================================
 // Fake client
@@ -357,6 +357,89 @@ test("readCalendarEvents computes the correct (unaffected) local-midnight bounda
   assert.ok(call);
   assert.equal(call.timeMin, "2026-04-04T03:00:00.000Z");
   assert.equal(call.timeMax, "2026-04-05T04:00:00.000Z");
+});
+
+// ============================================================================
+// readCalendarEvents — optional target `date` (real-use fixes plan, Task 5:
+// "what's happening tomorrow", read any day). Defaults to today (computed
+// from `now`/`timeZone`, unchanged) when `date` is omitted; when given, reads
+// THAT day's host-TZ window instead, via the exact same read-only client —
+// no new client type, no new function.
+// ============================================================================
+
+test("readCalendarEvents reads a given target date's window instead of today's, when config.date is set", async () => {
+  const client = new FakeCalendarReadClient([{ items: [] }]);
+
+  // "Today" per FIXED_NOW/UTC is 2026-08-22 — config.date asks for a
+  // different day entirely (tomorrow), and the query window must reflect
+  // THAT day, not today's.
+  await readCalendarEvents(client, { now: FIXED_NOW, timeZone: "UTC", date: "2026-08-23" });
+
+  const call = client.calls[0];
+  assert.ok(call);
+  assert.equal(call.timeMin, "2026-08-23T00:00:00.000Z");
+  assert.equal(call.timeMax, "2026-08-24T00:00:00.000Z");
+});
+
+test("readCalendarEvents still defaults to TODAY's window (from now/timeZone) when config.date is omitted", async () => {
+  const client = new FakeCalendarReadClient([{ items: [] }]);
+
+  await readCalendarEvents(client, { now: FIXED_NOW, timeZone: "UTC" });
+
+  const call = client.calls[0];
+  assert.ok(call);
+  assert.equal(call.timeMin, "2026-08-22T00:00:00.000Z");
+  assert.equal(call.timeMax, "2026-08-23T00:00:00.000Z");
+});
+
+test("readCalendarEvents computes a given target date's window in Spencer's LOCAL timezone, same as it already does for today", async () => {
+  const client = new FakeCalendarReadClient([{ items: [] }]);
+
+  await readCalendarEvents(client, { now: FIXED_NOW, timeZone: "America/New_York", date: "2026-08-23" });
+
+  const call = client.calls[0];
+  assert.ok(call);
+  // 2026-08-23 local midnight in America/New_York (UTC-4, EDT in August) is 2026-08-23T04:00:00.000Z.
+  assert.equal(call.timeMin, "2026-08-23T04:00:00.000Z");
+  assert.equal(call.timeMax, "2026-08-24T04:00:00.000Z");
+});
+
+test("readCalendarEvents returns a target day's real events (not today's), when config.date is set", async () => {
+  const client = new FakeCalendarReadClient([
+    {
+      items: [
+        makeEvent({
+          id: "tomorrow-event",
+          summary: "Study session",
+          startDateTime: "2026-08-23T10:00:00-04:00",
+          endDateTime: "2026-08-23T11:00:00-04:00",
+        }),
+      ],
+    },
+  ]);
+
+  const events = await readCalendarEvents(client, { now: FIXED_NOW, timeZone: "America/New_York", date: "2026-08-23" });
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0]?.title, "Study session");
+});
+
+// ============================================================================
+// Review fix (real-use fixes plan, Task 5 fix): config.date must THROW
+// (AD-8's convention — an adapter throws on malformed input rather than
+// silently defaulting) on a malformed or unreal date, instead of silently
+// treating a missing/garbage year/month/day as 1970-01-01.
+// ============================================================================
+
+test("readCalendarEvents throws (never silently defaults to 1970-01-01) when config.date isn't a real, well-formed YYYY-MM-DD date", async () => {
+  const client = new FakeCalendarReadClient([{ items: [] }]);
+
+  for (const badDate of ["not-a-date", "2026-13-01", "2026-02-30", "26-08-23", ""]) {
+    await assert.rejects(
+      () => readCalendarEvents(client, { now: FIXED_NOW, timeZone: "UTC", date: badDate as IsoDate }),
+      `expected config.date "${badDate}" to throw rather than silently default`,
+    );
+  }
 });
 
 test("createCalendarReadClient builds a CalendarReadClient from an injected already-authenticated auth client, with no network call", () => {

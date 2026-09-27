@@ -1040,6 +1040,15 @@ function buildChatDeps(
     readCalendarEvents(createCalendarReadClient(getTokenStore().getOAuth2Client() as unknown as Parameters<typeof createCalendarReadClient>[0]), {
       timeZone,
     });
+  // Real-use fixes plan, Task 5 ("what's happening tomorrow"): the same
+  // read-only client/binding as `readCalendarEventsFn` above, just with the
+  // target date threaded through to `readCalendarEvents`'s own `date`
+  // field — `app/day-view.ts`'s `dayView` is the sole caller.
+  const readCalendarEventsForDate = async (date: IsoDate): Promise<readonly CalendarEvent[]> =>
+    readCalendarEvents(createCalendarReadClient(getTokenStore().getOAuth2Client() as unknown as Parameters<typeof createCalendarReadClient>[0]), {
+      timeZone,
+      date,
+    });
   // Real-use fixes plan, Task 1 ("plan my day on demand"): `/plan`'s own
   // Calendar-write seam (`app/plan-day.ts`'s `PlanDayDeps.writeCalendarPlan`)
   // — same lazy-construction convention as `getCalendarBroadClient` above,
@@ -1090,7 +1099,15 @@ function buildChatDeps(
     getCompletedTaskIdsToday: () => listCompletedTaskIdsOnDate(connection, currentIsoDate(new Date(), timeZone), timeZone),
     getNotionCreatePageBinding,
     searchFn,
+    // Review fix (real-use fixes plan, Task 5 fix, FR-42): the single
+    // source of truth for whether web search is actually configured right
+    // now — threaded through `ChatTurnDeps` (via `WebSearchDeps`) into both
+    // `app/web-search.ts`'s `searchWeb` (never attempts a search when
+    // false) and, via `app/chat-turn.ts`'s final `answerQuestion` call,
+    // `core/tone.ts`'s capability text (never claims search when false).
+    webSearchAvailable: Boolean(perplexityApiKey),
     readCalendarEventsFn,
+    readCalendarEventsForDate,
     resolveCalendarEditRouteFn: (calendarId, eventId) => calendarResolveRoute(getCalendarBroadClient(), calendarId, eventId),
     proposeCalendarEditFn: (calendarId, eventId, change) => calendarProposeEdit(getCalendarBroadClient(), calendarId, eventId, change),
     proposeNewCalendarEventFn: proposeNewCalendarEvent,

@@ -118,3 +118,22 @@ test("with no emit, answerQuestion never calls the streaming path", async () => 
   await answerQuestion({ llmClient }, { message: "hi", history: [{ role: "user", content: "hi" }] });
   assert.equal(llmClient.calls[0]!.stream, undefined);
 });
+
+// ============================================================================
+// Review fix (real-use fixes plan, Task 5 fix, FR-42): webSearchAvailable
+// threading — defaults to true (unchanged prior behavior) when omitted, and
+// the capability text must actually change when it's explicitly false.
+// ============================================================================
+
+test("answerQuestion defaults webSearchAvailable to true when omitted, matching resolveToneSystemPrompt's own default", async () => {
+  const llmClient = makeFakeLlmClient("hey yourself");
+  await answerQuestion({ llmClient }, { message: "hey, what's up", history: [{ role: "user", content: "hey, what's up" }] });
+  assert.equal(llmClient.calls[0]!.system, resolveToneSystemPrompt("hey, what's up", true));
+});
+
+test("answerQuestion passes webSearchAvailable: false through to resolveToneSystemPrompt, so the capability text says search isn't set up", async () => {
+  const llmClient = makeFakeLlmClient("hey yourself");
+  await answerQuestion({ llmClient, webSearchAvailable: false }, { message: "hey, what's up", history: [{ role: "user", content: "hey, what's up" }] });
+  assert.equal(llmClient.calls[0]!.system, resolveToneSystemPrompt("hey, what's up", false));
+  assert.match(llmClient.calls[0]!.system, /web search isn't set up yet/i);
+});

@@ -101,6 +101,12 @@ function baseDeps(overrides: Partial<ChatTurnDeps> = {}): ChatTurnDeps {
     readCalendarEventsFn: async () => {
       throw new Error("chat-turn test: readCalendarEventsFn not configured for this test");
     },
+    // Real-use fixes plan, Task 5 ("what's happening tomorrow"): same
+    // throws-only-if-invoked convention as `readCalendarEventsFn` above, for
+    // every test in this file that doesn't exercise the day-view recognizer.
+    readCalendarEventsForDate: async () => {
+      throw new Error("chat-turn test: readCalendarEventsForDate not configured for this test");
+    },
     resolveCalendarEditRouteFn: async () => {
       throw new Error("chat-turn test: resolveCalendarEditRouteFn not configured for this test");
     },
@@ -110,6 +116,11 @@ function baseDeps(overrides: Partial<ChatTurnDeps> = {}): ChatTurnDeps {
     proposeNewCalendarEventFn: () => {
       throw new Error("chat-turn test: proposeNewCalendarEventFn not configured for this test");
     },
+    // Review fix (real-use fixes plan, Task 5 fix, FR-42): defaults to
+    // available — every test in this file that doesn't specifically
+    // exercise the "search isn't configured" behavior gets the pre-existing
+    // (search-available) capability text and search-trigger dispatch.
+    webSearchAvailable: true,
     searchFn: async () => {
       throw new Error("chat-turn test: searchFn not configured for this test");
     },
@@ -383,6 +394,44 @@ test("Review Focus #5: session is threaded by reference across two chatTurn call
   );
 });
 
+// ============================================================================
+// Review fix (real-use fixes plan, Task 5 fix, FR-42): when web search isn't
+// actually configured (no PERPLEXITY_API_KEY), chatTurn must never let a
+// search-trigger line attempt a search, and general chat's capability text
+// must say so plainly rather than claiming it can search.
+// ============================================================================
+
+test("a search-trigger line replies plainly that web search isn't set up, and never calls searchFn, when webSearchAvailable is false", async () => {
+  let searchCalls = 0;
+  const deps = baseDeps({
+    llmClient: makeFakeLlmClient("SEARCH: best hiking boots"),
+    webSearchAvailable: false,
+    searchFn: async () => {
+      searchCalls++;
+      return { ok: true, value: { answer: "should never be reached", citations: [] } };
+    },
+  });
+
+  const result = await chatTurn(deps, { message: "search for the best hiking boots", history: [] });
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.value.reply, "Web search isn't set up yet (it needs a Perplexity key).");
+  assert.equal(searchCalls, 0, "searchFn must never be called when webSearchAvailable is false");
+});
+
+test("general chat's capability text says web search isn't set up (never claims it) when webSearchAvailable is false", async () => {
+  const llmClient = makeFakeLlmClient("I can't do that yet.");
+  const deps = baseDeps({ llmClient, webSearchAvailable: false });
+
+  await chatTurn(deps, { message: "what can you do", history: [{ role: "user", content: "what can you do" }] });
+
+  const lastCall = (llmClient as any).calls.at(-1);
+  assert.ok(lastCall, "expected answerQuestion's own Claude call");
+  assert.match(lastCall.system, /web search isn't set up yet \(it needs a perplexity key\)/i);
+  assert.doesNotMatch(lastCall.system, /search the web for a factual/i);
+});
+
 test("Story 8.4: session.recentMessages records every line that reaches chatTurn — including a save-search-result/create-item/calendar-edit/search line, none of which bypass chatTurn any more", async () => {
   for (const message of ["save that", "create a task to buy milk", "move team sync to 6pm", "search for something"]) {
     const session = makeSession();
@@ -501,6 +550,91 @@ test("a Plan-view request ('what's my plan') is never mistaken for a Plan-day (g
   // isPlanViewCommand wins here (checked first) — showPlan, not planDay — so
   // nothing is generated or persisted.
   assert.equal(getPlan(deps.store, TEST_TODAY), undefined);
+});
+
+// ============================================================================
+// Real-use fixes plan, Task 5: "what's happening tomorrow" (read any day) —
+// the day-view recognizer, checked among the planning recognizers, and its
+// two non-swallow guarantees (calendar-edit lines, and isPlanViewCommand's
+// own "what's my plan" territory).
+// ============================================================================
+
+test("chatTurn recognizes 'what's happening tomorrow' deterministically (zero LLM calls) and routes to dayView for the resolved date", async () => {
+  const llmClient = makeFakeLlmClient();
+  const calendarCalls: string[] = [];
+  const deps = baseDeps({
+    llmClient,
+    readCalendarEventsForDate: async (date) => {
+      calendarCalls.push(date);
+      return [{ id: "e1", title: "Study session", start: "2026-08-23T14:00:00.000Z", end: "2026-08-23T15:00:00.000Z" }];
+    },
+  });
+
+  const result = await chatTurn(deps, { message: "what's happening tomorrow", history: [] });
+
+  assert.ok(result.ok);
+  if (!result.ok) return;
+  assert.match(result.value.reply, /Study session/);
+  assert.deepEqual(calendarCalls, ["2026-08-23"], "expected dayView to read TOMORROW's (2026-08-23) window, resolved against baseDeps' fixed 'now'/timeZone");
+  assert.equal((llmClient as any).calls.length, 0, "a recognized day-view command must never call the LLM client");
+});
+
+test("chatTurn's day-view recognizer never swallows a calendar-EDIT line ('move my 3pm tomorrow to 4') — that still routes to the calendar-edit drafter", async () => {
+  const llmClient = makeFakeLlmClient("NONE");
+  const dayViewCalls: string[] = [];
+  const deps = baseDeps({
+    llmClient,
+    readCalendarEventsFn: async () => [{ id: "e1", title: "3pm sync", start: "2026-08-23T19:00:00.000Z", end: "2026-08-23T20:00:00.000Z" }],
+    readCalendarEventsForDate: async (date) => {
+      dayViewCalls.push(date);
+      return [];
+    },
+  });
+
+  const result = await chatTurn(deps, {
+    message: "move my 3pm tomorrow to 4",
+    history: [{ role: "user", content: "move my 3pm tomorrow to 4" }],
+  });
+
+  assert.ok(result.ok);
+  assert.equal(dayViewCalls.length, 0, "day-view's own Calendar read must never fire for a calendar-EDIT line");
+  assert.ok((llmClient as any).calls.length >= 1, "expected the line to still reach draftCalendarEditRequest (the calendar-edit path), not dayView");
+});
+
+test("chatTurn's day-view recognizer never swallows isPlanViewCommand's own bare 'what's my plan' territory (checked first, unchanged)", async () => {
+  const dayViewCalls: string[] = [];
+  const deps = baseDeps({
+    readCalendarEventsForDate: async (date) => {
+      dayViewCalls.push(date);
+      return [];
+    },
+  });
+
+  const result = await chatTurn(deps, { message: "what's my plan", history: [] });
+
+  assert.ok(result.ok);
+  if (!result.ok) return;
+  assert.equal(dayViewCalls.length, 0, "isPlanViewCommand must win first — dayView must never be reached for this exact phrase");
+  assert.match(result.value.reply, /no plan/i);
+});
+
+test("chatTurn's day-view recognizer falls through to the ordinary chat path when the trailing phrase doesn't resolve to a real date", async () => {
+  const llmClient = makeFakeLlmClient("Just thinking out loud.");
+  const dayViewCalls: string[] = [];
+  const deps = baseDeps({
+    llmClient,
+    readCalendarEventsForDate: async (date) => {
+      dayViewCalls.push(date);
+      return [];
+    },
+  });
+
+  const result = await chatTurn(deps, { message: "what's on your mind", history: [{ role: "user", content: "what's on your mind" }] });
+
+  assert.ok(result.ok);
+  if (!result.ok) return;
+  assert.equal(dayViewCalls.length, 0, "an unresolvable trailing phrase must never reach dayView's Calendar read");
+  assert.equal(result.value.reply, "Just thinking out loud.", "expected the line to fall through to the ordinary classify/general-chat path");
 });
 
 test("/night dispatches to startNightCloseOut and surfaces its question", async () => {

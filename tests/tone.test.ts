@@ -294,3 +294,53 @@ test("resolveEscalatedToneSystemPrompt: exhaustively covers every ToneRegister a
     }
   }
 });
+
+// ============================================================================
+// CAPABILITIES_INSTRUCTION content (real-use fixes plan, Task 5): the
+// general-chat capability list must accurately reflect what /plan (Task 1)
+// and day-view (Task 5) actually add, and must never claim Yoh can delete or
+// cancel a Calendar event (AD-13 — there is no delete variant anywhere in
+// this codebase).
+// ============================================================================
+
+test("buildToneSystemPrompt's capability list says Yoh can build today's Plan on demand and read any day's Calendar (Tasks 1 and 5)", () => {
+  const instruction = buildToneSystemPrompt("casual-peer");
+  assert.match(instruction, /\/plan/);
+  assert.match(instruction, /plan my day/i);
+  assert.match(instruction, /read any day's calendar/i);
+});
+
+test("buildToneSystemPrompt's capability list never claims Yoh can delete or cancel a Calendar event", () => {
+  const instruction = buildToneSystemPrompt("casual-peer");
+  assert.doesNotMatch(instruction, /can\s+(?:delete|cancel)\s+(?:a\s+)?calendar/i);
+  assert.match(instruction, /cannot delete or cancel a calendar event/i);
+});
+
+// ============================================================================
+// Review fix: FR-42 says Yoh never claims a capability it doesn't have.
+// Spencer may have no PERPLEXITY_API_KEY configured, so the capability text
+// must depend on a threaded `webSearchAvailable` boolean rather than
+// claiming web search unconditionally.
+// ============================================================================
+
+test("buildToneSystemPrompt claims web search when webSearchAvailable is true (the default, and every existing call site's unchanged behavior)", () => {
+  const withDefault = buildToneSystemPrompt("casual-peer");
+  const explicitTrue = buildToneSystemPrompt("casual-peer", true);
+  assert.equal(withDefault, explicitTrue);
+  assert.match(explicitTrue, /search the web/i);
+  assert.doesNotMatch(explicitTrue, /isn't set up yet/i);
+});
+
+test("buildToneSystemPrompt never claims web search when webSearchAvailable is false, and says plainly it isn't set up", () => {
+  const instruction = buildToneSystemPrompt("casual-peer", false);
+  assert.doesNotMatch(instruction, /search the web/i);
+  assert.match(instruction, /web search isn't set up yet \(it needs a perplexity key\)/i);
+});
+
+test("resolveToneSystemPrompt threads webSearchAvailable through to buildToneSystemPrompt", () => {
+  const available = resolveToneSystemPrompt("hey, what's up", true);
+  const unavailable = resolveToneSystemPrompt("hey, what's up", false);
+  assert.equal(available, buildToneSystemPrompt("casual-peer", true));
+  assert.equal(unavailable, buildToneSystemPrompt("casual-peer", false));
+  assert.notEqual(available, unavailable);
+});

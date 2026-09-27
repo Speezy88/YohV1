@@ -152,6 +152,7 @@ import type {
   CalendarEditChange,
   CalendarEvent,
   ExternalId,
+  IsoDate,
   IsoDateTime,
   PlanBlock,
   Proposal,
@@ -310,6 +311,16 @@ export interface CalendarAdapterConfig {
   readonly calendarId?: string;
   /** Injectable clock defining "now", defaults to `() => new Date()`. Lets tests fix "today" without depending on real wall-clock time. */
   readonly now?: () => Date;
+  /**
+   * Real-use fixes plan, Task 5 ("what's happening tomorrow"): an optional
+   * target calendar date (`YYYY-MM-DD`) to read instead of today. When
+   * given, `readCalendarEvents` reads THAT day's host-`timeZone` window
+   * (via the same `localDayWindowUtc`-family helpers below), rather than
+   * today's — same read-only client, same day-window semantics, just a
+   * different day. Omitted (the default, unchanged) means "today," computed
+   * from `now`/`timeZone` exactly as before this field existed.
+   */
+  readonly date?: IsoDate;
 }
 
 /**
@@ -330,23 +341,30 @@ export interface CalendarWriteConfig {
 // ============================================================================
 
 /**
- * Reads every one of today's events from Spencer's primary Google Calendar
- * via the injected read-scoped client, with each event's start/end time
- * (Story 1.4's acceptance criteria). Always queries live (no caching layer
- * in this file — see the module docstring), so an event added or changed on
- * the primary calendar before this read runs is included in its result.
+ * Reads every one of a given day's events from Spencer's primary Google
+ * Calendar via the injected read-scoped client, with each event's start/end
+ * time (Story 1.4's acceptance criteria). Reads TODAY by default; Task 5's
+ * `config.date`, when given, reads that day instead — see
+ * `CalendarAdapterConfig.date`'s own doc comment. Always queries live (no
+ * caching layer in this file — see the module docstring), so an event added
+ * or changed on the primary calendar before this read runs is included in
+ * its result.
  *
  * Per AD-8, this function does not catch or wrap SDK/network errors: a
  * failure while querying the Calendar API (auth, rate limit, network)
- * propagates as a thrown error to the caller (`rituals/*.ts`, a later
- * task).
+ * propagates as a thrown error to the caller (`rituals/*.ts`/`app/*.ts`).
  */
 export async function readCalendarEvents(
   client: CalendarReadClient,
   config: CalendarAdapterConfig,
 ): Promise<CalendarEvent[]> {
-  const now = (config.now ?? (() => new Date()))();
-  const { start, end } = localDayWindowUtc(now, config.timeZone);
+  // Review fix: `!== undefined` (not a truthy check) — an explicitly-passed
+  // empty string is a malformed `date`, not "no date given," and must reach
+  // `localDayWindowUtcForDate`'s own throw rather than being silently
+  // absorbed into the "today" default below.
+  const { start, end } = config.date !== undefined
+    ? localDayWindowUtcForDate(config.date, config.timeZone)
+    : localDayWindowUtc((config.now ?? (() => new Date()))(), config.timeZone);
   const timeMin = start.toISOString();
   const timeMax = end.toISOString();
 
@@ -988,9 +1006,8 @@ function startOfLocalDayUtc(year: number, month: number, day: number, timeZone: 
   );
 }
 
-/** `timeZone`'s local calendar day containing `date`, as a `[start, end)` pair of UTC instants (`end` exclusive, the following local midnight). */
-function localDayWindowUtc(date: Date, timeZone: string): { readonly start: Date; readonly end: Date } {
-  const { year, month, day } = localDatePartsInZone(date, timeZone);
+/** `timeZone`'s local calendar day for the given Y/M/D, as a `[start, end)` pair of UTC instants (`end` exclusive, the following local midnight). Shared by `localDayWindowUtc` (today, from a real instant) and `localDayWindowUtcForDate` (Task 5: an explicit target `IsoDate`) — both ultimately just need a Y/M/D to resolve into a window. */
+function localDayWindowUtcForYmd(year: number, month: number, day: number, timeZone: string): { readonly start: Date; readonly end: Date } {
   const start = startOfLocalDayUtc(year, month, day, timeZone);
 
   // `Date.UTC` itself correctly rolls `day + 1` over into the next
@@ -1008,6 +1025,54 @@ function localDayWindowUtc(date: Date, timeZone: string): { readonly start: Date
   );
 
   return { start, end };
+}
+
+/** `timeZone`'s local calendar day containing `date`, as a `[start, end)` pair of UTC instants (`end` exclusive, the following local midnight). */
+function localDayWindowUtc(date: Date, timeZone: string): { readonly start: Date; readonly end: Date } {
+  const { year, month, day } = localDatePartsInZone(date, timeZone);
+  return localDayWindowUtcForYmd(year, month, day, timeZone);
+}
+
+const ISO_DATE_SHAPE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+function isLeapYear(year: number): boolean {
+  return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+}
+
+/** Real-calendar-date check — the same small, deliberate duplication `core/relative-date.ts`'s own doc comment already documents against `adapters/iso-datetime.ts`'s ISO check (per AD-1, this file cannot import `core/*.ts`). Used only by `localDayWindowUtcForDate`'s malformed-input guard below. */
+function isRealCalendarDate(year: number, month: number, day: number): boolean {
+  if (month < 1 || month > 12) return false;
+  const daysInMonth = [31, isLeapYear(year) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1]!;
+  return day >= 1 && day <= daysInMonth;
+}
+
+/**
+ * Real-use fixes plan, Task 5: `timeZone`'s local calendar day for an
+ * EXPLICIT target `IsoDate` (`"YYYY-MM-DD"`), as the same `[start, end)`
+ * pair of UTC instants `localDayWindowUtc` computes for "today" — the
+ * caller (`app/day-view.ts`, via `readCalendarEvents`'s `config.date`)
+ * already resolved this from a relative-date phrase
+ * (`core/relative-date.ts`'s `resolveRelativeDate`) before it ever reaches
+ * here, so in the ordinary case this never sees anything malformed.
+ *
+ * Review fix: a malformed or unreal `date` (wrong shape, a two-digit year,
+ * month 13, Feb 30, …) THROWS — per AD-8, an adapter fails loud on bad
+ * input rather than silently substituting a guessed value. The previous
+ * version of this function used `?? 1970`/`?? 1` fallbacks on a `NaN` split
+ * result, which meant a caller bug (or a future caller that skips
+ * `resolveRelativeDate`'s own validation) would silently read Spencer's
+ * Google Calendar for 1970-01-01 instead of failing — exactly the kind of
+ * silent-wrong-data bug AD-8 exists to prevent.
+ */
+function localDayWindowUtcForDate(date: IsoDate, timeZone: string): { readonly start: Date; readonly end: Date } {
+  const match = ISO_DATE_SHAPE_RE.exec(date);
+  const year = match ? Number(match[1]) : NaN;
+  const month = match ? Number(match[2]) : NaN;
+  const day = match ? Number(match[3]) : NaN;
+  if (!match || !isRealCalendarDate(year, month, day)) {
+    throw new Error(`calendar-adapter: config.date "${date}" is not a valid YYYY-MM-DD calendar date`);
+  }
+  return localDayWindowUtcForYmd(year, month, day, timeZone);
 }
 
 // ============================================================================

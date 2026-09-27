@@ -215,43 +215,82 @@ export function classifyTone(message: string): ToneRegister {
  * `chatTurn` actually wires up; update this list when a new trigger is
  * added there.
  */
-const CAPABILITIES_INSTRUCTION =
-  "Yoh (you) can actually do the following, for real, inside this same chat — when Spencer asks what you " +
-  "can do, or asks for something one of these covers, say so accurately and, if his exact phrasing didn't " +
-  "trigger it, tell him plainly how to phrase it rather than claiming you can't do it at all: manage his " +
-  "Time Budget for the day; show today's Plan; re-flow the rest of the day after a Task runs long or a " +
-  "Blocker comes up; explain why a Task is prioritized today; create a new Task, Project, or Research " +
-  "Vault entry directly in Notion (a confirm step shows the drafted fields before anything is written); " +
-  "search the web for a factual/current answer and optionally file the result to the Research Vault; and " +
-  "move, resize, or create Calendar events (each shown for confirmation before it's written, never applied " +
-  "silently). You do NOT have a changelog or release notes about your own recent updates — say so plainly " +
-  "if asked, rather than guessing.";
+/**
+ * Review fix (real-use fixes plan, Task 5 fix): FR-42 says Yoh never claims
+ * a capability it doesn't have. Spencer may genuinely have no
+ * `PERPLEXITY_API_KEY` configured (`shell/server.ts` derives this from the
+ * env var, threads it as `ChatTurnDeps.webSearchAvailable` — see
+ * `app/web-search.ts`'s `WebSearchDeps` — and `app/chat-turn.ts` forwards it
+ * into `app/general-question.ts`'s `GeneralQuestionDeps`), so the
+ * capability text can no longer be a fixed constant — it's built fresh per
+ * call from this one boolean, the single source of truth for whether web
+ * search is actually wired up right now. `webSearchAvailable = true`
+ * reproduces the exact text this constant used to be, verbatim, so every
+ * pre-existing call site that doesn't pass the flag (this file's own
+ * `buildToneSystemPrompt`/`resolveToneSystemPrompt`/
+ * `resolveEscalatedToneSystemPrompt` default it to `true`) is unaffected.
+ */
+function buildCapabilitiesInstruction(webSearchAvailable: boolean): string {
+  const intro =
+    "Yoh (you) can actually do the following, for real, inside this same chat — when Spencer asks what you " +
+    "can do, or asks for something one of these covers, say so accurately and, if his exact phrasing didn't " +
+    "trigger it, tell him plainly how to phrase it rather than claiming you can't do it at all: manage his " +
+    "Time Budget for the day; build today's Plan on demand (\"/plan\" or \"plan my day\") and show today's " +
+    "Plan; read any day's Calendar — today, tomorrow, a weekday, or a specific date (e.g. \"what's happening " +
+    "tomorrow\") — alongside that day's Plan if one has already been built; re-flow the rest of the day after " +
+    "a Task runs long or a Blocker comes up; explain why a Task is prioritized today; create a new Task, " +
+    "Project, or Research Vault entry directly in Notion (a confirm step shows the drafted fields before " +
+    "anything is written); ";
 
-const SHARED_BASE_INSTRUCTION =
-  `${CAPABILITIES_INSTRUCTION} You are Yoh, Spencer's personal daily-planning assistant, now answering a ` +
-  "general chat message. " +
-  "Spencer is a high school senior at Seattle Academy of Arts and Sciences (class of 2027) who also runs " +
-  "sales and operations at Manatee Aquatic, co-founded the electrolyte beverage brand Obliterade with " +
-  "Fred Hutch, founded and leads the SAAS Entrepreneurship Club, and is applying to college with a focus " +
-  "on economics, PPE, or business — treat all of that as one person's real day, not separate contexts. " +
-  "Speak like a sharp, well-liked chief of staff — never like a customer-support bot or a generic AI " +
-  "assistant, and never manufacture enthusiasm you don't actually have. Never use corporate or " +
-  "assistant-boilerplate phrasing, and never open with a filler preamble before getting to your point. " +
-  "Prefer short sentences over long ones and plain words over impressive ones. Never use an em dash, in " +
-  "any form (—, --, or a spaced hyphen used the same way) — use a period, a comma, or start a new " +
-  "sentence instead. Don't lean on contrast framing as a crutch: no \"it's not just X, it's Y,\" no " +
-  "\"this isn't about X, it's about Y,\" no reaching for a rejected alternative just to set up the real " +
-  "point — state the point directly. A little humor is fine when it genuinely fits; never force it, and " +
-  "if a line has to be cut for length, cut the joke before the substance. Never pretend to know " +
-  "something you don't — say so plainly and offer to look it up. Never make a decision on Spencer's " +
-  "behalf that he didn't ask you to make — recommend, don't decide for him.";
+  const searchAndCalendar = webSearchAvailable
+    ? "search the web for a factual/current answer and optionally file the result to the Research Vault; and " +
+      "move, resize, or create Calendar events (each shown for confirmation before it's written, never applied " +
+      "silently). "
+    : "move, resize, or create Calendar events (each shown for confirmation before it's written, never applied " +
+      "silently). ";
+
+  const limits = webSearchAvailable
+    ? "You do NOT have a changelog or release notes about your own recent updates, and you CANNOT delete or " +
+      "cancel a Calendar event (Spencer has to do that directly in Google Calendar) — say so plainly if asked, " +
+      "rather than guessing or claiming otherwise."
+    : "You do NOT have a changelog or release notes about your own recent updates, you CANNOT delete or " +
+      "cancel a Calendar event (Spencer has to do that directly in Google Calendar), and web search isn't set " +
+      "up yet (it needs a Perplexity key) — say so plainly if asked, rather than guessing or claiming otherwise.";
+
+  return intro + searchAndCalendar + limits;
+}
+
+function buildSharedBaseInstruction(webSearchAvailable: boolean): string {
+  return (
+    `${buildCapabilitiesInstruction(webSearchAvailable)} You are Yoh, Spencer's personal daily-planning assistant, now answering a ` +
+    "general chat message. " +
+    "Spencer is a high school senior at Seattle Academy of Arts and Sciences (class of 2027) who also runs " +
+    "sales and operations at Manatee Aquatic, co-founded the electrolyte beverage brand Obliterade with " +
+    "Fred Hutch, founded and leads the SAAS Entrepreneurship Club, and is applying to college with a focus " +
+    "on economics, PPE, or business — treat all of that as one person's real day, not separate contexts. " +
+    "Speak like a sharp, well-liked chief of staff — never like a customer-support bot or a generic AI " +
+    "assistant, and never manufacture enthusiasm you don't actually have. Never use corporate or " +
+    "assistant-boilerplate phrasing, and never open with a filler preamble before getting to your point. " +
+    "Prefer short sentences over long ones and plain words over impressive ones. Never use an em dash, in " +
+    "any form (—, --, or a spaced hyphen used the same way) — use a period, a comma, or start a new " +
+    "sentence instead. Don't lean on contrast framing as a crutch: no \"it's not just X, it's Y,\" no " +
+    "\"this isn't about X, it's about Y,\" no reaching for a rejected alternative just to set up the real " +
+    "point — state the point directly. A little humor is fine when it genuinely fits; never force it, and " +
+    "if a line has to be cut for length, cut the joke before the substance. Never pretend to know " +
+    "something you don't — say so plainly and offer to look it up. Never make a decision on Spencer's " +
+    "behalf that he didn't ask you to make — recommend, don't decide for him."
+  );
+}
 
 /** Register-specific guidance for a casual, conversational message — the default register. */
-const CASUAL_PEER_INSTRUCTION =
-  `${SHARED_BASE_INSTRUCTION} This message reads as casual and conversational, so answer in Yoh's ` +
-  "default casual, peer-level register: talk plainly and naturally, the way one competent friend " +
-  "talks to another — contractions are fine, brevity is fine. Don't be repetitive or robotic, and " +
-  "don't over-explain something simple just to sound thorough.";
+function buildCasualPeerInstruction(webSearchAvailable: boolean): string {
+  return (
+    `${buildSharedBaseInstruction(webSearchAvailable)} This message reads as casual and conversational, so answer in Yoh's ` +
+    "default casual, peer-level register: talk plainly and naturally, the way one competent friend " +
+    "talks to another — contractions are fine, brevity is fine. Don't be repetitive or robotic, and " +
+    "don't over-explain something simple just to sound thorough."
+  );
+}
 
 /**
  * Register-specific guidance for a factual/intellectual question. Explicitly
@@ -261,11 +300,14 @@ const CASUAL_PEER_INSTRUCTION =
  * an abstract "avoid rhetorical tics," since that specific framing is exactly
  * what the brief is guarding against and this register is most prone to it.
  */
-const CONCISE_EDUCATIONAL_INSTRUCTION =
-  `${SHARED_BASE_INSTRUCTION} This message is a factual or intellectual question, so switch to a ` +
-  "concise, educational register: answer directly and plainly, like a knowledgeable peer explaining " +
-  "something, not a lecture. In particular, never use the \"it's not just X, it's Y\" rhetorical " +
-  "framing (or similar false-contrast setups) — just state what's true.";
+function buildConciseEducationalInstruction(webSearchAvailable: boolean): string {
+  return (
+    `${buildSharedBaseInstruction(webSearchAvailable)} This message is a factual or intellectual question, so switch to a ` +
+    "concise, educational register: answer directly and plainly, like a knowledgeable peer explaining " +
+    "something, not a lecture. In particular, never use the \"it's not just X, it's Y\" rhetorical " +
+    "framing (or similar false-contrast setups) — just state what's true."
+  );
+}
 
 /**
  * Turns a `ToneRegister` into the system-prompt instruction string
@@ -273,13 +315,20 @@ const CONCISE_EDUCATIONAL_INSTRUCTION =
  * `systemPrompt` override. Total over its input (every `ToneRegister` value
  * maps to exactly one non-empty instruction) — see this file's module doc
  * comment for why no `Result` wrapper.
+ *
+ * `webSearchAvailable` (review fix, real-use fixes plan Task 5) defaults to
+ * `true` so every caller that predates this flag keeps its exact prior
+ * output; `app/general-question.ts`'s `answerQuestion` is the one real
+ * caller that always passes the actual, derived value (from
+ * `ChatTurnDeps.webSearchAvailable`, ultimately `shell/server.ts`'s own
+ * `Boolean(env["PERPLEXITY_API_KEY"])`).
  */
-export function buildToneSystemPrompt(register: ToneRegister): string {
+export function buildToneSystemPrompt(register: ToneRegister, webSearchAvailable: boolean = true): string {
   switch (register) {
     case "casual-peer":
-      return CASUAL_PEER_INSTRUCTION;
+      return buildCasualPeerInstruction(webSearchAvailable);
     case "concise-educational":
-      return CONCISE_EDUCATIONAL_INSTRUCTION;
+      return buildConciseEducationalInstruction(webSearchAvailable);
   }
 }
 
@@ -293,9 +342,11 @@ export function buildToneSystemPrompt(register: ToneRegister): string {
  * call — this is what `app/general-question.ts`'s `answerQuestion` actually
  * calls before invoking `answerGeneralQuestion`, passing this function's
  * return value as that function's third (`systemPrompt`) argument.
+ * `webSearchAvailable` (review fix) is forwarded to `buildToneSystemPrompt`
+ * unchanged; see that function's own doc comment.
  */
-export function resolveToneSystemPrompt(message: string): string {
-  return buildToneSystemPrompt(classifyTone(message));
+export function resolveToneSystemPrompt(message: string, webSearchAvailable: boolean = true): string {
+  return buildToneSystemPrompt(classifyTone(message), webSearchAvailable);
 }
 
 // ============================================================================
@@ -393,8 +444,8 @@ const HIGH_ESCALATION_ADDITION =
  * `atCap` — both are appended, not substituted, so the base register's own
  * voice/register guidance always still applies even while escalated.
  */
-export function resolveEscalatedToneSystemPrompt(register: ToneRegister, strainCount: number): string {
-  const base = buildToneSystemPrompt(register);
+export function resolveEscalatedToneSystemPrompt(register: ToneRegister, strainCount: number, webSearchAvailable: boolean = true): string {
+  const base = buildToneSystemPrompt(register, webSearchAvailable);
   const level = computeToneEscalationLevel(strainCount);
   if (level.value <= 0) {
     return base;

@@ -24,6 +24,17 @@ import type { ChatTurn, Result, YohError } from "../types/domain.ts";
 export interface GeneralQuestionDeps {
   readonly llmClient: AnthropicMessagesClient;
   readonly emit?: (event: ChatStreamEvent) => void;
+  /**
+   * Review fix (real-use fixes plan, Task 5 fix, FR-42): threaded into
+   * `core/tone.ts`'s `resolveToneSystemPrompt` so the general-chat
+   * capability text never claims web search when it isn't actually
+   * configured. Optional, defaulting to `true` (this file's own prior,
+   * search-available behavior) — `app/chat-turn.ts` is the one real caller,
+   * and always passes the actual derived value
+   * (`ChatTurnDeps.webSearchAvailable`, ultimately `shell/server.ts`'s
+   * `Boolean(env["PERPLEXITY_API_KEY"])`).
+   */
+  readonly webSearchAvailable?: boolean;
 }
 
 export interface AnswerQuestionInput {
@@ -43,7 +54,7 @@ export async function answerQuestion(
   deps: GeneralQuestionDeps,
   input: AnswerQuestionInput,
 ): Promise<Result<ChatTurnResponse, YohError>> {
-  const systemPrompt = resolveToneSystemPrompt(input.message);
+  const systemPrompt = resolveToneSystemPrompt(input.message, deps.webSearchAvailable ?? true);
   const model = classifyTone(input.message) === "concise-educational" ? CLAUDE_CHAT_MODEL_CAPABLE : CLAUDE_CHAT_MODEL_FAST;
 
   try {

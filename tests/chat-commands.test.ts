@@ -15,6 +15,7 @@ import {
   isPlanViewCommand,
   isSaveSearchResultCommand,
   parseCreateItemCommand,
+  parseDayViewCommand,
   parseTimeBudgetCommand,
   parseWhyPrioritizedCommand,
 } from "../src/core/chat-commands.ts";
@@ -362,4 +363,41 @@ test("isCalendarEditCommand excludes a cancel/delete/remove/clear request even t
   for (const line of ["delete my meeting with Alex tomorrow at 3", "cancel the meeting with Alex tomorrow", "remove my meeting with Alex at 3pm"]) {
     assert.equal(isCalendarEditCommand(line), false, `expected "${line}" NOT to be recognized by isCalendarEditCommand (AD-13)`);
   }
+});
+
+// ============================================================================
+// parseDayViewCommand (real-use fixes plan, Task 5: "what's happening
+// tomorrow") — pure trigger recognition. Returns the raw trailing date
+// phrase, NOT a resolved date: `app/chat-turn.ts` resolves it via
+// `core/relative-date.ts`'s `resolveRelativeDate` before ever calling
+// `app/day-view.ts`.
+// ============================================================================
+
+test("parseDayViewCommand recognizes 'what's happening <day>' phrasings and returns the raw trailing phrase", () => {
+  assert.equal(parseDayViewCommand("what's happening tomorrow"), "tomorrow");
+  assert.equal(parseDayViewCommand("What is happening tomorrow?"), "tomorrow");
+  assert.equal(parseDayViewCommand("what do I have on Thursday"), "Thursday");
+  assert.equal(parseDayViewCommand("what's on tomorrow"), "tomorrow");
+  assert.equal(parseDayViewCommand("what's on my calendar tomorrow"), "tomorrow");
+  assert.equal(parseDayViewCommand("what's on my schedule for Oct 3"), "Oct 3");
+  assert.equal(parseDayViewCommand("what's on for 2026-10-05"), "2026-10-05");
+});
+
+test("parseDayViewCommand returns undefined for a line with no trailing phrase at all, or an unrelated line", () => {
+  assert.equal(parseDayViewCommand("what's happening"), undefined);
+  assert.equal(parseDayViewCommand("what's on"), undefined);
+  assert.equal(parseDayViewCommand("hey, what's up"), undefined);
+  assert.equal(parseDayViewCommand("Lab report draft, due Thursday"), undefined);
+});
+
+test("parseDayViewCommand never matches a calendar-EDIT line — those stay isCalendarEditCommand's own territory", () => {
+  for (const line of ["move my 3pm tomorrow to 4", "reschedule the dentist appointment to Friday", "cancel my meeting with Alex tomorrow"]) {
+    assert.equal(parseDayViewCommand(line), undefined, `expected "${line}" NOT to be recognized as a day-view request`);
+    assert.equal(isCalendarEditCommand(line) || isCalendarDeleteRequestCommand(line), true, `expected "${line}" to still be recognized by its own real trigger`);
+  }
+});
+
+test("parseDayViewCommand never matches isPlanViewCommand's own bare 'what's my plan' territory", () => {
+  assert.equal(isPlanViewCommand("what's my plan"), true);
+  assert.equal(parseDayViewCommand("what's my plan"), undefined);
 });

@@ -44,15 +44,18 @@ import {
   isPlanViewCommand,
   isSaveSearchResultCommand,
   parseCreateItemCommand,
+  parseDayViewCommand,
   parseTimeBudgetCommand,
   parseWhyPrioritizedCommand,
 } from "../core/chat-commands.ts";
+import { resolveRelativeDate } from "../core/relative-date.ts";
 import { classifyCapture, classifyChatIntent } from "../adapters/llm-adapter.ts";
 import { reportBlocker } from "./blocker-report.ts";
 import { RECENT_MESSAGES_WINDOW, type ChatSession } from "./chat-session.ts";
 import { proposeCalendarEdit, type CalendarEditDeps } from "./calendar-edit.ts";
 import { COMMANDS } from "./commands.ts";
 import { draftItem, type CreateItemDeps } from "./create-item.ts";
+import { dayView } from "./day-view.ts";
 import { answerQuestion } from "./general-question.ts";
 import { reflowDay } from "./mid-day-reflow.ts";
 import { morningView } from "./morning-view.ts";
@@ -68,7 +71,7 @@ import type { LogEntry } from "../adapters/logger.ts";
 import type { AnthropicMessagesClient } from "../adapters/llm-adapter.ts";
 import type { MemoryStore } from "../adapters/memory-store.ts";
 import type { ChatStreamEvent, ChatTurnRequest, ChatTurnResponse, MorningViewResponse } from "../types/api.ts";
-import type { ChatIntent, ChatTurn, ExternalId, IsoDate, PlanBlock, Result, Task, YohError } from "../types/domain.ts";
+import type { CalendarEvent, ChatIntent, ChatTurn, ExternalId, IsoDate, PlanBlock, Result, Task, YohError } from "../types/domain.ts";
 
 /**
  * The largest number of `ChatTurn`s `chatTurn` will ever send to Claude —
@@ -128,6 +131,16 @@ export interface ChatTurnDeps extends CreateItemDeps, CalendarEditDeps, WebSearc
    */
   readonly writeCalendarPlan?: (blocks: readonly PlanBlock[]) => Promise<void>;
   readonly log?: (entry: LogEntry) => void;
+  /**
+   * Real-use fixes plan, Task 5 ("what's happening tomorrow"):
+   * `adapters/calendar-adapter.ts`'s `readCalendarEvents`, pre-bound to its
+   * client/timeZone, taking the target date Task 5's `CalendarAdapterConfig.date`
+   * added — threaded through to `app/day-view.ts`'s `dayView`. Distinct
+   * from `readCalendarEventsFn` above (which always reads TODAY, for
+   * `app/calendar-edit.ts`'s own overlap check) rather than widening that
+   * existing field's shape.
+   */
+  readonly readCalendarEventsForDate: (date: IsoDate) => Promise<readonly CalendarEvent[]>;
 }
 
 /**
@@ -270,6 +283,35 @@ export async function chatTurn(deps: ChatTurnDeps, input: ChatTurnRequest): Prom
     return explainPriority({ store: deps.store, readTasks: deps.readTasks }, { taskName: whyPrioritizedTaskName });
   }
 
+  // Real-use fixes plan, Task 5 ("what's happening tomorrow"): checked
+  // deterministically among the planning recognizers above, right after
+  // why-prioritized — `parseDayViewCommand` (core/chat-commands.ts) only
+  // ever matches a line that OPENS with a Calendar-query verb ("what's
+  // happening"/"what do I have"/"what's on"), so it never collides with
+  // `isCalendarEditCommand`'s own move/reschedule/create verbs (checked
+  // later, below) or `isCalendarDeleteRequestCommand`'s cancel/delete/
+  // remove/clear verbs — "move my 3pm tomorrow to 4" and "cancel my meeting
+  // with Alex tomorrow" both start with a verb this recognizer never
+  // matches at all. `isPlanViewCommand`'s bare "plan"/"what's my plan" is
+  // ALSO never reached here even in principle, since it's checked earlier
+  // above and already returns before this line runs. A match here still
+  // costs zero LLM calls: `resolveRelativeDate` is the same pure,
+  // deterministic resolver Tasks 2/3 already use, not a model call — only a
+  // genuinely resolvable trailing phrase (a real "today"/"tomorrow"/
+  // weekday/month-day/ISO date) reaches `dayView`'s own Calendar read; an
+  // unresolvable phrase (e.g. "what's on your mind") falls through to the
+  // next recognizer exactly like a non-match here.
+  const dayViewPhrase = parseDayViewCommand(input.message);
+  if (dayViewPhrase !== undefined) {
+    const resolvedDate = resolveRelativeDate(dayViewPhrase, { now: deps.now(), timeZone: deps.timeZone });
+    if (resolvedDate !== undefined) {
+      return dayView(
+        { store: deps.store, timeZone: deps.timeZone, now: deps.now, readCalendarEventsForDate: deps.readCalendarEventsForDate },
+        { date: resolvedDate },
+      );
+    }
+  }
+
   // Story 8.4 — checked in the SAME order chat-cli.ts's loop used before
   // this story (F6, Epic 6 retro): save-search-result BEFORE create-item,
   // because its own looser Notion-mention trigger also matches "save"/
@@ -348,7 +390,7 @@ export async function chatTurn(deps: ChatTurnDeps, input: ChatTurnRequest): Prom
   if (chatIntent.kind === "search-trigger") return searchWeb(deps, { query: chatIntent.query });
 
   return answerQuestion(
-    { llmClient: deps.llmClient, ...(deps.emit ? { emit: deps.emit } : {}) },
+    { llmClient: deps.llmClient, webSearchAvailable: deps.webSearchAvailable, ...(deps.emit ? { emit: deps.emit } : {}) },
     { message: input.message, history: trimHistory(input.history) },
   );
 }
