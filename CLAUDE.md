@@ -34,5 +34,13 @@
 ## Implementer subagents
 
 - Every implementer gets `docs/process/implementer-contract.md` (copied into
-  the plan workspace) plus a brief with a controller-built Code Map and
-  "Idioms to copy" block. Implementers never open plan/architecture/PRD files.
+  the plan workspace) plus a brief built from `docs/process/brief-template.md`
+  (Code Map + "Idioms to copy" filled from the current HEAD). Binding
+  constraints live once, in `AGENTS.md`. Implementers never open
+  plan/architecture/PRD files.
+- Measure each implementer with `scripts/agent-metrics.py` and log the
+  numbers in the plan ledger.
+
+## Agent guide
+
+@AGENTS.md

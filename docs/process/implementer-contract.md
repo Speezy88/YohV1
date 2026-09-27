@@ -6,25 +6,11 @@ Work from: `<worktree path>` (git worktree, branch `<branch>`). Run every comman
 
 ## Inputs
 1. **Task brief** (path in your dispatch): your requirements, verbatim from the plan, followed by a **Code Map** (`file:~line — function — what it does`, plus the covering tests). Start from the Code Map; line numbers are approximate (anchor on the function name). Write your own TDD steps.
-2. **Binding constraints** below. They are the complete relevant subset of the plans' Global Constraints.
+2. **`AGENTS.md`** (repo root; `CLAUDE.md` imports it, so it is usually already in your context — if not, read it once). Its commands, binding constraints, safety rules and anti-patterns bind you.
 3. **Read order:** Code Map entries by line range (not whole files) → its "Idioms to copy" exemplars → write your first failing test, within ~15 turns. Read beyond the Code Map only when a failing test or compile error needs it.
 4. The real code is the source of truth for existing names and shapes. Read what you change, by line range after a grep — not whole large files, and don't re-read a file you've already read unless it changed.
 
 **Do not open plan, architecture, PRD or epics files** (`_bmad-output/**`, `docs/superpowers/plans/**`, anything named *architecture*/*spine*/*prd*/*epics*) or other tasks' briefs/reports. Everything relevant is in your brief and this contract. If something the brief doesn't settle blocks you, report `NEEDS_CONTEXT` with the specific question instead of hunting.
-
-## Binding constraints
-- **Layering** (`tests/layering-rules.test.ts` enforces; keep it green): `shell/{server,chat-cli}.ts → app → {rituals, core, adapters}`; `shell/ritual-cli.ts → rituals → {core, adapters}`; rituals never import `app/`. `core/` imports only `types/` + `core/`. `web/` reaches the system only over HTTP/SSE and imports only `import type` from `src/types/`.
-- **app/**: every exported function is `(deps, input) => Promise<Result<Output, YohError>>`; pure parsers/recognizers live in `core/`. app/ is one-shot per turn and never blocks for input. Only app/ calls `setTaskStatus` / `updateTaskField` / `createPage` / `updateTaskTitle` / `applyCalendarEdit`. Shells are transport only: parse → call one app function → render its Result; never call adapter writes or branch on business rules.
-- **core/** is pure (no I/O, no module state, no argument mutation). Adapters may throw; app/ converts to `Result`. `YohError.kind`: missing-field, auth-expired, unreachable, rate-limited, validation, stale-proposal, conflict.
-- **Proposals** are applied only by `app/confirm-proposal.ts` after an explicit yes (typed, chip, or button — all equal); a decline writes nothing. Typed field answers and "save that" are direct writes, not proposals.
-- **Data completeness:** suggestions are built lazily at display time; never store a pre-built Proposal. Field values are written via `updateTaskField` (with its select guard), then merged as a `TaskFieldOverride`.
-- **Storage:** `adapters/sqlite.ts` is the only opener; multi-step writes use `writeTx`; every user-visible change appends one outbox row in the same transaction. The chat transcript is client memory only; `web/` never invents storage for it (localStorage only for view prefs).
-- **Live delivery:** chat replies stream on their own SSE response to `POST /api/chat`; the web reuses the single shared `EventSource` (`web/src/lib/eventBus.ts`) and never opens a second.
-- **Web:** a view over the server API (plans, gates, proposals, open items are server-computed). Tokens only (`web/src/tokens.css` via Tailwind v4 theme) — no hard-coded color/shadow/radius/duration. Animations read `useReducedMotion` with a fade/instant fallback. Skeletons, not spinners. Every write visibly succeeds or fails. WCAG 2.2 AA in both themes; keyboard-operable; icons 1.8px stroke with an accessible name. Home's `"home-data"` is the only launch-splash gate. CSP `default-src 'self'`.
-- **Copy/tone:** peer-level, second person, neutral and guilt-free, no emoji, no filler; never claim a capability Yoh lacks.
-- **Conventions:** kebab-case `src/` files, PascalCase React components. Routes `/api/<noun>[/<verb>]`, JSON returning the serialized Result envelope via `wire()`/`httpStatus()` in `shell/server.ts`. "Today" uses host `TZ`, never the browser's. Logs: single-line JSON to stderr. Each shared tuning constant has exactly one defining export.
-- **Tests:** `node:test` with fake adapters for `src/`; Vitest + RTL for `web/`; Playwright via `web/playwright.config.ts` + `tests/e2e/fixture-server.ts` (fake Notion/LLM, port 8788, never real services). Tests start green and stay green.
-- **Never write to Spencer's real Notion or Calendar**, and never make paid live API calls unless your brief explicitly says to.
 
 ## Job
 Use TDD: a failing test first, then the code. Run focused tests while iterating, then the full gate once before committing: `npm run check` AND `cd web && npx playwright test`. Send gate output to a file and read only the failures/summary.
