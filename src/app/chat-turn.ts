@@ -36,6 +36,7 @@ import {
   isBlockerReportCommand,
   isCalendarEditCommand,
   isMidDayReflowCommand,
+  isPlanDayCommand,
   isPlanViewCommand,
   isSaveSearchResultCommand,
   parseCreateItemCommand,
@@ -52,16 +53,18 @@ import { answerQuestion } from "./general-question.ts";
 import { reflowDay } from "./mid-day-reflow.ts";
 import { morningView } from "./morning-view.ts";
 import { startNightCloseOut } from "./night-close-out.ts";
+import { planDay, type PlanDayDeps } from "./plan-day.ts";
 import { showPlan } from "./plan-view.ts";
 import { saveSearchResult, type SaveSearchResultDeps } from "./save-search-result.ts";
 import { declareTimeBudget } from "./time-budget.ts";
 import { searchWeb, type WebSearchDeps } from "./web-search.ts";
 import { explainPriority } from "./why-prioritized.ts";
 import { localIsoDate } from "../rituals/ritual-shared.ts";
+import type { LogEntry } from "../adapters/logger.ts";
 import type { AnthropicMessagesClient } from "../adapters/llm-adapter.ts";
 import type { MemoryStore } from "../adapters/memory-store.ts";
 import type { ChatStreamEvent, ChatTurnRequest, ChatTurnResponse, MorningViewResponse } from "../types/api.ts";
-import type { ChatIntent, ChatTurn, ExternalId, Result, Task, YohError } from "../types/domain.ts";
+import type { ChatIntent, ChatTurn, ExternalId, PlanBlock, Result, Task, YohError } from "../types/domain.ts";
 
 /**
  * The largest number of `ChatTurn`s `chatTurn` will ever send to Claude —
@@ -96,6 +99,45 @@ export interface ChatTurnDeps extends CreateItemDeps, CalendarEditDeps, WebSearc
   readonly emit?: (event: ChatStreamEvent) => void;
   /** Story 8.7 (FR-41): threaded through to `/night`'s exclusion rule (`app/night-close-out.ts`). */
   readonly getCompletedTaskIdsToday: () => ReadonlySet<ExternalId>;
+  /**
+   * Real-use fixes plan, Task 1 ("plan my day on demand"): threaded through
+   * to `app/plan-day.ts`'s `planDay`, which runs the SAME
+   * `rituals/morning-ritual.ts` pipeline the 6am cron uses. Optional — a
+   * test/CLI that never dispatches `/plan` or "plan my day" need not stub
+   * it, mirroring `MorningRitualDeps`'s own optional seam. Deliberately NOT
+   * a `sendNotification`-shaped field: `planDay` hardcodes that to a no-op
+   * itself, so there is no seam here through which a push could ever be
+   * wired back in (Spencer, 2026-09-27 — see `plan-day.ts`'s own doc
+   * comment). `bumpLevels` isn't threaded here at all — `planDay` computes
+   * it itself from `store`, fresh on every call (see `plan-day.ts`'s own
+   * doc comment for why a long-running server process can't just capture
+   * it once).
+   */
+  readonly writeCalendarPlan?: (blocks: readonly PlanBlock[]) => Promise<void>;
+  readonly log?: (entry: LogEntry) => void;
+}
+
+/**
+ * Builds `app/plan-day.ts`'s `PlanDayDeps` from `ChatTurnDeps` — the one
+ * field-name remap this needs: `MorningRitualDeps`/`PlanDayDeps` call the
+ * Calendar read seam `readCalendarEvents`, while `ChatTurnDeps` (via
+ * `CalendarEditDeps`) already calls the identical function
+ * `readCalendarEventsFn` — reused as-is here rather than adding a second,
+ * differently-named required field to `ChatTurnDeps` for the same
+ * capability.
+ */
+function planDayDepsFrom(deps: ChatTurnDeps): PlanDayDeps {
+  return {
+    store: deps.store,
+    session: deps.session,
+    llmClient: deps.llmClient,
+    timeZone: deps.timeZone,
+    now: deps.now,
+    readTasks: deps.readTasks,
+    readCalendarEvents: deps.readCalendarEventsFn,
+    ...(deps.writeCalendarPlan ? { writeCalendarPlan: deps.writeCalendarPlan } : {}),
+    ...(deps.log ? { log: deps.log } : {}),
+  };
 }
 
 /**
@@ -169,6 +211,17 @@ export async function chatTurn(deps: ChatTurnDeps, input: ChatTurnRequest): Prom
 
   if (isPlanViewCommand(input.message)) {
     return showPlan({ store: deps.store, timeZone: deps.timeZone, now: deps.now }, {});
+  }
+
+  // Real-use fixes plan, Task 1: checked right after Plan-VIEW so the two
+  // never race each other — `isPlanViewCommand`'s bare "plan"/"show my
+  // plan" and `isPlanDayCommand`'s "plan my day"/"plan today" never match
+  // the same line (pinned by `tests/chat-commands.test.ts`), so ordering
+  // between them doesn't actually matter, but grouping the two Plan
+  // commands together keeps the dispatch chain readable.
+  if (isPlanDayCommand(input.message)) {
+    emitStatus(deps, STATUS_CHECKING_TASKS);
+    return planDay(planDayDepsFrom(deps), {});
   }
 
   if (isMidDayReflowCommand(input.message)) {
@@ -268,6 +321,8 @@ async function dispatchSlashCommand(deps: ChatTurnDeps, line: string): Promise<R
     }
     case "/night":
       return startNightCloseOut(deps, {});
+    case "/plan":
+      return planDay(planDayDepsFrom(deps), {});
     default:
       // Unreachable while COMMANDS lists only /morning and /night — a
       // future epic's registry entry gets its own `case` when that story
@@ -284,7 +339,7 @@ async function dispatchSlashCommand(deps: ChatTurnDeps, line: string): Promise<R
  * one is pending on a suggest-question.
  */
 function formatMorningView(view: MorningViewResponse): string {
-  if (!view.plan) return "No Plan has been generated for today yet.";
+  if (!view.plan) return 'No Plan yet today. Type /plan (or say "plan my day") and I\'ll build it now.';
   const openItemsLine =
     view.openItems.length === 0
       ? "Nothing else open."

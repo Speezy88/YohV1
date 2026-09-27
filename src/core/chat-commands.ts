@@ -90,6 +90,40 @@ export function isPlanViewCommand(line: string): boolean {
 }
 
 // ============================================================================
+// On-demand Plan-DAY (generate) command (real-use fixes plan, Task 1: "Plan
+// my day on demand", `/plan`)
+// ============================================================================
+
+/**
+ * Recognizes an on-demand Plan-GENERATION request typed in Chat — distinct
+ * from `isPlanViewCommand` just above, which only shows a Plan that already
+ * exists. The same kind of deliberately simple, documented pattern matching
+ * every other recognizer in this file uses, NOT real free-text NLU.
+ *
+ * Recognized phrasing (case-insensitive, extra whitespace tolerated, an
+ * optional trailing "?"):
+ *   - "plan my day"
+ *   - "make my plan"
+ *   - "generate today's plan" (apostrophe optional: "generate todays plan")
+ *   - "plan today"
+ *
+ * Deliberately does NOT match a bare "plan" or "what's my plan"/"show my
+ * plan" — those are `isPlanViewCommand`'s own territory (a request to VIEW
+ * today's already-generated Plan, never to build one); `app/chat-turn.ts`
+ * checks both, and the two never overlap on any of the phrasings either
+ * pins (see this file's own tests).
+ *
+ * Returns `false` (not an error) for any line that doesn't match this shape
+ * at all, so `chatTurn` can fall through to the next recognizer exactly as
+ * it already does for an unrecognized line.
+ */
+const PLAN_DAY_COMMAND_RE = /^(?:plan\s+(?:my\s+day|today)|make\s+my\s+plan|generate\s+today'?s\s+plan)\??$/i;
+
+export function isPlanDayCommand(line: string): boolean {
+  return PLAN_DAY_COMMAND_RE.test(line.trim());
+}
+
+// ============================================================================
 // Mid-Day Re-Flow trigger command (originally Task 15 / Story 2.3, FR-9)
 // ============================================================================
 

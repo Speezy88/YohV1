@@ -15,7 +15,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
-import { createMemoryStore, getCurrentTimeBudget, putOpenInteractionRequest, putPlan, type MemoryStore } from "../src/adapters/memory-store.ts";
+import { createMemoryStore, getCurrentTimeBudget, getPlan, putOpenInteractionRequest, putPlan, putTimeBudget, type MemoryStore } from "../src/adapters/memory-store.ts";
 import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
 import { chatTurn, MAX_CHAT_HISTORY_TURNS, STATUS_THINKING, type ChatTurnDeps } from "../src/app/chat-turn.ts";
 import { COMMANDS } from "../src/app/commands.ts";
@@ -424,6 +424,83 @@ test("/morning dispatches to morningView and formats its response as chat text �
   if (!result.ok) return;
   assert.match(result.value.reply, /Draft the memo/);
   assert.equal((llmClient as any).calls.length, 0, "a recognized /morning command must never call the LLM client");
+});
+
+test("/morning with no Plan yet points Spencer at /plan (real-use fixes plan, Task 1) — it still never generates a Plan itself (FR-1)", async () => {
+  const deps = baseDeps();
+  const result = await chatTurn(deps, { message: "/morning", history: [] });
+  assert.ok(result.ok);
+  if (!result.ok) return;
+  assert.equal(result.value.reply, 'No Plan yet today. Type /plan (or say "plan my day") and I\'ll build it now.');
+});
+
+// ============================================================================
+// Real-use fixes plan, Task 1: "plan my day" (generate) — both the slash
+// command and the deterministic "plan my day" family route to planDay.
+// ============================================================================
+
+const TEST_TODAY = "2026-08-22"; // matches baseDeps()'s pinned `now` (2026-08-22T18:00:00.000Z)
+
+function completeTask(): Task {
+  return {
+    id: "t1",
+    title: "Draft the memo",
+    createdAt: "2026-08-22T12:00:00.000Z",
+    updatedAt: "2026-08-22T12:00:00.000Z",
+    estimatedDurationMinutes: 30,
+    area: "Work",
+    dueDate: TEST_TODAY,
+    status: "not-started",
+    energy: "medium",
+  };
+}
+
+function planDayReadyDeps(overrides: Partial<ChatTurnDeps> = {}): ChatTurnDeps {
+  const store = tempStore();
+  putTimeBudget(store, { date: TEST_TODAY, totalMinutes: 240, workMinutes: 70, breakMinutes: 15 });
+  return baseDeps({
+    store,
+    readTasks: async () => [completeTask()],
+    readCalendarEventsFn: async () => [],
+    ...overrides,
+  });
+}
+
+test("/plan dispatches to planDay and never calls the LLM client", async () => {
+  const llmClient = makeFakeLlmClient();
+  const deps = planDayReadyDeps({ llmClient });
+
+  const result = await chatTurn(deps, { message: "/plan", history: [] });
+
+  assert.ok(result.ok);
+  if (!result.ok) return;
+  assert.match(result.value.reply, /Draft the memo/);
+  assert.equal((llmClient as any).calls.length, 0, "a recognized /plan command must never call the LLM client");
+  assert.ok(getPlan(deps.store, TEST_TODAY), "the Plan is genuinely persisted");
+});
+
+test("chatTurn recognizes the 'plan my day' family (deterministic, zero LLM calls) and dispatches to planDay", async () => {
+  for (const line of ["plan my day", "make my plan", "generate today's plan", "plan today"]) {
+    const llmClient = makeFakeLlmClient();
+    const deps = planDayReadyDeps({ llmClient });
+
+    const result = await chatTurn(deps, { message: line, history: [] });
+
+    assert.ok(result.ok, `expected "${line}" to succeed`);
+    if (!result.ok) continue;
+    assert.match(result.value.reply, /Draft the memo/, `expected "${line}" to route to planDay's rendered Plan`);
+    assert.equal((llmClient as any).calls.length, 0, `"${line}" must never call the LLM client`);
+  }
+});
+
+test("a Plan-view request ('what's my plan') is never mistaken for a Plan-day (generate) request", async () => {
+  const deps = planDayReadyDeps();
+  const result = await chatTurn(deps, { message: "what's my plan", history: [] });
+  assert.ok(result.ok);
+  if (!result.ok) return;
+  // isPlanViewCommand wins here (checked first) — showPlan, not planDay — so
+  // nothing is generated or persisted.
+  assert.equal(getPlan(deps.store, TEST_TODAY), undefined);
 });
 
 test("/night dispatches to startNightCloseOut and surfaces its question", async () => {

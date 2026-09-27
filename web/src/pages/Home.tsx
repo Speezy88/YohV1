@@ -78,7 +78,7 @@ export default function HomePage(): React.JSX.Element {
         <Confetti today={today} />
         <div className="flex flex-col gap-2">
           {plan === undefined ? (
-            <p className="font-body text-body text-ink-secondary">No Plan yet today.</p>
+            <p className="font-body text-body text-ink-secondary">No Plan yet today. Type /plan to build it now.</p>
           ) : allDone ? (
             <p className="font-body text-body text-ink-secondary">Nothing left on today's Plan.</p>
           ) : (

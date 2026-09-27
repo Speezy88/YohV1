@@ -22,6 +22,11 @@ export const COMMANDS: readonly CommandDescriptor[] = [
     description: "Runs the Night Ritual close-out interactively, and cancels tonight's scheduled prompt and escalation once you're done.",
     example: "/night",
   },
+  {
+    name: "/plan",
+    description: "Builds today's Plan right now, if it doesn't exist yet — same as the 6am Morning Ritual, but on demand and in-app only (no push).",
+    example: "/plan",
+  },
 ];
 
 /** `GET /api/commands` (C5) and `chatTurn`'s slash-dispatch both call this — the registry, verbatim, wrapped in a `Result`. */

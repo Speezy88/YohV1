@@ -107,7 +107,10 @@ export function createMorningRitualDeps(
   // The bumpLevels bridge (see the doc comment above): every currently-
   // stored SlipHistory row, turned into a `taskId -> consecutiveSlipCount`
   // map, then the REAL `core/slip-bump.ts` computation over it — never a
-  // parallel/hand-rolled escalation here.
+  // parallel/hand-rolled escalation here. `app/plan-day.ts`'s own `/plan`
+  // deps builder needs the identical bridge but AD-1 forbids it importing
+  // this `shell/` file, so it keeps its own small copy of this same loop
+  // (see that file's own doc comment).
   const slipCounts: Record<ExternalId, number> = {};
   for (const record of listSlipHistories(store)) {
     slipCounts[record.id] = record.data.consecutiveSlipCount;

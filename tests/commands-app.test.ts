@@ -5,10 +5,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { COMMANDS, listCommands } from "../src/app/commands.ts";
 
-test("COMMANDS lists exactly /morning and /night for Epic 8 — /sandbox and /research are later epics' own additions", () => {
+test("COMMANDS lists exactly /morning, /night, and /plan — /sandbox and /research are later epics' own additions", () => {
   assert.deepEqual(
     COMMANDS.map((c) => c.name),
-    ["/morning", "/night"],
+    ["/morning", "/night", "/plan"],
   );
 });
 

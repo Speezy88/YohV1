@@ -67,10 +67,10 @@ describe("HomePage", () => {
     expect(screen.getByTestId("chat-bubble")).toBeInTheDocument();
   });
 
-  it("shows 'No Plan yet today.' when plan is undefined", () => {
+  it("shows 'No Plan yet today. Type /plan to build it now.' when plan is undefined (real-use fixes plan, Task 1)", () => {
     mockState({ status: "loaded", value: { today: "2026-09-25", plan: undefined, calendar: { blocks: [] } } });
     render(<HomeWithNav />);
-    expect(screen.getByText("No Plan yet today.")).toBeInTheDocument();
+    expect(screen.getByText("No Plan yet today. Type /plan to build it now.")).toBeInTheDocument();
   });
 
   it("shows 'Nothing left on today's Plan.' when every row is completed, and the calendar still renders", () => {

@@ -70,12 +70,15 @@ import {
   bindCalendarApply,
   createCalendarBroadClient,
   createCalendarReadClient,
+  createCalendarWriteClient,
   proposeCalendarEdit as calendarProposeEdit,
   proposeNewCalendarEvent,
   readCalendarEvents,
   resolveCalendarEditRoute as calendarResolveRoute,
+  writeTodaysPlanToCalendar,
   type CalendarApplyBindingFn,
   type CalendarBroadClient,
+  type CalendarWriteClient,
 } from "../adapters/calendar-adapter.ts";
 import {
   bindNotionCreatePage,
@@ -1007,6 +1010,25 @@ function buildChatDeps(
     readCalendarEvents(createCalendarReadClient(getTokenStore().getOAuth2Client() as unknown as Parameters<typeof createCalendarReadClient>[0]), {
       timeZone,
     });
+  // Real-use fixes plan, Task 1 ("plan my day on demand"): `/plan`'s own
+  // Calendar-write seam (`app/plan-day.ts`'s `PlanDayDeps.writeCalendarPlan`)
+  // — same lazy-construction convention as `getCalendarBroadClient` above,
+  // built from the SAME cached `getTokenStore()` rather than a second,
+  // independently-refreshing token store. Deliberately not a re-run of
+  // `shell/ritual-cli/morning-deps.ts`'s `createMorningRitualDeps` wholesale
+  // — this file already builds its own lazily-guarded Notion client and
+  // `TokenStore` for `/api/chat`'s other capabilities (see
+  // `loadNotionFeatureConfig`/`buildHomeViewDeps` above for the identical
+  // reasoning on the Notion/Calendar READ side), and re-running that
+  // builder here would stand up a SECOND, independent Notion client and a
+  // SECOND, independently-refreshing Google `TokenStore` in the same
+  // process — a worse outcome than the few lines of adapter-binding code
+  // this avoids duplicating.
+  let cachedCalendarWriteClient: CalendarWriteClient | undefined;
+  const getCalendarWriteClient = (): CalendarWriteClient => {
+    cachedCalendarWriteClient ??= createCalendarWriteClient(getTokenStore().getOAuth2Client() as unknown as Parameters<typeof createCalendarWriteClient>[0]);
+    return cachedCalendarWriteClient;
+  };
   // Story 8.6 (Task 7): same lazy-construction convention as every binding
   // above — a session that never confirms a Calendar-edit Proposal must not
   // be unable to chat at all just because Google OAuth isn't configured.
@@ -1024,8 +1046,10 @@ function buildChatDeps(
     }
   };
 
+  const store = notion?.store ?? createMemoryStore(connection);
+
   return {
-    store: notion?.store ?? createMemoryStore(connection),
+    store,
     timeZone,
     now: () => new Date(),
     llmClient,
@@ -1040,6 +1064,18 @@ function buildChatDeps(
     resolveCalendarEditRouteFn: (calendarId, eventId) => calendarResolveRoute(getCalendarBroadClient(), calendarId, eventId),
     proposeCalendarEditFn: (calendarId, eventId, change) => calendarProposeEdit(getCalendarBroadClient(), calendarId, eventId, change),
     proposeNewCalendarEventFn: proposeNewCalendarEvent,
+    // Real-use fixes plan, Task 1: `/plan`'s (`app/plan-day.ts`) own
+    // Yoh-Plan Calendar write, the same seam the 6am cron's
+    // `createMorningRitualDeps` binds, minus the push (`planDay` hardcodes
+    // that to a no-op itself, so it isn't threaded through `ChatTurnDeps` at
+    // all — see that file's own doc comment). `bumpLevels` is deliberately
+    // NOT built here: it's pure computation over `store` with no credential
+    // of its own, so `plan-day.ts` computes it itself, freshly, on every
+    // `/plan` — see that file's own doc comment for why (this object is
+    // built once at server startup, but a long-running process can see
+    // fresh `SlipHistory` rows written hours later, e.g. via `/night`).
+    writeCalendarPlan: (blocks) => writeTodaysPlanToCalendar(getCalendarWriteClient(), getTokenStore(), blocks, { timeZone }),
+    log: (entry) => writeStructuredLog(entry),
     // Story 8.6 (Task 7): `AnswerOpenItemDeps`'s own fields — spread in via
     // each write function's adapter-owned binder (never named directly
     // here, AD-16), so `GET /api/open-items`/`POST /api/open-items/answer`

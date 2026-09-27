@@ -10,6 +10,7 @@ import {
   isBlockerReportCommand,
   isCalendarEditCommand,
   isMidDayReflowCommand,
+  isPlanDayCommand,
   isPlanViewCommand,
   isSaveSearchResultCommand,
   parseCreateItemCommand,
@@ -87,6 +88,34 @@ test("isPlanViewCommand recognizes a few plan-view phrasings, case-insensitively
 
 test("isPlanViewCommand returns false for unrelated input, including other recognized commands", () => {
   for (const line of ["hello", "time budget 6h", "what's the weather", ""]) {
+    assert.equal(isPlanViewCommand(line), false, `expected "${line}" NOT to be recognized as a Plan-view request`);
+  }
+});
+
+// ============================================================================
+// isPlanDayCommand (Task 1, real-use fixes plan / "plan my day on demand")
+// ============================================================================
+
+test("isPlanDayCommand recognizes the four documented on-demand-generation phrasings, case-insensitively", () => {
+  for (const line of ["plan my day", "make my plan", "generate today's plan", "generate todays plan", "plan today", "Plan My Day", "PLAN TODAY"]) {
+    assert.equal(isPlanDayCommand(line), true, `expected "${line}" to be recognized as a Plan-day (generate) request`);
+  }
+});
+
+test("isPlanDayCommand returns false for a Plan-VIEW request — generating and viewing are different commands", () => {
+  for (const line of ["plan", "what's my plan", "show my plan", "show me today's plan"]) {
+    assert.equal(isPlanDayCommand(line), false, `expected "${line}" NOT to be recognized as a Plan-day (generate) request`);
+  }
+});
+
+test("isPlanDayCommand returns false for unrelated input, including other recognized commands", () => {
+  for (const line of ["hello", "time budget 6h", "what's the weather", ""]) {
+    assert.equal(isPlanDayCommand(line), false, `expected "${line}" NOT to be recognized as a Plan-day (generate) request`);
+  }
+});
+
+test("isPlanViewCommand returns false for a Plan-DAY (generate) request — the two commands never overlap", () => {
+  for (const line of ["plan my day", "make my plan", "generate today's plan", "plan today"]) {
     assert.equal(isPlanViewCommand(line), false, `expected "${line}" NOT to be recognized as a Plan-view request`);
   }
 });

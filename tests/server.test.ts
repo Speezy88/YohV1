@@ -181,7 +181,7 @@ test("GET /api/commands returns the registry", async () => {
   assert.equal(body.ok, true);
   assert.deepEqual(
     body.value.commands.map((c) => c.name),
-    ["/morning", "/night"],
+    ["/morning", "/night", "/plan"],
   );
   connection.close();
 });
