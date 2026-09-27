@@ -9,7 +9,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { createMemoryStore, getRitualInvocation, putRitualInvocation, putSelfCheckState } from "../src/adapters/memory-store.ts";
+import { createMemoryStore, getRitualInvocation, putPlan, putRitualInvocation, putSelfCheckState } from "../src/adapters/memory-store.ts";
 import { recordSlip } from "../src/adapters/memory-store.ts";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { initCompletionLogSchema, recordCompletion } from "../src/adapters/completion-log.ts";
@@ -33,6 +33,7 @@ import {
 import { PLAN_GENERATION_DEGRADED_THRESHOLD_MS } from "../src/rituals/morning-ritual.ts";
 import type { MorningRitualOutcome } from "../src/rituals/morning-ritual.ts";
 import type { PlanNotification } from "../src/rituals/ritual-shared.ts";
+import { recordNightCloseOutHandledWithoutPrompt, runNightEscalateRitual, runNightPromptRitual } from "../src/rituals/night-ritual.ts";
 import type { NightEscalateOutcome, NightPromptOutcome } from "../src/rituals/night-ritual.ts";
 import type { SelfCheckOutcome } from "../src/rituals/self-check.ts";
 import type { Plan, Result, YohError } from "../src/types/domain.ts";
@@ -421,6 +422,48 @@ test("night-escalate no longer appears in the 'not yet built' set — it's a rea
   const code = await runRitualCli(["night-escalate"], nightEscalateDeps({ ok: true, value: { status: "already-ran", date: TODAY } }, s));
   assert.equal(code, 0);
   assert.doesNotMatch(s.err.join("\n"), /not implemented yet/i);
+});
+
+// ============================================================================
+// Story 8.7: end-to-end — /night already recorded tonight's close-out, so
+// both `night-prompt` and `night-escalate`'s REAL ritual functions (not the
+// file's usual canned-outcome fakes) are no-ops when dispatched through
+// runRitualCli.
+// ============================================================================
+
+test("end-to-end: night-prompt then night-escalate, both real, are no-ops when /night already recorded tonight's close-out", async () => {
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db);
+  const store = createMemoryStore(connection);
+  recordNightCloseOutHandledWithoutPrompt(store, TODAY, "2026-08-22T20:00:00.000Z");
+  putPlan(store, PLAN);
+
+  const promptOutcome = await runNightPromptRitual({
+    store,
+    sendNotification: async () => {
+      throw new Error("must not be called — night-prompt is a no-op for tonight");
+    },
+    now: () => new Date("2026-08-22T21:00:00.000Z"),
+    timeZone: "UTC",
+    getCompletedTaskIdsToday: () => new Set(),
+  });
+  const sPrompt = sink();
+  const promptCode = await runRitualCli(["night-prompt"], nightPromptDeps(promptOutcome, sPrompt));
+  assert.equal(promptCode, 0);
+  assert.match(sPrompt.out.join("\n"), /already ran/i);
+
+  const escalateOutcome = await runNightEscalateRitual({
+    store,
+    sendEscalationEmail: async () => {
+      throw new Error("must not be called — night-escalate is a no-op for tonight");
+    },
+    now: () => new Date("2026-08-22T22:00:00.000Z"),
+    timeZone: "UTC",
+  });
+  const sEscalate = sink();
+  const escalateCode = await runRitualCli(["night-escalate"], nightEscalateDeps(escalateOutcome, sEscalate));
+  assert.equal(escalateCode, 0);
+  assert.match(sEscalate.out.join("\n"), /no-?op|already answered|nothing/i);
 });
 
 // ============================================================================

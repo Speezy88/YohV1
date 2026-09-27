@@ -169,6 +169,23 @@ test("POST /api/notifications/:id/read sets readAt via the server clock and the 
   connection.close();
 });
 
+// ---------------------------------------------------------------------------
+// Story 8.7 — GET /api/commands (transport over app/commands.ts)
+// ---------------------------------------------------------------------------
+
+test("GET /api/commands returns the registry", async () => {
+  const { app, connection } = tempApp();
+  const res = await app.request("/api/commands");
+  const body = (await res.json()) as { ok: true; value: { commands: { name: string }[] } };
+  assert.equal(res.status, 200);
+  assert.equal(body.ok, true);
+  assert.deepEqual(
+    body.value.commands.map((c) => c.name),
+    ["/morning", "/night"],
+  );
+  connection.close();
+});
+
 test("POST /api/notifications/:id/read on an unknown id returns 400 with a validation error envelope", async () => {
   const { app, connection } = tempApp();
   const res = await app.request("/api/notifications/nope/read", { method: "POST" });

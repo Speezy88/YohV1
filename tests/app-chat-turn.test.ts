@@ -15,13 +15,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
-import { createMemoryStore, getCurrentTimeBudget, type MemoryStore } from "../src/adapters/memory-store.ts";
+import { createMemoryStore, getCurrentTimeBudget, putOpenInteractionRequest, putPlan, type MemoryStore } from "../src/adapters/memory-store.ts";
 import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
 import { chatTurn, MAX_CHAT_HISTORY_TURNS, STATUS_THINKING, type ChatTurnDeps } from "../src/app/chat-turn.ts";
+import { COMMANDS } from "../src/app/commands.ts";
 import type { AnthropicMessagesClient } from "../src/adapters/llm-adapter.ts";
 import type { ChatSession } from "../src/app/chat-session.ts";
 import type { ChatStreamEvent } from "../src/types/api.ts";
-import type { ChatTurn, Task } from "../src/types/domain.ts";
+import type { ChatTurn, Plan, Task } from "../src/types/domain.ts";
 
 const TEST_TIME_ZONE = "America/New_York";
 
@@ -85,6 +86,10 @@ function baseDeps(overrides: Partial<ChatTurnDeps> = {}): ChatTurnDeps {
     },
     llmClient: makeFakeLlmClient(),
     session: makeSession(),
+    // Story 8.7 (FR-41): /night's exclusion rule — a throws-only-if-invoked
+    // default (same convention as every other optional-ish seam here), since
+    // most tests in this file never dispatch /night.
+    getCompletedTaskIdsToday: () => new Set(),
     // Story 8.4's four new capabilities' own dependencies — throws-only-if-
     // invoked stubs (same convention as `readTasks` above, and as
     // `shell/chat-cli.ts`'s own defaults) for every test in this file that
@@ -382,4 +387,83 @@ test("Story 8.4: session.recentMessages records every line that reaches chatTurn
     await chatTurn(deps, { message, history: [] });
     assert.deepEqual(session.recentMessages, [message], `expected "${message}" to be recorded into session.recentMessages`);
   }
+});
+
+// ============================================================================
+// Story 8.7: slash-dispatch through the command registry — /morning, /night,
+// unknown-command, and the "never leak a raw proposal" pinning test.
+// ============================================================================
+
+function samplePlanFixture(): Plan {
+  return {
+    id: "plan-2026-08-22",
+    date: "2026-08-22",
+    blocks: [{ id: "work-0", kind: "work", start: "2026-08-22T18:00:00.000Z", end: "2026-08-22T19:00:00.000Z", label: "Draft the memo", taskId: "t1" }],
+    reasoning: '"Draft the memo" leads today.',
+    version: 1,
+    createdAt: "2026-08-22T12:00:00.000Z",
+    updatedAt: "2026-08-22T12:00:00.000Z",
+  };
+}
+
+test("/morning dispatches to morningView and formats its response as chat text — never touches the LLM", async () => {
+  const llmClient = makeFakeLlmClient();
+  const store = tempStore();
+  putPlan(store, samplePlanFixture());
+  const deps = baseDeps({ llmClient, store });
+
+  const result = await chatTurn(deps, { message: "/morning", history: [] });
+  assert.ok(result.ok);
+  if (!result.ok) return;
+  assert.match(result.value.reply, /Draft the memo/);
+  assert.equal((llmClient as any).calls.length, 0, "a recognized /morning command must never call the LLM client");
+});
+
+test("/night dispatches to startNightCloseOut and surfaces its question", async () => {
+  const store = tempStore();
+  putPlan(store, samplePlanFixture());
+  const deps = baseDeps({ store });
+
+  const result = await chatTurn(deps, { message: "/night", history: [] });
+  assert.ok(result.ok);
+  if (!result.ok) return;
+  assert.ok(result.value.question);
+});
+
+test("an unknown command gets a neutral reply listing every real command, never an error", async () => {
+  const deps = baseDeps();
+  const result = await chatTurn(deps, { message: "/frobnicate", history: [] });
+  assert.ok(result.ok);
+  if (!result.ok) return;
+  assert.match(result.value.reply, /No command named "\/frobnicate"/);
+  for (const c of COMMANDS) assert.ok(result.value.reply.includes(c.name));
+});
+
+test("command matching is case-insensitive, and a trailing word after the command name is ignored", async () => {
+  const store = tempStore();
+  putPlan(store, samplePlanFixture());
+  const deps = baseDeps({ store });
+  const result = await chatTurn(deps, { message: "/MORNING please", history: [] });
+  assert.ok(result.ok);
+  if (!result.ok) return;
+  assert.doesNotMatch(result.value.reply, /No command named/);
+});
+
+// --- Review Focus #4: /morning's formatted reply must never leak a raw proposal object ---
+test("/morning's reply embeds only an open item's promptText, never a raw proposal object, even when one is pending", async () => {
+  const store = tempStore();
+  putPlan(store, samplePlanFixture());
+  putOpenInteractionRequest(store, "data-completeness", {
+    requestKind: "data-completeness",
+    promptText: "I need a bit more before I can plan around Draft the memo.",
+    createdAt: "2026-08-22T12:00:00.000Z",
+    detail: { incomplete: [{ taskId: "t1", taskTitle: "Draft the memo", missingFields: ["area"] }] },
+  });
+  const deps = baseDeps({ store });
+
+  const result = await chatTurn(deps, { message: "/morning", history: [] });
+  assert.ok(result.ok);
+  if (!result.ok) return;
+  assert.equal(result.value.reply.includes("[object Object]"), false);
+  assert.equal(/"kind"\s*:/.test(result.value.reply), false, "no raw JSON of a Proposal leaks into the chat reply");
 });

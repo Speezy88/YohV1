@@ -314,6 +314,29 @@ export type ChatStreamEvent =
 // Server route type (Ruling R2, AD-17)
 // ============================================================================
 
+// ============================================================================
+// Command Palette / /morning / /night (Story 8.7) — new shapes only.
+// ============================================================================
+
+/** One entry in the server-provided command registry (`src/app/commands.ts`'s `COMMANDS`) — the Web Command Palette (`GET /api/commands`) and `chatTurn`'s slash-dispatch both read from it (UX-DR38, FR-42). */
+export interface CommandDescriptor {
+  readonly name: string;
+  readonly description: string;
+  readonly example: string;
+}
+
+/** `GET /api/commands`'s value. */
+export interface CommandList {
+  readonly commands: readonly CommandDescriptor[];
+}
+
+/** `/morning`'s read-only view (`app/morning-view.ts`'s `morningView`): today's already-stored Plan (never regenerated), split into its rendered block-list text and its reasoning line, plus every open item. `plan: undefined` means no Plan has been generated yet today. */
+export interface MorningViewResponse {
+  readonly today: string;
+  readonly plan: { readonly text: string; readonly reasoning: string } | undefined;
+  readonly openItems: readonly OpenItem[];
+}
+
 /**
  * The server's Hono route type, re-exported TYPE-ONLY so `web/`'s typed
  * Hono RPC client (Story 7.5) is compiler-checked end to end while `web/`

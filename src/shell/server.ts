@@ -59,7 +59,12 @@ import {
 } from "../adapters/notification-store.ts";
 import { HEARTBEAT_INTERVAL_MS, initPlanStateStoreSchema, writeHeartbeat } from "../adapters/plan-state-store.ts";
 import { createMemoryStore, type MemoryStore } from "../adapters/memory-store.ts";
-import { initCompletionLogSchema, recordCompletion as completionLogRecordCompletion, type RecordCompletionInput } from "../adapters/completion-log.ts";
+import {
+  initCompletionLogSchema,
+  listCompletedTaskIdsOnDate,
+  recordCompletion as completionLogRecordCompletion,
+  type RecordCompletionInput,
+} from "../adapters/completion-log.ts";
 import { createTokenStore, loadGoogleOAuthConfigFromEnv, type TokenStore } from "../adapters/token-store.ts";
 import {
   bindCalendarApply,
@@ -84,6 +89,7 @@ import {
 import { createAnthropicMessagesClient, loadLlmAdapterConfigFromEnv, type AnthropicMessagesClient } from "../adapters/llm-adapter.ts";
 import { search as runSearch } from "../adapters/search-adapter.ts";
 import { listNotifications, markNotificationRead } from "../app/notifications.ts";
+import { listCommands } from "../app/commands.ts";
 import { chatTurn, type ChatTurnDeps } from "../app/chat-turn.ts";
 import type { ChatSession } from "../app/chat-session.ts";
 import type { SearchFn } from "../app/web-search.ts";
@@ -588,6 +594,13 @@ export function createApp(deps: ServerDeps) {
         const result = wire(await listNotifications(notificationsDeps, {}));
         return c.json(result, httpStatus(result));
       })
+      // Story 8.7 (C5): the one server-provided command registry the Web
+      // Command Palette reads — pure transport over `app/commands.ts`'s
+      // `listCommands`, no configuration needed.
+      .get("/api/commands", async (c) => {
+        const result = wire(await listCommands({}, {}));
+        return c.json(result, httpStatus(result));
+      })
       .post("/api/notifications/:id/read", async (c) => {
         const result = wire(await markNotificationRead(notificationsDeps, { id: c.req.param("id") }));
         return c.json(result, httpStatus(result));
@@ -1014,6 +1027,10 @@ function buildChatDeps(
     now: () => new Date(),
     llmClient,
     readTasks,
+    // Story 8.7 (FR-41): the same completion-log.ts binding
+    // ritual-cli.ts's createNightPromptRitualDeps already uses — /night's
+    // exclusion rule.
+    getCompletedTaskIdsToday: () => listCompletedTaskIdsOnDate(connection, currentIsoDate(new Date(), timeZone), timeZone),
     getNotionCreatePageBinding,
     searchFn,
     readCalendarEventsFn,

@@ -39,9 +39,12 @@ import {
   buildNightCloseOutPromptText,
   buildNightEscalationEmail,
   clearNightCloseOutRequestIfOpen,
+  collectNightCloseOutTasks,
+  isNightCloseOutRequestOpenFor,
   NIGHT_CLOSE_OUT_REQUEST_ID,
   NIGHT_ESCALATE_RITUAL_ID,
   NIGHT_PROMPT_RITUAL_ID,
+  recordNightCloseOutHandledWithoutPrompt,
   renderNightEscalateNotice,
   runNightEscalateRitual,
   runNightPromptRitual,
@@ -337,6 +340,91 @@ test("buildNightCloseOutPromptText names every Task and asks for completed/slipp
   assert.match(text, /Draft the memo/);
   assert.match(text, /Book the flights/);
   assert.match(text, /completed|slipped/i);
+});
+
+// ============================================================================
+// Story 8.7: collectNightCloseOutTasks / isNightCloseOutRequestOpenFor /
+// recordNightCloseOutHandledWithoutPrompt — the shared record, extracted and
+// widened so `/night` (app/night-close-out.ts) can make night-prompt and
+// night-escalate no-ops for a night it already handled interactively.
+// ============================================================================
+
+test("collectNightCloseOutTasks: dedupes by taskId, skips break/calendar-anchor blocks, skips Tasks completed today", () => {
+  const plan = samplePlan([
+    block({ id: "w0", kind: "work", start: "2026-08-22T13:00:00.000Z", end: "2026-08-22T13:30:00.000Z", label: "Draft the memo", taskId: "t1" }),
+    block({ id: "w1", kind: "work", start: "2026-08-22T13:30:00.000Z", end: "2026-08-22T14:00:00.000Z", label: "Draft the memo (cont.)", taskId: "t1" }),
+    block({ id: "b0", kind: "break", start: "2026-08-22T14:00:00.000Z", end: "2026-08-22T14:15:00.000Z", label: "Break" }),
+    block({ id: "w2", kind: "work", start: "2026-08-22T14:15:00.000Z", end: "2026-08-22T15:00:00.000Z", label: "Email the professor", taskId: "t2" }),
+  ]);
+  const tasks = collectNightCloseOutTasks(plan, new Set(["t2"]));
+  assert.deepEqual(tasks, [{ taskId: "t1", taskTitle: "Draft the memo" }]);
+});
+
+test("isNightCloseOutRequestOpenFor: true only when an open request's own detail.date matches", () => {
+  const store = tempStore();
+  assert.equal(isNightCloseOutRequestOpenFor(store, TODAY), false);
+  openCloseOutRequest(store, [{ taskId: "t1", taskTitle: "Draft the memo" }]);
+  assert.equal(isNightCloseOutRequestOpenFor(store, TODAY), true);
+  assert.equal(isNightCloseOutRequestOpenFor(store, "2026-08-21"), false);
+});
+
+test("recordNightCloseOutHandledWithoutPrompt writes the exact RitualRun record night-prompt's own guard and night-escalate's own disambiguation both read", () => {
+  const store = tempStore();
+  recordNightCloseOutHandledWithoutPrompt(store, TODAY, "2026-08-22T21:00:00.000Z");
+  const run = getRitualRun(store, NIGHT_PROMPT_RITUAL_ID);
+  assert.equal(run?.data.date, TODAY);
+  assert.equal(run?.data.ranAt, "2026-08-22T21:00:00.000Z");
+});
+
+// --- Review Focus #1: a stale open request must not suppress tonight's real prompt ---
+test("an open request for an EARLIER date does not stop night-prompt from building tonight's own request", async () => {
+  const store = tempStore();
+  openCloseOutRequest(store, [{ taskId: "stale", taskTitle: "Some old Task" }]); // detail.date defaults to TODAY in the helper — override it:
+  const stale = getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID)!;
+  putOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID, { ...stale.data, detail: { ...(stale.data.detail as NightCloseOutRequestDetail), date: "2026-08-20" } });
+  putPlan(store, samplePlan([block({ id: "w0", kind: "work", start: "2026-08-22T13:00:00.000Z", end: "2026-08-22T13:30:00.000Z", label: "Draft the memo", taskId: "t1" })]));
+
+  const sent: string[] = [];
+  const result = await runNightPromptRitual(deps(store, { sendNotification: async (n) => void sent.push(n.title) }));
+  assert.ok(result.ok && result.value.status === "prompted", `expected a fresh prompt, got ${JSON.stringify(result)}`);
+  assert.equal(sent.length, 1, "tonight's own push IS sent — the stale request must not suppress it");
+});
+
+// --- Review Focus #2: don't clobber an in-progress /night session ---
+test("an open, unanswered request for TODAY (started via /night) makes night-prompt a no-op — no push, no overwrite", async () => {
+  const store = tempStore();
+  openCloseOutRequest(store, [{ taskId: "t1", taskTitle: "Draft the memo" }]);
+  const before = getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID)!;
+  putPlan(store, samplePlan([block({ id: "w0", kind: "work", start: "2026-08-22T13:00:00.000Z", end: "2026-08-22T13:30:00.000Z", label: "Draft the memo", taskId: "t1" })]));
+
+  const sent: string[] = [];
+  const result = await runNightPromptRitual(deps(store, { sendNotification: async (n) => void sent.push(n.title) }));
+  assert.ok(result.ok);
+  if (result.ok) assert.equal(result.value.status, "already-ran");
+  assert.equal(sent.length, 0, "no push — the in-progress /night session already covers tonight");
+  const after = getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID)!;
+  assert.equal(after.version, before.version, "the open request is not replaced");
+});
+
+// --- AC4-pinning integration test: /night → night-prompt no-op → night-escalate no-op → day never unchecked ---
+test("AC4: once /night's own flow records the close-out, both night-prompt and night-escalate are full no-ops for that night, and the day is never marked unchecked", async () => {
+  const store = tempStore();
+  // Simulate /night's completed flow: the request was opened and then fully
+  // answered and cleared (app/answer-night-close-out.ts's job), and its
+  // final-answer step called the new helper — this is the ONE line Task 5 adds.
+  recordNightCloseOutHandledWithoutPrompt(store, TODAY, "2026-08-22T20:00:00.000Z");
+  putPlan(store, samplePlan([block({ id: "w0", kind: "work", start: "2026-08-22T13:00:00.000Z", end: "2026-08-22T13:30:00.000Z", label: "Draft the memo", taskId: "t1" })]));
+
+  const pushed: string[] = [];
+  const promptResult = await runNightPromptRitual(deps(store, { sendNotification: async (n) => void pushed.push(n.title) }));
+  assert.ok(promptResult.ok && promptResult.value.status === "already-ran");
+  assert.equal(pushed.length, 0);
+
+  const emailed: string[] = [];
+  const escalateResult = await runNightEscalateRitual(escalateDeps(store, { sendEscalationEmail: async (m) => void emailed.push(m.subject) }));
+  assert.ok(escalateResult.ok && escalateResult.value.status === "no-open-request");
+  assert.equal(emailed.length, 0);
+  assert.deepEqual(listUncheckedDays(store), [], "the day is never marked unchecked");
 });
 
 // ============================================================================

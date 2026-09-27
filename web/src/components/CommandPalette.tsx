@@ -1,0 +1,98 @@
+/**
+ * web/src/components/CommandPalette.tsx
+ *
+ * Story 8.7 (UX-DR38): a glass panel listing the server's command registry
+ * (`GET /api/commands`, `lib/commands.ts`), filtered live against `query` —
+ * everything currently typed in the Chat Input (or Chat Bubble, Story 8.8)
+ * while it starts with "/", so `query` IS that value.
+ *
+ * Owns its own keyboard handling (↑↓, Enter, Esc) via a capture-phase
+ * `document` listener rather than a prop-driven `onKeyDown`: the text
+ * input keeps focus the whole time (Spencer is still typing), so a
+ * listener scoped to this component's own DOM subtree would never see the
+ * keypress. A capture-phase listener on `document` runs before the Chat
+ * Input's own bubble-phase Enter-to-send handler, and `stopPropagation()`
+ * here keeps that handler from also firing.
+ *
+ * The highlighted row gets a 1.5px accent-solid rim (`--rim-width`). No
+ * match shows "No matching command" plus the full list.
+ */
+import { useEffect, useState } from "react";
+import { fetchCommands, filterCommands } from "../lib/commands.ts";
+import type { CommandDescriptor } from "../../../src/types/api.ts";
+
+export interface CommandPaletteProps {
+  readonly query: string;
+  readonly onRun: (name: string) => void;
+  readonly onClose: () => void;
+}
+
+export function CommandPalette({ query, onRun, onClose }: CommandPaletteProps): React.JSX.Element {
+  const [commands, setCommands] = useState<readonly CommandDescriptor[]>([]);
+  const [highlighted, setHighlighted] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchCommands().then((c) => {
+      if (!cancelled) setCommands(c);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const filtered = filterCommands(commands, query);
+  const rows = filtered.length === 0 ? commands : filtered;
+
+  useEffect(() => {
+    setHighlighted(0); // a new keystroke changed the filtered set — re-highlight the top row.
+  }, [query, commands.length]);
+
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent): void {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        e.stopPropagation();
+        setHighlighted((i) => Math.min(i + 1, Math.max(filtered.length - 1, 0)));
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        e.stopPropagation();
+        setHighlighted((i) => Math.max(i - 1, 0));
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        e.stopPropagation();
+        const picked = filtered[highlighted];
+        if (picked) onRun(picked.name);
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        onClose();
+      }
+    }
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => document.removeEventListener("keydown", handleKeyDown, true);
+  }, [filtered, highlighted, onRun, onClose]);
+
+  return (
+    <div role="listbox" aria-label="Command palette" data-testid="command-palette" className="notification-glass absolute bottom-full left-0 z-10 mb-2 w-full max-w-md rounded-md p-2">
+      {filtered.length === 0 && <div className="px-2 py-1 font-body text-body text-ink-secondary">No matching command</div>}
+      {rows.map((c, i) => (
+        <div
+          key={c.name}
+          role="option"
+          data-testid={`command-row-${c.name}`}
+          aria-selected={filtered.length > 0 && i === highlighted}
+          onClick={() => onRun(c.name)}
+          className={
+            "flex cursor-pointer items-baseline justify-between gap-2 rounded-sm border-[1.5px] px-2 py-1 " +
+            (filtered.length > 0 && i === highlighted ? "border-accent-solid" : "border-transparent")
+          }
+        >
+          <span className="font-body text-body font-bold text-ink-primary">{c.name}</span>
+          <span className="flex-1 truncate px-2 font-body text-body text-ink-secondary">{c.description}</span>
+          <span className="font-body text-caption text-ink-secondary">{c.example}</span>
+        </div>
+      ))}
+    </div>
+  );
+}

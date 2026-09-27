@@ -3,11 +3,11 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createMemoryStore, getOpenInteractionRequest, getSlipHistory, getUncheckedDay, putOpenInteractionRequest, putUncheckedDay } from "../src/adapters/memory-store.ts";
+import { createMemoryStore, getOpenInteractionRequest, getRitualRun, getSlipHistory, getUncheckedDay, putOpenInteractionRequest, putUncheckedDay } from "../src/adapters/memory-store.ts";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { initNotificationStoreSchema, listUnreadNotifications } from "../src/adapters/notification-store.ts";
 import { answerNightCloseOut } from "../src/app/answer-night-close-out.ts";
-import type { NightCloseOutTaskDetail } from "../src/rituals/night-ritual.ts";
+import { NIGHT_PROMPT_RITUAL_ID, type NightCloseOutTaskDetail } from "../src/rituals/night-ritual.ts";
 import type { Result, TaskStatus, YohError } from "../src/types/domain.ts";
 
 function tempStore() {
@@ -137,5 +137,38 @@ test("no in-app notification is raised while answering a close-out request (AD-5
   openReq(store, [{ taskId: "t1", taskTitle: "Draft the memo" }]);
   await answerNightCloseOut(deps(store), { requestId: "night-close-out", questionId: "t1", answer: "completed" });
   assert.deepEqual(listUnreadNotifications(store as never), []);
+  store.close();
+});
+
+// ============================================================================
+// Story 8.7: once the close-out is fully answered, the SAME RitualRun record
+// night-escalate reads is written — see rituals/night-ritual.ts's
+// recordNightCloseOutHandledWithoutPrompt.
+// ============================================================================
+
+test("Story 8.7: once every named Task is answered, the SAME RitualRun record night-escalate reads is written, keyed to the request's own detail.date", async () => {
+  const store = tempStore();
+  openReq(store, [{ taskId: "t1", taskTitle: "Draft the memo" }], "2026-09-25");
+  const result = await answerNightCloseOut(deps(store), { requestId: "night-close-out", questionId: "t1", answer: "completed" });
+  assert.equal(result.ok, true);
+  if (result.ok) assert.equal(result.value.next, "done");
+  const run = getRitualRun(store, NIGHT_PROMPT_RITUAL_ID);
+  assert.equal(run?.data.date, "2026-09-25", "written against the NIGHT the close-out was ABOUT, not the day it happened to be answered");
+  store.close();
+});
+
+// --- Review Focus #3: a partial (skipped) close-out still marks night-prompt as handled — a deliberate, documented trade-off ---
+test("a partially-skipped close-out still writes the marker once the loop concludes — night-prompt will not re-ask tonight even for the skipped Task", async () => {
+  const store = tempStore();
+  openReq(store, [
+    { taskId: "t1", taskTitle: "Draft the memo" },
+    { taskId: "t2", taskTitle: "Book the flights" },
+  ]);
+  await answerNightCloseOut(deps(store), { requestId: "night-close-out", questionId: "t1", answer: "completed" });
+  const result = await answerNightCloseOut(deps(store), { requestId: "night-close-out", questionId: "t2", answer: "skip" });
+  assert.equal(result.ok, true);
+  if (result.ok) assert.equal(result.value.next, "done");
+  const run = getRitualRun(store, NIGHT_PROMPT_RITUAL_ID);
+  assert.ok(run, "the marker is written unconditionally at the loop's conclusion, skip or not — see this story's own Review Focus #3");
   store.close();
 });

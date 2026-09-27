@@ -190,6 +190,7 @@ import type {
   InteractionRequest,
   IsoDate,
   IsoDateTime,
+  Plan,
   Result,
   Task,
   TaskStatus,
@@ -243,6 +244,60 @@ export function buildNightCloseOutPromptText(tasks: readonly NightCloseOutTaskDe
   const subject = tasks.length === 1 ? "this Task" : "these Tasks";
   const lines = tasks.map((t) => `  - ${t.taskTitle}`);
   return [`How did today go? For ${subject}, tell me completed or slipped:`, ...lines].join("\n");
+}
+
+/**
+ * Pure: collects every DISTINCT Task a `work` PlanBlock references in
+ * `plan`, in first-seen order, skipping any Task `completedToday` already
+ * covers (Story 7.9, FR-41). Extracted from `runNightPromptRitual`'s own
+ * inline loop (Task 8 / Story 8.7) so `app/night-close-out.ts`'s `/night`
+ * can build the IDENTICAL Task list without duplicating this dedupe rule.
+ */
+export function collectNightCloseOutTasks(plan: Plan, completedToday: ReadonlySet<ExternalId>): NightCloseOutTaskDetail[] {
+  const seen = new Set<ExternalId>();
+  const tasks: NightCloseOutTaskDetail[] = [];
+  for (const b of plan.blocks) {
+    if (b.kind !== "work" || b.taskId === undefined) continue;
+    if (seen.has(b.taskId)) continue;
+    if (completedToday.has(b.taskId)) continue;
+    seen.add(b.taskId);
+    tasks.push({ taskId: b.taskId, taskTitle: b.label });
+  }
+  return tasks;
+}
+
+/**
+ * True when a `night-close-out` interaction request is currently open AND
+ * genuinely describes `date` — guards against a stale, earlier night's
+ * leftover request, the same care `runNightEscalateRitual`'s own
+ * `putUncheckedDay` call already takes (see that function's "Guarding
+ * against a STALE open request" doc comment).
+ */
+export function isNightCloseOutRequestOpenFor(store: MemoryStore, date: IsoDate): boolean {
+  const open = getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID);
+  const detail = open?.data.detail as NightCloseOutRequestDetail | undefined;
+  return detail?.date === date;
+}
+
+/**
+ * Story 8.7: `app/night-close-out.ts`'s `/night` flow calls this the
+ * instant its own combined close-out request is FULLY answered (the same
+ * "final answer" moment `clearNightCloseOutRequestIfOpen` already marks) —
+ * it writes into the EXACT SAME `RitualRun` record
+ * (`NIGHT_PROMPT_RITUAL_ID`) `runNightPromptRitual`'s own idempotence
+ * guard reads above, and `runNightEscalateRitual` reads to disambiguate
+ * "answered" from "not-prompted-yet" (see that function's own doc
+ * comment). Once this is written, a LATER-firing `night-prompt` cron
+ * takes the EXISTING `already-ran` branch (no new code path there) and a
+ * later `night-escalate` takes its EXISTING `no-open-request` branch: cap
+ * burned, no email, day never marked unchecked. Deliberately the SAME
+ * record, not a new one — a separate marker would leave `night-escalate`
+ * unable to tell "/night handled it" apart from "night-prompt hasn't
+ * fired yet," which is exactly the ambiguity `NightEscalateOutcome`'s
+ * `"not-prompted-yet"` vs `"no-open-request"` split exists to resolve.
+ */
+export function recordNightCloseOutHandledWithoutPrompt(store: MemoryStore, date: IsoDate, ranAt: IsoDateTime): void {
+  putRitualRun(store, NIGHT_PROMPT_RITUAL_ID, { date, ranAt });
 }
 
 // ============================================================================
@@ -333,9 +388,18 @@ export async function runNightPromptRitual(
   const nowIso = nowDate.toISOString();
   const today = localIsoDate(nowDate, deps.timeZone);
 
-  // --- Idempotence guard (AC #6) --------------------------------------------
+  // --- Idempotence guard (AC #6), widened for Story 8.7 (AD-5 Phase 2) ------
+  // Tonight's close-out counts as already handled either because THIS
+  // ritual already ran tonight (the original guard), OR because `/night`
+  // (app/night-close-out.ts) already opened tonight's own close-out
+  // request and Spencer is mid-session on it — night-prompt must not
+  // clobber that open request with a fresh `putOpenInteractionRequest`
+  // ("put" semantics: it REPLACES whatever's there) or send a redundant
+  // push. `isNightCloseOutRequestOpenFor` guards against a STALE
+  // (earlier-night's) leftover request the same way
+  // `runNightEscalateRitual`'s own `putUncheckedDay` guard already does.
   const lastRun = getRitualRun(deps.store, NIGHT_PROMPT_RITUAL_ID);
-  if (lastRun?.data.date === today) {
+  if (lastRun?.data.date === today || isNightCloseOutRequestOpenFor(deps.store, today)) {
     log({ level: "info", event: "night-ritual.already-ran", detail: { date: today } });
     return { ok: true, value: { status: "already-ran", date: today } };
   }
@@ -349,17 +413,8 @@ export async function runNightPromptRitual(
 
   // --- Collect every DISTINCT Task a work block names (dedupe by taskId) ----
   // Story 7.9 (FR-41): a Task completion-log.ts already shows completed
-  // today is skipped entirely — never even added to `seen`/`tasks`.
-  const completedToday = deps.getCompletedTaskIdsToday();
-  const seen = new Set<ExternalId>();
-  const tasks: NightCloseOutTaskDetail[] = [];
-  for (const b of plan.data.blocks) {
-    if (b.kind !== "work" || b.taskId === undefined) continue;
-    if (seen.has(b.taskId)) continue;
-    if (completedToday.has(b.taskId)) continue;
-    seen.add(b.taskId);
-    tasks.push({ taskId: b.taskId, taskTitle: b.label });
-  }
+  // today is skipped entirely — never even added to the collected list.
+  const tasks = collectNightCloseOutTasks(plan.data, deps.getCompletedTaskIdsToday());
 
   if (tasks.length === 0) {
     try {

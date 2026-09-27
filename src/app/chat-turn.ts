@@ -41,9 +41,12 @@ import { classifyChatIntent } from "../adapters/llm-adapter.ts";
 import { reportBlocker } from "./blocker-report.ts";
 import { RECENT_MESSAGES_WINDOW, type ChatSession } from "./chat-session.ts";
 import { proposeCalendarEdit, type CalendarEditDeps } from "./calendar-edit.ts";
+import { COMMANDS } from "./commands.ts";
 import { draftItem, type CreateItemDeps } from "./create-item.ts";
 import { answerQuestion } from "./general-question.ts";
 import { reflowDay } from "./mid-day-reflow.ts";
+import { morningView } from "./morning-view.ts";
+import { startNightCloseOut } from "./night-close-out.ts";
 import { showPlan } from "./plan-view.ts";
 import { saveSearchResult, type SaveSearchResultDeps } from "./save-search-result.ts";
 import { declareTimeBudget } from "./time-budget.ts";
@@ -52,8 +55,8 @@ import { explainPriority } from "./why-prioritized.ts";
 import { localIsoDate } from "../rituals/ritual-shared.ts";
 import type { AnthropicMessagesClient } from "../adapters/llm-adapter.ts";
 import type { MemoryStore } from "../adapters/memory-store.ts";
-import type { ChatStreamEvent, ChatTurnRequest, ChatTurnResponse } from "../types/api.ts";
-import type { ChatIntent, ChatTurn, Result, Task, YohError } from "../types/domain.ts";
+import type { ChatStreamEvent, ChatTurnRequest, ChatTurnResponse, MorningViewResponse } from "../types/api.ts";
+import type { ChatIntent, ChatTurn, ExternalId, Result, Task, YohError } from "../types/domain.ts";
 
 /**
  * The largest number of `ChatTurn`s `chatTurn` will ever send to Claude —
@@ -86,6 +89,8 @@ export interface ChatTurnDeps extends CreateItemDeps, CalendarEditDeps, WebSearc
   readonly llmClient: AnthropicMessagesClient;
   readonly session: ChatSession;
   readonly emit?: (event: ChatStreamEvent) => void;
+  /** Story 8.7 (FR-41): threaded through to `/night`'s exclusion rule (`app/night-close-out.ts`). */
+  readonly getCompletedTaskIdsToday: () => ReadonlySet<ExternalId>;
 }
 
 /**
@@ -144,6 +149,11 @@ function recordRecentMessage(deps: ChatTurnDeps, message: string): void {
 export async function chatTurn(deps: ChatTurnDeps, input: ChatTurnRequest): Promise<Result<ChatTurnResponse, YohError>> {
   recordRecentMessage(deps, input.message);
   emitStatus(deps, STATUS_THINKING);
+
+  const line = input.message.trim();
+  if (line.startsWith("/")) {
+    return dispatchSlashCommand(deps, line);
+  }
 
   const timeBudgetCommand = parseTimeBudgetCommand(input.message);
   if (timeBudgetCommand) {
@@ -204,4 +214,51 @@ export async function chatTurn(deps: ChatTurnDeps, input: ChatTurnRequest): Prom
     { llmClient: deps.llmClient, ...(deps.emit ? { emit: deps.emit } : {}) },
     { message: input.message, history: trimHistory(input.history) },
   );
+}
+
+/**
+ * Story 8.7 (FR-42, UX-DR38): the ONE place a `/`-prefixed line resolves
+ * against `commands.ts`'s registry — checked BEFORE every other recognizer,
+ * so a slash line never falls through to Time Budget/Plan-view/etc. Matching
+ * is case-insensitive, and a trailing word after the command name (e.g.
+ * "/morning please") is ignored. An unknown command gets a neutral reply
+ * listing every real command, never an error (AC).
+ */
+async function dispatchSlashCommand(deps: ChatTurnDeps, line: string): Promise<Result<ChatTurnResponse, YohError>> {
+  const [name] = line.split(/\s+/);
+  const match = COMMANDS.find((c) => c.name.toLowerCase() === name?.toLowerCase());
+  if (!match) {
+    const list = COMMANDS.map((c) => `${c.name} — ${c.description}`).join("\n");
+    return { ok: true, value: { reply: `No command named "${name}".\n\nAvailable commands:\n${list}`, receipts: [] } };
+  }
+  switch (match.name) {
+    case "/morning": {
+      const result = await morningView(deps, {});
+      if (!result.ok) return result;
+      return { ok: true, value: { reply: formatMorningView(result.value), receipts: [] } };
+    }
+    case "/night":
+      return startNightCloseOut(deps, {});
+    default:
+      // Unreachable while COMMANDS lists only /morning and /night — a
+      // future epic's registry entry gets its own `case` when that story
+      // lands.
+      return { ok: true, value: { reply: `"${match.name}" isn't wired up yet.`, receipts: [] } };
+  }
+}
+
+/**
+ * `/morning`'s plain formatter — an unexported helper, exempt from AD-16's
+ * `app/*.ts` export-shape rule since it's neither exported nor
+ * `(deps, input) => Promise<Result<...>>`. Embeds only an open item's
+ * `promptText` (Review Focus #4) — never a raw `proposal` object, even when
+ * one is pending on a suggest-question.
+ */
+function formatMorningView(view: MorningViewResponse): string {
+  if (!view.plan) return "No Plan has been generated for today yet.";
+  const openItemsLine =
+    view.openItems.length === 0
+      ? "Nothing else open."
+      : `${view.openItems.length} open item${view.openItems.length === 1 ? "" : "s"}: ` + view.openItems.map((i) => i.promptText).join("; ");
+  return [view.plan.text, "", view.plan.reasoning, "", openItemsLine].filter((l) => l.length > 0).join("\n");
 }

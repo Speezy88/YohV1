@@ -4,17 +4,26 @@
  * survives a remount; Enter sends and Shift+Enter doesn't.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ChatInput } from "./ChatInput.tsx";
 import * as chatStore from "../lib/chatStore.ts";
 import * as chatStreamModule from "../lib/chatStream.ts";
+import * as commands from "../lib/commands.ts";
 
 function box(): HTMLElement {
   return screen.getByRole("textbox", { name: "Message Yoh" });
 }
 
+const COMMAND_REGISTRY = [
+  { name: "/morning", description: "…", example: "/morning" },
+  { name: "/night", description: "…", example: "/night" },
+];
+
 describe("ChatInput", () => {
-  beforeEach(() => chatStore.__resetChatStoreForTests());
+  beforeEach(() => {
+    chatStore.__resetChatStoreForTests();
+    vi.spyOn(commands, "fetchCommands").mockResolvedValue(COMMAND_REGISTRY);
+  });
   afterEach(() => vi.restoreAllMocks());
 
   it("is glass, full width, and pill-shaped, with the focus ring + glow on focus", () => {
@@ -70,5 +79,59 @@ describe("ChatInput", () => {
     fireEvent.change(box(), { target: { value: "next" } });
     expect(box()).toHaveValue("next");
     expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  });
+
+  // ==========================================================================
+  // Story 8.7 (UX-DR38): the Command Palette opens on "/"
+  // ==========================================================================
+
+  it("typing '/' as the first character opens the Command Palette", async () => {
+    render(<ChatInput />);
+    fireEvent.change(box(), { target: { value: "/" } });
+    await waitFor(() => expect(screen.getByTestId("command-palette")).toBeInTheDocument());
+  });
+
+  it("a non-slash first character never opens the palette", () => {
+    render(<ChatInput />);
+    fireEvent.change(box(), { target: { value: "hi" } });
+    expect(screen.queryByTestId("command-palette")).not.toBeInTheDocument();
+  });
+
+  it("picking a command from the palette sends it and clears the input", async () => {
+    const sendSpy = vi.spyOn(chatStore, "send").mockResolvedValue(undefined);
+    render(<ChatInput />);
+    fireEvent.change(box(), { target: { value: "/" } });
+    await waitFor(() => expect(screen.getByTestId("command-row-/night")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("command-row-/night"));
+    expect(sendSpy).toHaveBeenCalledWith("/night");
+    expect(box()).toHaveValue("");
+  });
+
+  it("Esc closes the palette without clearing the typed text", async () => {
+    render(<ChatInput />);
+    fireEvent.change(box(), { target: { value: "/mor" } });
+    await waitFor(() => expect(screen.getByTestId("command-palette")).toBeInTheDocument());
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByTestId("command-palette")).not.toBeInTheDocument();
+    expect(box()).toHaveValue("/mor");
+  });
+
+  it("typing further after Esc reopens the palette", async () => {
+    render(<ChatInput />);
+    fireEvent.change(box(), { target: { value: "/mor" } });
+    await waitFor(() => expect(screen.getByTestId("command-palette")).toBeInTheDocument());
+    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.change(box(), { target: { value: "/morn" } });
+    await waitFor(() => expect(screen.getByTestId("command-palette")).toBeInTheDocument());
+  });
+
+  it("Enter while the palette is open runs the highlighted command, not send", async () => {
+    const sendSpy = vi.spyOn(chatStore, "send").mockResolvedValue(undefined);
+    render(<ChatInput />);
+    fireEvent.change(box(), { target: { value: "/" } });
+    await waitFor(() => expect(screen.getByTestId("command-row-/morning")).toBeInTheDocument());
+    fireEvent.keyDown(document, { key: "Enter" });
+    expect(sendSpy).toHaveBeenCalledWith("/morning");
+    expect(sendSpy).not.toHaveBeenCalledWith("/");
   });
 });

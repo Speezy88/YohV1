@@ -268,6 +268,7 @@ import {
 } from "../adapters/notion-adapter.ts";
 import {
   initCompletionLogSchema,
+  listCompletedTaskIdsOnDate,
   recordCompletion as completionLogRecordCompletion,
   type RecordCompletionInput,
 } from "../adapters/completion-log.ts";
@@ -636,6 +637,8 @@ export interface ChatCliDeps {
   readonly getCalendarApplyBinding?: CalendarApplyBindingFn;
   readonly recordCompletion?: RecordCompletionFn;
   readonly lookupTask?: LookupTaskFn;
+  /** Story 8.7 (FR-41): threaded into `chatTurn`'s deps for `/night`'s exclusion rule — the same `completion-log.ts` binding `ritual-cli.ts`'s `createNightPromptRitualDeps` already uses. */
+  readonly getCompletedTaskIdsToday?: () => ReadonlySet<ExternalId>;
 }
 
 /**
@@ -728,6 +731,9 @@ export async function runChatCli({
   lookupTask = async () => {
     throw new Error("chat-cli: no lookupTask dependency configured — cannot snapshot a close-out completion's Task fields");
   },
+  getCompletedTaskIdsToday = () => {
+    throw new Error("chat-cli: no getCompletedTaskIdsToday dependency configured — cannot exclude Tasks already completed today");
+  },
 }: ChatCliDeps): Promise<void> {
   // The running session transcript (2026-09-22 revision) — see
   // `withConversationHistory`'s own doc comment. Wrapping `io` here, once,
@@ -768,6 +774,7 @@ export async function runChatCli({
     readTasks,
     llmClient,
     session,
+    getCompletedTaskIdsToday,
     getNotionCreatePageBinding,
     searchFn,
     readCalendarEventsFn,
@@ -968,6 +975,11 @@ export async function main(env: Readonly<Record<string, string | undefined>> = p
   // `applyNightCloseOutConfirmation`'s own try/catch, which logs it and
   // never lets it block the completion record or the Status write.
   const lookupTask: LookupTaskFn = async (taskId) => (await readTasks()).find((t) => t.id === taskId);
+  // Story 8.7 (FR-41): the same completion-log.ts binding
+  // ritual-cli.ts's createNightPromptRitualDeps already uses — /night's
+  // exclusion rule.
+  const getCompletedTaskIdsToday = (): ReadonlySet<ExternalId> =>
+    listCompletedTaskIdsOnDate(connection, currentIsoDate(timeZone, () => new Date()), timeZone);
   // Same "lazily constructed, no unrelated startup requirement" convention
   // as `readTasks` above (Task 19) — a session that never answers a Night
   // Ritual close-out or Data-Completeness prompt must not be unable to
@@ -1111,6 +1123,7 @@ export async function main(env: Readonly<Record<string, string | undefined>> = p
       getCalendarApplyBinding,
       recordCompletion,
       lookupTask,
+      getCompletedTaskIdsToday,
     });
   } finally {
     connection.close();

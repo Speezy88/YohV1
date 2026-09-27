@@ -6,7 +6,13 @@
  * for `next`, so the recompute always reflects this turn's own answer.
  */
 import { getOpenInteractionRequest, updateInteractionRequestDetail, type MemoryStore } from "../adapters/memory-store.ts";
-import { applyNightCloseOutConfirmation, clearNightCloseOutRequestIfOpen, NIGHT_CLOSE_OUT_REQUEST_ID, type NightCloseOutRequestDetail } from "../rituals/night-ritual.ts";
+import {
+  applyNightCloseOutConfirmation,
+  clearNightCloseOutRequestIfOpen,
+  NIGHT_CLOSE_OUT_REQUEST_ID,
+  recordNightCloseOutHandledWithoutPrompt,
+  type NightCloseOutRequestDetail,
+} from "../rituals/night-ritual.ts";
 import { isSkipAnswer, parseNightCloseOutAnswer } from "../core/open-item-answers.ts";
 import { nextNightCloseOutTask, type NightCloseOutCursor } from "../core/open-item-questions.ts";
 import { buildOpenItemQuestion, type SurfaceOpenItemsDeps } from "./surface-open-items.ts";
@@ -50,6 +56,14 @@ async function withNext(
   if (!next.ok) return next;
   if (next.value === "done") {
     clearNightCloseOutRequestIfOpen(deps.store, { resolveUncheckedDay: skippedTaskIds.size === 0 });
+    // Story 8.7 (AD-5 Phase 2): the close-out is now fully answered — record
+    // it in the SAME memory-store.ts record night-escalate already reads,
+    // keyed to the NIGHT this close-out was about (closeOutDate), not
+    // necessarily the day it happened to be answered on. Written
+    // unconditionally (skip or not — a deliberate, documented trade-off: a
+    // skip already unblocks the chat session today, and this doesn't change
+    // that), so night-prompt will not re-ask tonight even for a skipped Task.
+    recordNightCloseOutHandledWithoutPrompt(deps.store, closeOutDate, new Date().toISOString());
     const skippedTitles = tasks.filter((t) => skippedTaskIds.has(t.taskId)).map((t) => t.taskTitle);
     const closing =
       skippedTitles.length === 0
