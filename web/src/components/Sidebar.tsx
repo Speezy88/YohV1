@@ -19,6 +19,7 @@ import { usePageNavigationContext } from "../lib/navigationContext.tsx";
 import { PAGES } from "../lib/pages.ts";
 import { PageIndicator } from "./PageIndicator.tsx";
 import { ThemeToggle } from "./ThemeToggle.tsx";
+import { YohMark } from "./YohMark.tsx";
 
 const PAGE_ICON_PATHS: Record<(typeof PAGES)[number]["id"], string> = {
   home: "M3 11l9-7 9 7 M5 10v10h14V10",
@@ -56,7 +57,7 @@ export function Sidebar(): React.JSX.Element {
   return (
     <nav aria-label="Pages" className="flex h-full w-[248px] shrink-0 flex-col gap-2.5 p-8">
       <div className="flex items-center gap-3 px-2.5 pb-7">
-        <span aria-hidden="true" className="size-10 rounded-lg bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end shadow-extruded-sm" />
+        <YohMark className="size-10 rounded-lg shadow-extruded-sm" />
         <span className="font-wordmark text-[26px] font-extrabold tracking-tight text-ink-primary">Yoh</span>
       </div>
 

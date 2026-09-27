@@ -40,6 +40,7 @@ import { PageNavigationContext } from "../lib/navigationContext.tsx";
 import { useReducedMotion } from "../hooks/useReducedMotion.ts";
 import { ChatMessage } from "./ChatMessage.tsx";
 import { ChatInput } from "./ChatInput.tsx";
+import { YohMark } from "./YohMark.tsx";
 
 /** Once within this many px of the stream's bottom, it still counts as "at the bottom" — avoids auto-scroll flapping off/on from sub-pixel rounding while text streams in. */
 const AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 48;
@@ -111,7 +112,7 @@ export function ChatPanel(): React.JSX.Element | null {
       >
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <span aria-hidden="true" className="size-[34px] rounded-md bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end" />
+            <YohMark className="size-[34px] rounded-md" />
             <span className="font-body text-title font-bold text-ink-primary">Yoh</span>
           </div>
           <div className="flex items-center gap-3">
