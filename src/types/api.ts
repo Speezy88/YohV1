@@ -16,7 +16,7 @@
  * the `/api/*` surface. `web/` may `import type` from here (AD-17) and from
  * nothing else in `src/` except other `types/` files.
  */
-import type { Result, YohError } from "./domain.ts";
+import type { Proposal, Result, YohError } from "./domain.ts";
 
 // ============================================================================
 // Serialized Result envelope
@@ -200,6 +200,55 @@ export interface PendingCheckOffResponse {
 /** `POST /api/check-off/:id/undo`'s value: the pending record is gone; nothing reached the Completion Log or Notion. */
 export interface UndoCheckOffResponse {
   readonly id: string;
+}
+
+// ============================================================================
+// Open interaction requests as resumable turns (Story 8.1) — new shapes only.
+// ============================================================================
+
+/** One selectable choice for an `OpenItemQuestion` — `[]` on the question itself means free text only. */
+export interface OpenItemOption {
+  readonly label: string;
+  readonly value: string;
+}
+
+/** The ONE currently-pending question for an open interaction request — deterministic `questionId`, so an answer can be checked for staleness (the conflict rule, C4). */
+export interface OpenItemQuestion {
+  readonly requestId: string;
+  readonly questionId: string;
+  readonly text: string;
+  readonly options: readonly OpenItemOption[];
+  readonly allowsFreeText: boolean;
+  /** Present when this question confirms a Proposal (e.g. an FR-25 suggestion) — echoed back verbatim in `AnswerOpenItemRequest.proposal`. */
+  readonly proposal?: Proposal<unknown>;
+}
+
+/** One open interaction request, with its current pending question already resolved. */
+export interface OpenItem {
+  readonly requestId: string;
+  readonly requestKind: string;
+  readonly promptText: string;
+  readonly question: OpenItemQuestion;
+}
+
+/** `GET /api/open-items`'s value (Task 7): every open request, each with its current question. */
+export interface OpenItemsResponse {
+  readonly items: readonly OpenItem[];
+}
+
+/** `POST /api/open-items/answer`'s body (Task 7). */
+export interface AnswerOpenItemRequest {
+  readonly requestId: string;
+  readonly questionId: string;
+  readonly answer: string;
+  readonly proposal?: Proposal<unknown>;
+}
+
+/** `POST /api/open-items/answer`'s value. */
+export interface AnswerOpenItemResponse {
+  readonly message?: string;
+  readonly receipts: readonly string[];
+  readonly next: OpenItemQuestion | "done";
 }
 
 // ============================================================================

@@ -154,6 +154,25 @@
  * heaviest user. This file imports both directly (AD-1 permits
  * `shell -> rituals`, never the reverse) and re-exports neither; nothing
  * about its behavior changed with either move.
+ *
+ * Story 8.1 update (Epic 8): every blocking answer LOOP this docstring
+ * describes above — the Data-Completeness field-by-field ask
+ * (`answerDataCompletenessRequest`), the Night Ritual close-out
+ * (`answerNightCloseOutRequest`), and the Self-Check prompt
+ * (`answerSelfCheckRequest`) — moved OUT of this file entirely, into
+ * `app/surface-open-items.ts` plus one `app/answer-*.ts` file per request
+ * kind, each answering exactly one question per call and returning the
+ * next question (or `"done"`) — the same shape a future Web route drives
+ * non-blockingly (C4). `parseNightCloseOutAnswer`/`isSkipAnswer`/
+ * `parseSelfCheckAnswer`/`parseProposalAnswer` moved to
+ * `core/open-item-answers.ts`; the pure cursor/question-assembly logic those
+ * loops used to inline now lives in `core/open-item-questions.ts`.
+ * `surfaceOpenInteractionRequests` (below) is now pure transport: it calls
+ * `app/surface-open-items.ts`'s `surfaceOpenItems`, prints the current
+ * question, reads one line, and calls `app/answer-open-item.ts`'s
+ * `answerOpenItem` — looping until `next === "done"` — for every request
+ * kind EXCEPT `"proposal"`, which still resolves through this file's own
+ * `answerProposalRequest` below (Task 3/Story 8.2's move, not this one).
  */
 import { createInterface } from "node:readline";
 import { Client } from "@notionhq/client";
@@ -166,8 +185,6 @@ import {
   getOpenInteractionRequest,
   getPlan,
   getSlipHistory,
-  listOpenInteractionRequests,
-  mergeTaskFieldOverride,
   putTimeBudget,
   type MemoryStore,
   type StoredRecord,
@@ -182,7 +199,6 @@ import {
   draftCalendarEditRequest,
   draftNotionPageFields,
   loadLlmAdapterConfigFromEnv,
-  suggestFieldValue,
   type AnthropicMessagesClient,
   type DraftedCalendarEditRequest,
 } from "../adapters/llm-adapter.ts";
@@ -212,12 +228,11 @@ import {
 } from "../adapters/completion-log.ts";
 import { search as runSearch, type SearchAdapterConfig } from "../adapters/search-adapter.ts";
 import { createTokenStore, loadGoogleOAuthConfigFromEnv, type TokenStore } from "../adapters/token-store.ts";
-import type { MissingFieldReport } from "../core/data-completeness-gate.ts";
 import { parsePlanningFieldValue } from "../core/planning-field-value.ts";
+import { parseProposalAnswer } from "../core/open-item-answers.ts";
 import { computeSlipBumpLevel } from "../core/slip-bump.ts";
 import { shapeDeclaredTimeBudget } from "../core/time-budget.ts";
 import { classifyTone, resolveToneSystemPrompt } from "../core/tone.ts";
-import { DATA_COMPLETENESS_REQUEST_ID, PLANNING_FIELD_LABELS } from "../rituals/data-completeness.ts";
 import { buildBlockerConfirmationLine, runMidDayReflow } from "../rituals/mid-day-reflow.ts";
 import {
   ACCENT,
@@ -229,21 +244,15 @@ import {
   shouldUseColor,
   WRAP_WIDTH,
 } from "../rituals/ritual-shared.ts";
-import {
-  applyNightCloseOutConfirmation,
-  clearNightCloseOutRequestIfOpen,
-  NIGHT_CLOSE_OUT_REQUEST_ID,
-  type NightCloseOutRequestDetail,
-  type NightCloseOutStatus,
-} from "../rituals/night-ritual.ts";
-import { applySelfCheckAnswer, isValidSelfCheckScore, SELF_CHECK_REQUEST_ID } from "../rituals/self-check.ts";
+import { RECENT_MESSAGES_WINDOW, type ChatSession } from "../app/chat-session.ts";
+import { surfaceOpenItems } from "../app/surface-open-items.ts";
+import { answerOpenItem, type AnswerOpenItemDeps } from "../app/answer-open-item.ts";
 import type {
   CalendarEditChange,
   CalendarEvent,
   ChatIntent,
   ChatTurn,
   ExternalId,
-  FieldValueSuggestion,
   InteractionRequest,
   IsoDate,
   NotionDatabaseTarget,
@@ -253,11 +262,11 @@ import type {
   Result,
   SearchAnswer,
   Task,
-  TaskFieldOverride,
   TaskStatus,
   TimeBudget,
   YohError,
 } from "../types/domain.ts";
+import type { OpenItem } from "../types/api.ts";
 
 // ============================================================================
 // REPL IO abstraction — injectable so tests never need a real TTY/stdin
@@ -353,147 +362,12 @@ function withConversationHistory(io: ChatCliIo, history: ChatTurn[]): ChatCliIo 
   };
 }
 
-/**
- * The thin wrapper `suggestFieldValue` (`llm-adapter.ts`, FR-25) is injected
- * with (Epic 6 retro item 7, F8/F9) — AD-1 forbids that `adapters/*.ts` file
- * from importing `core/planning-field-value.ts` directly, so this file,
- * which may import both, bridges them. Discards the Spencer-facing
- * rejection message: FR-25 treats an unparseable claimed value identically
- * to "no confident inference," never showing Spencer why (unlike FR-4's
- * `parsePlanningFieldValue` call below, which re-prompts with that exact
- * message).
- */
-function suggestedFieldValueParser(
-  field: PlanningFieldNames,
-  raw: string,
-): NonNullable<Task[PlanningFieldNames]> | undefined {
-  const parsed = parsePlanningFieldValue(field, raw);
-  return parsed.ok ? (parsed.value as NonNullable<Task[PlanningFieldNames]>) : undefined;
-}
-
-/** The shape `runChatCli`/`surfaceOpenInteractionRequests` thread through to `answerDataCompletenessRequest` — `notion-adapter.ts`'s `updateTaskField` (FR-24), pre-bound to its client/config, the same binding-convention `SetTaskStatusFn` (below) already establishes for `setTaskStatus`. */
+/** The shape `ChatCliDeps`/`main()` thread through as FR-24's Notion write — `notion-adapter.ts`'s `updateTaskField`, pre-bound to its client/config, the same binding-convention `SetTaskStatusFn` (below) already establishes for `setTaskStatus`. Story 8.1: this is now `app/answer-data-completeness.ts`'s `AnswerDataCompletenessDeps.updateTaskField` too — the Data-Completeness answer loop itself moved there. */
 type UpdateTaskFieldFn = (
   taskId: string,
   field: PlanningFieldNames,
   value: NonNullable<Task[PlanningFieldNames]>,
 ) => Promise<Result<void, YohError>>;
-
-/**
- * Answers the single combined `"data-completeness"` interaction request:
- * shows its (already-built) combined prompt line, then asks one follow-up
- * question per missing field per Task named in its `detail.incomplete`
- * payload, in order. Each answer is parsed via `parsePlanningFieldValue` and, once
- * valid, written to Notion FIRST (FR-24's `updateTaskField`, injected) and
- * only THEN persisted locally as a `TaskFieldOverride`
- * (`mergeTaskFieldOverride`) — mirroring `applyNightCloseOutConfirmation`'s
- * own "Notion written before any local state changes" ordering, so a local
- * override can never claim a value Notion doesn't actually have. A Notion
- * write failure re-asks the SAME question (Spencer sees why, via the
- * failure message) rather than storing an override Notion never agreed to;
- * an unparseable or blank answer does the same, unrelated to Notion at all
- * (UX-DR20) — neither skips the field nor stores anything.
- *
- * Only once every missing field across every named Task has been answered
- * is the interaction request itself cleared — re-reading its current
- * version immediately before clearing, so a genuine concurrent write to it
- * (e.g. a ritual re-running the gate mid-answer and replacing its content)
- * is still caught as `ConflictError` per AD-10 rather than silently
- * dropped.
- *
- * Returns `false` (without clearing the request) if `io.readLine` reports
- * EOF partway through — whatever was answered before that point stays
- * persisted as an override either way.
- */
-async function answerDataCompletenessRequest(
-  store: MemoryStore,
-  io: ChatCliIo,
-  record: StoredRecord<InteractionRequest>,
-  updateTaskField: UpdateTaskFieldFn,
-  llmClient?: AnthropicMessagesClient,
-  recentMessages: readonly string[] = [],
-): Promise<boolean> {
-  const detail = record.data.detail as { readonly incomplete?: readonly MissingFieldReport[] } | undefined;
-  const incomplete = detail?.incomplete ?? [];
-
-  io.writeLine(paint(record.data.promptText, ACCENT, shouldUseColor()));
-  io.writeLine("");
-
-  for (const report of incomplete) {
-    for (const field of report.missingFields) {
-      const label = PLANNING_FIELD_LABELS[field];
-
-      if (llmClient) {
-        let suggestion: FieldValueSuggestion | undefined;
-        try {
-          suggestion = await suggestFieldValue(
-            llmClient,
-            report.taskId,
-            report.taskTitle,
-            field,
-            recentMessages,
-            suggestedFieldValueParser,
-          );
-        } catch {
-          suggestion = undefined; // A Claude/API failure must never block the fallback blind ask.
-        }
-
-        if (suggestion) {
-          io.writeLine(`  ${report.taskTitle} — ${label}: I think it's "${suggestion.value}" — ${suggestion.reason}`);
-          let confirmAnswer: string | null = null;
-          do {
-            confirmAnswer = await io.readLine("  Sound right? (yes/no): ");
-            if (confirmAnswer === null) return false; // stdin closed mid-answer.
-          } while (confirmAnswer.trim().length === 0); // UX-DR20: silence is never an answer.
-
-          if (parseProposalAnswer(confirmAnswer) === true) {
-            const written = await updateTaskField(report.taskId, field, suggestion.value);
-            if (written.ok) {
-              mergeTaskFieldOverride(store, report.taskId, { [field]: suggestion.value } as TaskFieldOverride);
-              continue; // done with this field — skip the blind ask below.
-            }
-            io.writeLine(`I couldn't record that in Notion: ${written.error.message} — let's try a value directly.`);
-          }
-          // Anything other than a confirmed "yes" (an explicit "no," an
-          // unrecognized reply, or a Notion write failure on "yes") falls
-          // through to FR-4's plain blind ask below — FR-25 never blocks or
-          // replaces the baseline gate behavior.
-        }
-      }
-
-      for (;;) {
-        const answer = await io.readLine(`  ${report.taskTitle} — ${label}: `);
-        if (answer === null) return false; // stdin closed mid-answer.
-        if (answer.trim().length === 0) continue; // wait indefinitely (UX-DR20): re-ask, don't skip.
-
-        const parsed = parsePlanningFieldValue(field, answer);
-        if (!parsed.ok) {
-          io.writeLine(parsed.message);
-          continue; // re-ask the SAME question — an unparseable answer is not an answer.
-        }
-
-        const written = await updateTaskField(report.taskId, field, parsed.value as NonNullable<Task[PlanningFieldNames]>);
-        if (!written.ok) {
-          io.writeLine(
-            `I couldn't record that in Notion: ${written.error.message} — try again with a value closer to what's already in Notion.`,
-          );
-          continue; // re-ask — the Notion write must actually succeed before an override is stored.
-        }
-
-        mergeTaskFieldOverride(store, report.taskId, { [field]: parsed.value } as TaskFieldOverride);
-        break;
-      }
-    }
-  }
-
-  // Re-read the current version right before clearing (see doc comment
-  // above) rather than reusing `record.version`, which may be stale by now.
-  const current = getOpenInteractionRequest(store, DATA_COMPLETENESS_REQUEST_ID);
-  if (current) {
-    clearInteractionRequest(store, DATA_COMPLETENESS_REQUEST_ID, current.version);
-  }
-  io.writeLine("Got it — thanks. I'll factor that in next time I plan.");
-  return true;
-}
 
 // ============================================================================
 // Night Ritual close-out prompt (Task 19 / Story 3.1, FR-12–FR-14)
@@ -515,268 +389,13 @@ type RecordCompletionFn = (input: RecordCompletionInput) => void;
  */
 type LookupTaskFn = (taskId: ExternalId) => Promise<Task | undefined>;
 
-/**
- * Parses a raw close-out answer into `"completed"` or `"slipped"` — the same
- * deliberately-simple, clearly-documented pattern-matching convention every
- * other `chat-cli.ts` command parser uses (NOT real free-text NLU). Accepts
- * a few natural synonyms case-insensitively; anything else is rejected so
- * `answerNightCloseOutRequest` can re-prompt rather than guess. Does NOT
- * recognize `"skip"` — that is its own, separately-checked escape hatch
- * (`isSkipAnswer`, below), not a third `NightCloseOutStatus` value: skipping
- * a Task explicitly means "no status is being reported," which has no
- * `TaskStatus` to return.
- */
-export function parseNightCloseOutAnswer(raw: string): NightCloseOutStatus | undefined {
-  const normalized = raw.trim().toLowerCase();
-  if (/^(completed?|done|finished)$/.test(normalized)) return "completed";
-  if (/^(slipped?|missed|didn'?t (do it|finish)|not done)$/.test(normalized)) return "slipped";
-  return undefined;
-}
+// Story 8.1: `parseNightCloseOutAnswer`/`isSkipAnswer` moved to
+// `core/open-item-answers.ts`; `answerNightCloseOutRequest` moved (as
+// `answerNightCloseOut`) to `app/answer-night-close-out.ts`.
 
-/**
- * Recognizes Spencer's explicit "skip" escape hatch for ONE Task within a
- * close-out answer loop (Task 19 review fix) — see
- * `answerNightCloseOutRequest`'s own doc comment for why this exists and
- * what it does.
- */
-function isSkipAnswer(raw: string): boolean {
-  return /^skip$/i.test(raw.trim());
-}
-
-/**
- * Answers the single combined `"night-close-out"` interaction request: shows
- * its (already-built) combined prompt line, then asks one follow-up question
- * per named Task, in the order the request lists them. Mirrors
- * `answerDataCompletenessRequest`'s own shape exactly (Task 5's established
- * precedent for "one prompt covering multiple items, answered and persisted
- * one at a time, cleared only once every part is answered" — see this
- * file's module docstring for why the Data-Completeness prompt is the
- * closest precedent to follow rather than inventing a new shape).
- *
- * Each answer is parsed (`parseNightCloseOutAnswer`) and, once recognized,
- * immediately applied via `rituals/night-ritual.ts`'s
- * `applyNightCloseOutConfirmation` — which writes Notion FIRST and only then
- * updates local Slip-Bump state (see that function's own doc comment for
- * the ordering rationale). A blank answer re-prompts indefinitely
- * (UX-DR20), same as every other answer loop in this file.
- *
- * **The "skip" escape hatch (Task 19 review fix).** A Notion write failure
- * re-prompts the SAME question rather than silently moving on — correct for
- * a TRANSIENT failure (a network blip, a rate limit), where trying again
- * shortly after is the right move. It is wrong for a PERMANENT one (e.g. a
- * Task archived/deleted in Notion between Plan generation and close-out,
- * returning a hard 404 on every retry): without an escape, every answer
- * re-prompts forever, and since the request stays open on EOF, the very
- * NEXT chat session re-surfaces the same unanswerable prompt before
- * accepting anything else — a permanently unusable assistant. Typing
- * `"skip"` (recognized at ANY point in a Task's question, not only after a
- * failure — simpler to implement/document than gating it behind "has this
- * Task failed once already," and a legitimate "I don't want to answer this
- * one right now" is reasonable even absent a failure) leaves that ONE
- * Task's status unresolved for tonight: neither `setTaskStatus` nor
- * `recordSlip`/`clearSlip` is called for it, since Spencer explicitly did
- * not confirm what actually happened — recording a guess would be worse
- * than recording nothing. The loop still moves on to the next Task, and
- * the whole request still clears once every Task has been either answered
- * OR skipped (see below) — a skip is this task's chosen way to unblock the
- * rest of the close-out and the chat session itself, at the documented cost
- * that a skipped Task gets no Slip-Bump/Notion update for tonight (it is
- * not automatically re-asked; Spencer can address it another way, e.g.
- * directly in Notion, or it may be named again by a future night's prompt
- * if it's still on a later Plan).
- *
- * Only once every named Task has been either answered or explicitly skipped
- * is the interaction request itself cleared
- * (`clearNightCloseOutRequestIfOpen`) — re-reading its current version
- * immediately before clearing, same as `answerDataCompletenessRequest`, so
- * a genuine concurrent write to it is still caught as `ConflictError` per
- * AD-10 rather than silently dropped.
- *
- * Returns `false` (without clearing the request) if `io.readLine` reports
- * EOF partway through — whatever was answered or skipped before that point
- * stays applied either way (Notion already reflects an answered Task, and
- * so does any SlipHistory change; a skipped Task simply stays unresolved).
- */
-async function answerNightCloseOutRequest(
-  store: MemoryStore,
-  io: ChatCliIo,
-  record: StoredRecord<InteractionRequest>,
-  setTaskStatus: SetTaskStatusFn,
-  fallbackDate: IsoDate,
-  recordCompletion: RecordCompletionFn = () => {
-    throw new Error("chat-cli: no recordCompletion dependency configured — cannot record a Night Ritual close-out completion");
-  },
-  lookupTask: LookupTaskFn = async () => {
-    throw new Error("chat-cli: no lookupTask dependency configured — cannot snapshot a close-out completion's Task fields");
-  },
-): Promise<boolean> {
-  const detail = record.data.detail as NightCloseOutRequestDetail | undefined;
-  const tasks = detail?.tasks ?? [];
-  // The date these confirmations are ABOUT is the Plan's own date
-  // (`detail.date`, stamped by `runNightPromptRitual` when it built this
-  // request) — NOT necessarily the date Spencer happens to be answering on.
-  // Spencer may open chat the next morning to answer last night's prompt;
-  // `recordSlip`/`clearSlip` must record the slip against the day the Task
-  // was actually scheduled, not the day it was confirmed. `fallbackDate`
-  // (the caller's current local date) is used only if `detail.date` is
-  // somehow absent (a malformed/legacy record).
-  const closeOutDate = detail?.date ?? fallbackDate;
-
-  io.writeLine(paint(record.data.promptText, ACCENT, shouldUseColor()));
-  io.writeLine("");
-
-  const skippedTitles: string[] = [];
-
-  for (const t of tasks) {
-    for (;;) {
-      const answer = await io.readLine(`  ${t.taskTitle} — completed, slipped, or skip? `);
-      if (answer === null) return false; // stdin closed mid-answer.
-      if (answer.trim().length === 0) continue; // wait indefinitely (UX-DR20): re-ask, don't skip.
-
-      if (isSkipAnswer(answer)) {
-        skippedTitles.push(t.taskTitle);
-        io.writeLine(`Skipping "${t.taskTitle}" for now — nothing was recorded for it tonight.`);
-        break; // move on to the next Task without applying anything for this one.
-      }
-
-      const parsed = parseNightCloseOutAnswer(answer);
-      if (!parsed) {
-        io.writeLine(`I didn't understand "${answer}" — try "completed", "slipped", or "skip" to leave it for now.`);
-        continue; // re-ask the SAME question — an unparseable answer is not an answer.
-      }
-
-      const applied = await applyNightCloseOutConfirmation(
-        { store, setTaskStatus, recordCompletion, lookupTask },
-        t.taskId,
-        t.taskTitle,
-        parsed,
-        closeOutDate,
-        new Date().toISOString(),
-      );
-      if (!applied.ok) {
-        io.writeLine(
-          `I couldn't record that in Notion: ${applied.error.message} — try again, or type "skip" to leave it for now and move on.`,
-        );
-        continue; // re-ask — the Notion write must actually succeed before moving on, unless Spencer chooses to skip.
-      }
-      break;
-    }
-  }
-
-  // Task 21 (third post-review fix): only resolve a matching UncheckedDay
-  // record when EVERY named Task was genuinely answered — a skip means
-  // Spencer still hasn't confirmed what happened to at least one Task, so
-  // the flag (if this night was ever escalated/recorded) must survive to
-  // surface on a future Morning Plan rather than silently vanishing. See
-  // clearNightCloseOutRequestIfOpen's own doc comment for the full story.
-  clearNightCloseOutRequestIfOpen(store, { resolveUncheckedDay: skippedTitles.length === 0 });
-  io.writeLine(
-    skippedTitles.length === 0
-      ? "Got it — thanks. I've updated Notion and factored this into tomorrow's plan."
-      : `Got it — thanks. I've updated Notion for the rest; skipped for now: ${skippedTitles.join(", ")}.`,
-  );
-  return true;
-}
-
-// ============================================================================
-// Periodic Self-Check prompt (Task 24 / Story 4.3, FR-17, UX-DR15)
-// ============================================================================
-
-/**
- * Parses a raw Self-Check answer line into a score/reason pair. Per UX-DR15
- * both are required together — this is enforced structurally by the regex
- * itself, not by a separate "is the reason present" check afterward: a bare
- * number alone (or a number followed only by whitespace) simply fails to
- * MATCH, so it is indistinguishable from any other unparseable answer to
- * `answerSelfCheckRequest`'s loop below, which re-prompts exactly the same
- * way it would for a blank/nonsense line — no special-cased "you gave a
- * number but no reason" branch needed. The same deliberately-simple,
- * clearly-documented pattern-matching convention every other `chat-cli.ts`
- * answer parser uses (NOT real free-text NLU): a leading 1-2 digit whole
- * number, at least one space, then the rest of the line as the reason
- * (trimmed, must be non-blank). `isValidSelfCheckScore` (`rituals/
- * self-check.ts`) is the single source of truth for the valid range (1-10) —
- * duplicated nowhere here.
- */
-const SELF_CHECK_ANSWER_RE = /^\s*(\d{1,2})\s+(.+?)\s*$/;
-
-export interface SelfCheckAnswer {
-  readonly score: number;
-  readonly reason: string;
-}
-
-export function parseSelfCheckAnswer(raw: string): SelfCheckAnswer | undefined {
-  const match = SELF_CHECK_ANSWER_RE.exec(raw);
-  if (!match) return undefined;
-  const score = Number(match[1]);
-  const reason = match[2]!.trim();
-  if (!isValidSelfCheckScore(score) || reason.length === 0) return undefined;
-  return { score, reason };
-}
-
-/**
- * Answers the open `"self-check"` interaction request: shows the prompt,
- * then waits for ONE line carrying both a numeric score and a short written
- * reason (UX-DR15). A blank line re-prompts indefinitely (UX-DR20, the same
- * "wait indefinitely" pattern every other answer loop in this file uses); an
- * unparseable answer — including a bare number with no reason — ALSO
- * re-prompts the SAME question rather than guessing or accepting a partial
- * answer, per `parseSelfCheckAnswer`'s own doc comment.
- *
- * On a valid answer: persists it and the freshly-computed next-due schedule
- * via `rituals/self-check.ts`'s `applySelfCheckAnswer` — which is what
- * actually calls the shared `computeEscalation` curve (AD-6) via that file's
- * own `scheduleNextSelfCheck`; nothing here re-derives that arithmetic —
- * then clears the request, re-reading its current version immediately
- * before clearing (same as `answerDataCompletenessRequest`/
- * `answerNightCloseOutRequest`), so a genuine concurrent write to it is
- * still caught as `ConflictError` per AD-10 rather than silently dropped. A
- * failure to persist (a rare `ConflictError`) re-prompts the same question
- * rather than silently dropping the answer.
- *
- * `today` is the local calendar date this check-in is recorded against —
- * `runChatCli` passes its own current local date (the same value already
- * threaded through as `fallbackDate` for the night-close-out branch).
- * `random` defaults to `Math.random` in production and is only ever
- * overridden by a test.
- *
- * Returns `false` (without clearing the request) if `io.readLine` reports
- * EOF partway through — the request stays open, unanswered, for the next
- * session (UX-DR20).
- */
-async function answerSelfCheckRequest(
-  store: MemoryStore,
-  io: ChatCliIo,
-  record: StoredRecord<InteractionRequest>,
-  today: IsoDate,
-  random: () => number,
-): Promise<boolean> {
-  io.writeLine(paint(record.data.promptText, ACCENT, shouldUseColor()));
-  io.writeLine("");
-
-  for (;;) {
-    const answer = await io.readLine("  Score + reason: ");
-    if (answer === null) return false; // stdin closed mid-answer.
-    if (answer.trim().length === 0) continue; // wait indefinitely (UX-DR20): re-ask, don't clear.
-
-    const parsed = parseSelfCheckAnswer(answer);
-    if (!parsed) {
-      io.writeLine('I need both a number (1-10) and a short reason — e.g. "7 feeling on top of things".');
-      continue; // re-ask — UX-DR15: a bare number alone is not a complete answer.
-    }
-
-    const applied = applySelfCheckAnswer(store, { today, score: parsed.score, reason: parsed.reason, random });
-    if (!applied.ok) {
-      io.writeLine(`I couldn't record that: ${applied.error.message} — try again.`);
-      continue;
-    }
-
-    const current = getOpenInteractionRequest(store, SELF_CHECK_REQUEST_ID);
-    if (current) clearInteractionRequest(store, SELF_CHECK_REQUEST_ID, current.version);
-    io.writeLine("Thanks — got it. I'll check in again before too long.");
-    return true;
-  }
-}
+// Story 8.1: `parseSelfCheckAnswer`/`SelfCheckAnswer` moved to
+// `core/open-item-answers.ts`; `answerSelfCheckRequest` moved (as
+// `answerSelfCheck`) to `app/answer-self-check.ts`.
 
 // ============================================================================
 // Propose-Don't-Impose confirm/apply pathway (Task 23 / Story 4.2, AD-3)
@@ -911,20 +530,9 @@ function timeBudgetEntityAccessor(store: MemoryStore): ProposalEntityAccessor<Pa
   };
 }
 
-/**
- * Recognizes a yes/no answer to an open Proposal, tolerant of a few natural
- * variants — the same deliberately-simple, clearly-documented pattern
- * matching `parseNightCloseOutAnswer` uses above (NOT real free-text NLU).
- * Returns `undefined` for anything else, so `answerProposalRequest` re-asks
- * rather than guessing — UX-DR16: silence (and anything that isn't a clearly
- * recognized yes/no) is never treated as consent.
- */
-export function parseProposalAnswer(raw: string): boolean | undefined {
-  const normalized = raw.trim().toLowerCase();
-  if (/^(y|yes|yeah|yep|confirm|apply)$/.test(normalized)) return true;
-  if (/^(n|no|nope|dismiss|decline)$/.test(normalized)) return false;
-  return undefined;
-}
+// Story 8.1 (Controller Ruling 2): `parseProposalAnswer` moved to
+// `core/open-item-answers.ts` (imported at the top of this file) — used by
+// `answerProposalRequest` below exactly as before.
 
 /**
  * Answers a single open `requestKind: "proposal"` interaction request
@@ -1032,116 +640,118 @@ async function answerProposalRequest(
 }
 
 /**
- * Surfaces every currently open interaction request, one at a time, each
- * blocking for Spencer's answer before moving to the next — AD-5's "an open
- * confirmation blocks the chat flow rather than queuing silently alongside
- * something else." There is no timeout anywhere in this loop (UX-DR20):
- * every `io.readLine` call is awaited indefinitely, and a blank or
- * unparseable answer re-prompts rather than clearing the request or giving
+ * Story 8.1 rewrite: `chat-cli.ts` is transport only over `app/surface-
+ * open-items.ts`'s `surfaceOpenItems` and `app/answer-open-item.ts`'s
+ * `answerOpenItem` — the exact shape a future Web route drives
+ * non-blockingly (C4). Surfaces every currently open interaction request,
+ * one at a time, each blocking for Spencer's answer before moving to the
+ * next — AD-5's "an open confirmation blocks the chat flow rather than
+ * queuing silently alongside something else." There is no timeout anywhere
+ * in this loop (UX-DR20): every `io.readLine` call is awaited indefinitely,
+ * and a blank answer re-prompts rather than clearing the request or giving
  * up.
  *
- * The `"data-completeness"` request gets its full typed answer treatment
- * (`answerDataCompletenessRequest`, above: parse each missing field's
- * answer, persist it as a `TaskFieldOverride`, only then clear). The
- * `"night-close-out"` request (Task 19) gets its own typed treatment the
- * same way (`answerNightCloseOutRequest`, above: parse each Task's
- * completed/slipped answer, write Notion and Slip-Bump state, only then
- * clear). The `"self-check"` request (Task 24) gets its own typed treatment
- * too (`answerSelfCheckRequest`, above: parse a combined score+reason
- * answer, persist it and the next-due schedule, only then clear). Any OTHER
- * open request (a future Proposal prompt) falls back to the purely
- * mechanical surface-then-clear-on-any-non-empty-answer behavior this file
- * established before the Task 5 fix — a later task is expected to add its
- * own typed answer-application step the same way this file now does for
- * each of the above.
+ * The `"proposal"` request kind is the one exception, still resolved by
+ * this file's own `answerProposalRequest` (Task 3's move) — every other
+ * kind (`"data-completeness"`, `"night-close-out"`, `"self-check"`, and any
+ * future/unrecognized kind) answers one question per turn through
+ * `answerOpenItem`, printing each returned question, reading one line, and
+ * calling `answerOpenItem` again until `next === "done"`.
  *
- * `setTaskStatus`/`fallbackDate` are needed ONLY by the `"night-close-out"`
- * branch; both default to values that are safe for every OTHER caller
- * (including every pre-Task-19 test call site above, which never exercises
- * that branch) — `setTaskStatus` defaults to a stub that throws only if
- * actually invoked (mirrors `runChatCli`'s own `readTasks` default), and
- * `fallbackDate` defaults to `"UTC"`'s local date. `fallbackDate` is
- * deliberately NOT the date used to record a close-out confirmation's
- * Slip-Bump — `answerNightCloseOutRequest` prefers the Plan's own date
- * (`InteractionRequest.detail.date`, stamped when `runNightPromptRitual`
- * built the request), since Spencer may not answer until the next morning;
- * this parameter is only the last-resort fallback for a malformed/legacy
- * record with no `detail.date` at all, so it is provably never read in the
- * ordinary case. `runChatCli` itself always supplies its own real
- * `timeZone`-derived date — see that function's own doc comment on why
- * `timeZone` is never silently defaulted to UTC there. `fallbackDate` is
- * ALSO what `answerSelfCheckRequest` uses as its own `today` — unlike
- * night-close-out, a Self-Check answer has no earlier "Plan date" to prefer,
- * so the date Spencer is actually answering on is the right one to schedule
- * the next interval from.
- *
- * `random` (Task 24) is `rituals/self-check.ts`'s injectable `[0, 1)` RNG,
- * threaded through to `answerSelfCheckRequest` — defaults to `Math.random`
- * in production, overridden only by a test.
+ * `answerDeps` defaults to a set of stubs that throw only if actually
+ * invoked (mirrors every other optional dependency in this file) — safe for
+ * any caller that only ever exercises the `"proposal"` branch, or surfaces
+ * nothing at all. `runChatCli` always supplies a real one, built fresh at
+ * each call site so `today`/`session` stay current.
  *
  * Returns once no interaction request remains open, or once `io.readLine`
  * reports EOF (stdin closed) — whichever comes first.
  */
+function defaultAnswerOpenItemDeps(store: MemoryStore): AnswerOpenItemDeps {
+  return {
+    store,
+    session: { recentMessages: [], lastSearchAnswer: undefined },
+    updateTaskField: async () => {
+      throw new Error("chat-cli: no updateTaskField dependency configured — cannot record a Data-Completeness answer in Notion");
+    },
+    setTaskStatus: async () => {
+      throw new Error("chat-cli: no setTaskStatus dependency configured — cannot record Night Ritual close-out");
+    },
+    recordCompletion: () => {
+      throw new Error("chat-cli: no recordCompletion dependency configured — cannot record a Night Ritual close-out completion");
+    },
+    lookupTask: async () => {
+      throw new Error("chat-cli: no lookupTask dependency configured — cannot snapshot a close-out completion's Task fields");
+    },
+    today: localIsoDate(new Date(), "UTC"),
+    random: Math.random,
+  };
+}
+
 export async function surfaceOpenInteractionRequests(
   store: MemoryStore,
   io: ChatCliIo,
-  setTaskStatus: SetTaskStatusFn = async () => {
-    throw new Error("chat-cli: no setTaskStatus dependency configured — cannot record Night Ritual close-out");
-  },
-  fallbackDate: IsoDate = localIsoDate(new Date(), "UTC"),
-  random: () => number = Math.random,
-  updateTaskField: UpdateTaskFieldFn = async () => {
-    throw new Error("chat-cli: no updateTaskField dependency configured — cannot record a Data-Completeness answer in Notion");
-  },
-  llmClient?: AnthropicMessagesClient,
-  recentMessages: readonly string[] = [],
-  recordCompletion: RecordCompletionFn = () => {
-    throw new Error("chat-cli: no recordCompletion dependency configured — cannot record a Night Ritual close-out completion");
-  },
-  lookupTask: LookupTaskFn = async () => {
-    throw new Error("chat-cli: no lookupTask dependency configured — cannot snapshot a close-out completion's Task fields");
-  },
+  answerDeps: AnswerOpenItemDeps = defaultAnswerOpenItemDeps(store),
 ): Promise<void> {
   for (;;) {
-    const open = listOpenInteractionRequests(store);
-    if (open.length === 0) return;
-    const next = open[0]!;
+    const surfaced = await surfaceOpenItems(answerDeps, {});
+    if (!surfaced.ok || surfaced.value.items.length === 0) return;
+    const item = surfaced.value.items[0]!;
 
-    if (next.id === DATA_COMPLETENESS_REQUEST_ID && next.data.requestKind === "data-completeness") {
-      const resolved = await answerDataCompletenessRequest(store, io, next, updateTaskField, llmClient, recentMessages);
-      if (!resolved) return; // EOF mid-answer.
-      continue;
-    }
-
-    if (next.id === NIGHT_CLOSE_OUT_REQUEST_ID && next.data.requestKind === "night-close-out") {
-      const resolved = await answerNightCloseOutRequest(store, io, next, setTaskStatus, fallbackDate, recordCompletion, lookupTask);
-      if (!resolved) return; // EOF mid-answer.
-      continue;
-    }
-
-    if (next.id === SELF_CHECK_REQUEST_ID && next.data.requestKind === "self-check") {
-      const resolved = await answerSelfCheckRequest(store, io, next, fallbackDate, random);
-      if (!resolved) return; // EOF mid-answer.
-      continue;
-    }
-
-    if (next.data.requestKind === "proposal") {
+    if (item.requestKind === "proposal") {
       // Checked by `requestKind` alone, deliberately not by a fixed id —
       // see `apply`'s own doc comment on staying generic over `Proposal<T>`
       // for a future Proposal kind with its own request id.
-      const resolved = await answerProposalRequest(store, io, next);
+      const record = getOpenInteractionRequest(store, item.requestId);
+      if (!record) continue; // cleared/changed concurrently — re-surface fresh.
+      const resolved = await answerProposalRequest(store, io, record);
       if (!resolved) return; // EOF mid-answer.
       continue;
     }
 
-    io.writeLine(paint(next.data.promptText, ACCENT, shouldUseColor()));
-    io.writeLine("");
-    const answer = await io.readLine("> ");
-    if (answer === null) return; // stdin closed — nothing more can be surfaced or answered.
-    if (answer.trim().length === 0) continue; // wait indefinitely (UX-DR20): re-prompt, don't clear on a blank line.
+    const resolved = await answerAndPresentOneItem(io, answerDeps, item);
+    if (!resolved) return; // EOF mid-answer.
+  }
+}
 
-    clearInteractionRequest(store, next.id, next.version);
-    io.writeLine("Got it — thanks.");
+/**
+ * Presents ONE open item's CURRENT question, reads one line, and calls
+ * `answerOpenItem` — looping (still within this one item, never returning to
+ * `surfaceOpenInteractionRequests`'s own outer loop) as long as the answer
+ * carries a `next` question rather than `"done"` (Review Focus #5: a
+ * decline-then-blind-answer within one field completes within a single
+ * `surfaceOpenInteractionRequests` call, before any unrelated line is read).
+ * A blank line re-prompts indefinitely (UX-DR20) without ever calling
+ * `answerOpenItem`. Returns `false` (leaving whatever's pending open,
+ * unanswered) on EOF.
+ */
+async function answerAndPresentOneItem(io: ChatCliIo, answerDeps: AnswerOpenItemDeps, first: OpenItem): Promise<boolean> {
+  io.writeLine(paint(first.promptText, ACCENT, shouldUseColor()));
+  io.writeLine("");
+  let question = first.question;
+  for (;;) {
+    if (question.text.length > 0) io.writeLine(question.text);
+    let answer: string | null;
+    for (;;) {
+      answer = await io.readLine("> ");
+      if (answer === null) return false; // stdin closed mid-answer.
+      if (answer.trim().length > 0) break; // wait indefinitely (UX-DR20): re-ask, don't skip.
+    }
+
+    const result = await answerOpenItem(answerDeps, {
+      requestId: first.requestId,
+      questionId: question.questionId,
+      answer: answer.trim(),
+      ...(question.proposal !== undefined ? { proposal: question.proposal } : {}),
+    });
+    if (!result.ok) {
+      io.writeLine(`I can't process that any more — ${result.error.message}`);
+      return true;
+    }
+    if (result.value.message) io.writeLine(result.value.message);
+    for (const receipt of result.value.receipts) io.writeLine(receipt);
+    if (result.value.next === "done") return true;
+    question = result.value.next;
   }
 }
 
@@ -2058,32 +1668,37 @@ export async function runChatCli({
   const chatHistory: ChatTurn[] = [];
   io = withConversationHistory(io, chatHistory);
 
-  // FR-25 (Story 6.2): a small bounded window of Spencer's own recent
-  // (non-blank) chat lines, threaded into `suggestFieldValue`'s inference
-  // attempt — never persisted (AD-11's "enrichment happens at display time,
-  // every time, not once at write time"), so it's purely an in-memory,
-  // per-session accumulator. Deliberately kept separate from `chatHistory`
-  // above: FR-25 wants only Spencer's OWN lines, not Yoh's replies.
-  const recentMessages: string[] = [];
-  const RECENT_MESSAGES_WINDOW = 20;
+  // Story 8.1 (C3): the one per-conversation `ChatSession` — replaces this
+  // function's own former `recentMessages`/`lastSearchAnswer` locals.
+  // `session.recentMessages` is FR-25's small bounded window of Spencer's
+  // own recent (non-blank) chat lines, threaded into `surfaceOpenItems`'s
+  // inference attempt — never persisted (AD-11's "enrichment happens at
+  // display time, every time, not once at write time"), so it's purely an
+  // in-memory, per-session accumulator, deliberately kept separate from
+  // `chatHistory` above (FR-25 wants only Spencer's OWN lines, not Yoh's
+  // replies). `session.lastSearchAnswer` (Story 6.5 / FR-29) is the most
+  // recent `SearchAnswer` produced THIS session (never persisted — "save
+  // that" only ever files a result from the current conversation), set by
+  // the search-trigger branch below.
+  const session: ChatSession = { recentMessages: [], lastSearchAnswer: undefined };
 
-  // Story 6.5 (FR-29): the most recent SearchAnswer produced THIS session
-  // (never persisted — "save that" only ever files a result from the
-  // current conversation), set by the search-trigger branch below.
-  let lastSearchAnswer: { readonly query: string; readonly answer: SearchAnswer } | undefined;
-
-  await surfaceOpenInteractionRequests(
+  // Built fresh at each `surfaceOpenInteractionRequests` call site (below)
+  // so `today` always reflects the current instant — mirrors this
+  // function's own pre-Story-8.1 convention of recomputing
+  // `currentIsoDate(timeZone, now)` fresh at every call, never caching it.
+  const buildAnswerDeps = (): AnswerOpenItemDeps => ({
     store,
-    io,
-    setTaskStatus,
-    currentIsoDate(timeZone, now),
-    undefined,
-    updateTaskField,
+    session,
     llmClient,
-    recentMessages,
+    updateTaskField,
+    setTaskStatus,
     recordCompletion,
     lookupTask,
-  );
+    today: currentIsoDate(timeZone, now),
+    random: Math.random,
+  });
+
+  await surfaceOpenInteractionRequests(store, io, buildAnswerDeps());
 
   // Set once the first real (non-blank) line has been handled, so a
   // muted divider separates each conversation turn from the next —
@@ -2104,25 +1719,14 @@ export async function runChatCli({
     if (line === null) return;
 
     if (line.trim().length > 0) {
-      recentMessages.push(line.trim());
-      if (recentMessages.length > RECENT_MESSAGES_WINDOW) recentMessages.shift();
+      session.recentMessages.push(line.trim());
+      if (session.recentMessages.length > RECENT_MESSAGES_WINDOW) session.recentMessages.shift();
     }
 
     // Re-check before processing anything else — a ritual running
     // concurrently (AD-10) may have opened a new interaction request since
     // the last check.
-    await surfaceOpenInteractionRequests(
-      store,
-      io,
-      setTaskStatus,
-      currentIsoDate(timeZone, now),
-      undefined,
-      updateTaskField,
-      llmClient,
-      recentMessages,
-      recordCompletion,
-      lookupTask,
-    );
+    await surfaceOpenInteractionRequests(store, io, buildAnswerDeps());
 
     if (line.trim().length === 0) continue;
     turnComplete = true;
@@ -2166,7 +1770,7 @@ export async function runChatCli({
     // taken over by the FR-26 create-item draft path instead of filing the
     // actual search result (FR-29).
     if (isSaveSearchResultCommand(line)) {
-      await handleSaveSearchResultCommand(io, lastSearchAnswer, currentIsoDate(timeZone, now), createNotionPage);
+      await handleSaveSearchResultCommand(io, session.lastSearchAnswer, currentIsoDate(timeZone, now), createNotionPage);
       continue;
     }
 
@@ -2221,9 +1825,9 @@ export async function runChatCli({
       // before "save that" can file anything, and a still-set earlier
       // answer is exactly as stale as one left over from a failure.
       if (answer === undefined || (answer.answer.length === 0 && answer.citations.length === 0)) {
-        lastSearchAnswer = undefined;
+        session.lastSearchAnswer = undefined;
       } else {
-        lastSearchAnswer = { query: chatIntent.query, answer };
+        session.lastSearchAnswer = { query: chatIntent.query, answer };
       }
       continue;
     }

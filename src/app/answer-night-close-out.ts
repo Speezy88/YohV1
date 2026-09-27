@@ -1,0 +1,103 @@
+/**
+ * src/app/answer-night-close-out.ts
+ *
+ * Story 8.1. Answers exactly ONE close-out Task per call (AD-16). Persists
+ * the resolved/skipped cursor BEFORE delegating to `buildOpenItemQuestion`
+ * for `next`, so the recompute always reflects this turn's own answer.
+ */
+import { getOpenInteractionRequest, updateInteractionRequestDetail, type MemoryStore } from "../adapters/memory-store.ts";
+import { applyNightCloseOutConfirmation, clearNightCloseOutRequestIfOpen, NIGHT_CLOSE_OUT_REQUEST_ID, type NightCloseOutRequestDetail } from "../rituals/night-ritual.ts";
+import { isSkipAnswer, parseNightCloseOutAnswer } from "../core/open-item-answers.ts";
+import { nextNightCloseOutTask, type NightCloseOutCursor } from "../core/open-item-questions.ts";
+import { buildOpenItemQuestion, type SurfaceOpenItemsDeps } from "./surface-open-items.ts";
+import type { ExternalId, IsoDate, Result, Task, TaskStatus, YohError } from "../types/domain.ts";
+import type { RecordCompletionInput } from "../adapters/completion-log.ts";
+import type { AnswerOpenItemRequest, AnswerOpenItemResponse } from "../types/api.ts";
+
+export interface AnswerNightCloseOutDeps extends SurfaceOpenItemsDeps {
+  readonly setTaskStatus: (taskId: ExternalId, status: TaskStatus) => Promise<Result<void, YohError>>;
+  readonly recordCompletion: (input: RecordCompletionInput) => void;
+  readonly lookupTask: (taskId: ExternalId) => Promise<Task | undefined>;
+}
+
+function readCursor(detail: (NightCloseOutRequestDetail & { readonly cursor?: NightCloseOutCursor }) | undefined) {
+  return { resolvedTaskIds: new Set(detail?.cursor?.resolvedTaskIds ?? []), skippedTaskIds: new Set(detail?.cursor?.skippedTaskIds ?? []) };
+}
+
+async function withNext(
+  deps: AnswerNightCloseOutDeps,
+  requestId: string,
+  closeOutDate: IsoDate,
+  tasks: NightCloseOutRequestDetail["tasks"],
+  resolvedTaskIds: ReadonlySet<string>,
+  skippedTaskIds: ReadonlySet<string>,
+  message: string | undefined,
+  receipts: readonly string[],
+): Promise<Result<AnswerOpenItemResponse, YohError>> {
+  const current = getOpenInteractionRequest(deps.store, requestId);
+  if (current) {
+    try {
+      updateInteractionRequestDetail<NightCloseOutRequestDetail & { cursor: NightCloseOutCursor }>(deps.store, requestId, current.version, () => ({
+        date: closeOutDate,
+        tasks,
+        cursor: { resolvedTaskIds: [...resolvedTaskIds], skippedTaskIds: [...skippedTaskIds] },
+      }));
+    } catch {
+      return { ok: false, error: { kind: "conflict", message: "answer-night-close-out: the request changed concurrently" } };
+    }
+  }
+  const next = await buildOpenItemQuestion(deps, { requestId });
+  if (!next.ok) return next;
+  if (next.value === "done") {
+    clearNightCloseOutRequestIfOpen(deps.store, { resolveUncheckedDay: skippedTaskIds.size === 0 });
+    const skippedTitles = tasks.filter((t) => skippedTaskIds.has(t.taskId)).map((t) => t.taskTitle);
+    const closing =
+      skippedTitles.length === 0
+        ? "Got it — thanks. I've updated Notion and factored this into tomorrow's plan."
+        : `Got it — thanks. I've updated Notion for the rest; skipped for now: ${skippedTitles.join(", ")}.`;
+    return { ok: true, value: { message: message ?? closing, receipts, next: "done" } };
+  }
+  return { ok: true, value: { ...(message !== undefined ? { message } : {}), receipts, next: next.value } };
+}
+
+export async function answerNightCloseOut(deps: AnswerNightCloseOutDeps, input: AnswerOpenItemRequest): Promise<Result<AnswerOpenItemResponse, YohError>> {
+  const record = getOpenInteractionRequest(deps.store, NIGHT_CLOSE_OUT_REQUEST_ID);
+  if (!record) return { ok: false, error: { kind: "conflict", message: "answer-night-close-out: no open close-out request" } };
+  const detail = record.data.detail as (NightCloseOutRequestDetail & { readonly cursor?: NightCloseOutCursor }) | undefined;
+  const tasks = detail?.tasks ?? [];
+  const closeOutDate: IsoDate = detail?.date ?? "1970-01-01";
+  const { resolvedTaskIds, skippedTaskIds } = readCursor(detail);
+  const pending = nextNightCloseOutTask({ tasks, resolvedTaskIds, skippedTaskIds });
+  if (!pending || pending.taskId !== input.questionId) {
+    return { ok: false, error: { kind: "conflict", message: "answer-night-close-out: that Task is no longer the pending one" } };
+  }
+
+  if (isSkipAnswer(input.answer)) {
+    return withNext(
+      deps,
+      record.id,
+      closeOutDate,
+      tasks,
+      resolvedTaskIds,
+      new Set([...skippedTaskIds, pending.taskId]),
+      `Skipping "${pending.taskTitle}" for now — nothing was recorded for it tonight.`,
+      [],
+    );
+  }
+  const parsed = parseNightCloseOutAnswer(input.answer);
+  if (!parsed) {
+    return withNext(deps, record.id, closeOutDate, tasks, resolvedTaskIds, skippedTaskIds, `I didn't understand "${input.answer}" — try "completed", "slipped", or "skip" to leave it for now.`, []);
+  }
+  const applied = await applyNightCloseOutConfirmation(
+    { store: deps.store, setTaskStatus: deps.setTaskStatus, recordCompletion: deps.recordCompletion, lookupTask: deps.lookupTask },
+    pending.taskId,
+    pending.taskTitle,
+    parsed,
+    closeOutDate,
+    new Date().toISOString(),
+  );
+  if (!applied.ok) {
+    return withNext(deps, record.id, closeOutDate, tasks, resolvedTaskIds, skippedTaskIds, `I couldn't record that in Notion: ${applied.error.message} — try again, or type "skip" to leave it for now and move on.`, []);
+  }
+  return withNext(deps, record.id, closeOutDate, tasks, new Set([...resolvedTaskIds, pending.taskId]), skippedTaskIds, undefined, [`Recorded "${pending.taskTitle}" as ${parsed}.`]);
+}

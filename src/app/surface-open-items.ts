@@ -1,0 +1,115 @@
+/**
+ * src/app/surface-open-items.ts
+ *
+ * Story 8.1 (C3/C4). `buildOpenItemQuestion` is the ONE call site that
+ * fetches an FR-25 suggestion (impure — `llmClient`) and hands it to
+ * `core/open-item-questions.ts`'s pure assemblers; every `app/answer-*.ts`
+ * file calls it too, after mutating state, to build
+ * `AnswerOpenItemResponse.next` — so "what's pending" is computed in exactly
+ * one place (Controller Ruling 1), never duplicated between surfacing and
+ * answering.
+ */
+import { getOpenInteractionRequest, getTaskFieldOverride, listOpenInteractionRequests, type MemoryStore, type StoredRecord } from "../adapters/memory-store.ts";
+import { suggestFieldValue, type AnthropicMessagesClient } from "../adapters/llm-adapter.ts";
+import { parsePlanningFieldValue } from "../core/planning-field-value.ts";
+import {
+  buildDataCompletenessQuestion,
+  buildGenericQuestion,
+  buildNightCloseOutQuestion,
+  buildSelfCheckQuestion,
+  nextDataCompletenessQuestion,
+  nextNightCloseOutTask,
+  type DataCompletenessCursor,
+  type NightCloseOutCursor,
+} from "../core/open-item-questions.ts";
+import type { MissingFieldReport } from "../core/data-completeness-gate.ts";
+import type { NightCloseOutRequestDetail } from "../rituals/night-ritual.ts";
+import type { ChatSession } from "./chat-session.ts";
+import type { FieldValueSuggestion, InteractionRequest, PlanningFieldNames, Result, Task, TaskFieldOverride, YohError } from "../types/domain.ts";
+import type { OpenItem, OpenItemQuestion, OpenItemsResponse } from "../types/api.ts";
+
+export interface SurfaceOpenItemsDeps {
+  readonly store: MemoryStore;
+  readonly session: ChatSession;
+  readonly llmClient?: AnthropicMessagesClient;
+}
+
+export interface BuildOpenItemQuestionInput {
+  readonly requestId: string;
+}
+
+/** Bridges `parsePlanningFieldValue` (`core/`) into `suggestFieldValue`'s injected-parser parameter (`adapters/llm-adapter.ts` cannot import `core/*.ts` — AD-1). Discards the rejection message: FR-25 treats an unparseable claimed value identically to "no confident inference." */
+function parseValueWrapper(field: PlanningFieldNames, raw: string): NonNullable<Task[PlanningFieldNames]> | undefined {
+  const parsed = parsePlanningFieldValue(field, raw);
+  return parsed.ok ? (parsed.value as NonNullable<Task[PlanningFieldNames]>) : undefined;
+}
+
+function readOverridesByTaskId(store: MemoryStore, incomplete: readonly MissingFieldReport[]): ReadonlyMap<string, TaskFieldOverride> {
+  const map = new Map<string, TaskFieldOverride>();
+  for (const report of incomplete) {
+    const stored = getTaskFieldOverride(store, report.taskId);
+    if (stored) map.set(report.taskId, stored.data);
+  }
+  return map;
+}
+
+async function buildForRecord(deps: SurfaceOpenItemsDeps, record: StoredRecord<InteractionRequest>): Promise<OpenItemQuestion | "done"> {
+  switch (record.data.requestKind) {
+    case "data-completeness": {
+      const detail = record.data.detail as { readonly incomplete?: readonly MissingFieldReport[]; readonly cursor?: DataCompletenessCursor } | undefined;
+      const incomplete = detail?.incomplete ?? [];
+      const overridesByTaskId = readOverridesByTaskId(deps.store, incomplete);
+      const declinedSuggestions = new Set(detail?.cursor?.declinedSuggestions ?? []);
+      const pending = nextDataCompletenessQuestion({ incomplete, overridesByTaskId, declinedSuggestions });
+      if (!pending) return "done";
+      let suggestion: FieldValueSuggestion | undefined;
+      if (!pending.suggestionDeclined && deps.llmClient) {
+        try {
+          suggestion = await suggestFieldValue(deps.llmClient, pending.taskId, pending.taskTitle, pending.field, deps.session.recentMessages, parseValueWrapper);
+        } catch {
+          suggestion = undefined; // A Claude/API failure must never block the fallback blind ask.
+        }
+      }
+      return suggestion
+        ? buildDataCompletenessQuestion(record.id, pending, suggestion, new Date().toISOString())
+        : buildDataCompletenessQuestion(record.id, pending);
+    }
+    case "night-close-out": {
+      const detail = record.data.detail as (NightCloseOutRequestDetail & { readonly cursor?: NightCloseOutCursor }) | undefined;
+      const tasks = detail?.tasks ?? [];
+      const pending = nextNightCloseOutTask({
+        tasks,
+        resolvedTaskIds: new Set(detail?.cursor?.resolvedTaskIds ?? []),
+        skippedTaskIds: new Set(detail?.cursor?.skippedTaskIds ?? []),
+      });
+      return pending ? buildNightCloseOutQuestion(record.id, pending) : "done";
+    }
+    case "self-check":
+      return buildSelfCheckQuestion(record.id);
+    default:
+      return buildGenericQuestion(record.id);
+  }
+}
+
+/** The one FR-25 suggestion-fetch call site (C3) — reads the request fresh, computes the pending cursor position, fetches a suggestion when applicable, and builds the matching `OpenItemQuestion`. Every `answer-*.ts` calls this once, after mutating state, to build `AnswerOpenItemResponse.next`. `"done"` means the request no longer exists OR every question it covers has already been answered. */
+export async function buildOpenItemQuestion(deps: SurfaceOpenItemsDeps, input: BuildOpenItemQuestionInput): Promise<Result<OpenItemQuestion | "done", YohError>> {
+  const record = getOpenInteractionRequest(deps.store, input.requestId);
+  if (!record) return { ok: true, value: "done" };
+  return { ok: true, value: await buildForRecord(deps, record) };
+}
+
+/** Every open interaction request, each with its CURRENT pending question, built from its stored cursor (C3) — what a Web route or `chat-cli.ts`'s transport loop presents. */
+export async function surfaceOpenItems(deps: SurfaceOpenItemsDeps, _input: Record<string, never>): Promise<Result<OpenItemsResponse, YohError>> {
+  const open = listOpenInteractionRequests(deps.store);
+  const items: OpenItem[] = [];
+  for (const record of open) {
+    const question = await buildForRecord(deps, record);
+    items.push({
+      requestId: record.id,
+      requestKind: record.data.requestKind,
+      promptText: record.data.promptText,
+      question: question === "done" ? buildGenericQuestion(record.id) : question,
+    });
+  }
+  return { ok: true, value: { items } };
+}

@@ -99,8 +99,8 @@ development_status:
   7-10-check-off-a-task-with-undo: done
   epic-7-retrospective: optional
 
-  epic-8: backlog
-  8-1-open-interaction-requests-as-resumable-turns: backlog
+  epic-8: in-progress
+  8-1-open-interaction-requests-as-resumable-turns: done
   8-2-one-confirmation-path-for-every-proposal: backlog
   8-3-chat-turn-routing-for-planning-commands: backlog
   8-4-chat-turn-routing-for-notion-calendar-and-search-commands: backlog

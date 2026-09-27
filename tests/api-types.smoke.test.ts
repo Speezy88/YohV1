@@ -11,7 +11,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type {
+  AnswerOpenItemRequest,
+  AnswerOpenItemResponse,
   CheckOffRequest,
+  OpenItem,
+  OpenItemQuestion,
+  OpenItemsResponse,
   PendingCheckOffResponse,
   UndoCheckOffResponse,
   ApiResult,
@@ -145,4 +150,27 @@ test("Story 7.10 check-off shapes: the request carries only the Task id (Ruling 
   const missingCommitAt: PendingCheckOffResponse = { id: "p1", taskId: "t1", asOf: "2026-09-25T18:00:00.000Z", held: false };
   const undone: UndoCheckOffResponse = { id: "p1" };
   assert.ok(request.taskId && widened && pending.ok && missingCommitAt && undone.id);
+});
+
+test("Story 8.1 open-item shapes: OpenItemQuestion/OpenItem/OpenItemsResponse, AnswerOpenItemRequest/Response", () => {
+  const question: OpenItemQuestion = {
+    requestId: "data-completeness",
+    questionId: "t1:area",
+    text: "Call dentist — Area",
+    options: [],
+    allowsFreeText: true,
+  };
+  const item: OpenItem = { requestId: "data-completeness", requestKind: "data-completeness", promptText: "x", question };
+  const list: OpenItemsResponse = { items: [item] };
+  // @ts-expect-error — OpenItem is closed: an ad-hoc field never leaks onto the wire.
+  const widenedItem: OpenItem = { ...item, extra: true };
+  const answerRequest: AnswerOpenItemRequest = { requestId: "data-completeness", questionId: "t1:area", answer: "Health" };
+  const answerResponse: AnswerOpenItemResponse = { receipts: [], next: "done" };
+  const answerWithNext: AnswerOpenItemResponse = { receipts: ["Call dentist — Area: set to \"Health\"."], next: question };
+  // @ts-expect-error — AnswerOpenItemResponse.next is closed to OpenItemQuestion | "done", never an arbitrary string.
+  const badNext: AnswerOpenItemResponse = { receipts: [], next: "not-done" };
+  assert.equal(list.items.length, 1);
+  assert.equal(answerResponse.next, "done");
+  assert.equal(answerWithNext.next === "done" ? undefined : answerWithNext.next.questionId, "t1:area");
+  assert.ok(widenedItem && answerRequest.requestId && badNext);
 });

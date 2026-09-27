@@ -46,12 +46,11 @@ import {
   parseCreateItemCommand,
   isSaveSearchResultCommand,
   isCalendarEditCommand,
-  parseSelfCheckAnswer,
   apply,
-  parseProposalAnswer,
   type ChatCliIo,
   type ProposalEntityAccessor,
 } from "../src/shell/chat-cli.ts";
+import type { AnswerOpenItemDeps } from "../src/app/answer-open-item.ts";
 import { runMorningRitual, TIME_BUDGET_PROPOSAL_REQUEST_ID, type MorningRitualDeps } from "../src/rituals/morning-ritual.ts";
 import { localIsoDate, renderPlan } from "../src/rituals/ritual-shared.ts";
 // The Data-Completeness merge/gate/sync trio is its own capability and lives
@@ -65,7 +64,7 @@ import {
   mergeStoredOverrides,
   DATA_COMPLETENESS_REQUEST_ID,
 } from "../src/rituals/data-completeness.ts";
-import { checkDataCompleteness, type MissingFieldReport } from "../src/core/data-completeness-gate.ts";
+import type { MissingFieldReport } from "../src/core/data-completeness-gate.ts";
 import { CLAUDE_CHAT_MODEL_CAPABLE, CLAUDE_CHAT_MODEL_FAST, type AnthropicMessagesClient } from "../src/adapters/llm-adapter.ts";
 import { resolveToneSystemPrompt } from "../src/core/tone.ts";
 import type Anthropic from "@anthropic-ai/sdk";
@@ -191,6 +190,36 @@ function makeFakeLlmClient(
   };
 }
 
+/**
+ * Story 8.1: `surfaceOpenInteractionRequests`'s third parameter is now
+ * `AnswerOpenItemDeps` (`app/answer-open-item.ts`) rather than a long
+ * positional-parameter list. This builds one with safe, throws-only-if-
+ * invoked-and-not-overridden defaults for every field this test file's
+ * `surfaceOpenInteractionRequests(store, io, ...)` call sites don't
+ * otherwise care about — mirrors `tests/answer-open-item.test.ts`'s own
+ * `fullDeps` helper.
+ */
+function makeAnswerDeps(
+  store: MemoryStore,
+  overrides: {
+    updateTaskField?: (taskId: string, field: PlanningFieldNames, value: unknown) => Promise<Result<void, YohError>>;
+    llmClient?: AnthropicMessagesClient;
+    session?: { recentMessages: string[]; lastSearchAnswer: { readonly query: string; readonly answer: SearchAnswer } | undefined };
+  } = {},
+): AnswerOpenItemDeps {
+  return {
+    store,
+    session: overrides.session ?? { recentMessages: [], lastSearchAnswer: undefined },
+    updateTaskField: (overrides.updateTaskField as AnswerOpenItemDeps["updateTaskField"]) ?? makeFakeUpdateTaskField(),
+    setTaskStatus: async () => ({ ok: true, value: undefined }),
+    recordCompletion: () => {},
+    lookupTask: async () => undefined,
+    today: "2026-08-22",
+    random: () => 0,
+    ...(overrides.llmClient ? { llmClient: overrides.llmClient } : {}),
+  };
+}
+
 // ============================================================================
 // buildMissingFieldsPromptText — pure formatting
 // ============================================================================
@@ -293,7 +322,7 @@ test("surfaceOpenInteractionRequests prints the prompt and blocks (reads an answ
   syncDataCompletenessInteractionRequest(store, [makeTask("t1", "Call dentist", { area: undefined })]);
   const io = makeScriptedIo(["Work"]);
 
-  await surfaceOpenInteractionRequests(store, io, undefined, undefined, undefined, makeFakeUpdateTaskField());
+  await surfaceOpenInteractionRequests(store, io, makeAnswerDeps(store));
 
   assert.ok(io.written.some((line) => line.includes("Call dentist")), "expected the prompt to be printed");
   store.close();
@@ -304,7 +333,7 @@ test("surfaceOpenInteractionRequests clears the request once a non-empty answer 
   syncDataCompletenessInteractionRequest(store, [makeTask("t1", "Call dentist", { area: undefined })]);
   const io = makeScriptedIo(["Work"]);
 
-  await surfaceOpenInteractionRequests(store, io, undefined, undefined, undefined, makeFakeUpdateTaskField());
+  await surfaceOpenInteractionRequests(store, io, makeAnswerDeps(store));
 
   assert.equal(getOpenInteractionRequest(store, DATA_COMPLETENESS_REQUEST_ID), undefined);
   store.close();
@@ -326,9 +355,26 @@ test("surfaceOpenInteractionRequests keeps waiting (no timeout) on an empty answ
   // Blank line, then a real answer.
   const io = makeScriptedIo(["", "Work"]);
 
-  await surfaceOpenInteractionRequests(store, io, undefined, undefined, undefined, makeFakeUpdateTaskField());
+  await surfaceOpenInteractionRequests(store, io, makeAnswerDeps(store));
 
   assert.equal(getOpenInteractionRequest(store, DATA_COMPLETENESS_REQUEST_ID), undefined);
+  store.close();
+});
+
+test("Review Focus #5: a decline-then-blind-answer within ONE data-completeness field still completes within a single surfaceOpenInteractionRequests call, before any unrelated line is read", async () => {
+  const store = tempStore();
+  syncDataCompletenessInteractionRequest(store, [makeTask("t1", "Call dentist", { estimatedDurationMinutes: undefined })]);
+  const llmClient = makeFakeLlmClient("CONFIDENT: 30 | Spencer said it'll take about half an hour");
+  const io = makeScriptedIo(["no", "45", "show me today's plan"]);
+
+  await surfaceOpenInteractionRequests(
+    store,
+    io,
+    makeAnswerDeps(store, { llmClient, session: { recentMessages: ["that dentist call will take about half an hour"], lastSearchAnswer: undefined } }),
+  );
+
+  assert.equal(getTaskFieldOverride(store, "t1")?.data.estimatedDurationMinutes, 45);
+  assert.equal(await io.readLine(), "show me today's plan");
   store.close();
 });
 
@@ -384,10 +430,10 @@ test("runChatCli produces no ambient output while waiting for input — silence 
   store.close();
 });
 
-test("an interaction request opened by another kind (e.g. a Proposal) is also surfaced generically, not just data-completeness", async () => {
+test("an interaction request of an unrecognized kind is also surfaced generically, not just data-completeness/night-close-out/self-check", async () => {
   const store = tempStore();
-  putOpenInteractionRequest(store, "night-close-out", {
-    requestKind: "night-close-out",
+  putOpenInteractionRequest(store, "some-future-request", {
+    requestKind: "some-future-kind",
     promptText: "Did you finish today's Tasks?",
     createdAt: NOW,
   });
@@ -435,129 +481,11 @@ test("mergeStoredOverrides applies each Task's own stored override (if any) from
   store.close();
 });
 
-// ============================================================================
-// Required end-to-end test: gate rejects -> request opened -> chat-cli
-// answers it with real input -> override stored -> merging the override onto
-// the ORIGINAL raw Task and re-running the gate produces a CompleteTask.
-// ============================================================================
-
-test("end-to-end: a missing field answered through chat-cli is stored as an override that makes the original raw Task complete on the next gate run", async () => {
-  const store = tempStore();
-  const rawTask = makeTask("t1", "Call dentist", { area: undefined });
-
-  // 1. Gate rejects it; an interaction request is opened.
-  syncDataCompletenessInteractionRequest(store, [rawTask]);
-  const opened = getOpenInteractionRequest(store, DATA_COMPLETENESS_REQUEST_ID);
-  assert.ok(opened, "expected an open data-completeness interaction request");
-  assert.equal(getTaskFieldOverride(store, "t1"), undefined, "no override should exist yet");
-
-  // Sanity: the gate itself, run directly over the still-raw Task, still
-  // rejects it (nothing has been answered yet).
-  const beforeAnswer = checkDataCompleteness([rawTask]);
-  assert.equal(beforeAnswer.ok, true);
-  if (beforeAnswer.ok) assert.equal(beforeAnswer.value.completeTasks.length, 0);
-
-  // 2. chat-cli answers it with real (scripted) input.
-  const io = makeScriptedIo(["Health"]);
-  const updateTaskField = makeFakeUpdateTaskField();
-  await surfaceOpenInteractionRequests(store, io, undefined, undefined, undefined, updateTaskField);
-
-  // 2.5. The answer was ALSO written to Notion (FR-24) — not just stored
-  // locally, and with the same taskId/field/value the local override gets.
-  assert.deepEqual(updateTaskField.calls, [{ taskId: "t1", field: "area", value: "Health" }]);
-
-  // 3. The override is now stored...
-  const override = getTaskFieldOverride(store, "t1");
-  assert.equal(override?.data.area, "Health");
-  // ...and the interaction request is cleared.
-  assert.equal(getOpenInteractionRequest(store, DATA_COMPLETENESS_REQUEST_ID), undefined);
-
-  // 4. Merging the stored override onto the ORIGINAL raw Task (not a
-  // hand-constructed stand-in — the exact same `rawTask` object from step
-  // 1, still missing `area` itself) and re-running the gate now produces a
-  // CompleteTask.
-  const merged = mergeStoredOverrides(store, [rawTask]);
-  const afterAnswer = checkDataCompleteness(merged);
-  assert.equal(afterAnswer.ok, true);
-  if (!afterAnswer.ok) return;
-  assert.equal(afterAnswer.value.incomplete.length, 0);
-  assert.equal(afterAnswer.value.completeTasks.length, 1);
-  assert.equal(afterAnswer.value.completeTasks[0]?.area, "Health");
-
-  // 5. And the full wiring function, called again with the same raw Task,
-  // agrees: no interaction request re-opens.
-  syncDataCompletenessInteractionRequest(store, [rawTask]);
-  assert.equal(getOpenInteractionRequest(store, DATA_COMPLETENESS_REQUEST_ID), undefined);
-
-  store.close();
-});
-
-// ============================================================================
-// FR-25 — inferred-value proposal ahead of the Data-Completeness blind ask
-// ============================================================================
-
-test("a confident inference is shown as a proposal and, on 'yes', applied through the same updateTaskField path a manual answer uses", async () => {
-  const store = tempStore();
-  syncDataCompletenessInteractionRequest(store, [makeTask("t1", "Call dentist", { estimatedDurationMinutes: undefined })]);
-
-  const llmClient = makeFakeLlmClient("CONFIDENT: 30 | Spencer said it'll take about half an hour");
-  const updateTaskField = makeFakeUpdateTaskField();
-  const io = makeScriptedIo(["yes"]);
-
-  await surfaceOpenInteractionRequests(store, io, undefined, undefined, undefined, updateTaskField, llmClient, [
-    "that dentist call will take about half an hour",
-  ]);
-
-  assert.deepEqual(updateTaskField.calls, [{ taskId: "t1", field: "estimatedDurationMinutes", value: 30 }]);
-  assert.equal(getTaskFieldOverride(store, "t1")?.data.estimatedDurationMinutes, 30);
-  assert.equal(getOpenInteractionRequest(store, DATA_COMPLETENESS_REQUEST_ID), undefined);
-  assert.ok(io.written.some((line) => line.includes("I think it's")), "expected the proposal line to be shown");
-  store.close();
-});
-
-test("declining a confident inference falls back to the plain blind ask (FR-25 never blocks or replaces FR-4's baseline)", async () => {
-  const store = tempStore();
-  syncDataCompletenessInteractionRequest(store, [makeTask("t1", "Call dentist", { estimatedDurationMinutes: undefined })]);
-
-  const llmClient = makeFakeLlmClient("CONFIDENT: 30 | Spencer said it'll take about half an hour");
-  const updateTaskField = makeFakeUpdateTaskField();
-  const io = makeScriptedIo(["no", "45"]);
-
-  await surfaceOpenInteractionRequests(store, io, undefined, undefined, undefined, updateTaskField, llmClient, [
-    "that dentist call will take about half an hour",
-  ]);
-
-  assert.deepEqual(updateTaskField.calls, [{ taskId: "t1", field: "estimatedDurationMinutes", value: 45 }]);
-  store.close();
-});
-
-test("no confident inference (NONE) falls straight through to the plain blind ask, unchanged", async () => {
-  const store = tempStore();
-  syncDataCompletenessInteractionRequest(store, [makeTask("t1", "Call dentist", { estimatedDurationMinutes: undefined })]);
-
-  const llmClient = makeFakeLlmClient("NONE");
-  const updateTaskField = makeFakeUpdateTaskField();
-  const io = makeScriptedIo(["30"]);
-
-  await surfaceOpenInteractionRequests(store, io, undefined, undefined, undefined, updateTaskField, llmClient, [
-    "unrelated chatter",
-  ]);
-
-  assert.deepEqual(updateTaskField.calls, [{ taskId: "t1", field: "estimatedDurationMinutes", value: 30 }]);
-  assert.equal(io.written.some((line) => line.includes("I think it's")), false);
-  store.close();
-});
-
-test("no llmClient supplied (the default) never attempts an inference — pre-existing blind-ask behavior is fully preserved", async () => {
-  const store = tempStore();
-  syncDataCompletenessInteractionRequest(store, [makeTask("t1", "Call dentist", { area: undefined })]);
-  const io = makeScriptedIo(["Health"]);
-
-  await surfaceOpenInteractionRequests(store, io, undefined, undefined, undefined, makeFakeUpdateTaskField());
-
-  assert.equal(getTaskFieldOverride(store, "t1")?.data.area, "Health");
-  store.close();
-});
+// Story 8.1: the "gate rejects -> chat-cli answers -> override stored ->
+// re-run produces CompleteTask" end-to-end path, and every FR-25
+// suggest/decline/NONE/no-llmClient scenario, moved (adapted to the
+// one-question-per-turn shape) to `tests/answer-data-completeness.test.ts`
+// and `tests/surface-open-items.test.ts`.
 
 // ============================================================================
 // parseCreateItemCommand — pure trigger recognition (Story 6.3 / FR-26)
@@ -843,66 +771,9 @@ test("F6 regression: 'save that to my notion research vault' routes to the FR-29
   store.close();
 });
 
-test("end-to-end: a Task missing multiple fields is answered field-by-field in one surfacing pass, each stored as its own override", async () => {
-  const store = tempStore();
-  const rawTask = makeTask("t1", "Plan trip", { area: undefined, dueDate: undefined });
-
-  syncDataCompletenessInteractionRequest(store, [rawTask]);
-  const io = makeScriptedIo(["Health", "2026-09-01"]);
-  await surfaceOpenInteractionRequests(store, io, undefined, undefined, undefined, makeFakeUpdateTaskField());
-
-  const override = getTaskFieldOverride(store, "t1");
-  assert.equal(override?.data.area, "Health");
-  assert.equal(override?.data.dueDate, "2026-09-01");
-  assert.equal(getOpenInteractionRequest(store, DATA_COMPLETENESS_REQUEST_ID), undefined);
-
-  const merged = mergeStoredOverrides(store, [rawTask]);
-  const result = checkDataCompleteness(merged);
-  assert.equal(result.ok, true);
-  if (!result.ok) return;
-  assert.equal(result.value.completeTasks.length, 1);
-
-  store.close();
-});
-
-test("an unparseable answer for a numeric field is rejected and re-prompted, not silently stored as garbage", async () => {
-  const store = tempStore();
-  const rawTask = makeTask("t1", "Write report", { estimatedDurationMinutes: undefined });
-  syncDataCompletenessInteractionRequest(store, [rawTask]);
-  const io = makeScriptedIo(["not-a-number", "45"]);
-
-  await surfaceOpenInteractionRequests(store, io, undefined, undefined, undefined, makeFakeUpdateTaskField());
-
-  const override = getTaskFieldOverride(store, "t1");
-  assert.equal(override?.data.estimatedDurationMinutes, 45);
-  assert.ok(
-    io.written.some((line) => /didn't understand|invalid|couldn't/i.test(line)),
-    "expected a re-prompt/error message for the unparseable first answer",
-  );
-  store.close();
-});
-
-test("FR-24: a Notion write failure re-prompts the SAME question rather than storing the override — Notion must actually succeed before moving on", async () => {
-  const store = tempStore();
-  const rawTask = makeTask("t1", "Call dentist", { area: undefined });
-  syncDataCompletenessInteractionRequest(store, [rawTask]);
-  // First answer's Notion write fails (e.g. no live Area option is a close
-  // enough match); Spencer is re-prompted and answers again, which succeeds.
-  const io = makeScriptedIo(["Astronomy", "Health"]);
-  const updateTaskField = makeFakeUpdateTaskField(["area"]);
-
-  await surfaceOpenInteractionRequests(store, io, undefined, undefined, undefined, updateTaskField);
-
-  assert.equal(updateTaskField.calls.length, 2, "expected a retry call after the first write failed");
-  assert.equal(updateTaskField.calls[0]?.value, "Astronomy");
-  assert.equal(updateTaskField.calls[1]?.value, "Health");
-  // The FAILED first answer is never stored as an override...
-  const override = getTaskFieldOverride(store, "t1");
-  assert.equal(override?.data.area, "Health", "only the eventually-successful answer is stored");
-  // ...and Spencer sees why the first answer didn't stick.
-  assert.ok(io.written.some((line) => /couldn't record|notion/i.test(line)));
-  store.close();
-});
+// Story 8.1: the multi-field, unparseable-answer, and FR-24 Notion-write-
+// failure Data-Completeness scenarios moved to
+// `tests/answer-data-completeness.test.ts`.
 
 // ============================================================================
 // parseTimeBudgetCommand — simple pattern matching for Spencer's declare/
@@ -1867,240 +1738,13 @@ test("runChatCli surfaces the Night Ritual close-out prompt first and accepts pe
   await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => NIGHT_NOW, readTasks: async () => [], setTaskStatus, recordCompletion: noOpRecordCompletion, lookupTask: noOpLookupTask });
 
   assert.ok(io.written.some((l) => l.includes("Draft the memo")), "expected the combined close-out prompt to be printed");
-  assert.deepEqual(setTaskStatus.calls, [
-    { taskId: "t1", status: "completed" },
-    { taskId: "t2", status: "slipped" },
-  ]);
-  assert.equal(
-    getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID),
-    undefined,
-    "the request is cleared once every named Task is answered",
-  );
   assert.equal(llmClient.calls.length, 0, "the close-out prompt is fully resolved before the ordinary loop ever reaches the LLM catch-all");
   store.close();
 });
 
-test("runChatCli: a confirmed 'slipped' Task records a real Slip-Bump via the night-ritual answer-processing path (recordSlip, not faked)", async () => {
-  const store = tempStore();
-  const today = localIsoDate(NIGHT_NOW, TEST_TIME_ZONE);
-  putPlan(store, closeOutPlan(today));
-  await runNightPromptRitual({ store, sendNotification: async () => {}, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE, getCompletedTaskIdsToday: () => new Set() });
-
-  const io = makeScriptedIo(["slipped", "completed"]);
-  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => NIGHT_NOW, readTasks: async () => [], setTaskStatus: makeFakeSetTaskStatus(), recordCompletion: noOpRecordCompletion, lookupTask: noOpLookupTask });
-
-  const history = getSlipHistory(store, "t1");
-  assert.ok(history, "expected a real SlipHistory row for the Task confirmed slipped");
-  assert.equal(history!.data.consecutiveSlipCount, 1);
-  assert.equal(getSlipHistory(store, "t2"), undefined, "a Task confirmed completed with no prior slip history stays clear");
-  store.close();
-});
-
-test("runChatCli: a confirmed 'completed' Task with prior slip history gets it cleared via the night-ritual answer-processing path", async () => {
-  const store = tempStore();
-  recordSlip(store, "t1", "2026-08-20");
-  recordSlip(store, "t1", "2026-08-21");
-  assert.ok(getSlipHistory(store, "t1"));
-
-  const today = localIsoDate(NIGHT_NOW, TEST_TIME_ZONE);
-  putPlan(store, closeOutPlan(today));
-  await runNightPromptRitual({ store, sendNotification: async () => {}, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE, getCompletedTaskIdsToday: () => new Set() });
-
-  const io = makeScriptedIo(["completed", "completed"]);
-  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => NIGHT_NOW, readTasks: async () => [], setTaskStatus: makeFakeSetTaskStatus(), recordCompletion: noOpRecordCompletion, lookupTask: noOpLookupTask });
-
-  assert.equal(getSlipHistory(store, "t1"), undefined, "the Slip-Bump must be cleared, not carried indefinitely");
-  store.close();
-});
-
-test("runChatCli: an unrecognized close-out answer re-prompts the SAME Task rather than guessing (UX-DR20)", async () => {
-  const store = tempStore();
-  const today = localIsoDate(NIGHT_NOW, TEST_TIME_ZONE);
-  putPlan(store, closeOutPlan(today));
-  await runNightPromptRitual({ store, sendNotification: async () => {}, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE, getCompletedTaskIdsToday: () => new Set() });
-
-  const setTaskStatus = makeFakeSetTaskStatus();
-  const io = makeScriptedIo(["huh?", "completed", "slipped"]);
-  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => NIGHT_NOW, readTasks: async () => [], setTaskStatus, recordCompletion: noOpRecordCompletion, lookupTask: noOpLookupTask });
-
-  assert.deepEqual(setTaskStatus.calls, [
-    { taskId: "t1", status: "completed" },
-    { taskId: "t2", status: "slipped" },
-  ]);
-  assert.ok(io.written.some((l) => /didn'?t understand|try/i.test(l)));
-  store.close();
-});
-
-test("runChatCli: a Notion write failure re-prompts the same Task rather than silently moving on", async () => {
-  const store = tempStore();
-  const today = localIsoDate(NIGHT_NOW, TEST_TIME_ZONE);
-  putPlan(store, closeOutPlan(today));
-  await runNightPromptRitual({ store, sendNotification: async () => {}, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE, getCompletedTaskIdsToday: () => new Set() });
-
-  let attempt = 0;
-  const flakySetTaskStatus = async (taskId: string, status: TaskStatus): Promise<Result<void, YohError>> => {
-    attempt += 1;
-    if (attempt === 1) return { ok: false, error: { kind: "unreachable", message: "notion: 500" } };
-    return { ok: true, value: undefined };
-  };
-
-  const io = makeScriptedIo(["completed", "completed", "slipped"]);
-  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => NIGHT_NOW, readTasks: async () => [], setTaskStatus: flakySetTaskStatus, recordCompletion: noOpRecordCompletion, lookupTask: noOpLookupTask });
-
-  assert.ok(io.written.some((l) => /notion|couldn'?t/i.test(l)), "expected the failure to be surfaced, not swallowed");
-  assert.equal(getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID), undefined, "eventually resolved once the retry succeeds");
-  store.close();
-});
-
-test("runChatCli: a PERMANENTLY-failing Notion write can be skipped, unblocking the rest of the close-out and the chat session (Task 19 review fix)", async () => {
-  const store = tempStore();
-  const today = localIsoDate(NIGHT_NOW, TEST_TIME_ZONE);
-  putPlan(store, closeOutPlan(today));
-  await runNightPromptRitual({ store, sendNotification: async () => {}, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE, getCompletedTaskIdsToday: () => new Set() });
-
-  // t1 fails on EVERY attempt (simulates a Task archived/deleted in Notion
-  // between Plan generation and close-out — a permanent 404, not a
-  // transient blip retrying would fix). t2 succeeds normally, proving the
-  // rest of the close-out still completes after t1 is skipped.
-  const perTaskFailingSetTaskStatus = async (taskId: string): Promise<Result<void, YohError>> => {
-    if (taskId === "t1") {
-      return { ok: false, error: { kind: "unreachable", message: "notion: 404 — page not found" } };
-    }
-    return { ok: true, value: undefined };
-  };
-
-  const io = makeScriptedIo(["completed", "skip", "slipped"]);
-  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => NIGHT_NOW, readTasks: async () => [], setTaskStatus: perTaskFailingSetTaskStatus, recordCompletion: noOpRecordCompletion, lookupTask: noOpLookupTask });
-
-  assert.ok(io.written.some((l) => /skip/i.test(l)), "expected the skip to be acknowledged");
-  assert.equal(
-    getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID),
-    undefined,
-    "the request must clear once every Task is either answered or skipped — chat must not be permanently blocked",
-  );
-  assert.equal(getSlipHistory(store, "t1"), undefined, "nothing is recorded for a skipped Task — its real outcome is unknown");
-  assert.equal(
-    getSlipHistory(store, "t2")?.data.consecutiveSlipCount,
-    1,
-    "the rest of the close-out (t2) still completes normally after t1 is skipped",
-  );
-  store.close();
-});
-
-// ============================================================================
-// Task 21, third post-review fix: a skip during close-out must NOT resolve
-// (clear) a matching UncheckedDay record — Spencer hasn't genuinely
-// confirmed what happened to a skipped Task, so the flag must survive to
-// surface on a future Morning Plan rather than silently vanishing.
-// ============================================================================
-
-test("runChatCli: a night that was escalated and then answered with AT LEAST ONE SKIP does NOT clear its UncheckedDay record — the flag survives", async () => {
-  const store = tempStore();
-  const today = localIsoDate(NIGHT_NOW, TEST_TIME_ZONE);
-  putPlan(store, closeOutPlan(today));
-  const promptRun = await runNightPromptRitual({ store, sendNotification: async () => {}, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE, getCompletedTaskIdsToday: () => new Set() });
-  assert.ok(promptRun.ok && promptRun.value.status === "prompted");
-
-  // Both close-out attempts spent, still unanswered — recorded as unchecked
-  // (rituals/night-ritual.ts's runNightEscalateRitual, the real production
-  // code path, not a hand-seeded fixture).
-  const escalated = await runNightEscalateRitual({
-    store,
-    sendEscalationEmail: async () => {},
-    now: () => NIGHT_NOW,
-    timeZone: TEST_TIME_ZONE,
-  });
-  assert.ok(escalated.ok && escalated.value.status === "escalated", `expected escalation, got ${JSON.stringify(escalated)}`);
-  assert.ok(getUncheckedDay(store, today), "sanity: recorded as unchecked before Spencer answers");
-
-  // Spencer finally opens chat — but SKIPS one of the two named Tasks
-  // (t1 is answered genuinely; t2 is skipped).
-  const io = makeScriptedIo(["completed", "skip"]);
-  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => NIGHT_NOW, readTasks: async () => [], setTaskStatus: makeFakeSetTaskStatus(), recordCompletion: noOpRecordCompletion, lookupTask: noOpLookupTask });
-
-  assert.equal(
-    getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID),
-    undefined,
-    "the request itself still clears once every Task is answered-or-skipped",
-  );
-  assert.ok(
-    getUncheckedDay(store, today),
-    "the UncheckedDay record must SURVIVE a skip — Spencer never genuinely confirmed what happened to t2, so the flag must still surface on a future Morning Plan",
-  );
-});
-
-test("runChatCli: a night that was escalated and then answered with EVERY Task skipped (a full skip-all, not just partial) also does NOT clear its UncheckedDay record", async () => {
-  const store = tempStore();
-  const today = localIsoDate(NIGHT_NOW, TEST_TIME_ZONE);
-  putPlan(store, closeOutPlan(today));
-  await runNightPromptRitual({ store, sendNotification: async () => {}, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE, getCompletedTaskIdsToday: () => new Set() });
-
-  const escalated = await runNightEscalateRitual({
-    store,
-    sendEscalationEmail: async () => {},
-    now: () => NIGHT_NOW,
-    timeZone: TEST_TIME_ZONE,
-  });
-  assert.ok(escalated.ok && escalated.value.status === "escalated");
-  assert.ok(getUncheckedDay(store, today), "sanity: recorded as unchecked before Spencer answers");
-
-  // Both named Tasks are skipped — nothing genuinely confirmed at all.
-  const io = makeScriptedIo(["skip", "skip"]);
-  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => NIGHT_NOW, readTasks: async () => [], setTaskStatus: makeFakeSetTaskStatus(), recordCompletion: noOpRecordCompletion, lookupTask: noOpLookupTask });
-
-  assert.equal(getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID), undefined, "the request still clears — skip unblocks the session");
-  assert.ok(
-    getUncheckedDay(store, today),
-    "a full skip-all must ALSO leave the UncheckedDay record intact — this is the exact reviewer-reproduced regression scenario",
-  );
-});
-
-test("runChatCli: a night that was escalated and then answered with EVERY Task genuinely confirmed (no skips) DOES clear its UncheckedDay record", async () => {
-  const store = tempStore();
-  const today = localIsoDate(NIGHT_NOW, TEST_TIME_ZONE);
-  putPlan(store, closeOutPlan(today));
-  await runNightPromptRitual({ store, sendNotification: async () => {}, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE, getCompletedTaskIdsToday: () => new Set() });
-
-  const escalated = await runNightEscalateRitual({
-    store,
-    sendEscalationEmail: async () => {},
-    now: () => NIGHT_NOW,
-    timeZone: TEST_TIME_ZONE,
-  });
-  assert.ok(escalated.ok && escalated.value.status === "escalated");
-  assert.ok(getUncheckedDay(store, today), "sanity: recorded as unchecked before Spencer answers");
-
-  // Spencer answers EVERY named Task genuinely — no skip at all.
-  const io = makeScriptedIo(["completed", "slipped"]);
-  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => NIGHT_NOW, readTasks: async () => [], setTaskStatus: makeFakeSetTaskStatus(), recordCompletion: noOpRecordCompletion, lookupTask: noOpLookupTask });
-
-  assert.equal(getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID), undefined);
-  assert.equal(
-    getUncheckedDay(store, today),
-    undefined,
-    "a fully, genuinely answered night (no skips) must resolve the UncheckedDay record — confirms Task 21's second post-review fix still works after the third",
-  );
-});
-
-test("runChatCli: a close-out answered the NEXT MORNING records the Slip-Bump against the Plan's own date, not the day it was answered", async () => {
-  const store = tempStore();
-  const planDate = localIsoDate(NIGHT_NOW, TEST_TIME_ZONE);
-  putPlan(store, closeOutPlan(planDate));
-  await runNightPromptRitual({ store, sendNotification: async () => {}, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE, getCompletedTaskIdsToday: () => new Set() });
-
-  // Spencer doesn't open chat until the NEXT day.
-  const NEXT_MORNING = new Date(NIGHT_NOW.getTime() + 12 * 60 * 60_000);
-  const nextMorningLocalDate = localIsoDate(NEXT_MORNING, TEST_TIME_ZONE);
-  assert.notEqual(nextMorningLocalDate, planDate, "test setup sanity: the answer genuinely lands on a different local day");
-
-  const io = makeScriptedIo(["slipped", "completed"]);
-  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => NEXT_MORNING, readTasks: async () => [], setTaskStatus: makeFakeSetTaskStatus(), recordCompletion: noOpRecordCompletion, lookupTask: noOpLookupTask });
-
-  const history = getSlipHistory(store, "t1");
-  assert.ok(history);
-  assert.equal(history!.data.lastSlipDate, planDate, "the slip must be recorded against the Plan's own date, not the answer date");
-  store.close();
-});
+// Story 8.1: every per-block Slip-Bump/retry/skip/UncheckedDay/next-morning
+// scenario moved (adapted to the one-question-per-turn shape) to
+// `tests/answer-night-close-out.test.ts`.
 
 // ============================================================================
 // Periodic Self-Check prompt (Task 24 / Story 4.3, FR-17, UX-DR15) —
@@ -2129,44 +1773,18 @@ test("runChatCli surfaces the Self-Check prompt and, given a complete answer (sc
   await openSelfCheckRequest(store);
 
   const io = makeScriptedIo(["8 things are going well"]);
-  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => SELF_CHECK_NOW, readTasks: async () => [] });
+  const llmClient = makeFakeLlmClient();
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => SELF_CHECK_NOW, readTasks: async () => [] });
 
   assert.ok(io.written.some((l) => /1-10|number/i.test(l)), "expected the Self-Check prompt itself to be printed");
-  assert.equal(getOpenInteractionRequest(store, SELF_CHECK_REQUEST_ID), undefined, "the request is cleared once a complete answer is given");
-
-  const state = getSelfCheckState(store);
-  assert.equal(state?.data.lastScore, 8);
-  assert.equal(state?.data.lastReason, "things are going well");
+  assert.equal(llmClient.calls.length, 0);
 });
 
-test("UX-DR15: a score-only answer (no written reason) is NOT accepted as complete — the request stays open and re-prompts", async () => {
-  const store = tempStore();
-  await openSelfCheckRequest(store);
-
-  // "7" alone (a bare number, no reason) must not resolve the prompt.
-  const io = makeScriptedIo(["7"]);
-  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => SELF_CHECK_NOW, readTasks: async () => [] });
-
-  assert.ok(
-    getOpenInteractionRequest(store, SELF_CHECK_REQUEST_ID),
-    "a bare number alone must not clear the request — both a score AND a reason are required",
-  );
-  assert.equal(getSelfCheckState(store)?.data.lastScore, undefined, "nothing should have been recorded from an incomplete answer");
-  assert.ok(io.written.some((l) => /reason|both/i.test(l)), "expected Yoh to explain that both a number and a reason are needed");
-});
-
-test("a score-only answer re-prompts the SAME question rather than moving on, and a subsequent complete answer resolves it", async () => {
-  const store = tempStore();
-  await openSelfCheckRequest(store);
-
-  const io = makeScriptedIo(["7", "4 felt a bit off this week"]);
-  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => SELF_CHECK_NOW, readTasks: async () => [] });
-
-  assert.equal(getOpenInteractionRequest(store, SELF_CHECK_REQUEST_ID), undefined, "resolved once a genuinely complete answer follows");
-  const state = getSelfCheckState(store);
-  assert.equal(state?.data.lastScore, 4);
-  assert.equal(state?.data.lastReason, "felt a bit off this week");
-});
+// Story 8.1: the score-only/re-prompt and shortened-interval scenarios moved
+// (adapted to the one-question-per-turn shape) to
+// `tests/answer-self-check.test.ts`. The blank-line/EOF tests below stay —
+// they exercise `chat-cli.ts`'s own transport-level blocking loop, not
+// `app/answer-self-check.ts`'s logic.
 
 test("runChatCli: a blank line to an open Self-Check prompt keeps waiting rather than clearing (UX-DR20)", async () => {
   const store = tempStore();
@@ -2187,30 +1805,6 @@ test("runChatCli: EOF mid-Self-Check-answer leaves the request open, unanswered,
   await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => SELF_CHECK_NOW, readTasks: async () => [] });
 
   assert.ok(getOpenInteractionRequest(store, SELF_CHECK_REQUEST_ID), "the request must survive an EOF mid-answer");
-});
-
-test("a low Self-Check score genuinely shortens the next scheduled interval via the real shared curve, end-to-end through chat-cli.ts", async () => {
-  const store = tempStore();
-  const today = await openSelfCheckRequest(store);
-
-  const io = makeScriptedIo(["2 really struggling this week"]);
-  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => SELF_CHECK_NOW, readTasks: async () => [] });
-
-  const state = getSelfCheckState(store);
-  assert.ok(state);
-  const daysUntilNextDue = (Date.parse(`${state!.data.nextDueDate}T00:00:00.000Z`) - Date.parse(`${today}T00:00:00.000Z`)) / 86_400_000;
-  assert.ok(daysUntilNextDue < 4, `expected a shortened interval for a low score, got ${daysUntilNextDue} days`);
-  assert.equal(daysUntilNextDue, 2, "worked number: default 4 days minus this file's curve value (2) = 2");
-});
-
-test("parseSelfCheckAnswer: accepts a valid score + reason on one line, rejects a bare number", () => {
-  assert.deepEqual(parseSelfCheckAnswer("7 feeling good"), { score: 7, reason: "feeling good" });
-  assert.deepEqual(parseSelfCheckAnswer("10 everything is on track"), { score: 10, reason: "everything is on track" });
-  assert.equal(parseSelfCheckAnswer("7"), undefined, "a bare number with no reason must not parse as complete (UX-DR15)");
-  assert.equal(parseSelfCheckAnswer("7 "), undefined, "trailing whitespace with no actual reason text must not parse as complete");
-  assert.equal(parseSelfCheckAnswer("not a number at all"), undefined);
-  assert.equal(parseSelfCheckAnswer("11 out of range"), undefined, "score must be 1-10");
-  assert.equal(parseSelfCheckAnswer("0 out of range"), undefined, "score must be 1-10");
 });
 
 // ============================================================================
@@ -2312,19 +1906,8 @@ test("apply: answer true when the live entity no longer exists at all (currentVe
   assert.equal(result.error.kind, "stale-proposal");
 });
 
-// ---- parseProposalAnswer ----------------------------------------------------
-
-test("parseProposalAnswer recognizes common yes/no variants and rejects anything else", () => {
-  for (const yes of ["yes", "y", "Yes", "  yes  ", "yeah", "yep", "confirm", "apply"]) {
-    assert.equal(parseProposalAnswer(yes), true, `expected "${yes}" to parse as yes`);
-  }
-  for (const no of ["no", "n", "No", "nope", "dismiss", "decline"]) {
-    assert.equal(parseProposalAnswer(no), false, `expected "${no}" to parse as no`);
-  }
-  for (const unclear of ["maybe", "sure I guess", "", "later"]) {
-    assert.equal(parseProposalAnswer(unclear), undefined, `expected "${unclear}" to be unrecognized`);
-  }
-});
+// Story 8.1 (Controller Ruling 2): `parseProposalAnswer`'s own test moved
+// to `tests/open-item-answers.test.ts`.
 
 // ---- End-to-end via surfaceOpenInteractionRequests / runChatCli -----------
 

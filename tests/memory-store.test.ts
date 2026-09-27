@@ -23,6 +23,7 @@ import {
   getOpenInteractionRequest,
   listOpenInteractionRequests,
   clearInteractionRequest,
+  updateInteractionRequestDetail,
   getTaskFieldOverride,
   mergeTaskFieldOverride,
   getCurrentTimeBudget,
@@ -389,6 +390,47 @@ test("full persist -> surface -> clear cycle: after clearing, a fresh put starts
   const second = putOpenInteractionRequest(store, "data-completeness", makeRequest({ promptText: "new round" }));
   assert.equal(second.version, 1);
   assert.equal(getOpenInteractionRequest(store, "data-completeness")?.data.promptText, "new round");
+  store.close();
+});
+
+// ============================================================================
+// updateInteractionRequestDetail (Story 8.1) — the versioned pending-
+// question-cursor primitive, scoped to `detail` only.
+// ============================================================================
+
+test("updateInteractionRequestDetail rewrites only the detail payload, keeping requestKind/promptText/createdAt intact", () => {
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
+  putOpenInteractionRequest(store, "self-check", makeRequest({ requestKind: "self-check", promptText: "How are things going?" }));
+  const before = getOpenInteractionRequest(store, "self-check")!;
+
+  const after = updateInteractionRequestDetail(store, "self-check", before.version, (detail: unknown) => ({
+    ...(detail as object | undefined),
+    cursor: { seen: true },
+  }));
+
+  assert.equal(after.data.requestKind, "self-check");
+  assert.equal(after.data.promptText, "How are things going?");
+  assert.deepEqual((after.data.detail as { cursor: unknown }).cursor, { seen: true });
+  assert.equal(after.version, before.version + 1);
+  store.close();
+});
+
+test("updateInteractionRequestDetail throws ConflictError on a stale expectedVersion", () => {
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
+  putOpenInteractionRequest(store, "self-check", makeRequest({ requestKind: "self-check" }));
+  const current = getOpenInteractionRequest(store, "self-check")!;
+  updateInteractionRequestDetail(store, "self-check", current.version, () => ({ cursor: "first" }));
+
+  assert.throws(
+    () => updateInteractionRequestDetail(store, "self-check", current.version, () => ({ cursor: "second" })),
+    ConflictError,
+  );
+  store.close();
+});
+
+test("updateInteractionRequestDetail throws ConflictError when the request no longer exists", () => {
+  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
+  assert.throws(() => updateInteractionRequestDetail(store, "self-check", 1, () => ({ cursor: "x" })), ConflictError);
   store.close();
 });
 

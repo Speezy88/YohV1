@@ -360,6 +360,26 @@ export function clearInteractionRequest(store: MemoryStore, id: string, expected
   store.deleteRecord(INTERACTION_REQUEST_KIND, id, expectedVersion);
 }
 
+/**
+ * Rewrites ONLY the `detail` payload of the interaction request at `id`,
+ * keeping `requestKind`/`promptText`/`createdAt` untouched — the versioned
+ * primitive Story 8.1 uses to persist a per-request pending-question cursor
+ * (`detail.cursor`) across turns. `expectedVersion` mismatch (including "the
+ * request no longer exists") throws `ConflictError`, which an `app/*.ts`
+ * caller converts to `YohError.kind: "conflict"` per AD-8.
+ */
+export function updateInteractionRequestDetail<TDetail = unknown>(
+  store: MemoryStore,
+  id: string,
+  expectedVersion: number,
+  updateDetail: (currentDetail: TDetail | undefined) => TDetail,
+): StoredRecord<InteractionRequest<TDetail>> {
+  return store.readModifyWrite<InteractionRequest<TDetail>>(INTERACTION_REQUEST_KIND, id, expectedVersion, (current) => {
+    if (!current) throw new ConflictError(`memory-store: cannot update detail — no interaction request open at ${id}`, { id });
+    return { ...current.data, detail: updateDetail(current.data.detail) };
+  });
+}
+
 // ============================================================================
 // Task field overrides (Task 5 fix) — typed surface on `records`
 // ============================================================================

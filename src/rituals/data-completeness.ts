@@ -49,9 +49,9 @@ import {
   type DataCompletenessGateResult,
   type MissingFieldReport,
 } from "../core/data-completeness-gate.ts";
+import { PLANNING_FIELD_LABELS } from "../core/planning-field-value.ts";
 import type {
   InteractionRequest,
-  PlanningFieldNames,
   Result,
   Task,
   TaskFieldOverride,
@@ -62,14 +62,10 @@ import type {
 // Prompt text
 // ============================================================================
 
-/** Human-readable labels for `PlanningFieldNames`, used only in prompt text — the gate itself (`core/data-completeness-gate.ts`) stays presentation-agnostic per its Implementer note. */
-export const PLANNING_FIELD_LABELS: Record<PlanningFieldNames, string> = {
-  estimatedDurationMinutes: "Estimated Duration",
-  area: "Area",
-  dueDate: "Due Date",
-  status: "Status",
-  energy: "Energy",
-};
+// `PLANNING_FIELD_LABELS` now lives in `core/planning-field-value.ts` (Story
+// 8.1 review fix) — re-exported here (not just imported) so every existing
+// `rituals/data-completeness.ts` consumer keeps working unchanged.
+export { PLANNING_FIELD_LABELS };
 
 /**
  * Turns the gate's `MissingFieldReport[]` into the single combined prompt

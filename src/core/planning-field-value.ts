@@ -30,6 +30,26 @@
 import type { PlanningFieldNames, Task, TaskFieldOverride } from "../types/domain.ts";
 
 /**
+ * Human-readable labels for `PlanningFieldNames`, used only in prompt/question
+ * text (FR-4's blind ask, FR-25's suggest question, `rituals/data-
+ * completeness.ts`'s combined prompt) — the gate itself
+ * (`core/data-completeness-gate.ts`) stays presentation-agnostic per its
+ * Implementer note. Single definition (Story 8.1 review fix): this used to
+ * live in `rituals/data-completeness.ts`, which `core/open-item-questions.ts`
+ * then had to import — violating "`core/` imports only `types/` and other
+ * `core/`" (AD-1). Moved here so every `core/`/`app/`/`rituals/` consumer
+ * shares the one definition; `rituals/data-completeness.ts` re-imports it
+ * (`rituals -> core` is permitted).
+ */
+export const PLANNING_FIELD_LABELS: Record<PlanningFieldNames, string> = {
+  estimatedDurationMinutes: "Estimated Duration",
+  area: "Area",
+  dueDate: "Due Date",
+  status: "Status",
+  energy: "Energy",
+};
+
+/**
  * Result of parsing one raw string into the type a given planning field
  * actually needs. Discriminated on `ok` like `Result<T, YohError>`, but
  * deliberately its own (simpler) shape — this is input-parsing, not bound by
