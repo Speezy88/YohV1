@@ -16,8 +16,10 @@
  * builds the "Created ... in ..." receipt itself, once Spencer answers.
  */
 import { randomUUID } from "node:crypto";
-import { draftNotionPageFields, type AnthropicMessagesClient } from "../adapters/llm-adapter.ts";
+import { draftNotionPageFields, DRAFT_NOTION_PAGE_DATE_FIELDS, type AnthropicMessagesClient } from "../adapters/llm-adapter.ts";
 import { resolveNotionPageDraftProperties, type NotionCreatePageClient, type NotionCreatePageConfig } from "../adapters/notion-adapter.ts";
+import { resolveRelativeDate, resolveRelativeDateTime } from "../core/relative-date.ts";
+import { localIsoDate } from "../rituals/ritual-shared.ts";
 import { openProposal, type OpenProposalDeps } from "./open-proposal.ts";
 import type { ChatTurnResponse } from "../types/api.ts";
 import type { NotionDatabaseTarget, NotionPageDraft, Proposal, Result, YohError } from "../types/domain.ts";
@@ -41,6 +43,8 @@ export interface CreateItemDeps extends OpenProposalDeps {
   readonly llmClient: AnthropicMessagesClient;
   readonly getNotionCreatePageBinding: NotionCreatePageBindingFn;
   readonly now: () => Date;
+  /** Spencer's IANA timezone — real-use fixes plan, Task 3: both `draftNotionPageFields`'s own prompt and this file's own deterministic date resolution below need it. Already supplied at the `chatTurn`-deps level (shared with `CalendarEditDeps`'s identical field). */
+  readonly timeZone: string;
 }
 
 export interface CreateItemInput {
@@ -55,10 +59,58 @@ function describeDraft(database: NotionDatabaseTarget, properties: Readonly<Reco
   return lines.join("\n");
 }
 
+/**
+ * Resolves ONE drafted date field's raw string value deterministically: an
+ * already-valid ISO date/datetime passes through unchanged; a recognized
+ * relative phrase (with or without a time-of-day) resolves to one;
+ * anything else is `undefined`. Tries the time-aware form FIRST so a value
+ * that carries both a date and a time (the incident: "tomorrow at 10:45
+ * AM") resolves to a full datetime rather than silently dropping the time.
+ */
+function resolveDraftDateField(rawValue: string, ctx: { readonly now: Date; readonly timeZone: string }): string | undefined {
+  return resolveRelativeDateTime(rawValue, ctx) ?? resolveRelativeDate(rawValue, ctx);
+}
+
+/**
+ * Real-use fixes plan, Task 3: runs BEFORE `resolveNotionPageDraftProperties`
+ * / before any Proposal is opened — the incident this fixes is a draft that
+ * carried the literal, unresolved text "tomorrow at 10:45 AM" as Due Date,
+ * shown to Spencer and confirmed, rejected by Notion only afterward. On an
+ * unresolvable date field this returns a plain clarifying question instead
+ * (never a draft, never a Proposal) — `resolveNotionPageDraftProperties`'s
+ * own ISO backstop (notion-adapter.ts) still exists for defense in depth,
+ * but by the time it runs here every date field is already ISO or this
+ * function has already returned.
+ */
+function resolveDraftDateFields(
+  database: NotionDatabaseTarget,
+  fields: Record<string, string>,
+  ctx: { readonly now: Date; readonly timeZone: string },
+): { readonly ok: true } | { readonly ok: false; readonly reply: string } {
+  for (const field of DRAFT_NOTION_PAGE_DATE_FIELDS[database]) {
+    const raw = fields[field];
+    if (raw === undefined) continue;
+    const resolved = resolveDraftDateField(raw, ctx);
+    if (resolved === undefined) {
+      const title = fields["title"] ?? "that";
+      const reply =
+        field === "dueDate"
+          ? `When is "${title}" due? I couldn't read "${raw}" as a date.`
+          : `I couldn't read "${raw}" as a date for "${title}"'s ${field} — can you give me an actual date?`;
+      return { ok: false, reply };
+    }
+    fields[field] = resolved;
+  }
+  return { ok: true };
+}
+
 export async function draftItem(deps: CreateItemDeps, input: CreateItemInput): Promise<Result<ChatTurnResponse, YohError>> {
+  const now = deps.now();
+  const today = localIsoDate(now, deps.timeZone);
+
   let fields: Record<string, string> | undefined;
   try {
-    fields = await draftNotionPageFields(deps.llmClient, input.database, input.request);
+    fields = await draftNotionPageFields(deps.llmClient, input.database, input.request, today, deps.timeZone);
   } catch {
     fields = undefined;
   }
@@ -68,6 +120,11 @@ export async function draftItem(deps: CreateItemDeps, input: CreateItemInput): P
       ok: true,
       value: { reply: `I couldn't tell what you want in the new ${input.database} item — try naming it more directly.`, receipts: [] },
     };
+  }
+
+  const dateResolution = resolveDraftDateFields(input.database, fields, { now, timeZone: deps.timeZone });
+  if (!dateResolution.ok) {
+    return { ok: true, value: { reply: dateResolution.reply, receipts: [] } };
   }
 
   const binding = deps.getNotionCreatePageBinding();

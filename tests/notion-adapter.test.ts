@@ -918,6 +918,42 @@ test("resolveNotionPageDraftProperties never calls pages.create — validation o
   assert.equal(client.createCalls.length, 0);
 });
 
+// Real-use fixes plan, Task 3 (AD-12 backstop): a `date`-typed property
+// rejects any value that isn't a real ISO date/datetime — the incident this
+// guards against is a draft that carried the literal, never-resolved text
+// "tomorrow at 10:45 AM" as Due Date, shown to Spencer and confirmed before
+// Notion's own write-time check ever caught it.
+test("resolveNotionPageDraftProperties rejects a non-ISO date value for a date-typed property (the incident: an unresolved relative phrase)", async () => {
+  const client = fakeCreatePageClient(ALL_CREATE_PAGE_SCHEMAS);
+  const result = await resolveNotionPageDraftProperties(client, CREATE_PAGE_CONFIG, "Tasks", {
+    title: "Lab report draft",
+    dueDate: "tomorrow at 10:45 AM",
+  });
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.error.kind, "validation");
+    assert.match(result.error.message, /ISO date/);
+  }
+});
+
+test("resolveNotionPageDraftProperties accepts a bare ISO date for a date-typed property", async () => {
+  const client = fakeCreatePageClient(ALL_CREATE_PAGE_SCHEMAS);
+  const result = await resolveNotionPageDraftProperties(client, CREATE_PAGE_CONFIG, "Tasks", {
+    title: "Lab report draft",
+    dueDate: "2026-09-28",
+  });
+  assert.equal(result.ok, true);
+});
+
+test("resolveNotionPageDraftProperties accepts a full ISO datetime for a date-typed property", async () => {
+  const client = fakeCreatePageClient(ALL_CREATE_PAGE_SCHEMAS);
+  const result = await resolveNotionPageDraftProperties(client, CREATE_PAGE_CONFIG, "Tasks", {
+    title: "Lab report draft",
+    dueDate: "2026-09-28T17:45:00.000Z",
+  });
+  assert.equal(result.ok, true);
+});
+
 test("createPage creates a page in the target database's data source and returns its id/url", async () => {
   const client = fakeCreatePageClient(ALL_CREATE_PAGE_SCHEMAS);
   const result = await createPage(client, CREATE_PAGE_CONFIG, "ResearchVault", {

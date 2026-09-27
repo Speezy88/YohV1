@@ -56,6 +56,7 @@ function fakeTasksClient(): NotionCreatePageClient {
         type: "select",
         select: { options: [{ id: "1", name: "Errands", color: "blue", description: null }] },
       },
+      "Due Date": { id: "due", name: "Due Date", description: null, type: "date", date: {} },
     },
   } as unknown as Awaited<ReturnType<NotionCreatePageClient["dataSources"]["retrieve"]>>;
   return {
@@ -81,6 +82,7 @@ function tempDeps(overrides: { bindingOk?: boolean; llmResponse?: string } = {})
     store,
     llmClient: makeFakeLlmClient(overrides.llmResponse ?? ""),
     now: () => new Date("2026-09-26T18:00:00.000Z"),
+    timeZone: "America/Los_Angeles",
     getNotionCreatePageBinding: () =>
       overrides.bindingOk === false
         ? { ok: false, error: { kind: "missing-field", message: "no Notion config" } }
@@ -138,5 +140,54 @@ test("draftItem's confirm question leads with 'Create', not a bare 'Yes' (Story 
     { label: "Create", value: "yes" },
     { label: "Cancel", value: "no" },
   ]);
+  deps.connection.close();
+});
+
+// ============================================================================
+// Real-use fixes plan, Task 3: dates are resolved and validated before any
+// draft is shown. `tempDeps`'s frozen `now` is 2026-09-26T18:00:00.000Z —
+// 2026-09-26T11:00:00-07:00 in America/Los_Angeles (PDT), so "today" is
+// 2026-09-26 and "tomorrow" is 2026-09-27 in Spencer's own timezone.
+// ============================================================================
+
+test("the incident: an LLM draft that carries the literal, unresolved phrase \"tomorrow at 10:45 AM\" as dueDate is resolved deterministically before any draft is shown, never surfaced to Spencer as-is", async () => {
+  const deps = tempDeps({ llmResponse: "title=Lab report draft\ndueDate=tomorrow at 10:45 AM" });
+  const result = await draftItem(deps, { database: "Tasks", request: "lab report draft due tomorrow at 10:45am" });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.ok(result.value.question, "a resolvable date must still open a normal confirm question, not a clarifying question");
+  // 10:45 AM PDT (UTC-7) on 2026-09-27 is 17:45 UTC.
+  assert.match(result.value.question?.text ?? "", /dueDate: 2026-09-27T17:45:00\.000Z/);
+  deps.connection.close();
+});
+
+test("an unresolvable dueDate never produces a draft — a plain clarifying question instead", async () => {
+  const deps = tempDeps({ llmResponse: "title=Lab report draft\ndueDate=sometime soon" });
+  const result = await draftItem(deps, { database: "Tasks", request: "lab report draft due sometime soon" });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.value.question, undefined, "an unresolvable date must never open a confirm question / Proposal");
+  assert.equal(result.value.reply, 'When is "Lab report draft" due? I couldn\'t read "sometime soon" as a date.');
+  deps.connection.close();
+});
+
+test("an already-ISO dueDate (the LLM resolved it itself) passes through unchanged", async () => {
+  const deps = tempDeps({ llmResponse: "title=Lab report draft\ndueDate=2026-10-01" });
+  const result = await draftItem(deps, { database: "Tasks", request: "lab report draft due Oct 1" });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.ok(result.value.question);
+  assert.match(result.value.question?.text ?? "", /dueDate: 2026-10-01/);
+  deps.connection.close();
+});
+
+test("a bare relative dueDate with no time (\"Thursday\") resolves to a plain YYYY-MM-DD, not a datetime", async () => {
+  // 2026-09-26 is a Saturday; the next Thursday is 2026-10-01.
+  const deps = tempDeps({ llmResponse: "title=Lab report draft\ndueDate=Thursday" });
+  const result = await draftItem(deps, { database: "Tasks", request: "lab report draft due Thursday" });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.ok(result.value.question);
+  assert.match(result.value.question?.text ?? "", /dueDate: 2026-10-01(?!T)/);
   deps.connection.close();
 });

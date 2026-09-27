@@ -341,26 +341,42 @@ test("suggestFieldValue calls the injected parseValue with the trimmed claimed v
 
 test("draftNotionPageFields parses key=value lines into a field map", async () => {
   const { client } = fakeClient(textMessage("title=Buy hiking boots\narea=Errands\nestimatedDurationMinutes=30"));
-  const result = await draftNotionPageFields(client, "Tasks", "add a task to buy hiking boots, errands, 30 min");
+  const result = await draftNotionPageFields(client, "Tasks", "add a task to buy hiking boots, errands, 30 min", "2026-09-27", "America/Los_Angeles");
   assert.deepEqual(result, { title: "Buy hiking boots", area: "Errands", estimatedDurationMinutes: "30" });
 });
 
 test("draftNotionPageFields returns undefined when Claude extracts no title", async () => {
   const { client } = fakeClient(textMessage("area=Errands"));
-  const result = await draftNotionPageFields(client, "Tasks", "something about errands");
+  const result = await draftNotionPageFields(client, "Tasks", "something about errands", "2026-09-27", "America/Los_Angeles");
   assert.equal(result, undefined);
 });
 
 test("draftNotionPageFields returns undefined for a response with no parseable key=value lines at all", async () => {
   const { client } = fakeClient(textMessage("I'm not sure what you mean."));
-  const result = await draftNotionPageFields(client, "Tasks", "uhh");
+  const result = await draftNotionPageFields(client, "Tasks", "uhh", "2026-09-27", "America/Los_Angeles");
   assert.equal(result, undefined);
 });
 
 test("draftNotionPageFields mentions the target database in its system prompt", async () => {
   const { calls, client } = fakeClient(textMessage("title=X"));
-  await draftNotionPageFields(client, "ResearchVault", "research vault entry about hiking boots");
+  await draftNotionPageFields(client, "ResearchVault", "research vault entry about hiking boots", "2026-09-27", "America/Los_Angeles");
   assert.match(calls[0]!.params.system as string, /ResearchVault|Research Vault/);
+});
+
+test("draftNotionPageFields's system prompt gives today's date + timezone and instructs resolving a Tasks database's dueDate into a real date, never the relative phrase itself", async () => {
+  const { calls, client } = fakeClient(textMessage("title=X"));
+  await draftNotionPageFields(client, "Tasks", "create a task due tomorrow", "2026-09-27", "America/Los_Angeles");
+  const system = calls[0]!.params.system as string;
+  assert.match(system, /2026-09-27/);
+  assert.match(system, /America\/Los_Angeles/);
+  assert.match(system, /dueDate/);
+});
+
+test("draftNotionPageFields's system prompt does NOT mention date resolution for a database with no date-typed field (Projects)", async () => {
+  const { calls, client } = fakeClient(textMessage("title=X"));
+  await draftNotionPageFields(client, "Projects", "create a project", "2026-09-27", "America/Los_Angeles");
+  const system = calls[0]!.params.system as string;
+  assert.doesNotMatch(system, /resolve any relative date/i);
 });
 
 // ============================================================================

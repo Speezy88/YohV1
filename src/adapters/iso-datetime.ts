@@ -8,6 +8,7 @@
 // ============================================================================
 
 const FULL_ISO_DATETIME_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/i;
+const ISO_DATE_ONLY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 function isLeapYear(year: number): boolean {
   return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
@@ -44,4 +45,24 @@ export function isValidIsoDateTime(raw: string): boolean {
 /** Canonical UTC form (`toISOString`) of an already-validated datetime — call only after `isValidIsoDateTime` confirms `raw` is real. */
 export function normalizeIsoDateTime(raw: string): string {
   return new Date(raw).toISOString();
+}
+
+/**
+ * True only for a bare "YYYY-MM-DD" calendar date (no time component)
+ * whose fields are a real calendar day — real-use fixes plan, Task 3's
+ * draft-time backstop: `notion-adapter.ts`'s `resolveNotionPageDraftProperties`
+ * rejects a Notion `date`-typed property value that is neither this nor a
+ * full `isValidIsoDateTime` datetime, so a relative phrase like "tomorrow
+ * at 10:45 AM" can never reach Notion's own write-time validation as the
+ * first place it's caught.
+ */
+export function isValidIsoDate(raw: string): boolean {
+  const match = ISO_DATE_ONLY_RE.exec(raw);
+  if (!match) return false;
+  const [, yearStr, monthStr, dayStr] = match;
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+  const day = Number(dayStr);
+  if (month < 1 || month > 12) return false;
+  return day >= 1 && day <= daysInMonth(year, month);
 }

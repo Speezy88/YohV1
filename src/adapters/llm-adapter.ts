@@ -415,14 +415,36 @@ const DRAFT_NOTION_PAGE_KNOWN_FIELDS: Readonly<Record<NotionDatabaseTarget, read
   ResearchVault: ["title", "keyFindings", "query", "searchDate", "sources", "status", "area", "confidence", "openQuestions"],
 };
 
-function buildDraftNotionPageSystemPrompt(database: NotionDatabaseTarget): string {
+/**
+ * Internal field names (per database) that are Notion `date`-typed
+ * properties — Spencer's own free text for these needs date resolution,
+ * unlike every other field here. Exported (review fix, Task 3): also the
+ * ONE list `app/create-item.ts` runs through its own deterministic
+ * `core/relative-date.ts` resolver before ever showing a draft — `app/`
+ * importing `adapters/` is permitted, so this is imported there rather than
+ * kept as a second, separately-maintained copy.
+ */
+export const DRAFT_NOTION_PAGE_DATE_FIELDS: Readonly<Record<NotionDatabaseTarget, readonly string[]>> = {
+  Tasks: ["dueDate"],
+  Projects: [],
+  ResearchVault: ["searchDate"],
+};
+
+function buildDraftNotionPageSystemPrompt(database: NotionDatabaseTarget, today: string, timeZone: string): string {
   const fields = DRAFT_NOTION_PAGE_KNOWN_FIELDS[database];
-  return [
+  const dateFields = DRAFT_NOTION_PAGE_DATE_FIELDS[database];
+  const lines = [
     `You are helping Yoh, Spencer's personal planning assistant, turn a chat request into a structured draft for a new "${database}" Notion item.`,
     `Extract ONLY fields Spencer actually mentioned, from this list: ${fields.join(", ")}.`,
     `Respond with one "field=value" line per field you can confidently extract, using EXACTLY these field names. "title" is required — if you cannot confidently extract a title, respond with exactly: NONE`,
     "Never invent a value Spencer didn't say or clearly imply.",
-  ].join("\n");
+  ];
+  if (dateFields.length > 0) {
+    lines.push(
+      `Today's date is ${today}, Spencer's timezone is ${timeZone}. For ${dateFields.join("/")}, resolve any relative date or time Spencer gives (e.g. "tomorrow", "Thursday", "next week Friday", "Oct 3") into a real "YYYY-MM-DD" date — or, if Spencer also gave a specific time (e.g. "tomorrow at 10:45 AM"), a full ISO-8601 UTC datetime with a "Z" suffix (e.g. "2026-09-18T17:45:00.000Z"). Never respond with the relative phrase itself (e.g. never "dueDate=tomorrow") — always the resolved date/datetime. If you cannot confidently resolve it to a real date, omit that field entirely rather than guessing.`,
+    );
+  }
+  return lines.join("\n");
 }
 
 /**
@@ -433,16 +455,29 @@ function buildDraftNotionPageSystemPrompt(database: NotionDatabaseTarget): strin
  * API/transport failure still propagates as a thrown error (AD-8);
  * `app/create-item.ts` (Story 8.9: originally `shell/chat-cli.ts`) treats
  * that the same as "couldn't draft."
+ *
+ * `today`/`timeZone` (real-use fixes plan, Task 3): Spencer's own host-local
+ * "today" and IANA timezone, passed into the system prompt so the model
+ * resolves a relative date field itself — but this is a best-effort LLM
+ * resolution, NEVER trusted blindly: `app/create-item.ts` runs
+ * `core/relative-date.ts`'s deterministic resolver over every date field
+ * this returns before a Proposal is ever shown, and `notion-adapter.ts`'s
+ * `resolveNotionPageDraftProperties` rejects a non-ISO value as a backstop
+ * either way. This is exactly the incident this task fixes: a draft that
+ * once carried the literal, never-resolved text "tomorrow at 10:45 AM" as
+ * Due Date.
  */
 export async function draftNotionPageFields(
   client: AnthropicMessagesClient,
   database: NotionDatabaseTarget,
   request: string,
+  today: string,
+  timeZone: string,
 ): Promise<Record<string, string> | undefined> {
   const message = await client.messages.create({
     model: CLAUDE_CHAT_MODEL_FAST,
     max_tokens: DRAFT_NOTION_PAGE_MAX_TOKENS,
-    system: buildDraftNotionPageSystemPrompt(database),
+    system: buildDraftNotionPageSystemPrompt(database, today, timeZone),
     messages: [{ role: "user", content: request }],
   });
 

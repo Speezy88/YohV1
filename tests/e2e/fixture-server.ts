@@ -144,6 +144,7 @@ const draftFieldsLlmClient: AnthropicMessagesClient = {
 const captureDeps: CreateItemDeps = {
   store,
   now: () => new Date(),
+  timeZone: TIME_ZONE,
   llmClient: draftFieldsLlmClient,
   getNotionCreatePageBinding: () => ({ ok: true, value: { client: notionCreate.client, config: NOTION_CREATE_CONFIG } }),
 };

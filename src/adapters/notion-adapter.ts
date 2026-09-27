@@ -86,6 +86,7 @@
  */
 
 import { APIResponseError, isFullDataSource, isFullPage, type Client } from "@notionhq/client";
+import { isValidIsoDate, isValidIsoDateTime } from "./iso-datetime.ts";
 import type {
   CreatePageParameters,
   CreatePageResponse,
@@ -877,6 +878,17 @@ function resolveCreatePageProperty(
       return { ok: true, value: { number: n } };
     }
     case "date":
+      // Real-use fixes plan, Task 3 (backstop, AD-12): `app/create-item.ts` is
+      // supposed to have already resolved any relative phrase into a real
+      // ISO date/datetime BEFORE calling this — this check is what makes
+      // that not merely a convention. Without it, a raw, never-validated
+      // string like "tomorrow at 10:45 AM" would sail through here (Notion's
+      // own API only rejects it later, at WRITE time), which is exactly the
+      // incident this task fixes: a draft Spencer confirmed, that Notion
+      // then rejected.
+      if (!isValidIsoDate(rawValue) && !isValidIsoDateTime(rawValue)) {
+        return { ok: false, message: `"${propertyName}" expects an ISO date (got "${rawValue}")` };
+      }
       return { ok: true, value: { date: { start: rawValue } } };
     case "select":
     case "status": {
