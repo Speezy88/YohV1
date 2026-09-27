@@ -201,6 +201,71 @@ test("review fix: a stale/replayed 'yes' to an ALREADY-DECLINED suggest question
   store.close();
 });
 
+test("final-review fix: a 'yes' whose echoed proposal names a DIFFERENT task is refused as conflict — updateTaskField is never called", async () => {
+  const store = tempStore();
+  openReq(store, [{ taskId: "t1", taskTitle: "Call dentist", missingFields: ["estimatedDurationMinutes"] }]);
+  const updateTaskField = makeUpdateTaskField();
+  const proposal = {
+    id: "field-value:t1:estimatedDurationMinutes",
+    kind: "field-value" as const,
+    entityId: "t1",
+    entityVersion: "field-value",
+    // Same field, but a DIFFERENT task than the one actually pending (t1).
+    suggested: { taskId: "t2", taskTitle: "Some other task", field: "estimatedDurationMinutes" as const, value: 30, reason: "half an hour" },
+    reason: "half an hour",
+    createdAt: "2026-09-25T00:00:00.000Z",
+  };
+  const result = await answerDataCompleteness({ store, session: session(), updateTaskField }, { requestId: "data-completeness", questionId: "t1:estimatedDurationMinutes:suggest", answer: "yes", proposal });
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.error.kind, "conflict");
+  assert.equal(updateTaskField.calls.length, 0);
+  assert.equal(getTaskFieldOverride(store, "t1"), undefined);
+  store.close();
+});
+
+test("final-review fix: a 'yes' whose echoed proposal names a DIFFERENT field is refused as conflict — updateTaskField is never called", async () => {
+  const store = tempStore();
+  openReq(store, [{ taskId: "t1", taskTitle: "Call dentist", missingFields: ["estimatedDurationMinutes"] }]);
+  const updateTaskField = makeUpdateTaskField();
+  const proposal = {
+    id: "field-value:t1:estimatedDurationMinutes",
+    kind: "field-value" as const,
+    entityId: "t1",
+    entityVersion: "field-value",
+    // Same task, but a DIFFERENT field than the one actually pending (estimatedDurationMinutes).
+    suggested: { taskId: "t1", taskTitle: "Call dentist", field: "dueDate" as const, value: "2026-12-31", reason: "x" },
+    reason: "x",
+    createdAt: "2026-09-25T00:00:00.000Z",
+  };
+  const result = await answerDataCompleteness({ store, session: session(), updateTaskField }, { requestId: "data-completeness", questionId: "t1:estimatedDurationMinutes:suggest", answer: "yes", proposal });
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.error.kind, "conflict");
+  assert.equal(updateTaskField.calls.length, 0);
+  assert.equal(getTaskFieldOverride(store, "t1"), undefined);
+  store.close();
+});
+
+test("final-review fix: a 'yes' whose echoed proposal is a DIFFERENT kind (not field-value) is refused as conflict — updateTaskField is never called", async () => {
+  const store = tempStore();
+  openReq(store, [{ taskId: "t1", taskTitle: "Call dentist", missingFields: ["estimatedDurationMinutes"] }]);
+  const updateTaskField = makeUpdateTaskField();
+  const proposal = {
+    id: "time-budget-change-1",
+    kind: "time-budget-change" as const,
+    entityId: "current",
+    entityVersion: "1",
+    suggested: { totalMinutes: 480 },
+    reason: "x",
+    createdAt: "2026-09-25T00:00:00.000Z",
+  };
+  const result = await answerDataCompleteness({ store, session: session(), updateTaskField }, { requestId: "data-completeness", questionId: "t1:estimatedDurationMinutes:suggest", answer: "yes", proposal: proposal as never });
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.error.kind, "conflict");
+  assert.equal(updateTaskField.calls.length, 0);
+  assert.equal(getTaskFieldOverride(store, "t1"), undefined);
+  store.close();
+});
+
 test("an answer to a questionId that is no longer pending returns conflict and writes nothing", async () => {
   const store = tempStore();
   openReq(store, [{ taskId: "t1", taskTitle: "Plan trip", missingFields: ["area", "dueDate"] }]);

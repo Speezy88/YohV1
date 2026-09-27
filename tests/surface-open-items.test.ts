@@ -125,6 +125,34 @@ test("surfaceOpenItems builds the FULL confirm-question shape for an open 'propo
   store.close();
 });
 
+test("final-review fix (Important #2): re-surfacing a stored 'notion-page-draft' proposal keeps its Create/Cancel chip labels, not the generic Yes/No — the SAME shape a fresh draftItem() turn returns, since both go through the ONE buildProposalQuestion assembly point", async () => {
+  const store = tempStore();
+  const proposal = {
+    id: "create-Tasks-1",
+    kind: "notion-page-draft" as const,
+    entityId: "create-Tasks-1",
+    entityVersion: "new",
+    suggested: { database: "Tasks", properties: { title: "Buy hiking boots" } },
+    reason: "Here's what I'll create in Tasks:\n  title: Buy hiking boots",
+    createdAt: "2026-09-26T18:00:00.000Z",
+  };
+  putOpenInteractionRequest(store, "proposal:create-Tasks-1", {
+    requestKind: "proposal",
+    promptText: proposal.reason,
+    detail: { proposal, cursor: { questionId: "confirm" } },
+    createdAt: "2026-09-26T18:00:00.000Z",
+  });
+  const result = await surfaceOpenItems({ store, session: makeSession() }, {});
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  const question = result.value.items[0]!.question;
+  assert.deepEqual(question.options, [
+    { label: "Create", value: "yes" },
+    { label: "Cancel", value: "no" },
+  ]);
+  store.close();
+});
+
 test("surfaceOpenItems falls back to the generic question for a 'proposal' request with no stored proposal (malformed/legacy record)", async () => {
   const store = tempStore();
   putOpenInteractionRequest(store, "orphan-proposal", { requestKind: "proposal", promptText: "x", detail: {}, createdAt: "x" });

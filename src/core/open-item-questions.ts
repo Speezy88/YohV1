@@ -185,6 +185,23 @@ export function buildGenericQuestion(requestId: string): OpenItemQuestion {
 export const PROPOSAL_QUESTION_ID = "confirm";
 
 /**
+ * Story 8.8 AC3, final-review fix (Important #2): a generic Yes/No reads
+ * oddly for "did you want me to CREATE this" — every `notion-page-draft`
+ * confirm leads with "Create", pre-focused by `StructuredQuestion.tsx` so
+ * Enter alone confirms it. The VALUES are unchanged ("yes"/"no") — only the
+ * label changes; `answerOpenItem`/`parseProposalAnswer` read the value,
+ * never the label. Every other proposal kind keeps the generic Yes/No.
+ */
+const CREATE_CANCEL_OPTIONS = [
+  { label: "Create", value: "yes" },
+  { label: "Cancel", value: "no" },
+] as const;
+const YES_NO_OPTIONS = [
+  { label: "Yes", value: "yes" },
+  { label: "No", value: "no" },
+] as const;
+
+/**
  * Builds an open `"proposal"` item's one confirm question — text is the
  * request's own stored `promptText` (already the complete "here's what I
  * want to do, and why" line `chat-cli.ts` used to show verbatim, whichever
@@ -195,16 +212,22 @@ export const PROPOSAL_QUESTION_ID = "confirm";
  * surface) always has it at hand without a second store read — mirrors
  * FR-25's own suggest-question carrying its `Proposal<FieldValueSuggestion>`
  * the same way.
+ *
+ * Final-review fix (Important #2): this is the ONE place every
+ * `"proposal"` OpenItemQuestion is assembled (Controller Ruling 1) — a
+ * fresh `app/create-item.ts` draft (via `app/open-proposal.ts`'s own return)
+ * AND a later `app/surface-open-items.ts` re-surface (a page load, poll
+ * tick, or post-answer refetch) both call this same function, so the
+ * `notion-page-draft` -> Create/Cancel relabeling below can never drift
+ * between the two the way it did when `create-item.ts` relabeled only its
+ * own direct return value.
  */
 export function buildProposalQuestion(requestId: string, promptText: string, proposal: Proposal<unknown>): OpenItemQuestion {
   return {
     requestId,
     questionId: PROPOSAL_QUESTION_ID,
     text: promptText,
-    options: [
-      { label: "Yes", value: "yes" },
-      { label: "No", value: "no" },
-    ],
+    options: proposal.kind === "notion-page-draft" ? CREATE_CANCEL_OPTIONS : YES_NO_OPTIONS,
     allowsFreeText: true,
     proposal,
   };

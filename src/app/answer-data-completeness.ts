@@ -15,7 +15,7 @@ import type { MissingFieldReport } from "../core/data-completeness-gate.ts";
 import { DATA_COMPLETENESS_REQUEST_ID } from "../rituals/data-completeness.ts";
 import { confirmProposal } from "./confirm-proposal.ts";
 import { buildOpenItemQuestion, type SurfaceOpenItemsDeps } from "./surface-open-items.ts";
-import type { ExternalId, PlanningFieldNames, Result, Task, TaskFieldOverride, YohError } from "../types/domain.ts";
+import type { ExternalId, FieldValueSuggestion, PlanningFieldNames, Result, Task, TaskFieldOverride, YohError } from "../types/domain.ts";
 import type { AnswerOpenItemRequest, AnswerOpenItemResponse } from "../types/api.ts";
 
 export interface AnswerDataCompletenessDeps extends SurfaceOpenItemsDeps {
@@ -76,8 +76,28 @@ export async function answerDataCompleteness(deps: AnswerDataCompletenessDeps, i
   const label = PLANNING_FIELD_LABELS[pending.field];
 
   if (input.questionId.endsWith(":suggest")) {
-    const accepted = parseProposalAnswer(input.answer) === true && input.proposal?.kind === "field-value";
-    if (accepted) {
+    const answeredYes = parseProposalAnswer(input.answer) === true;
+    if (answeredYes) {
+      // Final-review fix (Important #1): the echoed `proposal`'s claimed
+      // identity is untyped JSON from the network — it must name the SAME
+      // (taskId, field) this suggest question is actually pending on, or a
+      // client could steer the write at an arbitrary Task's arbitrary
+      // planning field while still answering the correct `questionId`.
+      // `confirmProposal`'s own `"field-value"` branch re-validates the
+      // suggested VALUE (defense in depth) but never cross-checks identity —
+      // that check belongs here, the one place that actually knows what's
+      // pending.
+      const suggested = input.proposal?.kind === "field-value" ? (input.proposal.suggested as FieldValueSuggestion) : undefined;
+      const matchesPending = suggested !== undefined && suggested.taskId === pending.taskId && suggested.field === pending.field;
+      if (!matchesPending) {
+        return {
+          ok: false,
+          error: {
+            kind: "conflict",
+            message: "answer-data-completeness: the echoed proposal doesn't match the pending question",
+          },
+        };
+      }
       // Story 8.2: the write itself now goes through `confirmProposal` — the
       // ONE confirm path every Proposal kind resolves through, whichever
       // surface confirmed it (FR-48). `confirmProposal` re-validates the

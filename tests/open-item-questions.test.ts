@@ -124,3 +124,35 @@ test("buildProposalQuestion (Story 8.2, C4) builds the fixed confirm shape: 'con
     proposal,
   });
 });
+
+test("final-review fix (Important #2): buildProposalQuestion relabels a 'notion-page-draft' proposal's options to Create/Cancel, 'Create' first — the ONE place OpenItemQuestion shapes are assembled, so this holds regardless of which caller builds the question (a fresh draft OR a later re-surface)", () => {
+  const proposal: Proposal<unknown> = {
+    id: "create-Tasks-1",
+    kind: "notion-page-draft",
+    entityId: "create-Tasks-1",
+    entityVersion: "new",
+    suggested: { database: "Tasks", properties: { title: "Buy hiking boots" } },
+    reason: "Here's what I'll create in Tasks:\n  title: Buy hiking boots",
+    createdAt: "2026-09-26T18:00:00.000Z",
+  };
+  const q = buildProposalQuestion("proposal:create-Tasks-1", proposal.reason, proposal);
+  assert.deepEqual(q.options, [
+    { label: "Create", value: "yes" },
+    { label: "Cancel", value: "no" },
+  ]);
+});
+
+test("final-review fix (Important #2): every OTHER proposal kind keeps the generic Yes/No labels", () => {
+  const calendarProposal: Proposal<unknown> = {
+    id: "calendar-edit-1",
+    kind: "calendar-edit",
+    entityId: "evt-1",
+    entityVersion: "etag-1",
+    suggested: {},
+    reason: "Move it",
+    createdAt: "2026-09-26T18:00:00.000Z",
+  };
+  const q = buildProposalQuestion("proposal:calendar-edit-1", calendarProposal.reason, calendarProposal);
+  assert.deepEqual(q.options.map((o) => o.value), ["yes", "no"]);
+  assert.deepEqual(q.options.map((o) => o.label), ["Yes", "No"]);
+});

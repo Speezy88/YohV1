@@ -13,9 +13,11 @@
  *
  * Story 8.8 AC3: the first option chip is pre-focused the moment a question
  * mounts, so Enter alone confirms it (used by the capture flow's "Create"
- * chip — `app/create-item.ts`'s `CREATE_ITEM_OPTIONS` puts it first). This
- * is a plain mount-only effect, not a prop-driven key: every real caller
- * already gives a genuinely NEW question its own fresh component instance —
+ * chip — `core/open-item-questions.ts`'s `buildProposalQuestion` puts it
+ * first for any `notion-page-draft` proposal, the ONE place that shape is
+ * assembled). This is a plain mount-only effect, not a prop-driven key:
+ * every real caller already gives a genuinely NEW question its own fresh
+ * component instance —
  * `OpenItems.tsx` keys each card by `requestId:questionId` (so a
  * DIFFERENT question remounts and re-focuses, while a re-render of the
  * SAME item, e.g. an unrelated refetch, reuses the same instance and never

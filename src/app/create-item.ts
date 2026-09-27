@@ -19,21 +19,8 @@ import { randomUUID } from "node:crypto";
 import { draftNotionPageFields, type AnthropicMessagesClient } from "../adapters/llm-adapter.ts";
 import { resolveNotionPageDraftProperties, type NotionCreatePageClient, type NotionCreatePageConfig } from "../adapters/notion-adapter.ts";
 import { openProposal, type OpenProposalDeps } from "./open-proposal.ts";
-import type { ChatTurnResponse, OpenItemOption } from "../types/api.ts";
+import type { ChatTurnResponse } from "../types/api.ts";
 import type { NotionDatabaseTarget, NotionPageDraft, Proposal, Result, YohError } from "../types/domain.ts";
-
-/**
- * Story 8.8 AC3: a generic Yes/No reads oddly for "did you want me to
- * CREATE this" — every notion-page-draft confirm leads with "Create",
- * pre-focused by `StructuredQuestion.tsx` so Enter alone confirms it. The
- * VALUES are unchanged ("yes"/"no") — only the label changes;
- * `answerOpenItem`/`parseProposalAnswer` read the value, never the label, so
- * this is purely cosmetic and touches no other file.
- */
-export const CREATE_ITEM_OPTIONS: readonly OpenItemOption[] = [
-  { label: "Create", value: "yes" },
-  { label: "Cancel", value: "no" },
-];
 
 /**
  * The one place this task's code names `resolveNotionPageDraftProperties` —
@@ -124,6 +111,14 @@ export async function draftItem(deps: CreateItemDeps, input: CreateItemInput): P
     };
   }
 
-  const question = { ...opened.value, options: CREATE_ITEM_OPTIONS };
-  return { ok: true, value: { reply: "", receipts: [], question } };
+  // Final-review fix (Important #2): the "Create"/"Cancel" chip labels
+  // (Story 8.8 AC3) are no longer relabeled here — `open-proposal.ts`'s own
+  // return already carries them, via `core/open-item-questions.ts`'s
+  // `buildProposalQuestion`, the ONE place every `"proposal"` question is
+  // assembled (Controller Ruling 1). Relabeling only this direct-return
+  // value (as this file used to) meant a later re-surface through
+  // `app/surface-open-items.ts` regressed to generic Yes/No — moving the
+  // relabeling into that one shared assembly point fixes it for every
+  // caller at once.
+  return { ok: true, value: { reply: "", receipts: [], question: opened.value } };
 }

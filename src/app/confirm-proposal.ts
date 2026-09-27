@@ -258,6 +258,18 @@ export async function confirmProposal(
     // already be well-typed. Re-parsing through the SAME parser a typed
     // answer uses means an echoed proposal can never write anything a typed
     // answer couldn't (AD-11).
+    //
+    // Final-review fix (Important #1): this function does NOT itself
+    // cross-check `suggestion.taskId`/`.field` against anything — it trusts
+    // the caller for identity. That's deliberate: this is the one confirm
+    // path every Proposal kind resolves through (FR-48), including
+    // `app/answer-open-item.ts`'s `"proposal"` kind, which never has a
+    // "pending (taskId, field)" of its own to check against. FR-25's own
+    // caller (`app/answer-data-completeness.ts`) is the one that KNOWS what's
+    // pending, so it verifies `suggestion.taskId`/`.field` match the current
+    // pending question BEFORE ever calling this with `accept: true` —
+    // without that check, a client could echo a proposal naming a different
+    // Task/field than the one it's actually answering.
     const reparsed = parsePlanningFieldValue(suggestion.field, String(suggestion.value));
     if (!reparsed.ok) {
       clearRequestIfGiven(deps.store, requestId);
