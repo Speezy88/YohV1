@@ -141,4 +141,29 @@ test("dayView turns a thrown Calendar-read failure into an honest, non-crashing 
   if (!result.ok) return;
   assert.doesNotMatch(result.value.reply, /calendar-adapter:/);
   assert.match(result.value.reply, /couldn't reach Google Calendar/i);
+  store.close();
+});
+
+test("dayView displays an untitled event as '(No title)' — blank titles or punctuation-only", async () => {
+  const store = tempStore();
+  const result = await dayView(
+    {
+      store,
+      timeZone: TEST_TIME_ZONE,
+      now: TODAY_NOW,
+      readCalendarEventsForDate: async () => [
+        sampleEvent({ title: "" }), // blank title
+        sampleEvent({ title: "  ", id: "event-2", start: "2026-08-23T15:00:00.000Z", end: "2026-08-23T16:00:00.000Z" }), // whitespace-only
+        sampleEvent({ title: "...", id: "event-3", start: "2026-08-23T16:00:00.000Z", end: "2026-08-23T17:00:00.000Z" }), // punctuation-only
+      ],
+    },
+    { date: "2026-08-23" },
+  );
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  // All three events should show "(No title)"
+  const matches = (result.value.reply.match(/\(No title\)/g) || []).length;
+  assert.equal(matches, 3, "should have three '(No title)' strings for the three untitled events");
+  store.close();
 });

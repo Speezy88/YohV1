@@ -24,6 +24,7 @@
  * real calendar date, never a literal phrase like `"tomorrow"`.
  */
 import { getPlan, type MemoryStore } from "../adapters/memory-store.ts";
+import { displayEventTitle } from "../core/event-title.ts";
 import { errorCopyForThrown } from "../core/error-copy.ts";
 import { formatPlanDate, localIsoDate, renderPlan } from "../rituals/ritual-shared.ts";
 import type { ChatTurnResponse } from "../types/api.ts";
@@ -66,7 +67,7 @@ function formatLocalTime(instant: string, timeZone: string): string {
 
 function formatEventLine(event: CalendarEvent, timeZone: string): string {
   const range = `${formatLocalTime(event.start, timeZone)}-${formatLocalTime(event.end, timeZone)}`;
-  const title = event.title.trim().length > 0 ? event.title : "(untitled event)";
+  const title = displayEventTitle(event.title);
   return `  ${range}  ${title}`;
 }
 
