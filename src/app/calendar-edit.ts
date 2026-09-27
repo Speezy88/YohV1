@@ -22,6 +22,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { draftCalendarEditRequest, type AnthropicMessagesClient, type DraftedCalendarEditRequest } from "../adapters/llm-adapter.ts";
+import type { SqliteConnection } from "../adapters/sqlite.ts";
 import { lineStatesDurationOrEnd } from "../core/calendar-duration.ts";
 import { errorCopyForThrown } from "../core/error-copy.ts";
 import { openProposal, type OpenProposalDeps } from "./open-proposal.ts";
@@ -71,6 +72,8 @@ export interface CalendarEditDeps extends OpenProposalDeps {
   readonly resolveCalendarEditRouteFn: ResolveCalendarEditRouteFn;
   readonly proposeCalendarEditFn: ProposeCalendarEditAdapterFn;
   readonly proposeNewCalendarEventFn: ProposeNewCalendarEventFn;
+  /** Real-use fixes plan, Task 9: passed straight through to `draftCalendarEditRequest`'s own trailing `connection` argument so its usage gets recorded. Optional, mirroring `CreateItemDeps`'s identical field. */
+  readonly connection?: SqliteConnection;
 }
 
 export interface CalendarEditInput {
@@ -170,7 +173,14 @@ export async function proposeCalendarEdit(deps: CalendarEditDeps, input: Calenda
 
   let draft: DraftedCalendarEditRequest | undefined;
   try {
-    draft = await draftCalendarEditRequest(deps.llmClient, input.line, input.today, deps.timeZone, events.map((e) => ({ title: e.title, start: e.start, end: e.end })));
+    draft = await draftCalendarEditRequest(
+      deps.llmClient,
+      input.line,
+      input.today,
+      deps.timeZone,
+      events.map((e) => ({ title: e.title, start: e.start, end: e.end })),
+      deps.connection,
+    );
   } catch (err) {
     // Known leftover from Task 2: a malformed CREATE response used to leak
     // `llm-adapter: CREATE response has an invalid or out-of-range

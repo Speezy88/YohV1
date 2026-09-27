@@ -18,6 +18,7 @@
 import { randomUUID } from "node:crypto";
 import { draftNotionPageFields, DRAFT_NOTION_PAGE_DATE_FIELDS, type AnthropicMessagesClient } from "../adapters/llm-adapter.ts";
 import { resolveNotionPageDraftProperties, type NotionCreatePageClient, type NotionCreatePageConfig } from "../adapters/notion-adapter.ts";
+import type { SqliteConnection } from "../adapters/sqlite.ts";
 import { errorCopy } from "../core/error-copy.ts";
 import { resolveRelativeDate, resolveRelativeDateTime } from "../core/relative-date.ts";
 import { localIsoDate } from "../rituals/ritual-shared.ts";
@@ -46,6 +47,8 @@ export interface CreateItemDeps extends OpenProposalDeps {
   readonly now: () => Date;
   /** Spencer's IANA timezone — real-use fixes plan, Task 3: both `draftNotionPageFields`'s own prompt and this file's own deterministic date resolution below need it. Already supplied at the `chatTurn`-deps level (shared with `CalendarEditDeps`'s identical field). */
   readonly timeZone: string;
+  /** Real-use fixes plan, Task 9: passed straight through to `draftNotionPageFields`'s own trailing `connection` argument so its usage gets recorded. Optional, mirroring every other Deps interface in this file's own capability. */
+  readonly connection?: SqliteConnection;
 }
 
 export interface CreateItemInput {
@@ -111,7 +114,7 @@ export async function draftItem(deps: CreateItemDeps, input: CreateItemInput): P
 
   let fields: Record<string, string> | undefined;
   try {
-    fields = await draftNotionPageFields(deps.llmClient, input.database, input.request, today, deps.timeZone);
+    fields = await draftNotionPageFields(deps.llmClient, input.database, input.request, today, deps.timeZone, deps.connection);
   } catch {
     fields = undefined;
   }

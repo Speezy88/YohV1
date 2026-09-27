@@ -13,6 +13,12 @@ import { CLAUDE_CHAT_MODEL_CAPABLE, CLAUDE_CHAT_MODEL_FAST, type AnthropicMessag
 import { resolveToneSystemPrompt } from "../src/core/tone.ts";
 import type { ChatStreamEvent } from "../src/types/api.ts";
 
+/** Real-use fixes plan, Task 9: `params.system` is now an ARRAY of `TextBlockParam`s (a cache-control breakpoint lives on one of them), not a bare string — join every block's own `.text` to recover the plain text these assertions compare against `resolveToneSystemPrompt`'s own output. */
+function systemText(system: unknown): string {
+  if (typeof system === "string") return system;
+  return ((system as ReadonlyArray<{ text: string }>) ?? []).map((b) => b.text).join("\n");
+}
+
 function makeFakeLlmClient(responseText = "I don't have a specific answer for that.") {
   const calls: any[] = [];
   return {
@@ -64,7 +70,7 @@ test("answerQuestion (non-streaming) returns Claude's real response", async () =
 test("answerQuestion passes core/tone.ts's resolveToneSystemPrompt(message) as the systemPrompt", async () => {
   const llmClient = makeFakeLlmClient("hey yourself");
   await answerQuestion({ llmClient }, { message: "hey, what's up", history: [{ role: "user", content: "hey, what's up" }] });
-  assert.equal(llmClient.calls[0]!.system, resolveToneSystemPrompt("hey, what's up"));
+  assert.equal(systemText(llmClient.calls[0]!.system), resolveToneSystemPrompt("hey, what's up"));
 });
 
 test("an ordinary casual message routes to CLAUDE_CHAT_MODEL_FAST (Haiku)", async () => {
@@ -128,12 +134,12 @@ test("with no emit, answerQuestion never calls the streaming path", async () => 
 test("answerQuestion defaults webSearchAvailable to true when omitted, matching resolveToneSystemPrompt's own default", async () => {
   const llmClient = makeFakeLlmClient("hey yourself");
   await answerQuestion({ llmClient }, { message: "hey, what's up", history: [{ role: "user", content: "hey, what's up" }] });
-  assert.equal(llmClient.calls[0]!.system, resolveToneSystemPrompt("hey, what's up", true));
+  assert.equal(systemText(llmClient.calls[0]!.system), resolveToneSystemPrompt("hey, what's up", true));
 });
 
 test("answerQuestion passes webSearchAvailable: false through to resolveToneSystemPrompt, so the capability text says search isn't set up", async () => {
   const llmClient = makeFakeLlmClient("hey yourself");
   await answerQuestion({ llmClient, webSearchAvailable: false }, { message: "hey, what's up", history: [{ role: "user", content: "hey, what's up" }] });
-  assert.equal(llmClient.calls[0]!.system, resolveToneSystemPrompt("hey, what's up", false));
-  assert.match(llmClient.calls[0]!.system, /web search isn't set up yet/i);
+  assert.equal(systemText(llmClient.calls[0]!.system), resolveToneSystemPrompt("hey, what's up", false));
+  assert.match(systemText(llmClient.calls[0]!.system), /web search isn't set up yet/i);
 });

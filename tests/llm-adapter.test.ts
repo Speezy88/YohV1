@@ -26,8 +26,32 @@ import {
   CLAUDE_CHAT_MODEL_FAST,
   type AnthropicMessagesClient,
 } from "../src/adapters/llm-adapter.ts";
+import { initLlmUsageStoreSchema, listLlmUsage } from "../src/adapters/llm-usage-store.ts";
+import { openSqliteConnection, type SqliteConnection } from "../src/adapters/sqlite.ts";
 import { parsePlanningFieldValue } from "../src/core/planning-field-value.ts";
 import type { ChatTurn, FieldValueSuggestion, PlanningFieldNames, Task } from "../src/types/domain.ts";
+
+/**
+ * Real-use fixes plan, Task 9: every function in `llm-adapter.ts` now
+ * sends `system` as an ARRAY of `TextBlockParam`s (so a cache breakpoint
+ * can be pinned on a specific block) rather than a bare string. This
+ * extracts the equivalent plain text for the pre-existing assertions below
+ * that only ever cared about the WORDS, not the cache-control wrapper —
+ * joining every block's own `.text` reproduces exactly what the old plain
+ * `system: string` used to read as.
+ */
+function systemText(params: Anthropic.MessageCreateParamsNonStreaming): string {
+  const system = params.system;
+  if (typeof system === "string") return system;
+  return (system ?? []).map((block) => block.text).join("\n");
+}
+
+/** A fresh in-memory `SqliteConnection` with `llm_usage` already created — the real usage-recording tests below pass this as the new trailing `connection` argument and read back through `listLlmUsage`. */
+function fakeUsageConnection(): SqliteConnection {
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initLlmUsageStoreSchema(connection.db);
+  return connection;
+}
 
 /** A single-turn `ChatTurn[]` history — the shape most `answerGeneralQuestion` tests need, now that it takes real conversation history instead of a bare string. */
 function oneTurn(content: string): ChatTurn[] {
@@ -117,8 +141,10 @@ test("answerGeneralQuestion sends the given ChatTurn history verbatim as message
   const params = calls[0]!.params;
   assert.equal(params.model, CLAUDE_CHAT_MODEL_FAST);
   assert.ok(params.max_tokens > 0);
-  assert.deepEqual(params.messages, [{ role: "user", content: "what time is it in Tokyo" }]);
-  assert.ok(typeof params.system === "string" && params.system.length > 0);
+  assert.deepEqual(params.messages, [
+    { role: "user", content: [{ type: "text", text: "what time is it in Tokyo", cache_control: { type: "ephemeral" } }] },
+  ]);
+  assert.ok(systemText(params).length > 0);
 });
 
 test("answerGeneralQuestion sends the given model override (2026-09-22 revision — situational escalation to Sonnet)", async () => {
@@ -142,7 +168,10 @@ test("answerGeneralQuestion sends a multi-turn history as real prior conversatio
   assert.deepEqual(calls[0]!.params.messages, [
     { role: "user", content: "Quiz 1 — Energy: high" },
     { role: "assistant", content: "Got it — thanks. I'll factor that in next time I plan." },
-    { role: "user", content: "have you written the data to notion" },
+    // Real-use fixes plan, Task 9: only the LAST turn carries the
+    // conversation-history cache breakpoint (see `toCacheableMessages`) —
+    // everything earlier is sent unchanged, as a plain string.
+    { role: "user", content: [{ type: "text", text: "have you written the data to notion", cache_control: { type: "ephemeral" } }] },
   ]);
 });
 
@@ -157,7 +186,7 @@ test("answerGeneralQuestion accepts an overriding system prompt (Task 14's Tone 
 
   await answerGeneralQuestion(client, oneTurn("hello"), "Custom tone instruction.");
 
-  assert.equal(calls[0]!.params.system, "Custom tone instruction.");
+  assert.equal(systemText(calls[0]!.params), "Custom tone instruction.");
 });
 
 test("answerGeneralQuestion throws (AD-8) rather than returning an empty string when Claude returns no text content", async () => {
@@ -184,6 +213,90 @@ test("answerGeneralQuestion still returns a real response for a general/factual 
   const response = await answerGeneralQuestion(client, oneTurn("at what temperature does water boil"));
 
   assert.ok(response.length > 0);
+});
+
+// ============================================================================
+// answerGeneralQuestion — prompt caching + usage recording (real-use fixes
+// plan, Task 9). The growing chat history is cached turn to turn: only the
+// LAST message of `messages` carries the cache breakpoint, so a turn's
+// shared prefix (every earlier message) is exactly what a PRIOR call
+// already sent — byte-identical, so it can be read from cache — while only
+// the newest message is new content.
+// ============================================================================
+
+test("answerGeneralQuestion's system prompt is sent as one cacheable block", async () => {
+  const { calls, client } = fakeClient(textMessage("An answer."));
+  await answerGeneralQuestion(client, oneTurn("hello"));
+  const system = calls[0]!.params.system as Anthropic.TextBlockParam[];
+  assert.ok(Array.isArray(system));
+  assert.equal(system.length, 1);
+  assert.deepEqual(system[0]!.cache_control, { type: "ephemeral" });
+});
+
+test("answerGeneralQuestion's cached history prefix is byte-identical across two consecutive turns", async () => {
+  const first = fakeClient(textMessage("Got it."));
+  const turn1: ChatTurn[] = [{ role: "user", content: "Quiz 1 — Energy: high" }];
+  await answerGeneralQuestion(first.client, turn1);
+
+  const second = fakeClient(textMessage("Yes, I wrote it."));
+  const turn2: ChatTurn[] = [
+    { role: "user", content: "Quiz 1 — Energy: high" },
+    { role: "assistant", content: "Got it — thanks." },
+    { role: "user", content: "have you written the data to notion" },
+  ];
+  await answerGeneralQuestion(second.client, turn2);
+
+  // The system prompt (the OTHER half of the cacheable prefix, per
+  // Anthropic's `tools -> system -> messages` render order) is byte-stable
+  // across both calls — it never embeds a date (Task 9's own requirement).
+  assert.deepEqual(first.calls[0]!.params.system, second.calls[0]!.params.system);
+
+  // Turn 2's shared prefix (every message except the newest) reproduces
+  // turn 1's own messages verbatim, text-for-text — the only difference is
+  // WHICH message now carries the cache_control breakpoint (turn 1: the
+  // first/only message; turn 2: the new last message), which is metadata,
+  // not model input.
+  const textOf = (m: Anthropic.MessageParam): string => (typeof m.content === "string" ? m.content : (m.content[0] as Anthropic.TextBlockParam).text);
+  const turn1Texts = first.calls[0]!.params.messages.map(textOf);
+  const turn2SharedPrefixTexts = second.calls[0]!.params.messages.slice(0, turn1Texts.length).map(textOf);
+  assert.deepEqual(turn1Texts, turn2SharedPrefixTexts);
+
+  // And turn 2's own last message is the one now marked cacheable — turn
+  // 1's message is no longer marked (it's no longer last).
+  const turn1Last = first.calls[0]!.params.messages.at(-1)!;
+  const turn2Last = second.calls[0]!.params.messages.at(-1)!;
+  assert.ok(Array.isArray(turn1Last.content) && (turn1Last.content[0] as Anthropic.TextBlockParam).cache_control);
+  assert.ok(Array.isArray(turn2Last.content) && (turn2Last.content[0] as Anthropic.TextBlockParam).cache_control);
+});
+
+test("answerGeneralQuestion records usage under purpose 'answer' when given a connection", async () => {
+  const connection = fakeUsageConnection();
+  const { client } = fakeClient(textMessage("An answer."));
+  await answerGeneralQuestion(client, oneTurn("hello"), undefined, undefined, connection);
+  const rows = listLlmUsage(connection);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]!.purpose, "answer");
+  assert.equal(rows[0]!.model, CLAUDE_CHAT_MODEL_FAST);
+  assert.equal(rows[0]!.inputTokens, 10);
+  assert.equal(rows[0]!.outputTokens, 5);
+  assert.equal(rows[0]!.cacheCreationInputTokens, 0);
+  assert.equal(rows[0]!.cacheReadInputTokens, 0);
+  connection.close();
+});
+
+test("answerGeneralQuestion never calls the client at all when no connection is given — recording is purely additive", async () => {
+  const { calls, client } = fakeClient(textMessage("An answer."));
+  const before = calls.length;
+  await answerGeneralQuestion(client, oneTurn("hello"));
+  assert.equal(calls.length, before + 1, "the call itself must still happen — only recording is skipped");
+});
+
+test("answerGeneralQuestion swallows a usage-recording failure rather than letting it fail the call", async () => {
+  const connection = fakeUsageConnection();
+  connection.close(); // any write against a closed connection throws
+  const { client } = fakeClient(textMessage("An answer."));
+  const response = await answerGeneralQuestion(client, oneTurn("hello"), undefined, undefined, connection);
+  assert.equal(response, "An answer.");
 });
 
 // ============================================================================
@@ -261,6 +374,84 @@ test("the non-streaming answerGeneralQuestion path is untouched by the streaming
 });
 
 // ============================================================================
+// streamGeneralQuestion — prompt caching + usage recording (real-use fixes
+// plan, Task 9). This file's injected `AnthropicMessagesClient` interface
+// mirrors the SDK's RAW `stream: true` shape (no `.finalMessage()` helper —
+// see this file's own doc comment on `AnthropicMessagesClient`), so a real
+// stream's usage only ever arrives via `message_start`'s initial `Usage`
+// and each `message_delta`'s CUMULATIVE running total.
+// ============================================================================
+
+/** Like `fakeStreamingClient`, but also yields a `message_start` (with `startUsage`) before the text deltas and a `message_delta` (with the final cumulative `deltaUsage`) after them — the real shape `streamGeneralQuestion` reads usage from. */
+function fakeStreamingClientWithUsage(
+  chunks: readonly string[],
+  startUsage: Anthropic.Usage,
+  deltaUsage: Anthropic.MessageDeltaUsage,
+): { readonly calls: Array<{ readonly stream?: boolean }>; readonly client: AnthropicMessagesClient } {
+  const calls: Array<{ readonly stream?: boolean }> = [];
+  const client = {
+    messages: {
+      create: async (params: Anthropic.MessageCreateParamsNonStreaming | Anthropic.MessageCreateParamsStreaming) => {
+        calls.push(params);
+        async function* events(): AsyncGenerator<Anthropic.RawMessageStreamEvent> {
+          yield { type: "message_start", message: { ...textMessage(""), usage: startUsage } } as Anthropic.RawMessageStreamEvent;
+          for (const text of chunks) {
+            yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } } as Anthropic.RawMessageStreamEvent;
+          }
+          yield {
+            type: "message_delta",
+            delta: { container: null, stop_details: null, stop_reason: "end_turn", stop_sequence: null },
+            usage: deltaUsage,
+          } as Anthropic.RawMessageStreamEvent;
+        }
+        return events();
+      },
+    },
+  } as unknown as AnthropicMessagesClient;
+  return { calls, client };
+}
+
+test("streamGeneralQuestion's system prompt and history breakpoint match the non-streaming path", async () => {
+  const { calls, client } = fakeStreamingClient(["hi"]);
+  for await (const _chunk of streamGeneralQuestion(client, oneTurn("hello"))) {
+    // drain
+  }
+  const params = calls[0] as unknown as Anthropic.MessageCreateParamsStreaming;
+  const system = params.system as Anthropic.TextBlockParam[];
+  assert.ok(Array.isArray(system));
+  assert.deepEqual(system[0]!.cache_control, { type: "ephemeral" });
+  const lastMessage = params.messages.at(-1)!;
+  assert.ok(Array.isArray(lastMessage.content) && (lastMessage.content[0] as Anthropic.TextBlockParam).cache_control);
+});
+
+test("streamGeneralQuestion records the FINAL cumulative usage (from message_delta, not message_start) under purpose 'answer'", async () => {
+  const connection = fakeUsageConnection();
+  const { client } = fakeStreamingClientWithUsage(
+    ["Hel", "lo"],
+    { input_tokens: 20, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, server_tool_use: null, service_tier: null } as Anthropic.Usage,
+    { input_tokens: 20, output_tokens: 7, cache_creation_input_tokens: 5, cache_read_input_tokens: 15, output_tokens_details: null, server_tool_use: null },
+  );
+  for await (const _chunk of streamGeneralQuestion(client, oneTurn("hi"), undefined, undefined, connection)) {
+    // drain
+  }
+  const rows = listLlmUsage(connection);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]!.purpose, "answer");
+  assert.equal(rows[0]!.inputTokens, 20);
+  assert.equal(rows[0]!.outputTokens, 7, "must record the FINAL cumulative output_tokens (7), not message_start's initial placeholder (1)");
+  assert.equal(rows[0]!.cacheCreationInputTokens, 5);
+  assert.equal(rows[0]!.cacheReadInputTokens, 15);
+  connection.close();
+});
+
+test("streamGeneralQuestion never records usage when no connection is given", async () => {
+  const { client } = fakeStreamingClient(["hi"]);
+  for await (const _chunk of streamGeneralQuestion(client, oneTurn("hello"))) {
+    // drain — must not throw for lack of a connection
+  }
+});
+
+// ============================================================================
 // loadLlmAdapterConfigFromEnv — config loading (AD-10)
 // ============================================================================
 
@@ -319,7 +510,7 @@ test("suggestFieldValue sends the joined recent messages and mentions the Task/f
   const { calls, client } = fakeClient(textMessage("NONE"));
   await suggestFieldValue(client, "t1", "Call dentist", "energy", ["msg one", "msg two"], realParseValue);
   assert.equal(calls.length, 1);
-  assert.match(calls[0]!.params.system as string, /Call dentist/);
+  assert.match(systemText(calls[0]!.params), /Call dentist/);
   assert.equal(calls[0]!.params.messages[0]?.content, "msg one\nmsg two");
 });
 
@@ -333,6 +524,19 @@ test("suggestFieldValue calls the injected parseValue with the trimmed claimed v
   const result = await suggestFieldValue(client, "t1", "Call dentist", "area", ["some message"], fakeParseValue);
   assert.deepEqual(parseValueCalls, [{ field: "area", raw: "42" }]);
   assert.equal(result?.value, "a completely different value", "suggestFieldValue must trust whatever parseValue returns, not re-derive it");
+});
+
+test("suggestFieldValue's system prompt is sent as one cacheable block, and records usage under purpose 'suggest-field'", async () => {
+  const connection = fakeUsageConnection();
+  const { calls, client } = fakeClient(textMessage("NONE"));
+  await suggestFieldValue(client, "t1", "Call dentist", "area", ["msg"], realParseValue, connection);
+  const system = calls[0]!.params.system as Anthropic.TextBlockParam[];
+  assert.ok(Array.isArray(system));
+  assert.deepEqual(system[0]!.cache_control, { type: "ephemeral" });
+  const rows = listLlmUsage(connection);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]!.purpose, "suggest-field");
+  connection.close();
 });
 
 // ============================================================================
@@ -360,13 +564,13 @@ test("draftNotionPageFields returns undefined for a response with no parseable k
 test("draftNotionPageFields mentions the target database in its system prompt", async () => {
   const { calls, client } = fakeClient(textMessage("title=X"));
   await draftNotionPageFields(client, "ResearchVault", "research vault entry about hiking boots", "2026-09-27", "America/Los_Angeles");
-  assert.match(calls[0]!.params.system as string, /ResearchVault|Research Vault/);
+  assert.match(systemText(calls[0]!.params), /ResearchVault|Research Vault/);
 });
 
 test("draftNotionPageFields's system prompt gives today's date + timezone and instructs resolving a Tasks database's dueDate into a real date, never the relative phrase itself", async () => {
   const { calls, client } = fakeClient(textMessage("title=X"));
   await draftNotionPageFields(client, "Tasks", "create a task due tomorrow", "2026-09-27", "America/Los_Angeles");
-  const system = calls[0]!.params.system as string;
+  const system = systemText(calls[0]!.params);
   assert.match(system, /2026-09-27/);
   assert.match(system, /America\/Los_Angeles/);
   assert.match(system, /dueDate/);
@@ -375,8 +579,60 @@ test("draftNotionPageFields's system prompt gives today's date + timezone and in
 test("draftNotionPageFields's system prompt does NOT mention date resolution for a database with no date-typed field (Projects)", async () => {
   const { calls, client } = fakeClient(textMessage("title=X"));
   await draftNotionPageFields(client, "Projects", "create a project", "2026-09-27", "America/Los_Angeles");
-  const system = calls[0]!.params.system as string;
+  const system = systemText(calls[0]!.params);
   assert.doesNotMatch(system, /resolve any relative date/i);
+});
+
+// ============================================================================
+// draftNotionPageFields — prompt caching (real-use fixes plan, Task 9): the
+// date/timezone context is a SEPARATE, uncached `system` block from the
+// stable instructions, so the cached prefix stays byte-stable day to day.
+// ============================================================================
+
+test("draftNotionPageFields sends system as two blocks for a database with a date field: a cached stable block, then an uncached dynamic date/timezone block", async () => {
+  const { calls, client } = fakeClient(textMessage("title=X"));
+  await draftNotionPageFields(client, "Tasks", "create a task due tomorrow", "2026-09-27", "America/Los_Angeles");
+  const system = calls[0]!.params.system;
+  assert.ok(Array.isArray(system));
+  const blocks = system as Anthropic.TextBlockParam[];
+  assert.equal(blocks.length, 2);
+  assert.deepEqual(blocks[0]!.cache_control, { type: "ephemeral" });
+  assert.doesNotMatch(blocks[0]!.text, /2026-09-27/);
+  assert.equal(blocks[1]!.cache_control, undefined);
+  assert.match(blocks[1]!.text, /2026-09-27/);
+  assert.match(blocks[1]!.text, /America\/Los_Angeles/);
+});
+
+test("draftNotionPageFields's stable system block is IDENTICAL across two calls with different dates (Projects has no date field, so there's only ever one block)", async () => {
+  const first = fakeClient(textMessage("title=X"));
+  await draftNotionPageFields(first.client, "Projects", "create a project", "2026-09-27", "America/Los_Angeles");
+  const second = fakeClient(textMessage("title=X"));
+  await draftNotionPageFields(second.client, "Projects", "create a different project", "2026-09-28", "America/New_York");
+  assert.deepEqual(first.calls[0]!.params.system, second.calls[0]!.params.system);
+});
+
+test("draftNotionPageFields's stable block text is byte-identical across two calls a day apart (Tasks); only the second, uncached block differs", async () => {
+  const first = fakeClient(textMessage("title=X"));
+  await draftNotionPageFields(first.client, "Tasks", "create a task due tomorrow", "2026-09-27", "America/Los_Angeles");
+  const second = fakeClient(textMessage("title=X"));
+  await draftNotionPageFields(second.client, "Tasks", "create a task due tomorrow", "2026-09-28", "America/Los_Angeles");
+  const firstBlocks = first.calls[0]!.params.system as Anthropic.TextBlockParam[];
+  const secondBlocks = second.calls[0]!.params.system as Anthropic.TextBlockParam[];
+  assert.equal(firstBlocks[0]!.text, secondBlocks[0]!.text, "the cached stable block must be byte-identical regardless of the date");
+  assert.notEqual(firstBlocks[1]!.text, secondBlocks[1]!.text, "the uncached dynamic block carries the date and so differs day to day");
+});
+
+test("draftNotionPageFields records usage under purpose 'draft-notion' when given a connection", async () => {
+  const connection = fakeUsageConnection();
+  const { client } = fakeClient(textMessage("title=X"));
+  await draftNotionPageFields(client, "Tasks", "create a task", "2026-09-27", "America/Los_Angeles", connection);
+  const rows = listLlmUsage(connection);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]!.purpose, "draft-notion");
+  assert.equal(rows[0]!.model, CLAUDE_CHAT_MODEL_FAST);
+  assert.equal(rows[0]!.inputTokens, 10);
+  assert.equal(rows[0]!.outputTokens, 5);
+  connection.close();
 });
 
 // ============================================================================
@@ -399,6 +655,27 @@ test("classifyChatIntent defaults to general-question for any unrecognized respo
   const { client } = fakeClient(textMessage("I'm not sure."));
   const result = await classifyChatIntent(client, "hmm");
   assert.deepEqual(result, { kind: "general-question" });
+});
+
+test("classifyChatIntent's system prompt is one cacheable block, and it records usage under purpose 'classify'", async () => {
+  const connection = fakeUsageConnection();
+  const { calls, client } = fakeClient(textMessage("GENERAL"));
+  await classifyChatIntent(client, "how's it going", connection);
+  const system = calls[0]!.params.system as Anthropic.TextBlockParam[];
+  assert.ok(Array.isArray(system));
+  assert.deepEqual(system[0]!.cache_control, { type: "ephemeral" });
+  const rows = listLlmUsage(connection);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]!.purpose, "classify");
+  connection.close();
+});
+
+test("classifyChatIntent's system prompt is byte-identical across two separate calls (a genuinely stable, cacheable prefix)", async () => {
+  const first = fakeClient(textMessage("GENERAL"));
+  await classifyChatIntent(first.client, "how's it going");
+  const second = fakeClient(textMessage("SEARCH: weather tomorrow"));
+  await classifyChatIntent(second.client, "what's the weather tomorrow");
+  assert.deepEqual(first.calls[0]!.params.system, second.calls[0]!.params.system);
 });
 
 // ============================================================================
@@ -453,6 +730,19 @@ test("classifyCapture propagates a transport failure (AD-8) rather than swallowi
     },
   };
   await assert.rejects(() => classifyCapture(client, "anything"), /network down/);
+});
+
+test("classifyCapture's system prompt is one cacheable block, and it records usage under purpose 'capture'", async () => {
+  const connection = fakeUsageConnection();
+  const { calls, client } = fakeClient(textMessage("TASK"));
+  await classifyCapture(client, "Lab report draft, due Thursday", connection);
+  const system = calls[0]!.params.system as Anthropic.TextBlockParam[];
+  assert.ok(Array.isArray(system));
+  assert.deepEqual(system[0]!.cache_control, { type: "ephemeral" });
+  const rows = listLlmUsage(connection);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]!.purpose, "capture");
+  connection.close();
 });
 
 // ============================================================================
@@ -510,7 +800,7 @@ test("draftCalendarEditRequest parses a CREATE response with an ASSUMED duration
 test("draftCalendarEditRequest's system prompt instructs duration-phrase resolution and the ASSUMED/EXPLICIT marker", async () => {
   const { calls, client } = fakeClient(textMessage("NONE"));
   await draftCalendarEditRequest(client, "hmm", "2026-09-18", "America/New_York", []);
-  const system = calls[0]!.params.system as string;
+  const system = systemText(calls[0]!.params);
   assert.match(system, /an hour and a half.*90 minutes/i);
   assert.match(system, /default the duration to exactly 60 minutes/i);
   assert.match(system, /ASSUMED/);
@@ -533,10 +823,60 @@ test("draftCalendarEditRequest gives Claude today's date, timezone, and candidat
   await draftCalendarEditRequest(client, "move standup", "2026-09-18", "America/New_York", [
     { title: "Standup", start: "2026-09-18T13:00:00.000Z", end: "2026-09-18T13:15:00.000Z" },
   ]);
-  const system = calls[0]!.params.system as string;
+  const system = systemText(calls[0]!.params);
   assert.match(system, /2026-09-18/);
   assert.match(system, /America\/New_York/);
   assert.match(system, /Standup/);
+});
+
+// ============================================================================
+// draftCalendarEditRequest — prompt caching (real-use fixes plan, Task 9):
+// today's date/timezone AND today's candidate events are both genuinely
+// dynamic, so both live in the SECOND, uncached `system` block — the first
+// (instructions-only) block stays byte-identical no matter what day it is
+// or what's on the calendar.
+// ============================================================================
+
+test("draftCalendarEditRequest sends system as two blocks: a cached stable instructions block, then an uncached date/timezone/events block", async () => {
+  const { calls, client } = fakeClient(textMessage("NONE"));
+  // Deliberately a `today` that never coincidentally appears as an example
+  // date inside the stable instructions block's own prose (e.g. "2026-09-18"
+  // is used as a worked example there, so a real `today` of that same date
+  // would produce a false negative below).
+  await draftCalendarEditRequest(client, "move standup", "2026-12-01", "America/New_York", [
+    { title: "Standup", start: "2026-12-01T13:00:00.000Z", end: "2026-12-01T13:15:00.000Z" },
+  ]);
+  const system = calls[0]!.params.system as Anthropic.TextBlockParam[];
+  assert.ok(Array.isArray(system));
+  assert.equal(system.length, 2);
+  assert.deepEqual(system[0]!.cache_control, { type: "ephemeral" });
+  assert.doesNotMatch(system[0]!.text, /2026-12-01|Standup/);
+  assert.equal(system[1]!.cache_control, undefined);
+  assert.match(system[1]!.text, /2026-12-01/);
+  assert.match(system[1]!.text, /Standup/);
+});
+
+test("draftCalendarEditRequest's stable system block is byte-identical across two calls on different days with different candidate events", async () => {
+  const first = fakeClient(textMessage("NONE"));
+  await draftCalendarEditRequest(first.client, "move standup", "2026-09-18", "America/New_York", [
+    { title: "Standup", start: "2026-09-18T13:00:00.000Z", end: "2026-09-18T13:15:00.000Z" },
+  ]);
+  const second = fakeClient(textMessage("NONE"));
+  await draftCalendarEditRequest(second.client, "move sync", "2026-09-19", "America/Los_Angeles", []);
+  const firstBlocks = first.calls[0]!.params.system as Anthropic.TextBlockParam[];
+  const secondBlocks = second.calls[0]!.params.system as Anthropic.TextBlockParam[];
+  assert.equal(firstBlocks[0]!.text, secondBlocks[0]!.text);
+  assert.notEqual(firstBlocks[1]!.text, secondBlocks[1]!.text);
+});
+
+test("draftCalendarEditRequest records usage under purpose 'draft-calendar' when given a connection", async () => {
+  const connection = fakeUsageConnection();
+  const { client } = fakeClient(textMessage("NONE"));
+  await draftCalendarEditRequest(client, "hmm", "2026-09-18", "America/New_York", [], connection);
+  const rows = listLlmUsage(connection);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]!.purpose, "draft-calendar");
+  connection.close();
 });
 
 test("draftCalendarEditRequest rejects date-only and offset-less datetimes", async () => {

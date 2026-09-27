@@ -366,7 +366,7 @@ export async function chatTurn(deps: ChatTurnDeps, input: ChatTurnRequest): Prom
   // turn, same as `classifyChatIntent`'s own catch immediately below.
   let captured: "task" | "event" | "none" = "none";
   try {
-    captured = await classifyCapture(deps.llmClient, input.message);
+    captured = await classifyCapture(deps.llmClient, input.message, deps.connection);
   } catch {
     captured = "none";
   }
@@ -383,14 +383,19 @@ export async function chatTurn(deps: ChatTurnDeps, input: ChatTurnRequest): Prom
 
   let chatIntent: ChatIntent = { kind: "general-question" };
   try {
-    chatIntent = await classifyChatIntent(deps.llmClient, input.message);
+    chatIntent = await classifyChatIntent(deps.llmClient, input.message, deps.connection);
   } catch {
     chatIntent = { kind: "general-question" }; // a classifier failure must never block the ordinary chat turn.
   }
   if (chatIntent.kind === "search-trigger") return searchWeb(deps, { query: chatIntent.query });
 
   return answerQuestion(
-    { llmClient: deps.llmClient, webSearchAvailable: deps.webSearchAvailable, ...(deps.emit ? { emit: deps.emit } : {}) },
+    {
+      llmClient: deps.llmClient,
+      webSearchAvailable: deps.webSearchAvailable,
+      ...(deps.connection ? { connection: deps.connection } : {}),
+      ...(deps.emit ? { emit: deps.emit } : {}),
+    },
     { message: input.message, history: trimHistory(input.history) },
   );
 }

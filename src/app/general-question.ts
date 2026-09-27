@@ -16,6 +16,7 @@ import {
   CLAUDE_CHAT_MODEL_FAST,
   type AnthropicMessagesClient,
 } from "../adapters/llm-adapter.ts";
+import type { SqliteConnection } from "../adapters/sqlite.ts";
 import { errorCopyForThrown } from "../core/error-copy.ts";
 import { classifyTone, resolveToneSystemPrompt } from "../core/tone.ts";
 import type { ChatStreamEvent, ChatTurnResponse } from "../types/api.ts";
@@ -24,6 +25,15 @@ import type { ChatTurn, Result, YohError } from "../types/domain.ts";
 export interface GeneralQuestionDeps {
   readonly llmClient: AnthropicMessagesClient;
   readonly emit?: (event: ChatStreamEvent) => void;
+  /**
+   * Real-use fixes plan, Task 9: threaded straight through to
+   * `llm-adapter.ts`'s `answerGeneralQuestion`/`streamGeneralQuestion` as
+   * their own trailing `connection` argument, so every real Claude call
+   * this file makes gets its usage recorded. Optional — a caller with no
+   * interest in usage recording (most of this file's own tests) simply
+   * omits it; `shell/server.ts`'s `buildChatDeps` always supplies it.
+   */
+  readonly connection?: SqliteConnection;
   /**
    * Review fix (real-use fixes plan, Task 5 fix, FR-42): threaded into
    * `core/tone.ts`'s `resolveToneSystemPrompt` so the general-chat
@@ -60,13 +70,13 @@ export async function answerQuestion(
   try {
     if (deps.emit) {
       let full = "";
-      for await (const chunk of streamGeneralQuestion(deps.llmClient, input.history, systemPrompt, model)) {
+      for await (const chunk of streamGeneralQuestion(deps.llmClient, input.history, systemPrompt, model, deps.connection)) {
         full += chunk;
         deps.emit({ type: "delta", text: chunk });
       }
       return { ok: true, value: { reply: full, receipts: [] } };
     }
-    const reply = await answerGeneralQuestion(deps.llmClient, input.history, systemPrompt, model);
+    const reply = await answerGeneralQuestion(deps.llmClient, input.history, systemPrompt, model, deps.connection);
     return { ok: true, value: { reply, receipts: [] } };
   } catch (err) {
     return { ok: false, error: { kind: "unreachable", message: errorCopyForThrown(err, { service: "Claude" }) } };

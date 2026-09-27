@@ -65,6 +65,9 @@
  */
 import Anthropic from "@anthropic-ai/sdk";
 import { isValidIsoDateTime, normalizeIsoDateTime } from "./iso-datetime.ts";
+import { writeStructuredLog } from "./logger.ts";
+import { recordLlmUsage, type LlmUsagePurpose } from "./llm-usage-store.ts";
+import type { SqliteConnection } from "./sqlite.ts";
 import type {
   ChatIntent,
   ChatTurn,
@@ -130,6 +133,133 @@ export function loadLlmAdapterConfigFromEnv(
     throw new Error("llm-adapter: missing required environment variable CLAUDE_API_KEY");
   }
   return { apiKey };
+}
+
+// ============================================================================
+// Prompt caching + per-call usage recording (real-use fixes plan, Task 9)
+// ============================================================================
+//
+// Every function below that calls `client.messages.create` does two things
+// this section supports:
+//
+//  1. Marks its STABLE content with an ephemeral `cache_control` breakpoint
+//     (Anthropic's prompt caching: a prefix match over `tools -> system ->
+//     messages`, up to 4 breakpoints per request). `cacheableSystemBlock`
+//     wraps a system-prompt string as the one cached block; a few
+//     functions (`draftNotionPageFields`, `draftCalendarEditRequest`) send
+//     `system` as TWO blocks instead — the stable instructions (cached)
+//     followed by a second, uncached block carrying whatever changes every
+//     call (today's date/timezone, today's candidate events) — so the
+//     cached prefix never silently goes stale once a day. `answerGeneral
+//     Question`/`streamGeneralQuestion` additionally mark the LAST message
+//     of the conversation history (`toCacheableMessages`) so the growing
+//     chat prefix is cached turn to turn: each new call's shared history
+//     (everything except the newest message) matches byte-for-byte what a
+//     PRIOR call already cached, giving a cache read for that part and a
+//     cache write for only the newly-added turn.
+//  2. Records `response.usage` (or, for a stream, the usage accumulated
+//     from `message_start`/`message_delta` events) into
+//     `llm-usage-store.ts`, tagged with this function's own fixed
+//     `LlmUsagePurpose` — `recordUsageSafely` never throws: a failed
+//     write is logged and swallowed so it can never break a chat turn
+//     (this is exactly the AD-8-style "adapters may throw, but a
+//     best-effort side channel like this one must not" split).
+//
+// `connection` is an OPTIONAL trailing parameter on every exported function
+// below — real production wiring (`shell/server.ts`'s `buildChatDeps`)
+// always supplies it, but a caller/test with no interest in usage
+// recording (most of this file's own pre-existing tests) simply omits it,
+// exactly like `emit?` elsewhere in this codebase.
+
+const EPHEMERAL_CACHE_CONTROL: Anthropic.CacheControlEphemeral = { type: "ephemeral" };
+
+/** Wraps `text` as the one `TextBlockParam` a stable system prompt sends, with an ephemeral cache breakpoint at its end. */
+function cacheableSystemBlock(text: string): Anthropic.TextBlockParam {
+  return { type: "text", text, cache_control: EPHEMERAL_CACHE_CONTROL };
+}
+
+/** A block carrying content that changes every call — deliberately WITHOUT `cache_control`, so it never gets folded into (and never invalidates) the preceding cached block. */
+function volatileSystemBlock(text: string): Anthropic.TextBlockParam {
+  return { type: "text", text };
+}
+
+/**
+ * Renders `messages` for the Messages API, marking the LAST turn's content
+ * with an ephemeral cache breakpoint — every earlier turn is sent as a
+ * plain string, unchanged from before this task. On the NEXT call (one
+ * more turn appended), everything up to and including what was previously
+ * the last turn is byte-identical to what this call already sent, so it
+ * reads from cache; only the newly-appended turn(s) are a fresh cache
+ * write. (`cache_control` is request metadata, not model input — wrapping a
+ * turn's text in a one-element block array changes nothing about the
+ * actual tokens Claude sees, only which segment the API is asked to
+ * cache/read.)
+ */
+function toCacheableMessages(messages: readonly ChatTurn[]): Anthropic.MessageParam[] {
+  const lastIndex = messages.length - 1;
+  return messages.map((turn, i) => ({
+    role: turn.role,
+    content: i === lastIndex ? [{ type: "text", text: turn.content, cache_control: EPHEMERAL_CACHE_CONTROL }] : turn.content,
+  }));
+}
+
+/** The zero-usage starting point `streamGeneralQuestion` accumulates onto as stream events arrive. */
+const ZERO_STREAM_USAGE: StreamUsage = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
+
+/** The 4 fields `recordUsageSafely` actually needs — both `Anthropic.Usage` (a non-streaming `Message`'s own `usage`) and this file's own streamed-accumulator shape satisfy it structurally. */
+interface StreamUsage {
+  readonly input_tokens: number;
+  readonly output_tokens: number;
+  readonly cache_creation_input_tokens: number | null;
+  readonly cache_read_input_tokens: number | null;
+}
+
+/** Folds one `message_start` event's initial `Usage` into a `StreamUsage`. */
+function streamUsageFromMessageStart(usage: Anthropic.Usage): StreamUsage {
+  return {
+    input_tokens: usage.input_tokens,
+    output_tokens: usage.output_tokens,
+    cache_creation_input_tokens: usage.cache_creation_input_tokens,
+    cache_read_input_tokens: usage.cache_read_input_tokens,
+  };
+}
+
+/** Merges one `message_delta` event's CUMULATIVE `MessageDeltaUsage` onto `prev` — a `null` field means "unchanged since `message_start`," so `prev`'s own value is kept rather than clobbered with `null`. */
+function mergeStreamDeltaUsage(prev: StreamUsage, delta: Anthropic.MessageDeltaUsage): StreamUsage {
+  return {
+    input_tokens: delta.input_tokens ?? prev.input_tokens,
+    output_tokens: delta.output_tokens,
+    cache_creation_input_tokens: delta.cache_creation_input_tokens ?? prev.cache_creation_input_tokens,
+    cache_read_input_tokens: delta.cache_read_input_tokens ?? prev.cache_read_input_tokens,
+  };
+}
+
+/**
+ * Appends one usage row to `llm-usage-store.ts` — a no-op when `connection`
+ * is `undefined` (no store wired, e.g. most of this file's own tests).
+ * NEVER throws: a recording failure is logged (`logger.ts`) and swallowed,
+ * per Task 9's own requirement that this side channel can never break a
+ * chat turn.
+ */
+function recordUsageSafely(connection: SqliteConnection | undefined, purpose: LlmUsagePurpose, model: string, usage: StreamUsage): void {
+  if (!connection) return;
+  try {
+    recordLlmUsage(connection, {
+      at: new Date().toISOString(),
+      model,
+      purpose,
+      inputTokens: usage.input_tokens,
+      outputTokens: usage.output_tokens,
+      cacheCreationInputTokens: usage.cache_creation_input_tokens ?? 0,
+      cacheReadInputTokens: usage.cache_read_input_tokens ?? 0,
+    });
+  } catch (err) {
+    writeStructuredLog({
+      level: "warn",
+      event: "llm-adapter.usage-record-failed",
+      detail: { purpose, model, message: err instanceof Error ? err.message : String(err) },
+    });
+  }
 }
 
 // ============================================================================
@@ -230,6 +360,7 @@ export async function answerGeneralQuestion(
   messages: readonly ChatTurn[],
   systemPrompt: string = DEFAULT_GENERAL_QA_SYSTEM_PROMPT,
   model: Anthropic.Model = CLAUDE_CHAT_MODEL_FAST,
+  connection?: SqliteConnection,
 ): Promise<string> {
   if (messages.length === 0) {
     throw new Error("llm-adapter: answerGeneralQuestion called with no conversation history at all");
@@ -238,9 +369,10 @@ export async function answerGeneralQuestion(
   const message = await client.messages.create({
     model,
     max_tokens: CLAUDE_CHAT_MAX_TOKENS,
-    system: systemPrompt,
-    messages: messages.map((turn) => ({ role: turn.role, content: turn.content })),
+    system: [cacheableSystemBlock(systemPrompt)],
+    messages: toCacheableMessages(messages),
   });
+  recordUsageSafely(connection, "answer", model, message.usage);
 
   const text = message.content
     .filter((block): block is Anthropic.TextBlock => block.type === "text")
@@ -270,6 +402,7 @@ export async function* streamGeneralQuestion(
   messages: readonly ChatTurn[],
   systemPrompt: string = DEFAULT_GENERAL_QA_SYSTEM_PROMPT,
   model: Anthropic.Model = CLAUDE_CHAT_MODEL_FAST,
+  connection?: SqliteConnection,
 ): AsyncGenerator<string, void, void> {
   if (messages.length === 0) {
     throw new Error("llm-adapter: streamGeneralQuestion called with no conversation history at all");
@@ -278,18 +411,30 @@ export async function* streamGeneralQuestion(
   const stream = await client.messages.create({
     model,
     max_tokens: CLAUDE_CHAT_MAX_TOKENS,
-    system: systemPrompt,
-    messages: messages.map((turn) => ({ role: turn.role, content: turn.content })),
+    system: [cacheableSystemBlock(systemPrompt)],
+    messages: toCacheableMessages(messages),
     stream: true,
   });
 
   let sawText = false;
+  // Usage arrives piecemeal across raw stream events (this file's injected
+  // client shape has no `.finalMessage()` helper — see this file's own
+  // `AnthropicMessagesClient` doc comment): `message_start` carries the
+  // initial `Usage`, and each `message_delta` carries the running
+  // CUMULATIVE totals, so the last one seen before `message_stop` is the
+  // real final tally.
+  let usage: StreamUsage = ZERO_STREAM_USAGE;
   for await (const event of stream) {
     if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
       sawText = true;
       yield event.delta.text;
+    } else if (event.type === "message_start") {
+      usage = streamUsageFromMessageStart(event.message.usage);
+    } else if (event.type === "message_delta") {
+      usage = mergeStreamDeltaUsage(usage, event.usage);
     }
   }
+  recordUsageSafely(connection, "answer", model, usage);
   if (!sawText) {
     throw new Error("llm-adapter: Claude returned no text content for a streamed general Q&A response");
   }
@@ -370,15 +515,25 @@ export async function suggestFieldValue(
   field: PlanningFieldNames,
   recentMessages: readonly string[],
   parseValue: ParsePlanningFieldValueFn,
+  connection?: SqliteConnection,
 ): Promise<FieldValueSuggestion | undefined> {
   if (recentMessages.length === 0) return undefined;
 
   const message = await client.messages.create({
     model: CLAUDE_CHAT_MODEL_FAST,
     max_tokens: SUGGEST_FIELD_VALUE_MAX_TOKENS,
-    system: buildSuggestFieldValueSystemPrompt(taskTitle, field),
+    // Real-use fixes plan, Task 9: marked cacheable like every other system
+    // prompt in this file, though — unlike the others — `taskTitle`/`field`
+    // are baked into this ONE prompt string on every call, so a genuine
+    // cache hit is unlikely (a different Task or field almost always means
+    // a different prompt). Harmless either way (a too-short or
+    // never-repeated prefix simply never gets read back), and keeps this
+    // function consistent with the rest of the file rather than a bespoke
+    // exception.
+    system: [cacheableSystemBlock(buildSuggestFieldValueSystemPrompt(taskTitle, field))],
     messages: [{ role: "user", content: recentMessages.join("\n") }],
   });
+  recordUsageSafely(connection, "suggest-field", CLAUDE_CHAT_MODEL_FAST, message.usage);
 
   const text = message.content
     .filter((block): block is Anthropic.TextBlock => block.type === "text")
@@ -430,7 +585,18 @@ export const DRAFT_NOTION_PAGE_DATE_FIELDS: Readonly<Record<NotionDatabaseTarget
   ResearchVault: ["searchDate"],
 };
 
-function buildDraftNotionPageSystemPrompt(database: NotionDatabaseTarget, today: string, timeZone: string): string {
+/**
+ * The STABLE half of this prompt — everything that depends only on
+ * `database`, never on today's date. Real-use fixes plan, Task 9: this
+ * used to also embed `today`/`timeZone` directly (Task 3), which made the
+ * ENTIRE system prompt change byte-for-byte once a day — a cache
+ * breakpoint placed after that text would silently stop hitting cache
+ * every midnight. `today`/`timeZone` now live in a SEPARATE, uncached
+ * block (`buildDraftNotionPageDynamicContext`, sent as `system`'s second
+ * element) so this block's own cache breakpoint stays valid call to call,
+ * for as long as `database` doesn't change.
+ */
+function buildDraftNotionPageStableSystemPrompt(database: NotionDatabaseTarget): string {
   const fields = DRAFT_NOTION_PAGE_KNOWN_FIELDS[database];
   const dateFields = DRAFT_NOTION_PAGE_DATE_FIELDS[database];
   const lines = [
@@ -441,10 +607,16 @@ function buildDraftNotionPageSystemPrompt(database: NotionDatabaseTarget, today:
   ];
   if (dateFields.length > 0) {
     lines.push(
-      `Today's date is ${today}, Spencer's timezone is ${timeZone}. For ${dateFields.join("/")}, resolve any relative date or time Spencer gives (e.g. "tomorrow", "Thursday", "next week Friday", "Oct 3") into a real "YYYY-MM-DD" date — or, if Spencer also gave a specific time (e.g. "tomorrow at 10:45 AM"), a full ISO-8601 UTC datetime with a "Z" suffix (e.g. "2026-09-18T17:45:00.000Z"). Never respond with the relative phrase itself (e.g. never "dueDate=tomorrow") — always the resolved date/datetime. If you cannot confidently resolve it to a real date, omit that field entirely rather than guessing.`,
+      `For ${dateFields.join("/")}, resolve any relative date or time Spencer gives (e.g. "tomorrow", "Thursday", "next week Friday", "Oct 3") into a real "YYYY-MM-DD" date — or, if Spencer also gave a specific time (e.g. "tomorrow at 10:45 AM"), a full ISO-8601 UTC datetime with a "Z" suffix (e.g. "2026-09-18T17:45:00.000Z"). Never respond with the relative phrase itself (e.g. never "dueDate=tomorrow") — always the resolved date/datetime. If you cannot confidently resolve it to a real date, omit that field entirely rather than guessing. Spencer's current date and timezone are given right after this instruction block.`,
     );
   }
   return lines.join("\n");
+}
+
+/** The VOLATILE half (Task 9) — `undefined` when `database` has no date-typed field at all (Projects), so no dynamic block is sent (and the stable prompt above never mentions date resolution either, unchanged from before this task). */
+function buildDraftNotionPageDynamicContext(database: NotionDatabaseTarget, today: string, timeZone: string): string | undefined {
+  if (DRAFT_NOTION_PAGE_DATE_FIELDS[database].length === 0) return undefined;
+  return `Today's date is ${today}, Spencer's timezone is ${timeZone}.`;
 }
 
 /**
@@ -473,13 +645,19 @@ export async function draftNotionPageFields(
   request: string,
   today: string,
   timeZone: string,
+  connection?: SqliteConnection,
 ): Promise<Record<string, string> | undefined> {
+  const dynamicContext = buildDraftNotionPageDynamicContext(database, today, timeZone);
+  const system: Anthropic.TextBlockParam[] = [cacheableSystemBlock(buildDraftNotionPageStableSystemPrompt(database))];
+  if (dynamicContext) system.push(volatileSystemBlock(dynamicContext));
+
   const message = await client.messages.create({
     model: CLAUDE_CHAT_MODEL_FAST,
     max_tokens: DRAFT_NOTION_PAGE_MAX_TOKENS,
-    system: buildDraftNotionPageSystemPrompt(database, today, timeZone),
+    system,
     messages: [{ role: "user", content: request }],
   });
+  recordUsageSafely(connection, "draft-notion", CLAUDE_CHAT_MODEL_FAST, message.usage);
 
   const text = message.content
     .filter((block): block is Anthropic.TextBlock => block.type === "text")
@@ -531,13 +709,14 @@ const CLASSIFY_CHAT_INTENT_SYSTEM_PROMPT = [
  * thrown error (AD-8); `app/chat-turn.ts` (Story 8.9: originally
  * `shell/chat-cli.ts`) treats that the same way.
  */
-export async function classifyChatIntent(client: AnthropicMessagesClient, line: string): Promise<ChatIntent> {
+export async function classifyChatIntent(client: AnthropicMessagesClient, line: string, connection?: SqliteConnection): Promise<ChatIntent> {
   const message = await client.messages.create({
     model: CLAUDE_CHAT_MODEL_FAST,
     max_tokens: CLASSIFY_CHAT_INTENT_MAX_TOKENS,
-    system: CLASSIFY_CHAT_INTENT_SYSTEM_PROMPT,
+    system: [cacheableSystemBlock(CLASSIFY_CHAT_INTENT_SYSTEM_PROMPT)],
     messages: [{ role: "user", content: line }],
   });
+  recordUsageSafely(connection, "classify", CLAUDE_CHAT_MODEL_FAST, message.usage);
 
   const text = message.content
     .filter((block): block is Anthropic.TextBlock => block.type === "text")
@@ -601,13 +780,18 @@ const CLASSIFY_CAPTURE_SYSTEM_PROMPT = [
  * genuine API/transport failure propagates (AD-8), exactly like
  * `classifyChatIntent`/`draftCalendarEditRequest` above.
  */
-export async function classifyCapture(client: AnthropicMessagesClient, line: string): Promise<"task" | "event" | "none"> {
+export async function classifyCapture(
+  client: AnthropicMessagesClient,
+  line: string,
+  connection?: SqliteConnection,
+): Promise<"task" | "event" | "none"> {
   const message = await client.messages.create({
     model: CLAUDE_CHAT_MODEL_FAST,
     max_tokens: CLASSIFY_CAPTURE_MAX_TOKENS,
-    system: CLASSIFY_CAPTURE_SYSTEM_PROMPT,
+    system: [cacheableSystemBlock(CLASSIFY_CAPTURE_SYSTEM_PROMPT)],
     messages: [{ role: "user", content: line }],
   });
+  recordUsageSafely(connection, "capture", CLAUDE_CHAT_MODEL_FAST, message.usage);
 
   const text = message.content
     .filter((block): block is Anthropic.TextBlock => block.type === "text")
@@ -657,7 +841,31 @@ interface CalendarEditCandidateEvent {
   readonly end: string;
 }
 
-function buildDraftCalendarEditSystemPrompt(
+/**
+ * The STABLE half (Task 9) — the behavior/format instructions, none of
+ * which depend on `today`/`timeZone`/`candidateEvents`. Before this task,
+ * `today`/`timeZone`/the candidate-events list were interleaved into this
+ * SAME string, which meant the "stable" prompt actually changed every
+ * single call (a different day, and usually a different events list) —
+ * nothing to cache at all. `buildDraftCalendarEditDynamicContext` below now
+ * carries all of that as `system`'s second, uncached block instead.
+ */
+function buildDraftCalendarEditStableSystemPrompt(): string {
+  return [
+    "You are helping Yoh, Spencer's personal planning assistant, turn a chat request into a structured Calendar edit.",
+    'Resolve any relative date or time Spencer gives (e.g. "4pm", "tomorrow", "Friday", "in an hour") into a full ISO-8601 UTC datetime with a "Z" suffix (e.g. "2026-09-18T20:00:00.000Z") — always include the date, time and "Z"; never a bare date or a time without an offset. Spencer\'s current date, timezone, and today\'s known calendar events are given right after this instruction block.',
+    "For a CREATE request, compute the event's END time precisely from whatever Spencer said: an explicit end time (\"till 4\", \"until 4pm\") ends there; a duration phrase (\"an hour and a half\" = 90 minutes, \"half an hour\" = 30 minutes, \"for 45 minutes\"/\"for 45 mins\" = 45 minutes) ends that many minutes after the start. If Spencer gave NEITHER an explicit end time NOR a duration at all, default the duration to exactly 60 minutes.",
+    "Respond on ONE line, in exactly one of these forms:",
+    "MOVE: <exact event title> | <new start, ISO-8601 UTC>",
+    "RESIZE: <exact event title> | <new end, ISO-8601 UTC>",
+    "CREATE: <title> | <start, ISO-8601 UTC> | <end, ISO-8601 UTC> | <ASSUMED if you defaulted the 60-minute duration yourself, else EXPLICIT>",
+    "or, if you cannot confidently determine this:",
+    "NONE",
+  ].join("\n");
+}
+
+/** The VOLATILE half (Task 9) — today's date/timezone plus today's own candidate events, all of which genuinely differ call to call (and day to day), so this is never marked `cache_control` (see `volatileSystemBlock`'s own doc comment). */
+function buildDraftCalendarEditDynamicContext(
   today: string,
   timeZone: string,
   candidateEvents: readonly CalendarEditCandidateEvent[],
@@ -667,17 +875,9 @@ function buildDraftCalendarEditSystemPrompt(
       ? candidateEvents.map((e) => `  - "${e.title}": ${e.start} to ${e.end}`).join("\n")
       : "  (none)";
   return [
-    "You are helping Yoh, Spencer's personal planning assistant, turn a chat request into a structured Calendar edit.",
-    `Today's date is ${today}, Spencer's timezone is ${timeZone}. Resolve any relative date or time Spencer gives (e.g. "4pm", "tomorrow", "Friday", "in an hour") into a full ISO-8601 UTC datetime with a "Z" suffix (e.g. "2026-09-18T20:00:00.000Z") — always include the date, time and "Z"; never a bare date or a time without an offset.`,
-    "For a CREATE request, compute the event's END time precisely from whatever Spencer said: an explicit end time (\"till 4\", \"until 4pm\") ends there; a duration phrase (\"an hour and a half\" = 90 minutes, \"half an hour\" = 30 minutes, \"for 45 minutes\"/\"for 45 mins\" = 45 minutes) ends that many minutes after the start. If Spencer gave NEITHER an explicit end time NOR a duration at all, default the duration to exactly 60 minutes.",
+    `Today's date is ${today}, Spencer's timezone is ${timeZone}.`,
     "Today's known calendar events (for matching an event Spencer refers to by name):",
     eventsList,
-    "Respond on ONE line, in exactly one of these forms:",
-    "MOVE: <exact event title> | <new start, ISO-8601 UTC>",
-    "RESIZE: <exact event title> | <new end, ISO-8601 UTC>",
-    "CREATE: <title> | <start, ISO-8601 UTC> | <end, ISO-8601 UTC> | <ASSUMED if you defaulted the 60-minute duration yourself, else EXPLICIT>",
-    "or, if you cannot confidently determine this:",
-    "NONE",
   ].join("\n");
 }
 
@@ -701,13 +901,15 @@ export async function draftCalendarEditRequest(
   today: string,
   timeZone: string,
   candidateEvents: readonly CalendarEditCandidateEvent[],
+  connection?: SqliteConnection,
 ): Promise<DraftedCalendarEditRequest | undefined> {
   const message = await client.messages.create({
     model: CLAUDE_CHAT_MODEL_FAST,
     max_tokens: DRAFT_CALENDAR_EDIT_MAX_TOKENS,
-    system: buildDraftCalendarEditSystemPrompt(today, timeZone, candidateEvents),
+    system: [cacheableSystemBlock(buildDraftCalendarEditStableSystemPrompt()), volatileSystemBlock(buildDraftCalendarEditDynamicContext(today, timeZone, candidateEvents))],
     messages: [{ role: "user", content: line }],
   });
+  recordUsageSafely(connection, "draft-calendar", CLAUDE_CHAT_MODEL_FAST, message.usage);
 
   const fullText = message.content
     .filter((block): block is Anthropic.TextBlock => block.type === "text")

@@ -195,10 +195,15 @@ test("chatTurn trims an untrimmed history down to MAX_CHAT_HISTORY_TURNS before 
   // is its classifyChatIntent call (Story 8.4, sent only the current line,
   // not the history); calls[2] is answerQuestion's own call, the one this
   // test is actually about.
-  const sentMessages = (llmClient as any).calls[2].messages as ReadonlyArray<{ role: string; content: string }>;
-  assert.equal(sentMessages.length, MAX_CHAT_HISTORY_TURNS);
-  assert.deepEqual(sentMessages, longHistory.slice(longHistory.length - MAX_CHAT_HISTORY_TURNS));
-  assert.equal(sentMessages[0]!.role, "user", "trimming must remove complete pairs, never leaving an assistant turn first");
+  const sentMessages = (llmClient as any).calls[2].messages as ReadonlyArray<{ role: string; content: string | ReadonlyArray<{ text: string }> }>;
+  // Real-use fixes plan, Task 9: the LAST message carries the conversation-
+  // history cache breakpoint (`llm-adapter.ts`'s `toCacheableMessages`), so
+  // its `content` is a one-element text-block array rather than a bare
+  // string — normalize back to plain text before comparing to `longHistory`.
+  const normalized = sentMessages.map((m) => ({ role: m.role, content: typeof m.content === "string" ? m.content : m.content[0]!.text }));
+  assert.equal(normalized.length, MAX_CHAT_HISTORY_TURNS);
+  assert.deepEqual(normalized, longHistory.slice(longHistory.length - MAX_CHAT_HISTORY_TURNS));
+  assert.equal(normalized[0]!.role, "user", "trimming must remove complete pairs, never leaving an assistant turn first");
 });
 
 test("Story 8.6 (Task 7): trimming drops a leading assistant turn if one slips through — a dropped empty reply (chatStore.ts's own historyOf() filter) can break strict [user,assistant] alternation, and the Messages API rejects a history starting with 'assistant'", async () => {
@@ -428,8 +433,9 @@ test("general chat's capability text says web search isn't set up (never claims 
 
   const lastCall = (llmClient as any).calls.at(-1);
   assert.ok(lastCall, "expected answerQuestion's own Claude call");
-  assert.match(lastCall.system, /web search isn't set up yet \(it needs a perplexity key\)/i);
-  assert.doesNotMatch(lastCall.system, /search the web for a factual/i);
+  const system: string = typeof lastCall.system === "string" ? lastCall.system : (lastCall.system ?? []).map((b: { text: string }) => b.text).join("\n");
+  assert.match(system, /web search isn't set up yet \(it needs a perplexity key\)/i);
+  assert.doesNotMatch(system, /search the web for a factual/i);
 });
 
 test("Story 8.4: session.recentMessages records every line that reaches chatTurn — including a save-search-result/create-item/calendar-edit/search line, none of which bypass chatTurn any more", async () => {
@@ -699,7 +705,11 @@ function fakeCaptureRoutingClient(opts: {
     messages: {
       create: async (params: any) => {
         calls.push(params);
-        const system = typeof params.system === "string" ? params.system : "";
+        // Real-use fixes plan, Task 9: `params.system` is now an ARRAY of
+        // `TextBlockParam`s (a cache-control breakpoint lives on one of
+        // them), not a bare string — join every block's own `.text` to get
+        // back the same plain text this fixture always matched against.
+        const system: string = typeof params.system === "string" ? params.system : (params.system ?? []).map((b: { text: string }) => b.text).join("\n");
         const text = system.includes("task/event-capture classifier")
           ? capture
           : system.includes("structured draft for a new")
@@ -829,7 +839,7 @@ function fakeCalendarCreateClient(createLine: string) {
     messages: {
       create: async (params: any) => {
         calls.push(params);
-        const system = typeof params.system === "string" ? params.system : "";
+        const system: string = typeof params.system === "string" ? params.system : (params.system ?? []).map((b: { text: string }) => b.text).join("\n");
         if (!system.includes("structured Calendar edit")) {
           throw new Error(`unexpected LLM call for a deterministically-recognized calendar line — system prompt: ${system.slice(0, 80)}`);
         }
@@ -914,7 +924,8 @@ test("the broadened deterministic calendar recognizer routes the incident line a
     assert.equal(proposal.suggested.end, end, `expected "${message}" to resolve to the correct ISO end`);
     assert.equal((llmClient as any).calls.length, 1, `expected exactly one LLM call (draftCalendarEditRequest) for "${message}" — the deterministic recognizer must short-circuit classifyCapture`);
     // The system prompt gets today's host-TZ date and timezone, not the browser/UTC clock.
-    const system = (llmClient as any).calls[0].system as string;
+    const rawSystem = (llmClient as any).calls[0].system;
+    const system: string = typeof rawSystem === "string" ? rawSystem : (rawSystem ?? []).map((b: { text: string }) => b.text).join("\n");
     assert.match(system, /2026-08-22/, `expected "${message}"'s draft call to be anchored on today's host-TZ date`);
     assert.match(system, /America\/New_York/);
   }

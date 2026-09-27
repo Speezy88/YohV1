@@ -90,6 +90,7 @@ import {
   type NotionTaskWriteBindingFn,
 } from "../adapters/notion-adapter.ts";
 import { createAnthropicMessagesClient, loadLlmAdapterConfigFromEnv, type AnthropicMessagesClient } from "../adapters/llm-adapter.ts";
+import { initLlmUsageStoreSchema } from "../adapters/llm-usage-store.ts";
 import { errorCopyForWire, GENERIC_SERVER_ERROR_MESSAGE } from "../core/error-copy.ts";
 import { search as runSearch } from "../adapters/search-adapter.ts";
 import { listNotifications, markNotificationRead } from "../app/notifications.ts";
@@ -1092,6 +1093,13 @@ function buildChatDeps(
     timeZone,
     now: () => new Date(),
     llmClient,
+    // Real-use fixes plan, Task 9: every `llm-adapter.ts` call site this
+    // process makes (`app/chat-turn.ts`, `app/general-question.ts`,
+    // `app/create-item.ts`, `app/calendar-edit.ts`,
+    // `app/surface-open-items.ts`) threads its own trailing `connection`
+    // argument from this one field, so real usage gets recorded — the
+    // schema is created idempotently above, at startup.
+    connection,
     readTasks,
     // Story 8.7 (FR-41): the same completion-log.ts binding
     // ritual-cli.ts's createNightPromptRitualDeps already uses — /night's
@@ -1147,6 +1155,11 @@ if (import.meta.main) {
   initNotificationStoreSchema(connection.db);
   initPlanStateStoreSchema(connection.db);
   initCompletionLogSchema(connection.db);
+  // Real-use fixes plan, Task 9: `server.ts` is the ONE shell that makes
+  // real Claude calls (POST /api/chat's `buildChatDeps` below) —
+  // `ritual-cli.ts` never calls Claude at all, so it needs no equivalent
+  // init call.
+  initLlmUsageStoreSchema(connection.db);
   // Story 7.4, AD-7: writes the heartbeat `ritual-cli.ts morning` checks on
   // start; stopped alongside the server on shutdown, below.
   const heartbeat = startHeartbeatWriter(connection);

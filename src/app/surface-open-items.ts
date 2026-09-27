@@ -11,6 +11,7 @@
  */
 import { getOpenInteractionRequest, getTaskFieldOverride, listOpenInteractionRequests, type MemoryStore, type StoredRecord } from "../adapters/memory-store.ts";
 import { suggestFieldValue, type AnthropicMessagesClient } from "../adapters/llm-adapter.ts";
+import type { SqliteConnection } from "../adapters/sqlite.ts";
 import { parsePlanningFieldValue } from "../core/planning-field-value.ts";
 import {
   buildDataCompletenessQuestion,
@@ -33,6 +34,8 @@ export interface SurfaceOpenItemsDeps {
   readonly store: MemoryStore;
   readonly session: ChatSession;
   readonly llmClient?: AnthropicMessagesClient;
+  /** Real-use fixes plan, Task 9: passed straight through to `suggestFieldValue`'s own trailing `connection` argument so its usage gets recorded. */
+  readonly connection?: SqliteConnection;
 }
 
 export interface BuildOpenItemQuestionInput {
@@ -66,7 +69,15 @@ async function buildForRecord(deps: SurfaceOpenItemsDeps, record: StoredRecord<I
       let suggestion: FieldValueSuggestion | undefined;
       if (!pending.suggestionDeclined && deps.llmClient) {
         try {
-          suggestion = await suggestFieldValue(deps.llmClient, pending.taskId, pending.taskTitle, pending.field, deps.session.recentMessages, parseValueWrapper);
+          suggestion = await suggestFieldValue(
+            deps.llmClient,
+            pending.taskId,
+            pending.taskTitle,
+            pending.field,
+            deps.session.recentMessages,
+            parseValueWrapper,
+            deps.connection,
+          );
         } catch {
           suggestion = undefined; // A Claude/API failure must never block the fallback blind ask.
         }
