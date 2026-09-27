@@ -73,7 +73,7 @@ and read only failures and the summary.
 
 ## Anti-patterns (observed in this repo's agent runs — don't)
 1. Reading whole files before writing anything. Grep, then read by line range (`sed -n 'a,bp'`); write the first failing test early.
-2. Opening `_bmad-output/` or `docs/superpowers/plans/`. The brief + this file are complete; if not, report `NEEDS_CONTEXT`.
+2. Opening `_bmad-output/` or `docs/superpowers/plans/` — except the per-story plan sections your brief names. The brief + this file are otherwise complete; if not, report `NEEDS_CONTEXT`.
 3. Re-reading a file you've already read and haven't changed.
 4. Dumping full test/gate output into context.
 5. Exporting a helper from `app/` (fails the layering test) — move it to `core/`.

@@ -10,7 +10,7 @@ Work from: `<worktree path>` (git worktree, branch `<branch>`). Run every comman
 3. **Read order:** Code Map entries by line range (not whole files) → its "Idioms to copy" exemplars → write your first failing test, within ~15 turns. Read beyond the Code Map only when a failing test or compile error needs it.
 4. The real code is the source of truth for existing names and shapes. Read what you change, by line range after a grep — not whole large files, and don't re-read a file you've already read unless it changed.
 
-**Do not open plan, architecture, PRD or epics files** (`_bmad-output/**`, `docs/superpowers/plans/**`, anything named *architecture*/*spine*/*prd*/*epics*) or other tasks' briefs/reports. Everything relevant is in your brief and this contract. If something the brief doesn't settle blocks you, report `NEEDS_CONTEXT` with the specific question instead of hunting.
+**Do not open plan, architecture, PRD or epics files** (`_bmad-output/**`, `docs/superpowers/plans/**`, anything named *architecture*/*spine*/*prd*/*epics*) or other tasks' briefs/reports — **except** the per-story plan sections your brief names (read only those sections, by heading). Everything else relevant is in your brief and this contract. If something the brief doesn't settle blocks you, report `NEEDS_CONTEXT` with the specific question instead of hunting.
 
 ## Job
 Use TDD: a failing test first, then the code. Run focused tests while iterating, then the full gate once before committing: `npm run check` AND `cd web && npx playwright test`. Send gate output to a file and read only the failures/summary.
