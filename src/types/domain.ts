@@ -164,6 +164,29 @@ export interface Task {
  * this story, so this type carries nothing beyond what a grouping label
  * needs. Extend here, not with a parallel type, if a later story needs more.
  */
+/**
+ * Task 6B (Tasks page): one selectable value for a Task field, as Spencer's
+ * LIVE Notion schema names it — `value` is Yoh's own enum value (what a
+ * write sends), `label` is the real Notion option name (what the Tasks
+ * page shows). Only options that map onto a known enum value are listed.
+ */
+export interface TaskFieldOption<V extends string = string> {
+  readonly value: V;
+  readonly label: string;
+}
+
+/**
+ * Task 6B: the options the Tasks page's inline selects offer, read from
+ * the Tasks data source's live schema (`notion-adapter.ts`'s
+ * `readTaskFieldOptions`), never a hard-coded list. `area` is `undefined`
+ * when Area is a free-text (`rich_text`) property rather than a select.
+ */
+export interface TaskFieldOptions {
+  readonly area: readonly string[] | undefined;
+  readonly energy: readonly TaskFieldOption<Energy>[];
+  readonly status: readonly TaskFieldOption<TaskStatus>[];
+}
+
 export interface Project {
   readonly id: ExternalId;
   readonly name: string;

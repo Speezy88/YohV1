@@ -12,10 +12,12 @@ export interface CheckboxProps {
   readonly label: string;
   readonly checked: boolean;
   readonly disabled?: boolean;
+  /** Task 6B: the Tasks page's larger 26px box (the approved mockup's `.box`); Home keeps the 17px default. */
+  readonly size?: "sm" | "lg";
   onCheck(): void;
 }
 
-export function Checkbox({ label, checked, disabled = false, onCheck }: CheckboxProps): React.JSX.Element {
+export function Checkbox({ label, checked, disabled = false, size = "sm", onCheck }: CheckboxProps): React.JSX.Element {
   return (
     <button
       type="button"
@@ -25,7 +27,8 @@ export function Checkbox({ label, checked, disabled = false, onCheck }: Checkbox
       disabled={disabled}
       onClick={onCheck}
       className={
-        "flex size-[17px] shrink-0 items-center justify-center rounded-xs border-[length:var(--rim-width)] border-rim-interactive shadow-inset " +
+        (size === "lg" ? "flex size-[26px] rounded-sm " : "flex size-[17px] rounded-xs ") +
+        "shrink-0 items-center justify-center border-[length:var(--rim-width)] border-rim-interactive shadow-inset disabled:opacity-60 " +
         "focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid " +
         (checked ? "bg-accent-solid" : "bg-surface-sunken")
       }

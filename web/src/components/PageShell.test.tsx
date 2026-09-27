@@ -35,11 +35,19 @@ describe("PageShell", () => {
     expect(screen.getByTestId("page-home")).toBeVisible();
   });
 
+  // Task 6B: arriving on Tasks focuses its quick-add row, so the NEXT key
+  // lands on that input (as it would in a real browser) — fired at the
+  // focused element, not at `document` directly. The quick-add hands an
+  // ↑ / Page Up / Page Down it doesn't need back to page navigation.
+  const keyOnFocused = (key: string): void => {
+    fireEvent.keyDown(document.activeElement ?? document, { key });
+  };
+
   it("↓ / ↑ move pages when no text field is focused", () => {
     render(<PageShell />);
     fireEvent.keyDown(document, { key: "ArrowDown" });
     expect(screen.getByRole("button", { name: /^tasks$/i })).toHaveAttribute("aria-current", "page");
-    fireEvent.keyDown(document, { key: "ArrowUp" });
+    keyOnFocused("ArrowUp");
     expect(screen.getByRole("button", { name: /^home$/i })).toHaveAttribute("aria-current", "page");
   });
 
@@ -47,7 +55,27 @@ describe("PageShell", () => {
     render(<PageShell />);
     fireEvent.keyDown(document, { key: "PageDown" });
     expect(screen.getByRole("button", { name: /^tasks$/i })).toHaveAttribute("aria-current", "page");
-    fireEvent.keyDown(document, { key: "PageUp" });
+    keyOnFocused("PageUp");
+    expect(screen.getByRole("button", { name: /^home$/i })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("Task 6B: arriving on Tasks focuses the quick-add row", () => {
+    render(<PageShell />);
+    fireEvent.keyDown(document, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "New task" }));
+  });
+
+  it("Task 6B: ↑/↓ inside an element that captures arrow keys (the Tasks list) never move pages", () => {
+    render(
+      <div>
+        <PageShell />
+        <div data-captures-arrow-keys="">
+          <button type="button">row</button>
+        </div>
+      </div>,
+    );
+    screen.getByRole("button", { name: "row" }).focus();
+    fireEvent.keyDown(screen.getByRole("button", { name: "row" }), { key: "ArrowDown" });
     expect(screen.getByRole("button", { name: /^home$/i })).toHaveAttribute("aria-current", "page");
   });
 

@@ -16,7 +16,7 @@
  * the `/api/*` surface. `web/` may `import type` from here (AD-17) and from
  * nothing else in `src/` except other `types/` files.
  */
-import type { ChatTurn, Proposal, Result, YohError } from "./domain.ts";
+import type { ChatTurn, Energy, IsoDate, PlanningFieldNames, Proposal, Result, TaskFieldOptions, TaskStatus, YohError } from "./domain.ts";
 
 // ============================================================================
 // Serialized Result envelope
@@ -348,6 +348,103 @@ export type ChatStreamEvent =
   | { readonly type: "delta"; readonly text: string }
   | { readonly type: "done"; readonly response: ChatTurnResponse }
   | { readonly type: "error"; readonly error: YohError };
+
+// ============================================================================
+// Tasks page (Task 6B, FR-43) — new shapes only.
+// ============================================================================
+
+/** How the Tasks list is grouped: by Due bucket (default), Area, or Status. */
+export type TasksGroupBy = "due" | "area" | "status";
+
+/** `GET /api/tasks`'s query: `groupBy` defaults to `"due"`; `query` filters by title or Area (case-insensitive). */
+export interface TasksListRequest {
+  readonly groupBy?: TasksGroupBy;
+  readonly query?: string;
+}
+
+/** One Task row on the Tasks page. `missing` lists the planning fields Notion has no value for (the row's "Add …" badges). */
+export interface TaskListItem {
+  readonly id: string;
+  readonly title: string;
+  readonly dueDate?: IsoDate;
+  readonly estimatedDurationMinutes?: number;
+  readonly area?: string;
+  readonly energy?: Energy;
+  readonly status?: TaskStatus;
+  readonly missing: readonly PlanningFieldNames[];
+  /** Due before today (host TZ) and not completed — server-computed, so the client never reads its own clock. */
+  readonly overdue: boolean;
+}
+
+/** One group of rows. `tone` is presentation only: `"danger"` for Overdue, `"accent"` for Today, `"neutral"` otherwise. */
+export interface TaskGroup {
+  readonly key: string;
+  readonly label: string;
+  readonly tone: "danger" | "accent" | "neutral";
+  readonly tasks: readonly TaskListItem[];
+}
+
+/** `GET /api/tasks`'s value. Empty groups are omitted. */
+export interface TasksViewResponse {
+  /** The host-timezone date this list's buckets were computed for (never the browser's date). */
+  readonly today: IsoDate;
+  readonly groupBy: TasksGroupBy;
+  readonly query: string;
+  /** Every Task in Notion, before `query` filtering. */
+  readonly total: number;
+  readonly groups: readonly TaskGroup[];
+  /** Live Notion options for the inline selects. */
+  readonly options: TaskFieldOptions;
+}
+
+/** `POST /api/tasks`'s body: the quick-add line exactly as typed. The server parses it (`core/quick-add.ts`). */
+export interface CreateTaskRequest {
+  readonly text: string;
+}
+
+/** `POST /api/tasks`'s value: the created Task (a direct write, AD-12 amended 2026-09-27) and its one-line receipt. */
+export interface CreateTaskResponse {
+  readonly task: TaskListItem;
+  readonly receipt: string;
+}
+
+/** `POST /api/tasks/parse`'s body: the quick-add line so far, plus the live Area options the page already holds (so a `#tag` preview needs no Notion call). */
+export interface QuickAddPreviewRequest {
+  readonly text: string;
+  readonly areaOptions?: readonly string[];
+}
+
+/** `POST /api/tasks/parse`'s value: what the quick-add line would create, shown as chips before Enter. */
+export interface QuickAddPreviewResponse {
+  readonly title: string;
+  readonly dueDate?: IsoDate;
+  readonly estimatedDurationMinutes?: number;
+  readonly energy?: Energy;
+  readonly area?: string;
+  /** `#tag` bodies that matched no live Area option — they stay in the title. */
+  readonly unmatchedAreas: readonly string[];
+}
+
+/** `POST /api/tasks/:id/field`'s body. `value` is raw text, parsed by `core/planning-field-value.ts` server-side. */
+export interface UpdateTaskFieldRequest {
+  readonly field: PlanningFieldNames;
+  readonly value: string;
+}
+
+/** `POST /api/tasks/:id/field`'s value. */
+export interface UpdateTaskFieldResponse {
+  readonly receipt: string;
+}
+
+/** `POST /api/tasks/:id/title`'s body (Task 6B fix round, AD-12 amended 2026-09-27): the new title, trimmed server-side. */
+export interface RenameTaskRequest {
+  readonly title: string;
+}
+
+/** `POST /api/tasks/:id/title`'s value. */
+export interface RenameTaskResponse {
+  readonly receipt: string;
+}
 
 // ============================================================================
 // Server route type (Ruling R2, AD-17)

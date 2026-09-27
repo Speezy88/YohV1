@@ -71,6 +71,13 @@ test("ink-secondary on surface-raised meets 4.5:1 in both themes", () => {
   assertPairMeets("ink-secondary", "surface-raised", 4.5);
 });
 
+test("Task 6B: ink-accent and ink-danger (small text on the Tasks page) meet 4.5:1 on surface-raised and surface-sunken in both themes", () => {
+  assertPairMeets("ink-accent", "surface-raised", 4.5);
+  assertPairMeets("ink-danger", "surface-raised", 4.5);
+  assertPairMeets("ink-accent", "surface-sunken", 4.5);
+  assertPairMeets("ink-danger", "surface-sunken", 4.5);
+});
+
 test("rim-interactive vs surface-raised meets 3:1 in both themes", () => {
   assertPairMeets("rim-interactive", "surface-raised", 3.0);
 });

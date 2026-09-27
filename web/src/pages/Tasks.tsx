@@ -1,14 +1,436 @@
-// web/src/pages/Tasks.tsx — Task 6A gives Tasks the new shell's look only;
-// Task 6B (a later task, pulled forward from Epic 11) builds its real
-// behavior: the quick-add row, grouped Task list, search, and grouping
-// controls the approved mockup (Tasks.dc.html) shows.
+/**
+ * web/src/pages/Tasks.tsx — Task 6B (FR-43), the approved Tasks.dc.html
+ * mockup: a header with search and a Due/Area/Status grouping control, the
+ * quick-add card, then every Task in grouped, raised rows.
+ *
+ * Built to be as quick as Notion:
+ *  - Arriving on the page focuses the quick-add line; `N` or `/` focuses it
+ *    from anywhere on the page. One typed line + Enter creates a Task (a
+ *    direct write, AD-12 amended 2026-09-27) — no dialog.
+ *  - Every cell edits in place (`TaskRow.tsx`); ↑/↓ move between rows (the
+ *    list captures them, so the page shell doesn't change pages), Tab moves
+ *    between cells, Enter edits, Esc cancels.
+ *  - The title renames in place too (AD-12 amended 2026-09-27).
+ *  - Checking a box — or choosing Completed in the Status select, which
+ *    takes the very same path — is the existing check-off + Undo (AD-20). A completed
+ *    Task stays listed (FR-43); unchecking one sets its Status back.
+ *    Nothing is ever deleted (AD-12).
+ *
+ * Optimism is visual only (AD-17): a new Task, an edited value, or a check
+ * shows at once, then the server's list — refetched on the write's own
+ * `tasks` hint, a `plan` hint, or directly after the write — takes over. A
+ * failed write reverts, shows a plain failure notice, and is announced.
+ * Every grouping, bucket, and "today" comes from the server.
+ */
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import type { QuickAddPreviewResponse, TaskGroup, TaskListItem, TasksGroupBy } from "../../../src/types/api.ts";
+import type { PlanningFieldNames } from "../../../src/types/domain.ts";
+import { PageNavigationContext } from "../lib/navigationContext.tsx";
+import { PAGES, isTextFieldFocused } from "../lib/pages.ts";
+import { loadGroupBy, requestCreateTask, requestRenameTask, requestUpdateTaskField, saveGroupBy, useTasksList } from "../lib/tasks.ts";
+import { remainingMs, requestCheckOff, requestUndo } from "../lib/checkOff.ts";
+import { addLocalFailureNotice } from "../lib/notifications.ts";
+import { useReducedMotion } from "../hooks/useReducedMotion.ts";
+import { TASK_ROW_GRID, TaskRow, type TaskEditField } from "../components/TaskRow.tsx";
+import { TaskQuickAdd } from "../components/TaskQuickAdd.tsx";
+import { UndoToast } from "../components/UndoToast.tsx";
+
+const TASKS_PAGE_INDEX = PAGES.findIndex((p) => p.id === "tasks");
+const SEARCH_DEBOUNCE_MS = 200;
+/** How long a saved-but-not-yet-listed value is kept on screen, waiting for Notion's list to catch up. */
+const RECONCILE_GRACE_MS = 10_000;
+
+const GROUP_OPTIONS: ReadonlyArray<{ readonly value: TasksGroupBy; readonly label: string }> = [
+  { value: "due", label: "Due" },
+  { value: "area", label: "Area" },
+  { value: "status", label: "Status" },
+];
+
+const FIELD_LABEL: Record<TaskEditField, string> = {
+  title: "the title",
+  dueDate: "the due date",
+  estimatedDurationMinutes: "the duration",
+  area: "the Area",
+  energy: "the Energy",
+  status: "the Status",
+};
+
+const TONE_CLASS: Record<TaskGroup["tone"], string> = {
+  danger: "text-ink-danger",
+  accent: "text-ink-accent",
+  neutral: "text-ink-secondary",
+};
+
+type FieldValue = string | number;
+interface FieldOverride {
+  readonly value: FieldValue;
+  readonly state: "saving" | "saved";
+  readonly at: number;
+}
+type Overrides = ReadonlyMap<string, ReadonlyMap<TaskEditField, FieldOverride>>;
+
+interface PendingCreate {
+  readonly key: string;
+  readonly item: TaskListItem;
+  readonly state: "saving" | "saved";
+  readonly at: number;
+}
+
+interface ToastState {
+  readonly id: string;
+  readonly taskId: string;
+  readonly taskName: string;
+  readonly durationMs: number;
+}
+
+function withOverrides(item: TaskListItem, overrides: ReadonlyMap<TaskEditField, FieldOverride> | undefined, today: string): TaskListItem {
+  if (!overrides || overrides.size === 0) return item;
+  const next: Record<string, unknown> = { ...item };
+  for (const [field, o] of overrides) next[field] = o.value;
+  const merged = next as unknown as TaskListItem;
+  const completed = merged.status === "completed";
+  return {
+    ...merged,
+    missing: completed ? [] : item.missing.filter((f: PlanningFieldNames) => !overrides.has(f)),
+    overdue: !completed && merged.dueDate !== undefined && merged.dueDate < today,
+  };
+}
+
+function RowSkeleton({ reducedMotion }: { readonly reducedMotion: boolean }): React.JSX.Element {
+  return <div data-testid="task-row-skeleton" className={`h-[58px] rounded-lg bg-surface-sunken ${reducedMotion ? "" : "animate-pulse"}`} />;
+}
+
 export default function TasksPage(): React.JSX.Element {
+  const nav = useContext(PageNavigationContext);
+  const isActive = nav === undefined || nav.index === TASKS_PAGE_INDEX;
+  const reducedMotion = useReducedMotion();
+
+  const [groupBy, setGroupBy] = useState<TasksGroupBy>(loadGroupBy);
+  const [search, setSearch] = useState("");
+  const [query, setQuery] = useState("");
+  const { state, refetch } = useTasksList(groupBy, query);
+
+  const [overrides, setOverrides] = useState<Overrides>(new Map());
+  const [pending, setPending] = useState<readonly PendingCreate[]>([]);
+  const [checks, setChecks] = useState<ReadonlySet<string>>(new Set());
+  const [editing, setEditing] = useState<{ readonly taskId: string; readonly field: TaskEditField } | undefined>(undefined);
+  const [toast, setToast] = useState<ToastState | undefined>(undefined);
+  const [receipt, setReceipt] = useState("");
+
+  const rootRef = useRef<HTMLDivElement>(null);
+  const quickAddRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const pendingCounter = useRef(0);
+
+  const focusQuickAdd = useCallback(() => quickAddRef.current?.focus({ preventScroll: true }), []);
+
+  // Arriving on the page puts the cursor in the quick-add line.
+  useEffect(() => {
+    if (isActive) focusQuickAdd();
+  }, [isActive, focusQuickAdd]);
+
+  // `N` or `/` focuses quick-add from anywhere on this page.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (!isActive || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key !== "n" && e.key !== "N" && e.key !== "/") return;
+      const active = document.activeElement;
+      if (isTextFieldFocused(active) || active?.tagName === "SELECT") return;
+      if (rootRef.current?.closest('[aria-hidden="true"]')) return; // the Chat panel has the foreground
+      e.preventDefault();
+      focusQuickAdd();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [isActive, focusQuickAdd]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setQuery(search.trim()), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  const serverItems = useMemo(() => {
+    const byId = new Map<string, TaskListItem>();
+    if (state.status === "loaded") for (const g of state.value.groups) for (const t of g.tasks) byId.set(t.id, t);
+    return byId;
+  }, [state]);
+
+  // Reconcile: once the server's list shows what we wrote, drop the local copy.
+  useEffect(() => {
+    if (state.status !== "loaded") return;
+    const now = Date.now();
+    setOverrides((prev) => {
+      const next = new Map<string, Map<TaskEditField, FieldOverride>>();
+      for (const [taskId, fields] of prev) {
+        const server = serverItems.get(taskId);
+        const kept = new Map([...fields].filter(([field, o]) => o.state === "saving" || (now - o.at < RECONCILE_GRACE_MS && server?.[field] !== o.value)));
+        if (kept.size > 0) next.set(taskId, kept);
+      }
+      return next;
+    });
+    setPending((prev) => prev.filter((p) => !serverItems.has(p.item.id) && (p.state === "saving" || now - p.at < RECONCILE_GRACE_MS)));
+    setChecks((prev) => new Set([...prev].filter((id) => serverItems.get(id)?.status !== "completed")));
+  }, [state, serverItems]);
+
+  const loaded = state.status === "loaded" ? state.value : undefined;
+  const today = loaded?.today;
+  const options = loaded?.options;
+
+  const setOverride = (taskId: string, field: TaskEditField, override: FieldOverride | undefined): void => {
+    setOverrides((prev) => {
+      const next = new Map(prev);
+      const fields = new Map(next.get(taskId) ?? []);
+      if (override) fields.set(field, override);
+      else fields.delete(field);
+      if (fields.size > 0) next.set(taskId, fields);
+      else next.delete(taskId);
+      return next;
+    });
+  };
+
+  const commitField = async (item: TaskListItem, field: TaskEditField, raw: string): Promise<void> => {
+    setEditing(undefined);
+    // AD-20: Completed from the Status select is a check-off, exactly like the checkbox.
+    if (field === "status" && raw === "completed") {
+      if (item.status !== "completed" && !checks.has(item.id)) await checkOffTask(item);
+      return;
+    }
+    const value: FieldValue = field === "estimatedDurationMinutes" ? Number(raw) : field === "title" ? raw.trim() : raw;
+    const showable = field === "estimatedDurationMinutes" ? Number.isInteger(value) && (value as number) > 0 : field === "title" ? value !== "" : true;
+    if (showable) setOverride(item.id, field, { value, state: "saving", at: Date.now() });
+    const outcome = field === "title" ? await requestRenameTask(item.id, raw) : await requestUpdateTaskField(item.id, field, raw);
+    if (outcome.ok) {
+      if (showable) setOverride(item.id, field, { value, state: "saved", at: Date.now() });
+      setReceipt(outcome.value.receipt);
+      void refetch();
+      return;
+    }
+    setOverride(item.id, field, undefined);
+    const notice = `Couldn't change ${FIELD_LABEL[field]} for "${item.title}". ${outcome.message}`;
+    addLocalFailureNotice(notice);
+    setReceipt(notice);
+  };
+
+  const create = async (text: string, preview: QuickAddPreviewResponse | undefined): Promise<void> => {
+    const key = `pending-${++pendingCounter.current}`;
+    const { title = text, unmatchedAreas: _unmatched, ...fields } = preview ?? { unmatchedAreas: [] };
+    const draft: TaskListItem = { id: key, title, ...fields, missing: [], overdue: false };
+    setPending((prev) => [{ key, item: draft, state: "saving", at: Date.now() }, ...prev]);
+    const outcome = await requestCreateTask(text);
+    if (outcome.ok) {
+      setPending((prev) => prev.map((p) => (p.key === key ? { key, item: outcome.value.task, state: "saved", at: Date.now() } : p)));
+      setReceipt(outcome.value.receipt);
+      void refetch();
+      return;
+    }
+    setPending((prev) => prev.filter((p) => p.key !== key));
+    const notice = `Couldn't add "${title}". ${outcome.message}`;
+    addLocalFailureNotice(notice);
+    setReceipt(notice);
+  };
+
+  const undo = async (shown: ToastState): Promise<void> => {
+    const outcome = await requestUndo(shown.id);
+    setToast((current) => (current?.id === shown.id ? undefined : current));
+    if (outcome.ok) {
+      setChecks((prev) => new Set([...prev].filter((id) => id !== shown.taskId)));
+    } else {
+      addLocalFailureNotice(`Couldn't undo ${shown.taskName}`);
+    }
+  };
+
+  const toggleCheck = async (item: TaskListItem, checked: boolean): Promise<void> => {
+    if (checked) {
+      // Still inside its Undo window: unchecking IS the Undo.
+      if (toast?.taskId === item.id) return undo(toast);
+      // Already completed in Notion: set its Status back (never a delete).
+      return commitField(item, "status", "not-started");
+    }
+    return checkOffTask(item);
+  };
+
+  /** The ONE way this page completes a Task: check-off with its pending record, Undo toast and commit sweep (AD-20). */
+  const checkOffTask = async (item: TaskListItem): Promise<void> => {
+    setChecks((prev) => new Set(prev).add(item.id));
+    const outcome = await requestCheckOff(item.id);
+    if (!outcome.ok) {
+      setChecks((prev) => new Set([...prev].filter((id) => id !== item.id)));
+      addLocalFailureNotice(`Couldn't check off ${item.title}`);
+      return;
+    }
+    setToast({ id: outcome.value.id, taskId: item.id, taskName: item.title, durationMs: remainingMs(outcome.value) });
+  };
+
+  const focusRow = (rowIndex: number, col: string): boolean => {
+    const row = listRef.current?.querySelector<HTMLElement>(`[data-row-index="${rowIndex}"]`);
+    if (!row) return false;
+    const cell = row.querySelector<HTMLElement>(`[data-col="${col}"]`) ?? row.querySelector<HTMLElement>("[data-col]");
+    const target = cell?.matches("button:not(:disabled)") ? cell : cell?.querySelector<HTMLElement>("button:not(:disabled), input, select");
+    target?.focus({ preventScroll: false });
+    return target !== undefined && target !== null;
+  };
+
+  const onListKeyDown = (e: React.KeyboardEvent<HTMLDivElement>): void => {
+    const target = e.target as HTMLElement;
+    if (target.closest("[data-cell-editor]")) return; // an open editor owns its keys
+    const row = target.closest<HTMLElement>("[data-row-index]");
+    if (!row) return;
+    if (e.key === "Escape") {
+      target.blur();
+      return;
+    }
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    e.preventDefault();
+    const index = Number(row.dataset["rowIndex"]);
+    const col = target.closest<HTMLElement>("[data-col]")?.dataset["col"] ?? "0";
+    const next = index + (e.key === "ArrowDown" ? 1 : -1);
+    if (next < 0) focusQuickAdd();
+    else focusRow(next, col);
+  };
+
+  // The rows on screen, in order: anything just added first, then the server's groups.
+  const justAdded = pending.filter((p) => !serverItems.has(p.item.id));
+  const groups: ReadonlyArray<{ readonly key: string; readonly label: string; readonly tone: TaskGroup["tone"]; readonly rows: ReadonlyArray<{ item: TaskListItem; creating: boolean }> }> = [
+    ...(justAdded.length > 0 ? [{ key: "just-added", label: "Just added", tone: "accent" as const, rows: justAdded.map((p) => ({ item: p.item, creating: p.state === "saving" })) }] : []),
+    ...(loaded?.groups ?? []).map((g) => ({ key: g.key, label: g.label, tone: g.tone, rows: g.tasks.map((t) => ({ item: t, creating: false })) })),
+  ];
+
+  let rowIndex = 0;
+
   return (
-    <div className="flex h-full flex-col gap-6 p-8 pb-24">
-      <h1 className="font-body text-display font-bold tracking-tight text-ink-primary">Tasks</h1>
-      <div className="flex flex-1 items-center justify-center rounded-2xl bg-surface-raised font-body text-body text-ink-secondary shadow-extruded-lg">
-        Tasks is arriving in the next task — its look is ready, its behavior isn't yet.
-      </div>
+    <div ref={rootRef} className="flex h-full flex-col gap-[22px] p-8 pb-24">
+      <header className="flex items-center justify-between gap-4">
+        <h1 className="m-0 font-body text-display font-bold tracking-tight text-ink-primary">Tasks</h1>
+        <div className="flex items-center gap-3">
+          <label className="flex h-[46px] w-[280px] items-center gap-2.5 rounded-full bg-surface-sunken px-4 shadow-inset">
+            <svg aria-hidden="true" viewBox="0 0 24 24" width={18} height={18} fill="none" stroke="currentColor" className="shrink-0 text-ink-secondary">
+              <path d="M11 17a6 6 0 1 0 0-12 6 6 0 0 0 0 12z M20 20l-4.5-4.5" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <input
+              type="search"
+              aria-label="Search tasks"
+              placeholder="Search tasks"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  setSearch("");
+                }
+              }}
+              className="min-w-0 flex-1 border-0 bg-transparent font-body text-small text-ink-primary outline-none placeholder:text-ink-secondary"
+            />
+          </label>
+          <div role="group" aria-label="Group by" className="flex gap-1 rounded-lg bg-surface-sunken p-1 shadow-inset">
+            {GROUP_OPTIONS.map((option) => {
+              const pressed = option.value === groupBy;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  aria-pressed={pressed}
+                  onClick={() => {
+                    setGroupBy(option.value);
+                    saveGroupBy(option.value);
+                  }}
+                  className={
+                    "h-[38px] rounded-md px-4 font-body text-small focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid " +
+                    (pressed
+                      ? "bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end font-bold text-on-accent-solid shadow-extruded-sm"
+                      : "text-ink-secondary hover:text-ink-primary")
+                  }
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </header>
+
+      <TaskQuickAdd
+        ref={quickAddRef}
+        today={today}
+        options={options}
+        onSubmit={(text, preview) => void create(text, preview)}
+        onArrowDown={() => focusRow(0, "0")}
+        onPageUp={() => nav?.prev()}
+        onPageDown={() => nav?.next()}
+      />
+
+      <section aria-label="All tasks" className="flex min-h-0 flex-1 flex-col gap-2">
+        <div aria-hidden="true" className={`${TASK_ROW_GRID} h-8 px-[18px] font-body text-label font-bold uppercase tracking-wide text-ink-secondary`}>
+          <span />
+          <span>Task</span>
+          <span>Due</span>
+          <span>Duration</span>
+          <span>Area</span>
+          <span>Energy</span>
+          <span>Status</span>
+        </div>
+        {state.status === "loaded" && state.refreshFailed && (
+          <p className="m-0 px-[18px] font-body text-small text-ink-secondary">
+            Couldn't refresh from Notion — showing the list from {state.refreshFailed.at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.
+          </p>
+        )}
+        <div ref={listRef} data-captures-arrow-keys="" onKeyDown={onListKeyDown} className="-mx-4 flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-4 pb-4 pt-1">
+          {state.status === "loading" && justAdded.length === 0 ? (
+            [0, 1, 2, 3, 4].map((i) => <RowSkeleton key={i} reducedMotion={reducedMotion} />)
+          ) : state.status === "error" && justAdded.length === 0 ? (
+            <p className="m-0 p-5 font-body text-body text-ink-secondary">Couldn't load Tasks right now. {state.message}</p>
+          ) : groups.length === 0 ? (
+            <p className="m-0 p-5 font-body text-body text-ink-secondary">
+              {query ? `No Tasks match "${query}".` : "No Tasks yet. Type one above and press Enter."}
+            </p>
+          ) : (
+            groups.map((group) => (
+              <section key={group.key} aria-label={group.label} className="flex flex-col gap-2">
+                <h2 className={`m-0 px-[18px] pb-0.5 pt-2.5 font-body text-small font-bold uppercase tracking-wide ${TONE_CLASS[group.tone]}`}>
+                  {group.label} · {group.rows.length}
+                </h2>
+                <ul className="m-0 flex list-none flex-col gap-2 p-0">
+                  {group.rows.map(({ item: raw, creating }) => {
+                    const item = today ? withOverrides(raw, overrides.get(raw.id), today) : raw;
+                    const checked = item.status === "completed" || checks.has(item.id);
+                    const saving = new Set([...(overrides.get(raw.id) ?? [])].filter(([, o]) => o.state === "saving").map(([f]) => f));
+                    return (
+                      <TaskRow
+                        key={raw.id}
+                        item={item}
+                        rowIndex={rowIndex++}
+                        today={today ?? ""}
+                        options={options ?? { area: [], energy: [], status: [] }}
+                        editing={editing?.taskId === raw.id ? editing.field : undefined}
+                        saving={saving}
+                        checked={checked}
+                        creating={creating}
+                        onCheck={() => void toggleCheck(item, checked)}
+                        onStartEdit={(field) => setEditing({ taskId: raw.id, field })}
+                        onCommit={(field, value) => void commitField(item, field, value)}
+                        onCancel={() => setEditing(undefined)}
+                      />
+                    );
+                  })}
+                </ul>
+              </section>
+            ))
+          )}
+        </div>
+      </section>
+
+      <p role="status" className="sr-only">
+        {receipt}
+      </p>
+      {toast && (
+        <UndoToast
+          key={toast.id}
+          id={toast.id}
+          taskName={toast.taskName}
+          durationMs={toast.durationMs}
+          onUndo={() => undo(toast)}
+          onExpire={() => setToast((current) => (current?.id === toast.id ? undefined : current))}
+        />
+      )}
     </div>
   );
 }

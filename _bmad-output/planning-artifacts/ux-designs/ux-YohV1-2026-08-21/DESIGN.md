@@ -60,6 +60,11 @@ colors:
   event-fixed-stripe-b-dark: '#282219'
   event-fixed-ink: '#4A4235'
   event-fixed-ink-dark: '#C9BDA8'
+  # Added 2026-09-27 (Task 6B, Tasks page): small accent/red TEXT — see the table below.
+  ink-accent: '#1963C4'
+  ink-accent-dark: '#6AA8F5'
+  ink-danger: '#B3261E'
+  ink-danger-dark: '#FF8A80'
 typography:
   # Figtree (SIL OFL, self-hosted) for every feature page and overlay; sizes as rendered in type-compare-1.html panel 1.
   # AMENDED 2026-09-27 (Spencer): bigger scale overall — body 17-18px, headings ~40px, controls 44-64px.
@@ -235,6 +240,8 @@ Every color has a light and a dark value (dark mode is in scope; both modes meet
 | `{colors.on-accent-solid}` / `-dark` | `#FFFFFF` | `#14120F` | Label/checkmark on an accent-solid fill. |
 | `{colors.accent-glow}` / `-dark` | `rgba(30,111,217,.35)` | `rgba(62,140,240,.35)` | Soft glow around a focused Ask Yoh pill *(was Chat Bubble)* / Chat Input. |
 | `{colors.event-fixed-stripe-a}` / `-b` / `-ink` | `#DCD4C4` / `#D2C8B4` / `#4A4235` | `#2E2820` / `#282219` / `#C9BDA8` | Cross-hatch + ink for non-Yoh fixed Calendar events. |
+| `{colors.ink-accent}` / `-dark` *(added 2026-09-27, Task 6B)* | `#1963C4` | `#6AA8F5` | Small accent-blue TEXT: the Tasks page's "Today" group heading and "Add …" missing-field badges. `{colors.accent-solid}` is only 4.3:1 as small text on the light surface; this is ≥4.5:1 on surface-raised and surface-sunken in both themes (`tests/token-contrast.test.ts`). |
+| `{colors.ink-danger}` / `-dark` *(added 2026-09-27, Task 6B)* | `#B3261E` | `#FF8A80` | Overdue: the Tasks page's "Overdue" group heading and an overdue Due date. ≥4.5:1 on surface-raised and surface-sunken in both themes. |
 
 **Gradient rule.** ~~The full two-stop sweep has exactly two signature uses: the Thinking Indicator shimmer and the active Page Indicator pill (the active nav pill).~~ *Amended 2026-09-27 (Spencer): the two-moment limit is lifted.* The full gradient now also runs on the active nav sidebar item, primary buttons, checked Checkboxes, today's date, Plan blocks, and accent headings, in addition to the Thinking Indicator shimmer. Elsewhere `{colors.accent-solid}` still applies: the dragging/moved-block outline, neutral icon strokes, toast accent bars, the Sandbox Finale bar, and focus rings. White on the gradient's light stop measures 1.74–1.94:1 and can never pass — every gradient use above is a fill or background, never a text color on the light stop. **Caveat:** the shimmer fills the status *text* itself, and the light stop `#7FC1F5` on `{colors.surface-raised}` measures 1.49:1 ‡. The shimmer's legibility is an open accessibility question (EXPERIENCE.md Open Questions).
 

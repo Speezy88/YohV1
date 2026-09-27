@@ -64,7 +64,7 @@ function importsFromApp(contents: string): string[] {
 // ---------------------------------------------------------------------------
 
 /** AD-12's Notion writes + AD-13's Calendar edit — callable only from `app/` (AD-16). */
-const ADAPTER_WRITE_FUNCTIONS = ["setTaskStatus", "updateTaskField", "createPage", "applyCalendarEdit"] as const;
+const ADAPTER_WRITE_FUNCTIONS = ["setTaskStatus", "updateTaskField", "updateTaskTitle", "createPage", "applyCalendarEdit"] as const;
 /**
  * Ruling R1 (Story 8.4): empty, not deleted — the "no shell/*.ts file...
  * names a Notion/Calendar write function" test below still needs a set to

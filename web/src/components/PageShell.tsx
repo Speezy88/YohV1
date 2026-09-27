@@ -25,7 +25,7 @@
 // `inert`/`aria-hidden` as defense-in-depth (`inert`'s focus-blocking
 // behavior isn't implemented in every environment, notably jsdom).
 import { useEffect, useRef, useState } from "react";
-import { PAGES, isTextFieldFocused, usePageNavigation } from "../lib/pages.ts";
+import { PAGES, capturesArrowKeys, isTextFieldFocused, usePageNavigation } from "../lib/pages.ts";
 import HomePage from "../pages/Home.tsx";
 import TasksPage from "../pages/Tasks.tsx";
 import DeskPage from "../pages/Desk.tsx";
@@ -112,6 +112,8 @@ export function PageShell(): React.JSX.Element {
       }
       if (chatOpen) return; // the panel is the foreground surface; page keys are inert while it's open
       if (isTextFieldFocused(document.activeElement)) return;
+      // Task 6B: a region that owns ↑/↓ (the Tasks list's rows) keeps them.
+      if ((e.key === "ArrowDown" || e.key === "ArrowUp") && (e.defaultPrevented || capturesArrowKeys(document.activeElement))) return;
       if (e.key === "ArrowDown" || e.key === "PageDown") nav.next();
       if (e.key === "ArrowUp" || e.key === "PageUp") nav.prev();
     };

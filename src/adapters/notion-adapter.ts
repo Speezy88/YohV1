@@ -105,6 +105,8 @@ import type {
   Project,
   Result,
   Task,
+  TaskFieldOption,
+  TaskFieldOptions,
   TaskStatus,
   YohError,
 } from "../types/domain.ts";
@@ -433,6 +435,7 @@ export async function readNotionTasks(
   const taskPropertyNames = config.taskPropertyNames ?? DEFAULT_TASK_PROPERTY_NAMES;
   const projectPropertyNames = config.projectPropertyNames ?? DEFAULT_PROJECT_PROPERTY_NAMES;
   const energyOptionNames = config.energyOptionNames ?? DEFAULT_ENERGY_OPTION_NAMES;
+  const statusOptionNames = config.statusOptionNames ?? DEFAULT_TASK_STATUS_OPTION_NAMES;
 
   const [taskPages, projectPages] = await Promise.all([
     queryAllPages(client, config.tasksDataSourceId),
@@ -440,8 +443,61 @@ export async function readNotionTasks(
   ]);
 
   return {
-    tasks: taskPages.map((page) => toTask(page, taskPropertyNames, energyOptionNames)),
+    tasks: taskPages.map((page) => toTask(page, taskPropertyNames, energyOptionNames, statusOptionNames)),
     projects: projectPages.map((page) => toProject(page, projectPropertyNames)),
+  };
+}
+
+// ============================================================================
+// readTaskFieldOptions (Task 6B) — the Tasks page's live select options.
+// A read, like `readNotionTasks`: it lets SDK/network errors propagate
+// (AD-8), and writes nothing.
+// ============================================================================
+
+/**
+ * Reads the Tasks data source's LIVE schema and returns the options the
+ * Tasks page's inline selects offer (`TaskFieldOptions`): every Area
+ * select option name (or `undefined` when Area is free text), and each
+ * live Energy/Status option that maps onto one of Yoh's enum values —
+ * mapped by the SAME read-side normalization `readNotionTasks` uses, so an
+ * option the list can show is exactly an option a row can hold. A live
+ * option that maps onto no enum value is left out rather than guessed at.
+ */
+export async function readTaskFieldOptions(
+  client: NotionSchemaClient,
+  config: Pick<NotionAdapterConfig, "tasksDataSourceId" | "taskPropertyNames" | "energyOptionNames" | "statusOptionNames">,
+): Promise<TaskFieldOptions> {
+  const names = config.taskPropertyNames ?? DEFAULT_TASK_PROPERTY_NAMES;
+  const energyOptionNames = config.energyOptionNames ?? DEFAULT_ENERGY_OPTION_NAMES;
+  const statusOptionNames = config.statusOptionNames ?? DEFAULT_TASK_STATUS_OPTION_NAMES;
+  const schema = await client.dataSources.retrieve({ data_source_id: config.tasksDataSourceId });
+  if (!isFullDataSource(schema)) {
+    throw new Error("notion-adapter: Notion returned a partial data source object — cannot read the Tasks options");
+  }
+
+  const liveOptionNames = (propertyName: string): readonly string[] | undefined => {
+    const property = schema.properties[propertyName];
+    if (property?.type === "select") return property.select.options.map((o) => o.name);
+    if (property?.type === "status") return property.status.options.map((o) => o.name);
+    return undefined;
+  };
+
+  const mapOptions = <V extends string>(liveNames: readonly string[], toValue: (name: string) => V | undefined): TaskFieldOption<V>[] => {
+    const seen = new Set<V>();
+    const out: TaskFieldOption<V>[] = [];
+    for (const label of liveNames) {
+      const value = toValue(label);
+      if (value === undefined || seen.has(value)) continue;
+      seen.add(value);
+      out.push({ value, label });
+    }
+    return out;
+  };
+
+  return {
+    area: liveOptionNames(names.area),
+    energy: mapOptions(liveOptionNames(names.energy) ?? [], (label) => normalizeEnergy(label, energyOptionNames)),
+    status: mapOptions(liveOptionNames(names.status) ?? [], (label) => normalizeStatus(label, statusOptionNames)),
   };
 }
 
@@ -599,6 +655,33 @@ export async function updateTaskField(
   return writeSelectLikeField(client, config.tasksDataSourceId, taskId, propertyNames.energy, preferredOptionName);
 }
 
+// ============================================================================
+// updateTaskTitle (Task 6B fix round; AD-12 amended 2026-09-27, Spencer) —
+// the closed write surface's one addition: the title of an EXISTING Task,
+// from Spencer's own edit on the Tasks page only.
+// ============================================================================
+
+/**
+ * Writes `title` (trimmed) to Task `taskId`'s title property — the
+ * configured one (`taskPropertyNames.title`, i.e. `NOTION_TASK_TITLE_PROPERTY`,
+ * Spencer's real "Task Name") — and touches nothing else. A blank title is
+ * refused (`validation`) before any call is made. Like `setTaskStatus`/
+ * `updateTaskField`, it returns a `Result` and never throws.
+ */
+export async function updateTaskTitle(
+  client: NotionWriteClient,
+  config: NotionFieldWriteConfig,
+  taskId: string,
+  title: string,
+): Promise<Result<void, YohError>> {
+  const trimmed = title.trim();
+  if (trimmed.length === 0) {
+    return { ok: false, error: { kind: "validation", message: "A Task's title can't be blank." } };
+  }
+  const titleProperty = (config.taskPropertyNames ?? DEFAULT_TASK_PROPERTY_NAMES).title;
+  return writePageProperty(client, taskId, titleProperty, { title: [{ type: "text", text: { content: trimmed } }] });
+}
+
 /** The single shared `client.pages.update` call site for every `updateTaskField` write except Status (which keeps its own, inside `setTaskStatus`, unchanged) — AD-12's write surface stays exactly these two call sites. */
 async function writePageProperty(
   client: NotionWriteClient,
@@ -743,10 +826,17 @@ export interface NotionTaskWriteBindings {
     field: PlanningFieldNames,
     value: NonNullable<Task[PlanningFieldNames]>,
   ) => Promise<Result<void, YohError>>;
+  /** Task 6B fix round: the Tasks page's inline rename (AD-12 amended 2026-09-27). */
+  readonly updateTaskTitle: (taskId: string, title: string) => Promise<Result<void, YohError>>;
 }
 
 export function bindNotionTaskWrites(getBinding: NotionTaskWriteBindingFn): NotionTaskWriteBindings {
   return {
+    updateTaskTitle: async (taskId, title) => {
+      const binding = getBinding();
+      if (!binding.ok) return binding;
+      return updateTaskTitle(binding.value.client, binding.value.config, taskId, title);
+    },
     setTaskStatus: async (taskId, status) => {
       const binding = getBinding();
       if (!binding.ok) return binding;
@@ -1100,12 +1190,13 @@ function toTask(
   page: PageObjectResponse,
   names: NotionTaskPropertyNames,
   energyOptionNames: Partial<Record<Energy, string>>,
+  statusOptionNames: Record<TaskStatus, string>,
 ): Task {
   const estimatedDurationMinutes = getNumber(page, names.estimatedDuration);
   const area = getAreaValue(page, names.area);
   const dueDateStart = getDateStart(page, names.dueDate);
   const dueDate = dueDateStart === undefined ? undefined : toIsoDateOnly(dueDateStart);
-  const status = normalizeStatus(getStatusName(page, names.status));
+  const status = normalizeStatus(getStatusName(page, names.status), statusOptionNames);
   const energy = normalizeEnergy(getSelectName(page, names.energy), energyOptionNames);
   const projectId = getFirstRelationId(page, names.project);
 
@@ -1215,7 +1306,21 @@ function normalizeOptionName(raw: string | undefined): string | undefined {
   return normalized.length > 0 ? normalized : undefined;
 }
 
-function normalizeStatus(raw: string | undefined): TaskStatus | undefined {
+/**
+ * Checks `raw` against `optionNames` (the write-side Status option names,
+ * e.g. Spencer's live "Nothing" for `"not-started"`) FIRST, case-
+ * insensitively — Task 6B fix: without this, a Task whose live Status is
+ * "Nothing" (the option `setTaskStatus` itself writes for `"not-started"`
+ * since the 2026-09-22 rename) read back as having NO Status at all, so
+ * every untouched Task looked like it was missing a field. Falls back to
+ * the generic "In Progress" -> "in-progress" normalization.
+ */
+function normalizeStatus(raw: string | undefined, optionNames: Record<TaskStatus, string>): TaskStatus | undefined {
+  if (raw === undefined) return undefined;
+  const lowered = raw.trim().toLowerCase();
+  for (const status of Object.keys(optionNames) as TaskStatus[]) {
+    if (optionNames[status].toLowerCase() === lowered) return status;
+  }
   const normalized = normalizeOptionName(raw);
   return normalized !== undefined && VALID_TASK_STATUSES.has(normalized)
     ? (normalized as TaskStatus)

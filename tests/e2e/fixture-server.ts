@@ -31,7 +31,13 @@ import { initNotificationStoreSchema } from "../../src/adapters/notification-sto
 import { initPlanStateStoreSchema } from "../../src/adapters/plan-state-store.ts";
 import { initCompletionLogSchema, listCompletedTaskIdsOnDate } from "../../src/adapters/completion-log.ts";
 import { createMemoryStore, putOpenInteractionRequest, putPlan, putTimeBudget } from "../../src/adapters/memory-store.ts";
-import { createPage as notionCreatePage, type NotionCreatePageConfig } from "../../src/adapters/notion-adapter.ts";
+import {
+  bindNotionTaskWrites,
+  createPage as notionCreatePage,
+  readNotionTasks,
+  readTaskFieldOptions,
+  type NotionCreatePageConfig,
+} from "../../src/adapters/notion-adapter.ts";
 import { draftItem, type CreateItemDeps } from "../../src/app/create-item.ts";
 import { localIsoDate } from "../../src/rituals/ritual-shared.ts";
 import { startCheckOffCommitSweep, startServer, type ChatTurnFn, type ServerDeps } from "../../src/shell/server.ts";
@@ -39,6 +45,7 @@ import type { AnthropicMessagesClient } from "../../src/adapters/llm-adapter.ts"
 import type { Plan, Proposal, Task, TimeBudget } from "../../src/types/domain.ts";
 import { createFakeNotionStatusClient } from "../fakes/fake-notion-status-client.ts";
 import { createFakeNotionCreateClient } from "../fakes/fake-notion-create-client.ts";
+import { createFakeNotionTasksDb } from "../fakes/fake-notion-tasks-db.ts";
 
 /** The Tasks on today's fixture Plan — `web/e2e/check-off.spec.ts` checks these off by name. */
 export const FIXTURE_TASKS = [
@@ -217,6 +224,31 @@ const chat = {
     notionCreatePage(notionCreate.client, NOTION_CREATE_CONFIG, database as never, properties),
 } as unknown as NonNullable<ServerDeps["chat"]>;
 
+// Task 6B: the Tasks page runs against a whole fake Tasks data source
+// (query + live schema + create + update) — the REAL notion-adapter read,
+// option, create and field-write functions all run on top of it, so
+// `web/e2e/tasks.spec.ts` can list, quick-add and inline-edit end to end.
+// Seeded relative to the fixture's own "today" so every Due bucket shows.
+const shiftDays = (days: number): string => new Date(Date.parse(`${today}T00:00:00.000Z`) + days * 86_400_000).toISOString().slice(0, 10);
+const tasksDb = createFakeNotionTasksDb({
+  seed: [
+    { id: "tp-overdue", title: "Email Mr. Alvarez about the lab", dueDate: shiftDays(-2), minutes: 15, area: "School", energy: "low", status: "Nothing" },
+    { id: "tp-today", title: "Calc problem set 4", dueDate: today, minutes: 60, area: "Math", energy: "medium", status: "Nothing" },
+    { id: "tp-done", title: "Return library books", dueDate: today, minutes: 20, area: "Errands", energy: "low", status: "Completed" },
+    { id: "tp-week", title: "AP Bio ch. 7 reading", dueDate: shiftDays(2), minutes: 90, area: "Bio", status: "Nothing" },
+    { id: "tp-soccer", title: "Soccer fundraiser flyers", dueDate: shiftDays(4), minutes: 45, area: "Personal", energy: "medium", status: "In Progress" },
+    { id: "tp-nodate", title: "College essay brainstorm", area: "School", energy: "Deep", status: "Nothing" },
+  ],
+});
+const TASKS_CONFIG = { tasksDataSourceId: "tasks-ds", projectsDataSourceId: "projects-ds" };
+const tasksPage: NonNullable<ServerDeps["tasks"]> = {
+  timeZone: TIME_ZONE,
+  readTasks: async () => (await readNotionTasks(tasksDb.client, TASKS_CONFIG)).tasks,
+  readFieldOptions: () => readTaskFieldOptions(tasksDb.client, TASKS_CONFIG),
+  getNotionCreatePageBinding: () => ({ ok: true, value: { client: tasksDb.client, config: { ...TASKS_CONFIG, researchVaultDataSourceId: "vault-ds" } } }),
+  ...bindNotionTaskWrites(() => ({ ok: true, value: { client: tasksDb.client, config: TASKS_CONFIG } })),
+};
+
 function fixtureState(url: URL): Response {
   const taskId = url.searchParams.get("taskId") ?? "";
   const body = {
@@ -225,6 +257,8 @@ function fixtureState(url: URL): Response {
     // Story 8.8 (Review Focus #3): empty until Spencer's "Create" chip
     // actually confirms the draft — proves no shortcut write.
     createdPages: notionCreate.createdPages.map((p) => ({ title: p.title })),
+    // Task 6B: the fake Tasks data source's rows, as Notion would hold them.
+    tasksRows: tasksDb.rows(),
   };
   return new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } });
 }
@@ -240,7 +274,7 @@ const handle = startServer(
         return url.pathname === "/__fixture/state" ? fixtureState(url) : options.fetch(request);
       },
     }),
-  { homeView, checkOff, chat },
+  { homeView, checkOff, chat, tasks: tasksPage },
 );
 const sweep = startCheckOffCommitSweep({ connection, ...checkOff, now: () => new Date() }, { log: quiet });
 

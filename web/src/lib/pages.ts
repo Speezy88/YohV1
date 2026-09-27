@@ -46,6 +46,16 @@ export function usePageNavigation(initialIndex = 0): PageNavigation {
  * not navigate pages while typing (`<input>`, `<textarea>`, or a
  * `contenteditable` element such as the Chat Input).
  */
+/**
+ * Task 6B: true when `element` sits inside a region that owns ↑/↓ itself
+ * (marked `data-captures-arrow-keys`) — the Tasks list moves between rows
+ * with them, so page navigation must leave them alone while a row has
+ * focus. Page Up/Page Down still navigate.
+ */
+export function capturesArrowKeys(element: Element | null): boolean {
+  return element?.closest("[data-captures-arrow-keys]") != null;
+}
+
 export function isTextFieldFocused(element: Element | null): boolean {
   if (!element) return false;
   const tag = element.tagName;

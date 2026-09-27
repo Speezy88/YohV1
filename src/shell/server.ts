@@ -85,6 +85,7 @@ import {
   bindNotionTaskWrites,
   loadTaskPropertyNamesFromEnv,
   readNotionTasks,
+  readTaskFieldOptions,
   type NotionCreatePageBindingFn,
   type NotionTaskPropertyNames,
   type NotionTaskWriteBindingFn,
@@ -111,6 +112,9 @@ import {
 } from "../app/check-off.ts";
 import { surfaceOpenItems } from "../app/surface-open-items.ts";
 import { answerOpenItem, type AnswerOpenItemDeps } from "../app/answer-open-item.ts";
+import { listTasks, type TasksViewDeps } from "../app/tasks-view.ts";
+import { createTask, previewQuickAdd, type CreateTaskDeps } from "../app/create-task.ts";
+import { renameTask, updateTask, type UpdateTaskDeps } from "../app/update-task.ts";
 import type {
   AnswerOpenItemRequest,
   ApiResult,
@@ -118,11 +122,17 @@ import type {
   ChatTurnRequest,
   ChatTurnResponse,
   CheckOffRequest,
+  CreateTaskRequest,
   EventHint,
   HealthResponse,
+  QuickAddPreviewRequest,
+  RenameTaskRequest,
+  TasksGroupBy,
+  TasksListRequest,
   TimeBudgetRequest,
+  UpdateTaskFieldRequest,
 } from "../types/api.ts";
-import type { CalendarEvent, ChatTurn, ExternalId, IsoDate, Result, Task, YohError, YohErrorKind } from "../types/domain.ts";
+import type { CalendarEvent, ChatTurn, ExternalId, IsoDate, PlanningFieldNames, Result, Task, YohError, YohErrorKind } from "../types/domain.ts";
 
 // ============================================================================
 // GET /api/events — outbox tail → SSE hints (AD-18)
@@ -474,6 +484,17 @@ export interface ServerDeps {
    * it). Absent, `createApp` makes one for its own lifetime.
    */
   readonly chatSession?: ChatSession;
+  /**
+   * Task 6B: the Tasks page routes' dependencies — the live Notion read
+   * (`readTasks`/`readFieldOptions`), the lazy create-page binding, and the
+   * field-write binding spread in from `bindNotionTaskWrites` (this
+   * file never names a write function, AD-16). Optional for the same
+   * reason as `homeView`: absent, every Tasks route reports a clear
+   * `unreachable` error.
+   */
+  readonly tasks?: Omit<TasksViewDeps, "now" | "log"> &
+    Omit<CreateTaskDeps, "now" | "connection" | "log" | "timeZone"> &
+    Omit<UpdateTaskDeps, "connection" | "log"> & { readonly now?: () => Date };
 }
 
 /** A failure envelope typed without `ApiResult<never>`'s impossible `{ok: true}` arm, so the RPC client's response type stays exact. */
@@ -493,6 +514,15 @@ const OPEN_ITEMS_NOT_CONFIGURED: ApiFailure = {
   ok: false,
   error: { kind: "unreachable", message: errorCopyForWire({ kind: "unreachable", message: "server: chat dependencies not configured" }) },
 };
+
+/** Task 6B: the Tasks page routes' "not configured" failure (Notion isn't set up). */
+const TASKS_NOT_CONFIGURED: ApiFailure = {
+  ok: false,
+  error: { kind: "unreachable", message: "I'm not set up to do that yet — my Notion connection isn't configured." },
+};
+
+const TASKS_GROUP_BY: ReadonlySet<string> = new Set<TasksGroupBy>(["due", "area", "status"]);
+const PLANNING_FIELD_NAMES: ReadonlySet<string> = new Set<PlanningFieldNames>(["estimatedDurationMinutes", "area", "dueDate", "status", "energy"]);
 
 /** HTTP status for a serialized `Result` — the body is always the envelope; the status just makes logs and devtools honest. */
 const ERROR_STATUS: Readonly<Record<YohErrorKind, ContentfulStatusCode>> = {
@@ -549,6 +579,12 @@ export function createApp(deps: ServerDeps) {
     ? { ...deps.checkOff, connection: deps.connection, now: deps.checkOff.now ?? (() => new Date()), log }
     : undefined;
   const chatSession: ChatSession = deps.chatSession ?? { recentMessages: [], lastSearchAnswer: undefined };
+  // Task 6B: one merged deps object serves all three Tasks-page app/
+  // functions (each reads only its own fields). Spread, never re-keyed, so
+  // the write binding's name never appears in this file (AD-16).
+  const tasksDeps: (TasksViewDeps & CreateTaskDeps & UpdateTaskDeps) | undefined = deps.tasks
+    ? { ...deps.tasks, now: deps.tasks.now ?? (() => new Date()), connection: deps.connection, log }
+    : undefined;
   // Preflight ruling P2: the ONE merged deps object `/api/chat`,
   // `/api/open-items`, and `/api/open-items/answer` ALL call into `app/`
   // with — never `deps.chat` directly. `runChatTurn` (a test seam, never a
@@ -720,6 +756,94 @@ export function createApp(deps: ServerDeps) {
         const result = wire(await releaseCheckOff(checkOffDeps, { id: c.req.param("id") }));
         return c.json(result, httpStatus(result));
       })
+      // Task 6B (FR-43): the Tasks page. Pure transport over
+      // `app/tasks-view.ts` (the grouped list), `app/create-task.ts` (the
+      // quick-add row's direct write and its live preview), and
+      // `app/update-task.ts` (an inline cell edit, FR-24's direct write).
+      .get(
+        "/api/tasks",
+        validator("query", (value, c) => {
+          const groupBy = typeof value["groupBy"] === "string" ? value["groupBy"] : undefined;
+          const query = typeof value["query"] === "string" ? value["query"] : undefined;
+          if (groupBy !== undefined && !TASKS_GROUP_BY.has(groupBy)) {
+            const invalid: ApiFailure = { ok: false, error: { kind: "validation", message: "tasks: unknown groupBy" } };
+            return c.json(invalid, httpStatus(invalid));
+          }
+          return { ...(groupBy !== undefined ? { groupBy: groupBy as TasksGroupBy } : {}), ...(query !== undefined ? { query } : {}) } satisfies TasksListRequest;
+        }),
+        async (c) => {
+          if (!tasksDeps) return c.json(TASKS_NOT_CONFIGURED, httpStatus(TASKS_NOT_CONFIGURED));
+          const result = wire(await listTasks(tasksDeps, c.req.valid("query")));
+          return c.json(result, httpStatus(result));
+        },
+      )
+      .post(
+        "/api/tasks",
+        validator("json", (value, c) => {
+          const text = (value as { text?: unknown } | null)?.text;
+          if (typeof text !== "string") {
+            const invalid: ApiFailure = { ok: false, error: { kind: "validation", message: "tasks: missing text" } };
+            return c.json(invalid, httpStatus(invalid));
+          }
+          return { text } satisfies CreateTaskRequest;
+        }),
+        async (c) => {
+          if (!tasksDeps) return c.json(TASKS_NOT_CONFIGURED, httpStatus(TASKS_NOT_CONFIGURED));
+          const result = wire(await createTask(tasksDeps, c.req.valid("json")));
+          return c.json(result, httpStatus(result));
+        },
+      )
+      .post(
+        "/api/tasks/parse",
+        validator("json", (value, c) => {
+          const body = value as { text?: unknown; areaOptions?: unknown } | null;
+          const areaOptions = body?.areaOptions;
+          const validOptions = areaOptions === undefined || (Array.isArray(areaOptions) && areaOptions.every((o) => typeof o === "string"));
+          if (typeof body?.text !== "string" || !validOptions) {
+            const invalid: ApiFailure = { ok: false, error: { kind: "validation", message: "tasks/parse: missing text" } };
+            return c.json(invalid, httpStatus(invalid));
+          }
+          return { text: body.text, ...(areaOptions !== undefined ? { areaOptions: areaOptions as string[] } : {}) } satisfies QuickAddPreviewRequest;
+        }),
+        async (c) => {
+          if (!tasksDeps) return c.json(TASKS_NOT_CONFIGURED, httpStatus(TASKS_NOT_CONFIGURED));
+          const result = wire(await previewQuickAdd(tasksDeps, c.req.valid("json")));
+          return c.json(result, httpStatus(result));
+        },
+      )
+      .post(
+        "/api/tasks/:id/field",
+        validator("json", (value, c) => {
+          const body = value as { field?: unknown; value?: unknown } | null;
+          if (typeof body?.field !== "string" || !PLANNING_FIELD_NAMES.has(body.field) || typeof body.value !== "string") {
+            const invalid: ApiFailure = { ok: false, error: { kind: "validation", message: "tasks/field: missing field/value" } };
+            return c.json(invalid, httpStatus(invalid));
+          }
+          return { field: body.field as PlanningFieldNames, value: body.value } satisfies UpdateTaskFieldRequest;
+        }),
+        async (c) => {
+          if (!tasksDeps) return c.json(TASKS_NOT_CONFIGURED, httpStatus(TASKS_NOT_CONFIGURED));
+          const result = wire(await updateTask(tasksDeps, { taskId: c.req.param("id"), ...c.req.valid("json") }));
+          return c.json(result, httpStatus(result));
+        },
+      )
+      // Task 6B fix round (AD-12 amended 2026-09-27): an inline rename.
+      .post(
+        "/api/tasks/:id/title",
+        validator("json", (value, c) => {
+          const title = (value as { title?: unknown } | null)?.title;
+          if (typeof title !== "string") {
+            const invalid: ApiFailure = { ok: false, error: { kind: "validation", message: "tasks/title: missing title" } };
+            return c.json(invalid, httpStatus(invalid));
+          }
+          return { title } satisfies RenameTaskRequest;
+        }),
+        async (c) => {
+          if (!tasksDeps) return c.json(TASKS_NOT_CONFIGURED, httpStatus(TASKS_NOT_CONFIGURED));
+          const result = wire(await renameTask(tasksDeps, { taskId: c.req.param("id"), ...c.req.valid("json") }));
+          return c.json(result, httpStatus(result));
+        },
+      )
       // Story 8.5, AD-18/C5: one chat turn, its reply streamed on this
       // request's own SSE response (separate from GET /api/events). Always
       // ends in exactly one `done` or `error` event (`runChatStream`). A
@@ -835,7 +959,7 @@ export function startServer(
   env: Readonly<Record<string, string | undefined>> = process.env,
   serveFn: ServeFn = (options) => serve({ ...options }),
   /** Story 7.8's `homeView`, Story 7.10's `checkOff`, and Story 8.5's `chat`, threaded through the same way `connection` already is. */
-  features: Pick<ServerDeps, "homeView" | "checkOff" | "chat"> = {},
+  features: Pick<ServerDeps, "homeView" | "checkOff" | "chat" | "tasks"> = {},
 ): ServerHandle {
   const port = parsePort(env["YOH_SERVER_PORT"]);
   // Contract C3: one ChatSession per server process, shared by every chat route.
@@ -846,6 +970,7 @@ export function startServer(
     ...(features.homeView ? { homeView: features.homeView } : {}),
     ...(features.checkOff ? { checkOff: features.checkOff } : {}),
     ...(features.chat ? { chat: features.chat } : {}),
+    ...(features.tasks ? { tasks: features.tasks } : {}),
   });
   return serveFn({ fetch: app.fetch, hostname: LOOPBACK_HOST, port });
 }
@@ -942,6 +1067,34 @@ function buildHomeViewDeps(notion: NotionFeatureConfig, env: Readonly<Record<str
  * Needs no Google configuration. The Notion client goes to `app/check-off.ts`
  * as a dependency; the Status write itself is made there (AD-16).
  */
+/**
+ * Task 6B: the Tasks page routes' real dependencies, on the SAME Notion
+ * client Home and check-off already share. The create-page binding and the
+ * field-write binding are both built here from that one client; the writes
+ * themselves happen inside `app/create-task.ts`/`app/update-task.ts`
+ * (AD-16), the field write reached only through the adapter's own
+ * `bindNotionTaskWrites` spread. The create-page config type also carries a
+ * Research Vault id; only the Tasks target is ever used from this page.
+ */
+function buildTasksDeps(notion: NotionFeatureConfig, env: Readonly<Record<string, string | undefined>>): ServerDeps["tasks"] {
+  const config = {
+    tasksDataSourceId: notion.tasksDataSourceId,
+    projectsDataSourceId: notion.projectsDataSourceId,
+    taskPropertyNames: notion.taskPropertyNames,
+  };
+  const readTasks = readTasksWith(notion);
+  return {
+    timeZone: notion.timeZone,
+    readTasks: async () => (await readTasks()).tasks,
+    readFieldOptions: () => readTaskFieldOptions(notion.notionClient, config),
+    getNotionCreatePageBinding: () => ({
+      ok: true,
+      value: { client: notion.notionClient, config: { ...config, researchVaultDataSourceId: env["NOTION_RESEARCH_VAULT_DATA_SOURCE_ID"] ?? "" } },
+    }),
+    ...bindNotionTaskWrites(() => ({ ok: true, value: { client: notion.notionClient, config } })),
+  };
+}
+
 function buildCheckOffDeps(notion: NotionFeatureConfig): ServerDeps["checkOff"] {
   const readTasks = readTasksWith(notion);
   return {
@@ -1198,10 +1351,12 @@ if (import.meta.main) {
   const homeView = notion ? buildHomeViewDeps(notion, process.env) : undefined;
   const checkOff = notion ? buildCheckOffDeps(notion) : undefined;
   const chat = buildChatDeps(connection, notion, process.env);
+  const tasks = notion ? buildTasksDeps(notion, process.env) : undefined;
   const handle = startServer(connection, process.env, undefined, {
     ...(homeView ? { homeView } : {}),
     ...(checkOff ? { checkOff } : {}),
     ...(chat ? { chat } : {}),
+    ...(tasks ? { tasks } : {}),
   });
   // Story 7.10, AD-20: the startup sweep commits anything left overdue by a
   // previous process, then the commit timer takes over.

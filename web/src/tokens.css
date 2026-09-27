@@ -45,6 +45,15 @@
   --color-event-fixed-stripe-a: light-dark(#dcd4c4, #2e2820);
   --color-event-fixed-stripe-b: light-dark(#d2c8b4, #282219);
   --color-event-fixed-ink: light-dark(#4a4235, #c9bda8);
+  /* Task 6B (Tasks page, approved Tasks.dc.html mockup): small accent-blue
+     and red TEXT — a group heading ("TODAY", "OVERDUE"), a missing-field
+     badge ("Add due date"), an overdue date. `accent-solid` itself is only
+     4.3:1 on the light surface (fine for fills and rims, short of 4.5:1 for
+     text this small), so accent text gets its own slightly deeper token;
+     danger is the mockup's #B3261E, lightened for dark mode. Both are
+     pinned at ≥4.5:1 on surface-raised by tests/token-contrast.test.ts. */
+  --color-ink-accent: light-dark(#1963c4, #6aa8f5);
+  --color-ink-danger: light-dark(#b3261e, #ff8a80);
 
   /* Radii — DESIGN.md `rounded`, plus `--radius-2xl` (Task 6A): the
      mockup's page-surface/chat-panel corner (28-30px) sits a step above
