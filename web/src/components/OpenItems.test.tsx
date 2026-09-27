@@ -106,4 +106,42 @@ describe("OpenItems", () => {
     expect(screen.getByText("What area is Draft the memo?")).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByText("What area is Draft the memo?")).not.toBeInTheDocument());
   });
+
+  describe("collapsible when there are many (Task 0)", () => {
+    const manyItems = (count: number) =>
+      Array.from({ length: count }, (_, i) => ({
+        ...ITEM,
+        requestId: `r${i}`,
+        question: { ...ITEM.question, requestId: `r${i}`, questionId: `t${i}:area`, text: `Question ${i}` },
+      }));
+
+    it("shows no toggle, and every card, when there are only a few items", () => {
+      render(<OpenItems items={manyItems(3)} />);
+      expect(screen.queryByTestId("open-items-toggle")).not.toBeInTheDocument();
+      expect(screen.getByText("Question 0")).toBeInTheDocument();
+      expect(screen.getByText("Question 2")).toBeInTheDocument();
+    });
+
+    it("shows a collapse toggle once there are many, and its own scroll cap on the list", () => {
+      render(<OpenItems items={manyItems(4)} />);
+      expect(screen.getByTestId("open-items-toggle")).toBeInTheDocument();
+      const list = screen.getByTestId("open-items-list");
+      expect(list.className).toMatch(/overflow-y-auto/);
+    });
+
+    it("collapsing hides every card behind a summary, and expanding restores them", () => {
+      render(<OpenItems items={manyItems(5)} />);
+      const toggle = screen.getByTestId("open-items-toggle");
+      expect(toggle).toHaveAttribute("aria-expanded", "true");
+
+      fireEvent.click(toggle);
+      expect(toggle).toHaveAttribute("aria-expanded", "false");
+      expect(screen.queryByTestId("open-items-list")).not.toBeInTheDocument();
+      expect(screen.queryByText("Question 0")).not.toBeInTheDocument();
+
+      fireEvent.click(toggle);
+      expect(toggle).toHaveAttribute("aria-expanded", "true");
+      expect(screen.getByText("Question 0")).toBeInTheDocument();
+    });
+  });
 });
