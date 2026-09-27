@@ -29,6 +29,28 @@ test("Task 6 addendum: parseNightCloseOutAnswer tolerates natural free-text phra
   assert.equal(parseNightCloseOutAnswer("nope"), "slipped");
 });
 
+// I3 (final-review): a bare "not"/"missed" ANYWHERE in the reply used to
+// read as slipped, even when it wasn't attached to the completion word —
+// so "done, not bad" wrote Status = Slipped to real Notion. Negation now
+// only counts when it attaches to the completion word, or the reply is
+// only a slip word.
+test("I3 (final-review): an unattached 'not'/'missed' next to a completion word still reads as completed", () => {
+  assert.equal(parseNightCloseOutAnswer("done, not bad"), "completed");
+  assert.equal(parseNightCloseOutAnswer("finished it, not too hard"), "completed");
+  assert.equal(parseNightCloseOutAnswer("completed, missed the bonus question though"), "completed");
+});
+
+test("I3 (final-review): attached negation and stands-alone slip words still read as slipped", () => {
+  assert.equal(parseNightCloseOutAnswer("not done"), "slipped");
+  assert.equal(parseNightCloseOutAnswer("not finished"), "slipped");
+  assert.equal(parseNightCloseOutAnswer("didn't finish"), "slipped");
+  assert.equal(parseNightCloseOutAnswer("didn't do it"), "slipped");
+  assert.equal(parseNightCloseOutAnswer("missed"), "slipped");
+  assert.equal(parseNightCloseOutAnswer("nope"), "slipped");
+  assert.equal(parseNightCloseOutAnswer("no"), "slipped");
+  assert.equal(parseNightCloseOutAnswer("slipped"), "slipped");
+});
+
 test("isSkipAnswer recognizes only the literal 'skip' (case-insensitive)", () => {
   assert.equal(isSkipAnswer("skip"), true);
   assert.equal(isSkipAnswer("SKIP"), true);
@@ -63,6 +85,18 @@ test("Task 6: parseSelfCheckAnswer rejects a reply with no 1-10 number at all", 
   assert.equal(parseSelfCheckAnswer("not a number at all"), undefined);
   assert.equal(parseSelfCheckAnswer(""), undefined);
   assert.equal(parseSelfCheckAnswer("eleven"), undefined);
+});
+
+// M2 (final-review): a digit anywhere in the reply is preferred over a
+// spelled-out number word, and the LAST standalone 1-10 digit wins when
+// several are present — the misread cases the review verified.
+test("M2 (final-review): a digit is preferred over a spelled-out number word when both are present", () => {
+  assert.deepEqual(parseSelfCheckAnswer("had one rough class, but 7"), { score: 7, reason: "" });
+  assert.deepEqual(parseSelfCheckAnswer("two tests today, feeling like a 6"), { score: 6, reason: "" });
+});
+
+test("M2 (final-review): the LAST standalone 1-10 digit wins when several are present", () => {
+  assert.deepEqual(parseSelfCheckAnswer("3 hours of sleep, 5"), { score: 5, reason: "" });
 });
 
 test("parseProposalAnswer recognizes common yes/no variants and rejects anything else", () => {

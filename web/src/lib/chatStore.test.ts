@@ -6,10 +6,10 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, renderHook } from "@testing-library/react";
-import { __resetChatStoreForTests, recordAnsweredOpenItem, send, setDraft, useChatStore } from "./chatStore.ts";
+import { __resetChatStoreForTests, appendPendingOpenItem, recordAnsweredOpenItem, resolveMessageQuestion, send, setDraft, useChatStore } from "./chatStore.ts";
 import * as chatStreamModule from "./chatStream.ts";
 import * as notifications from "./notifications.ts";
-import type { ChatStreamEvent, ChatTurnRequest, OpenItemQuestion } from "../../../src/types/api.ts";
+import type { ChatStreamEvent, ChatTurnRequest, OpenItem, OpenItemQuestion } from "../../../src/types/api.ts";
 
 /** A `streamChat` stand-in the test drives by hand: `emit` pushes an event, `finish`/`fail` settle it. */
 function controllableStream() {
@@ -189,5 +189,53 @@ describe("chatStore", () => {
     const { result } = renderHook(() => useChatStore());
     act(() => recordAnsweredOpenItem("no", { receipts: [] }));
     expect(result.current.messages[1]).toMatchObject({ role: "assistant", text: "", receipts: [], status: "done" });
+  });
+
+  // ==========================================================================
+  // appendPendingOpenItem / resolveMessageQuestion (C1, final-review)
+  // ==========================================================================
+
+  const SELF_CHECK_ITEM: OpenItem = {
+    requestId: "self-check",
+    requestKind: "self-check",
+    promptText: "How are things going?",
+    question: { requestId: "self-check", questionId: "score", text: "Score (1-10)?", options: [], allowsFreeText: true },
+  };
+
+  it("appendPendingOpenItem shows one Yoh message per requestId+questionId, a no-op on a repeat of the SAME pending item", () => {
+    const { result } = renderHook(() => useChatStore());
+    act(() => appendPendingOpenItem(SELF_CHECK_ITEM));
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.messages[0]).toMatchObject({ role: "assistant", text: "How are things going?", question: SELF_CHECK_ITEM.question });
+
+    act(() => appendPendingOpenItem(SELF_CHECK_ITEM));
+    expect(result.current.messages).toHaveLength(1); // still just the one — same request, still pending, never shown twice
+  });
+
+  it("C1 (final-review): once resolveMessageQuestion clears an item, a LATER re-raise under the same requestId (a ritual reusing its fixed id) shows again", () => {
+    const { result } = renderHook(() => useChatStore());
+    act(() => appendPendingOpenItem(SELF_CHECK_ITEM));
+    const messageId = result.current.messages[0]!.id;
+
+    // Spencer answers it — the app resolves this message's question (Task 6's
+    // "the card hides only when the server actually resolves it").
+    act(() => resolveMessageQuestion(messageId));
+    expect(result.current.messages[0]!.question).toBeUndefined();
+
+    // The ritual runs again later and re-raises under the SAME fixed
+    // requestId/questionId (self-check's questionId is always "score") — it
+    // must show again, not be silently swallowed by the dedupe forever.
+    act(() => appendPendingOpenItem(SELF_CHECK_ITEM));
+    expect(result.current.messages).toHaveLength(2);
+    expect(result.current.messages[1]).toMatchObject({ role: "assistant", text: "How are things going?", question: SELF_CHECK_ITEM.question });
+  });
+
+  it("resolveMessageQuestion clears the question from the stored message, so a remounted component reading the SAME message never shows it again", () => {
+    const { result } = renderHook(() => useChatStore());
+    act(() => appendPendingOpenItem(SELF_CHECK_ITEM));
+    const messageId = result.current.messages[0]!.id;
+    act(() => resolveMessageQuestion(messageId));
+    expect(result.current.messages[0]).toMatchObject({ role: "assistant", text: "How are things going?" });
+    expect(result.current.messages[0]!.question).toBeUndefined();
   });
 });

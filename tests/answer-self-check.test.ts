@@ -55,6 +55,19 @@ test("Task 6: a bare number with no reason is now accepted (natural reply), pers
   store.close();
 });
 
+// M2 (final-review): the reply used to say "Thanks — got it." without ever
+// echoing the parsed score, so a misread (e.g. a number word instead of the
+// digit Spencer actually meant) was invisible. It now leads with the
+// logged score, keeping the existing follow-up text after it.
+test("M2 (final-review): a successful answer's reply echoes the logged score", async () => {
+  const store = tempStore();
+  openReq(store);
+  const result = await answerSelfCheck(deps(store), { requestId: "self-check", questionId: "score", answer: "7, feeling good" });
+  assert.equal(result.ok, true);
+  if (result.ok) assert.equal(result.value.message, "Logged 7/10. I'll check in again before too long.");
+  store.close();
+});
+
 test("Task 6: a reply with no 1-10 number at all is rejected, re-asks the SAME question, and says plainly what's needed", async () => {
   const store = tempStore();
   openReq(store);

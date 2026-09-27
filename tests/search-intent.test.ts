@@ -52,6 +52,14 @@ const PLANNING_NEGATIVE_LINES = [
   "time budget 6 hours",
   "why is homework prioritized",
   "what's my schedule looking like this week",
+  // I1 (final-review): the cue path must not send Spencer's own planning
+  // questions to Perplexity — first-person lines, and lines about
+  // due/homework/assignments/essays/what he's working on, stay on the
+  // deterministic-fallthrough route (classifyCapture/classifyChatIntent).
+  "what's due this week?",
+  "any homework due this week?",
+  "what should I work on right now?",
+  "whats the latest on my lab report",
 ];
 
 for (const line of PLANNING_NEGATIVE_LINES) {

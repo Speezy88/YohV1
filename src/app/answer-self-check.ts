@@ -42,5 +42,10 @@ export async function answerSelfCheck(deps: AnswerSelfCheckDeps, input: AnswerOp
     };
   }
   clearInteractionRequest(deps.store, SELF_CHECK_REQUEST_ID, record.version);
-  return { ok: true, value: { message: "Thanks — got it. I'll check in again before too long.", receipts: [], next: "done" } };
+  // M2 (final-review): echo the parsed score so a misread (e.g. a nearby
+  // number the parser picked over Spencer's actual score) is visible
+  // instead of hidden behind a generic "got it" — the score already drives
+  // `scheduleNextSelfCheck` by this point, so this is a receipt, not a
+  // chance to change it.
+  return { ok: true, value: { message: `Logged ${parsed.score}/10. I'll check in again before too long.`, receipts: [], next: "done" } };
 }

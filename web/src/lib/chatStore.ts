@@ -47,8 +47,24 @@ const EMPTY: ChatStoreState = { messages: [], draft: "", sending: false };
 let state: ChatStoreState = EMPTY;
 let nextId = 0;
 const listeners = new Set<() => void>();
-/** Task 6 addendum: which ritual-raised open-item `requestId`s have already been injected into this session's transcript (`appendPendingOpenItem`) — "shown once per request id per session", so a re-fetch/reopen never duplicates the same pending question. Client state only, never persisted. */
+/**
+ * C1 (final-review): which ritual-raised open-item questions have already
+ * been injected into this session's transcript (`appendPendingOpenItem`),
+ * keyed on `requestId + questionId` rather than `requestId` alone — every
+ * ritual (`self-check`, `night-close-out`, `data-completeness`) reuses one
+ * fixed `requestId` across every run, so keying on `requestId` alone meant
+ * a re-raised question, weeks later, stayed permanently invisible once the
+ * FIRST one had ever been shown. `resolveMessageQuestion` deletes an entry
+ * the moment its question is actually resolved, so a later re-raise (even
+ * one that reuses the exact same requestId+questionId, as self-check
+ * always does) is no longer in this Set and shows again. Client state only,
+ * never persisted.
+ */
 const shownPendingRequestIds = new Set<string>();
+
+function pendingItemKey(requestId: string, questionId: string): string {
+  return `${requestId}::${questionId}`;
+}
 
 function set(next: ChatStoreState): void {
   state = next;
@@ -196,19 +212,43 @@ export function recordAnsweredOpenItem(
  * — `item.promptText` as the message text, `item.question` as its inline
  * Structured Question card, answerable exactly like any other inline
  * question (`ChatMessage.tsx`'s own `answerInline`). A no-op past the first
- * call for a given `item.requestId` in this session (dedupe by requestId,
- * per the brief — a reopen or a later `GET /api/open-items` refetch never
- * duplicates it), so `ChatPanel.tsx` can call this on every fetch/hint
- * without tracking what it already showed.
+ * call for a given `item.requestId + item.question.questionId` combination
+ * in this session (C1: NOT `requestId` alone — see `shownPendingRequestIds`
+ * — a reopen or a later `GET /api/open-items` refetch never duplicates a
+ * still-pending item), so `ChatPanel.tsx` can call this on every fetch/hint
+ * without tracking what it already showed. `resolveMessageQuestion` frees
+ * the entry once the item is actually answered, so a ritual re-raise under
+ * the same id later shows again instead of staying hidden forever.
  */
 export function appendPendingOpenItem(item: OpenItem): void {
-  if (shownPendingRequestIds.has(item.requestId)) return;
-  shownPendingRequestIds.add(item.requestId);
+  const key = pendingItemKey(item.requestId, item.question.questionId);
+  if (shownPendingRequestIds.has(key)) return;
+  shownPendingRequestIds.add(key);
   const id = `chat-${++nextId}`;
   set({
     ...state,
     messages: [...state.messages, { id, role: "assistant", text: item.promptText, receipts: [], question: item.question, status: "done" }],
   });
+}
+
+/**
+ * I2/C1 (final-review): the ONE place a Structured Question's card is
+ * actually resolved — called by `ChatMessage.tsx`'s `answerInline` whenever
+ * the server genuinely resolves the question (`next === "done"`, a
+ * genuinely different `next` question, or a `conflict`/`stale-proposal`
+ * outcome, which means it's already resolved elsewhere). Clears
+ * `question` from the stored message itself (not component state), so a
+ * later remount of `ChatMessage` — closing and reopening the panel — reads
+ * the SAME resolved state from the store and never shows the card again
+ * (I2). Also frees this question's dedupe entry (C1), so a ritual that
+ * re-raises under the same requestId+questionId later is treated as new.
+ */
+export function resolveMessageQuestion(messageId: string): void {
+  const message = state.messages.find((m) => m.id === messageId);
+  if (message?.question) {
+    shownPendingRequestIds.delete(pendingItemKey(message.question.requestId, message.question.questionId));
+  }
+  set({ ...state, messages: state.messages.map((m) => (m.id === messageId ? { ...m, question: undefined } : m)) });
 }
 
 /** Test-only: clears the module-level transcript (and the pending-item dedupe set) between tests. Never called from production code. */

@@ -475,6 +475,24 @@ test('chatTurn treats a leading "search:" prefix (what Research Hub\'s ask box a
   assert.equal((llmClient as any).calls.length, 0, "an explicit search: prefix never depends on the classifier");
 });
 
+test("M6 (final-review): an explicit \"search:\" prefix always searches, even when the rest of the line reads like a create-item command", async () => {
+  const llmClient = makeFakeLlmClient("GENERAL");
+  const searchCalls: string[] = [];
+  const deps = baseDeps({
+    llmClient,
+    searchFn: async (query) => {
+      searchCalls.push(query);
+      return { ok: true, value: { answer: "Here's how the Notion API create-a-page endpoint works.", citations: [] } };
+    },
+  });
+
+  const result = await chatTurn(deps, { message: "search: add a new task in notion via api", history: [] });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(searchCalls, ["add a new task in notion via api"]);
+  assert.equal((llmClient as any).calls.length, 0, "search: must be checked before create-item, without any classifier call");
+});
+
 test("chatTurn's search pre-check never swallows a planning line that happens to contain a cue word (\"today's plan\") — falls through to the classifier same as before", async () => {
   const llmClient = makeFakeLlmClient("GENERAL");
   const searchCalls: string[] = [];

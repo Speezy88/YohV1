@@ -26,11 +26,15 @@
  *      "current", "right now", "price of", "stock", "score", "weather", "who
  *      won", "what happened") anywhere in the line — but ONLY when the line
  *      doesn't also read like a request for Yoh's OWN planning data (a
- *      "plan"/"task"/"schedule"/"calendar"/"priorit-" noun anywhere in it).
- *      This is what keeps "today's plan" and "my tasks this week" off the
- *      search path — the cue words they happen to contain describe a
- *      planning question, not a real-world fact — while a genuine planning
- *      line built around those planning nouns has, in every case, already
+ *      "plan"/"task"/"schedule"/"calendar"/"priorit-"/"due"/"homework"/
+ *      "assignment"/"essay"/"working on" noun anywhere in it) or a
+ *      first-person line about Spencer himself (I1, final-review: "what
+ *      should I work on", "whats the latest on my lab report"). This is
+ *      what keeps "today's plan", "my tasks this week", "what's due this
+ *      week", and "what should I work on right now" off the search path —
+ *      the cue words they happen to contain describe a planning question,
+ *      not a real-world fact — while a genuine planning line built around
+ *      those planning nouns has, in every case, already
  *      matched one of `chatTurn`'s earlier, MORE specific deterministic
  *      recognizers (`isPlanViewCommand`, `parseDayViewCommand`, etc.) and
  *      returned before this function is ever called at all; this guard only
@@ -60,7 +64,17 @@ const CURRENT_INFO_CUE_RE =
 const INFO_REQUEST_RE =
   /^\s*(?:(?:what|what's|whats|who|who's|when|where|which|why|how|how's|is|are|was|were|did|does|do|any|tell\s+me|give\s+me|show\s+me)\b|(?:news|latest|price\s+of|weather|current\s+events|today'?s|this\s+week'?s)\b)|\?\s*$/i;
 
-const PLANNING_NOUN_RE = /\b(?:plan|tasks?|schedule|calendar|priorit\w*)\b/i;
+const PLANNING_NOUN_RE = /\b(?:plan|tasks?|schedule|calendar|priorit\w*|due|homework|assignments?|essays?|working\s+on|work\s+on)\b/i;
+
+/**
+ * I1 (final-review): checked ONLY on the current-info CUE path below (never
+ * the explicit verb or `search:` prefix paths — "search: how am I doing"
+ * still searches; Research Hub's ask box always searches). A first-person
+ * line ("what should I work on", "whats the latest on my lab report") reads
+ * as Spencer asking about himself or his own work, not a request for a
+ * real-world fact, even when it also contains a current-info cue word.
+ */
+const CUE_PATH_FIRST_PERSON_RE = /\b(?:i|i'm|me|my|mine)\b/i;
 
 export interface SearchIntent {
   readonly query: string;
@@ -84,7 +98,12 @@ export function parseSearchIntent(line: string): SearchIntent | undefined {
     return { query: stripped.length > 0 ? stripped : trimmed };
   }
 
-  if (CURRENT_INFO_CUE_RE.test(trimmed) && INFO_REQUEST_RE.test(trimmed) && !PLANNING_NOUN_RE.test(trimmed)) {
+  if (
+    CURRENT_INFO_CUE_RE.test(trimmed) &&
+    INFO_REQUEST_RE.test(trimmed) &&
+    !PLANNING_NOUN_RE.test(trimmed) &&
+    !CUE_PATH_FIRST_PERSON_RE.test(trimmed)
+  ) {
     return { query: trimmed };
   }
 

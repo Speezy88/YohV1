@@ -96,9 +96,10 @@ describe("ChatMessage", () => {
     await waitFor(() => expect(screen.queryByRole("button", { name: "Yes" })).not.toBeInTheDocument());
   });
 
-  it("Task 6: an inline question's stale-proposal rejection keeps the card and shows the honest message inline, without recording a new turn", async () => {
+  it("I2 (final-review): an inline question's stale-proposal/conflict rejection resolves and hides the card, recording a short neutral note instead", async () => {
     vi.spyOn(openItemsLib, "submitOpenItemAnswer").mockResolvedValue({ ok: false, kind: "stale-proposal", message: "entity changed since suggested" });
     const recordSpy = vi.spyOn(chatStore, "recordAnsweredOpenItem").mockImplementation(() => {});
+    const resolveSpy = vi.spyOn(chatStore, "resolveMessageQuestion").mockImplementation(() => {});
     render(
       <ChatMessage
         message={msg({
@@ -110,9 +111,9 @@ describe("ChatMessage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Yes" }));
 
-    await waitFor(() => expect(screen.getByText("That proposal is out of date — nothing was changed.")).toBeInTheDocument());
-    expect(recordSpy).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "Yes" })).toBeInTheDocument();
+    await waitFor(() => expect(resolveSpy).toHaveBeenCalledWith("m1"));
+    expect(recordSpy).toHaveBeenCalledWith("yes", { message: "That proposal is out of date — nothing was changed.", receipts: [] });
+    expect(screen.queryByRole("button", { name: "Yes" })).not.toBeInTheDocument();
   });
 
   it("Task 6: a 'try again' response (next = the SAME question) keeps the card and shows the server's message inline", async () => {

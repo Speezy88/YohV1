@@ -246,6 +246,19 @@ export async function chatTurn(deps: ChatTurnDeps, input: ChatTurnRequest): Prom
     return dispatchSlashCommand(deps, line);
   }
 
+  // M6 (final-review): the explicit "search:" prefix — what Research Hub's
+  // ask box always sends — is checked here, at the very top, next to the
+  // slash-command check and before every other deterministic recognizer
+  // (including create-item just below). Without this, "search: add a new
+  // task in notion via api" matched `parseCreateItemCommand` and opened a
+  // create-item draft instead of searching, contradicting "Research Hub
+  // always searches". `parseSearchIntent` still does the actual parsing
+  // (prefix stripped, query = the rest); this is just an ordering fix.
+  if (/^search:/i.test(line)) {
+    const explicitSearchIntent = parseSearchIntent(line);
+    if (explicitSearchIntent) return searchWeb(deps, { query: explicitSearchIntent.query });
+  }
+
   const timeBudgetCommand = parseTimeBudgetCommand(input.message);
   if (timeBudgetCommand) {
     const result = await declareTimeBudget({ store: deps.store, timeZone: deps.timeZone, now: deps.now }, timeBudgetCommand);

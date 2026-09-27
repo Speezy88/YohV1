@@ -21,11 +21,20 @@
  * are answered"): the old code hid this turn's card on ANY response,
  * including a "try again" one — so a request that failed to parse looked
  * answered but stayed open server-side. The card now hides ONLY when the
- * server actually resolves it: `next === "done"`, or `next` is a genuinely
- * different question (a new one is appended as its own turn instead). A
+ * server actually resolves it: `next === "done"`, `next` is a genuinely
+ * different question (a new one is appended as its own turn instead), or
+ * the answer comes back `conflict`/`stale-proposal` (I2: the item is
+ * already resolved elsewhere, so there is nothing left to keep open). A
  * retry (`next` is the SAME question, by `requestId`+`questionId`) or a
  * network/server failure both keep this card and show the server's
  * message/the honest rejection inline underneath it, via `inlineNote`.
+ *
+ * I2 (final-review, "answered question cards come back after closing and
+ * reopening the chat panel"): every genuine resolution also calls
+ * `resolveMessageQuestion` (`chatStore.ts`), which clears `question` from
+ * the STORED message, not just this component's own `answered` state — a
+ * remount (closing/reopening the panel unmounts every `ChatMessage`) reads
+ * the same resolved message from the store and never shows the card again.
  *
  * Task 6A (2026-09-27): the panel renders Yoh's replies as markdown (bold,
  * lists, etc. — the approved mockup's "what's happening tomorrow" reply)
@@ -41,7 +50,7 @@ import Markdown from "react-markdown";
 import { ThinkingIndicator } from "./ThinkingIndicator.tsx";
 import { StructuredQuestion } from "./StructuredQuestion.tsx";
 import { HONEST_REJECTION, submitOpenItemAnswer } from "../lib/openItems.ts";
-import { recordAnsweredOpenItem } from "../lib/chatStore.ts";
+import { recordAnsweredOpenItem, resolveMessageQuestion } from "../lib/chatStore.ts";
 import type { ChatViewMessage } from "../lib/chatStore.ts";
 import type { OpenItemQuestion } from "../../../src/types/api.ts";
 
@@ -90,8 +99,20 @@ export function ChatMessage({ message }: ChatMessageProps): React.JSX.Element | 
     });
     setBusy(false);
 
-    // Task 6: only a genuine resolution ever hides this card.
+    // Task 6 / I2: only a genuine resolution ever hides this card — and
+    // when it does, the resolution is recorded in the STORE (not just this
+    // component's own state), so a later remount (closing/reopening the
+    // panel) reads the same resolved state and never shows it again.
     if (!outcome.ok) {
+      if (outcome.kind === "conflict" || outcome.kind === "stale-proposal") {
+        // I2: the item is already resolved (elsewhere, or by an earlier
+        // answer) — hide the card for good and put the honest, neutral
+        // line in the transcript instead of leaving the card stuck open.
+        setAnswered(true);
+        resolveMessageQuestion(message.id);
+        recordAnsweredOpenItem(answerText, { message: HONEST_REJECTION[outcome.kind] ?? outcome.message, receipts: [] });
+        return;
+      }
       // A network/server failure — keep the card, show the honest rejection inline (never the raw error).
       setInlineNote(HONEST_REJECTION[outcome.kind] ?? outcome.message);
       return;
@@ -99,6 +120,7 @@ export function ChatMessage({ message }: ChatMessageProps): React.JSX.Element | 
     const { next } = outcome.value;
     if (next === "done") {
       setAnswered(true);
+      resolveMessageQuestion(message.id);
       recordAnsweredOpenItem(answerText, { message: outcome.value.message, receipts: outcome.value.receipts });
       return;
     }
@@ -109,6 +131,7 @@ export function ChatMessage({ message }: ChatMessageProps): React.JSX.Element | 
     }
     // A genuinely different question: this card is done, and the new one is appended as its own turn.
     setAnswered(true);
+    resolveMessageQuestion(message.id);
     recordAnsweredOpenItem(answerText, { message: outcome.value.message, receipts: outcome.value.receipts, next });
   };
 
