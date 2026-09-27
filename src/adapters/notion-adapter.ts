@@ -710,6 +710,50 @@ function capitalizeFirst(raw: string): string {
   return raw.length === 0 ? raw : raw[0]!.toUpperCase() + raw.slice(1);
 }
 
+/**
+ * `setTaskStatus`/`updateTaskField`, pre-bound through a LAZY
+ * client/config provider (Story 8.4, Ruling R1) — `getBinding` is called
+ * fresh on every actual write, never at bind time, so a session that never
+ * triggers either write still never has to construct a Notion client or
+ * check its env vars (the same laziness `shell/chat-cli.ts`'s own
+ * pre-Story-8.4 closures always had). Only THIS file's own source may name
+ * `setTaskStatus`/`updateTaskField` directly (AD-16) — a shell that needs a
+ * bound closure for either (e.g. `shell/chat-cli.ts`'s `AnswerOpenItemDeps`
+ * construction, which feeds `app/answer-data-completeness.ts` and
+ * `app/answer-night-close-out.ts`) spreads this binder's return value
+ * instead of importing/calling the two write functions itself, so their
+ * names never appear as literal text in `shell/*.ts` (not even as an object-
+ * literal property key).
+ */
+export type NotionTaskWriteBindingFn = () => Result<
+  { readonly client: NotionWriteClient & NotionSchemaClient; readonly config: NotionFieldWriteConfig },
+  YohError
+>;
+
+export interface NotionTaskWriteBindings {
+  readonly setTaskStatus: (taskId: string, status: TaskStatus) => Promise<Result<void, YohError>>;
+  readonly updateTaskField: (
+    taskId: string,
+    field: PlanningFieldNames,
+    value: NonNullable<Task[PlanningFieldNames]>,
+  ) => Promise<Result<void, YohError>>;
+}
+
+export function bindNotionTaskWrites(getBinding: NotionTaskWriteBindingFn): NotionTaskWriteBindings {
+  return {
+    setTaskStatus: async (taskId, status) => {
+      const binding = getBinding();
+      if (!binding.ok) return binding;
+      return setTaskStatus(binding.value.client, binding.value.config, taskId, status);
+    },
+    updateTaskField: async (taskId, field, value) => {
+      const binding = getBinding();
+      if (!binding.ok) return binding;
+      return updateTaskField(binding.value.client, binding.value.config, taskId, field, value);
+    },
+  };
+}
+
 // ============================================================================
 // createPage (Story 6.3 / FR-26, FR-29, AD-12) — the adapter's THIRD and
 // final write function. resolveNotionPageDraftProperties is the shared,
@@ -955,6 +999,41 @@ export async function createPage(
   return {
     ok: true,
     value: isFullPage(response) ? { pageId: response.id, url: response.url } : { pageId: response.id },
+  };
+}
+
+/**
+ * `createPage`, pre-bound through a LAZY client/config provider (Story 8.4,
+ * Ruling R1) — `getBinding` (the same shape `app/create-item.ts`'s own
+ * `NotionCreatePageBindingFn` already uses, structurally) is called fresh on
+ * every actual write, never at bind time. `app/save-search-result.ts` calls
+ * `createPage` itself against the RAW client/config that function's own
+ * binding returns (AD-16's own convention for `app/*.ts`); this binder is
+ * for `shell/chat-cli.ts`'s OTHER call site, `AnswerOpenItemDeps`'s
+ * `createPage` field (consumed by `app/confirm-proposal.ts`'s
+ * `"notion-page-draft"` branch) — a shell may never name `createPage`
+ * directly (not even as an object-literal property key), so it spreads this
+ * binder's return value instead.
+ */
+export type NotionCreatePageBindingFn = () => Result<
+  { readonly client: NotionCreatePageClient; readonly config: NotionCreatePageConfig },
+  YohError
+>;
+
+export interface NotionCreatePageBinding {
+  readonly createPage: (
+    database: NotionDatabaseTarget,
+    properties: Readonly<Record<string, string>>,
+  ) => Promise<Result<{ readonly pageId: string; readonly url?: string }, YohError>>;
+}
+
+export function bindNotionCreatePage(getBinding: NotionCreatePageBindingFn): NotionCreatePageBinding {
+  return {
+    createPage: async (database, properties) => {
+      const binding = getBinding();
+      if (!binding.ok) return binding;
+      return createPage(binding.value.client, binding.value.config, database, properties);
+    },
   };
 }
 

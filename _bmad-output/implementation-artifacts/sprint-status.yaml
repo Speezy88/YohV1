@@ -103,7 +103,7 @@ development_status:
   8-1-open-interaction-requests-as-resumable-turns: done
   8-2-one-confirmation-path-for-every-proposal: done
   8-3-chat-turn-routing-for-planning-commands: done
-  8-4-chat-turn-routing-for-notion-calendar-and-search-commands: backlog
+  8-4-chat-turn-routing-for-notion-calendar-and-search-commands: done
   8-5-chat-page-with-streaming-replies: backlog
   8-6-open-items-and-structured-questions-in-chat: backlog
   8-7-command-palette-morning-and-night: backlog

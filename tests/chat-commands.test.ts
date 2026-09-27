@@ -8,8 +8,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   isBlockerReportCommand,
+  isCalendarEditCommand,
   isMidDayReflowCommand,
   isPlanViewCommand,
+  isSaveSearchResultCommand,
+  parseCreateItemCommand,
   parseTimeBudgetCommand,
   parseWhyPrioritizedCommand,
 } from "../src/core/chat-commands.ts";
@@ -187,5 +190,89 @@ test("parseWhyPrioritizedCommand returns undefined for unrelated input, includin
       undefined,
       `expected "${line}" NOT to be recognized as a why-prioritized request`,
     );
+  }
+});
+
+// ============================================================================
+// parseCreateItemCommand (Story 8.4)
+// ============================================================================
+
+test("parseCreateItemCommand recognizes 'create a task ...' and targets Tasks", () => {
+  const result = parseCreateItemCommand("create a task to buy hiking boots");
+  assert.deepEqual(result, { database: "Tasks", request: "to buy hiking boots" });
+});
+
+test("parseCreateItemCommand recognizes 'add a project ...' and targets Projects", () => {
+  assert.equal(parseCreateItemCommand("add a project called Kitchen Remodel")?.database, "Projects");
+});
+
+test("parseCreateItemCommand recognizes a research vault request and targets ResearchVault", () => {
+  assert.equal(parseCreateItemCommand("create a research vault entry about hiking boots")?.database, "ResearchVault");
+});
+
+test("parseCreateItemCommand returns undefined for an unrelated database name — no fourth target is ever produced", () => {
+  assert.equal(parseCreateItemCommand("create a shopping list"), undefined);
+});
+
+test("parseCreateItemCommand returns undefined for ordinary conversational input", () => {
+  assert.equal(parseCreateItemCommand("what's my plan today"), undefined);
+});
+
+test("parseCreateItemCommand recognizes a Notion-mention request that isn't phrased as 'create a ...'", () => {
+  assert.deepEqual(parseCreateItemCommand("can we input the high priority data to the notion tasks db"), {
+    database: "Tasks",
+    request: "can we input the high priority data to the notion tasks db",
+  });
+});
+
+test("parseCreateItemCommand recognizes 'put this in the notion research vault'", () => {
+  assert.equal(parseCreateItemCommand("put this in the notion research vault")?.database, "ResearchVault");
+});
+
+test("parseCreateItemCommand's Notion-mention branch requires a write verb, not just a question about Notion", () => {
+  assert.equal(parseCreateItemCommand("what's in the notion tasks db"), undefined);
+});
+
+test("parseCreateItemCommand's Notion-mention branch requires 'notion' and the database word in the same clause", () => {
+  assert.equal(parseCreateItemCommand("add milk to the list. also check notion tasks later"), undefined);
+});
+
+// ============================================================================
+// isSaveSearchResultCommand (Story 8.4)
+// ============================================================================
+
+test("isSaveSearchResultCommand recognizes 'save that'/'save this'/'file that' phrasings, case-insensitively", () => {
+  for (const line of ["save that", "Save This", "file that", "save that to the vault", "file this to the research vault"]) {
+    assert.equal(isSaveSearchResultCommand(line), true, `expected "${line}" to be recognized`);
+  }
+});
+
+test("isSaveSearchResultCommand returns false for unrelated input", () => {
+  for (const line of ["what's my plan", "create a task to buy boots", "save my progress"]) {
+    assert.equal(isSaveSearchResultCommand(line), false, `expected "${line}" NOT to be recognized`);
+  }
+});
+
+// ============================================================================
+// isCalendarEditCommand (Story 8.4)
+// ============================================================================
+
+test("isCalendarEditCommand recognizes move/reschedule/resize/extend/schedule/block-off phrasings", () => {
+  for (const line of [
+    "move team sync to 6pm",
+    "reschedule standup",
+    "resize the meeting",
+    "extend focus block",
+    "schedule a call with Jane",
+    "block off an hour for gym",
+    "create a time block for reading",
+  ]) {
+    assert.equal(isCalendarEditCommand(line), true, `expected "${line}" to be recognized`);
+  }
+});
+
+test("isCalendarEditCommand returns false for unrelated input — including a delete request, which has no trigger at all", () => {
+  for (const line of ["what's my plan", "create a task to buy boots", "search for the weather", "delete my team sync", "remove the 3pm meeting"]) {
+    assert.equal(isCalendarEditCommand(line), false, `expected "${line}" NOT to be recognized`);
   }
 });

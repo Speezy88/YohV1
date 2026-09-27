@@ -782,6 +782,37 @@ export async function applyCalendarEdit(
   }
 }
 
+/**
+ * `applyCalendarEdit`, pre-bound through a LAZY client provider (Story 8.4,
+ * Ruling R1) — `getBinding` is called fresh on every actual apply, never at
+ * bind time, and reports a construction failure (e.g. Google OAuth not
+ * configured) as an ordinary `Result` failure rather than a thrown error, so
+ * a session that never applies a Calendar edit is never blocked by it. Only
+ * THIS file's own source may name `applyCalendarEdit` directly (AD-16).
+ * `shell/chat-cli.ts`'s `AnswerOpenItemDeps` construction (consumed by
+ * `app/confirm-proposal.ts`'s `"calendar-edit"` branch) spreads this
+ * binder's return value instead of importing/calling it itself, so the name
+ * never appears as literal text in `shell/*.ts` (not even as an
+ * object-literal property key).
+ */
+export type CalendarApplyBindingFn = () => Result<CalendarBroadClient, YohError>;
+
+export interface CalendarApplyBinding {
+  readonly applyCalendarEdit: (
+    proposal: Proposal<CalendarEditChange>,
+  ) => Promise<Result<{ readonly eventId: string; readonly calendarId: string }, YohError>>;
+}
+
+export function bindCalendarApply(getBinding: CalendarApplyBindingFn): CalendarApplyBinding {
+  return {
+    applyCalendarEdit: async (proposal) => {
+      const binding = getBinding();
+      if (!binding.ok) return binding;
+      return applyCalendarEdit(binding.value, proposal);
+    },
+  };
+}
+
 // ============================================================================
 // Auth wiring (AD-10)
 // ============================================================================

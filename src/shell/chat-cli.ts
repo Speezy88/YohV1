@@ -128,8 +128,8 @@
  * where it is surfaced and answered. Mirrors `answerDataCompletenessRequest`'s
  * shape exactly: one follow-up question per named Task, each answer
  * immediately applied (`rituals/night-ritual.ts`'s
- * `applyNightCloseOutConfirmation` — writes `notion-adapter.ts`'s
- * `setTaskStatus`, then `recordSlip`/`clearSlip`), the request cleared only
+ * `applyNightCloseOutConfirmation` — writes `notion-adapter.ts`'s Status
+ * setter, then `recordSlip`/`clearSlip`), the request cleared only
  * once every Task is answered. This is the first real call site for
  * `core/slip-bump.ts`'s storage half (Task 17 built `recordSlip`/
  * `clearSlip` but nothing called them until now) and closes
@@ -193,74 +193,78 @@
  * `app/why-prioritized.ts`), each returning a plain-text-or-markdown
  * `ChatTurnResponse` instead of writing to `io` directly. The general-qa
  * catch-all (Task 13/14's Tone/model routing) moved the same way, to
- * `app/general-question.ts`. All six are now dispatched by one call into
- * `app/chat-turn.ts`'s `chatTurn`, which this file calls from exactly the
- * position the old trailing general-qa block used to occupy — *after* the
- * `classifyChatIntent`/search-trigger check and the create-item/calendar-
- * edit/save-that checks above it, which all stay inline in this file
- * unchanged (Controller ruling; Story 8.4 folds them into `chatTurn` too —
- * NOT this docstring's own historical "Task 5" above, which is a different,
- * pre-Epic-8 numbering scheme; Epic 8 work is always cited here by Story
- * number to avoid exactly that collision).
- * `chatTurn` never calls `classifyChatIntent` itself, and this file renders
- * whatever it returns — a reply, receipts, or an error message — through
- * its own terminal styling (`renderMarkdownForTerminal`, `shouldUseColor()`),
- * since `ChatTurnResponse.reply` is never ANSI (C2): the Plan-view and
- * Mid-Day Re-Flow/Blocker views accordingly lose their prior terminal color
- * here (accepted — this CLI itself retires in Story 8.9).
+ * `app/general-question.ts`. At this point (Story 8.3's own end state,
+ * superseded by Story 8.4 below) those six were dispatched by one call into
+ * `chatTurn`, positioned *after* a `classifyChatIntent`/search-trigger check
+ * and the create-item/calendar-edit/save-that checks that still ran inline
+ * in this file, ahead of it — see this docstring's Story 8.4 paragraph for
+ * what's actually true today.
+ *
+ * Story 8.4 update (AD-16, FR-26–FR-29): the save-search-result/create-item/
+ * calendar-edit checks, plus the `classifyChatIntent`/search-trigger check,
+ * all moved out of this file's main loop entirely, into `app/chat-turn.ts`'s
+ * OWN dispatch chain — positioned there, in that same F6-ordered sequence,
+ * AFTER `chatTurn`'s five Story-8.3 recognizers and BEFORE its
+ * `answerQuestion` fallback. This is what this docstring's Story 8.3
+ * paragraph names as still owed: the original, pre-Epic-8 priority is
+ * restored (every deterministic recognizer checked first, at zero Claude
+ * cost, with `classifyChatIntent` reached only once none of them match).
+ * `create-item.ts`/`calendar-edit.ts` no longer confirm inline either: each
+ * builds its `Proposal`, persists it via `app/open-proposal.ts` (Story 8.2),
+ * and returns its confirm question as `ChatTurnResponse.question` — this
+ * file presents that question with the exact same blocking loop
+ * `surfaceOpenInteractionRequests` already uses for every other open item
+ * (`presentQuestionLoop`, shared by both), so terminal behavior is
+ * unchanged. `search`/`save-search-result` stay direct, one-shot calls (no
+ * Proposal, per AD-3's own FR-28/FR-29 exemption). This is also the story
+ * that finally removes `chat-cli.ts` from `tests/layering-rules.test.ts`'s
+ * `SHELL_WRITE_ALLOWLIST` (Ruling R1): every Notion/Calendar write
+ * function's own binding construction moved into its owning adapter file
+ * (`notion-adapter.ts`'s `bindNotionTaskWrites`/`bindNotionCreatePage`,
+ * `calendar-adapter.ts`'s `bindCalendarApply`), so this file's own source
+ * text never names any of the four Notion/Calendar write functions
+ * directly — not even as an object-literal property key (see
+ * `tests/layering-rules.test.ts`'s own `ADAPTER_WRITE_FUNCTIONS` list for
+ * the closed set).
  *
  * The current dispatch truth (superseding every "still run first"/"before
  * the general-qa catch-all" claim in this docstring's earlier, historical
- * update paragraphs above): NONE of the five recognizers named above still
- * run directly in this file's main loop, and none of them run "before"
- * anything general-qa-related in the old sense — they're checked from
- * INSIDE `chatTurn`, by `core/chat-commands.ts`, only once `chatTurn` itself
- * is reached. This file's own main loop, top to bottom, is now: surface any
- * open interaction request; the save-that/create-item/calendar-edit checks;
- * `classifyChatIntent` (one real Claude call on every line that reaches it)
- * and, on a `"search-trigger"` result, the search handler; otherwise one
- * `chatTurn` call. That means a line `chatTurn` would recognize
- * deterministically (e.g. "time budget 6h") still costs exactly ONE Claude
- * call today — `classifyChatIntent`'s own — before `chatTurn` recognizes it
- * for free; this is a real, if small and bounded, transitional cost
- * (`app/chat-turn.ts`'s own doc comment and `tests/chat-cli.test.ts`'s
- * updated Time-Budget integration test both name it explicitly). Story 8.4
- * removes it by folding `classifyChatIntent`/search/create-item/
- * calendar-edit into `chatTurn` too, restoring the original top-to-bottom
- * priority (the five recognizers checked first again, ahead of classify,
- * at zero API cost).
+ * update paragraphs above): this file's ENTIRE per-line dispatch, top to
+ * bottom, is now: surface any open interaction request; one `chatTurn` call
+ * (which internally checks, in order, its five Story-8.3 recognizers, then
+ * save-search-result/create-item/calendar-edit, then classify ->
+ * search-trigger or general-question); render `chatTurn`'s reply/receipts;
+ * present any follow-up `question` it returned. Nothing about any of these
+ * eight capabilities is recognized or handled directly in this file's own
+ * loop any more (AD-16's "one `app/` function per shell call," fully true
+ * at last for this file). A line `chatTurn` recognizes deterministically
+ * (e.g. "time budget 6h") costs ZERO Claude calls; a truly unmatched line
+ * costs exactly two (`classifyChatIntent`, then the general-qa answer) —
+ * both invariants pinned by `tests/app-chat-turn.test.ts`.
  */
 import { createInterface } from "node:readline";
 import { Client } from "@notionhq/client";
 import { createMemoryStore, type MemoryStore } from "../adapters/memory-store.ts";
 import { openSqliteConnection } from "../adapters/sqlite.ts";
+import { createAnthropicMessagesClient, loadLlmAdapterConfigFromEnv, type AnthropicMessagesClient } from "../adapters/llm-adapter.ts";
 import {
-  classifyChatIntent,
-  createAnthropicMessagesClient,
-  draftCalendarEditRequest,
-  draftNotionPageFields,
-  loadLlmAdapterConfigFromEnv,
-  type AnthropicMessagesClient,
-  type DraftedCalendarEditRequest,
-} from "../adapters/llm-adapter.ts";
-import {
-  applyCalendarEdit as calendarApplyEdit,
+  bindCalendarApply,
   createCalendarBroadClient,
   createCalendarReadClient,
   proposeCalendarEdit as calendarProposeEdit,
   proposeNewCalendarEvent,
   readCalendarEvents,
   resolveCalendarEditRoute as calendarResolveRoute,
+  type CalendarApplyBindingFn,
   type CalendarBroadClient,
-  type MoveOrResizeChange,
 } from "../adapters/calendar-adapter.ts";
 import {
-  createPage as notionCreatePage,
+  bindNotionCreatePage,
+  bindNotionTaskWrites,
   loadTaskPropertyNamesFromEnv,
   readNotionTasks,
-  resolveNotionPageDraftProperties as notionResolveNotionPageDraftProperties,
-  setTaskStatus as notionSetTaskStatus,
-  updateTaskField as notionUpdateTaskField,
+  type NotionCreatePageBindingFn,
+  type NotionTaskWriteBindingFn,
 } from "../adapters/notion-adapter.ts";
 import {
   initCompletionLogSchema,
@@ -270,7 +274,6 @@ import {
 import { search as runSearch, type SearchAdapterConfig } from "../adapters/search-adapter.ts";
 import { createTokenStore, loadGoogleOAuthConfigFromEnv, type TokenStore } from "../adapters/token-store.ts";
 import { parsePlanningFieldValue } from "../core/planning-field-value.ts";
-import { parseProposalAnswer } from "../core/open-item-answers.ts";
 import {
   ACCENT,
   localIsoDate,
@@ -283,26 +286,21 @@ import {
 import type { ChatSession } from "../app/chat-session.ts";
 import { surfaceOpenItems } from "../app/surface-open-items.ts";
 import { answerOpenItem, type AnswerOpenItemDeps } from "../app/answer-open-item.ts";
-import { confirmProposal } from "../app/confirm-proposal.ts";
+import type { ProposeCalendarEditAdapterFn, ProposeNewCalendarEventFn, ResolveCalendarEditRouteFn } from "../app/calendar-edit.ts";
+import type { SearchFn } from "../app/web-search.ts";
 import { chatTurn, MAX_CHAT_HISTORY_TURNS, type ChatTurnDeps } from "../app/chat-turn.ts";
 import type {
-  CalendarEditChange,
   CalendarEvent,
-  ChatIntent,
   ChatTurn,
   ExternalId,
   IsoDate,
-  NotionDatabaseTarget,
-  NotionPageDraft,
   PlanningFieldNames,
-  Proposal,
   Result,
-  SearchAnswer,
   Task,
   TaskStatus,
   YohError,
 } from "../types/domain.ts";
-import type { OpenItem } from "../types/api.ts";
+import type { OpenItem, OpenItemQuestion } from "../types/api.ts";
 
 // ============================================================================
 // REPL IO abstraction — injectable so tests never need a real TTY/stdin
@@ -393,19 +391,15 @@ function withConversationHistory(io: ChatCliIo, history: ChatTurn[]): ChatCliIo 
   };
 }
 
-/** The shape `ChatCliDeps`/`main()` thread through as FR-24's Notion write — `notion-adapter.ts`'s `updateTaskField`, pre-bound to its client/config, the same binding-convention `SetTaskStatusFn` (below) already establishes for `setTaskStatus`. Story 8.1: this is now `app/answer-data-completeness.ts`'s `AnswerDataCompletenessDeps.updateTaskField` too — the Data-Completeness answer loop itself moved there. */
-type UpdateTaskFieldFn = (
-  taskId: string,
-  field: PlanningFieldNames,
-  value: NonNullable<Task[PlanningFieldNames]>,
-) => Promise<Result<void, YohError>>;
+// Story 8.4 (Ruling R1): `UpdateTaskFieldFn`/`SetTaskStatusFn` — this file's
+// own pre-bound-closure type aliases for the Task-field and Status writes —
+// are gone. `ChatCliDeps`/`main()` now thread a `NotionTaskWriteBindingFn`
+// (`notion-adapter.ts`) through `bindNotionTaskWrites` instead, so this
+// file's own source never has to name either write function directly.
 
 // ============================================================================
 // Night Ritual close-out prompt (Task 19 / Story 3.1, FR-12–FR-14)
 // ============================================================================
-
-/** The shape `runChatCli`/`surfaceOpenInteractionRequests` thread through to `rituals/night-ritual.ts`'s `applyNightCloseOutConfirmation` — `notion-adapter.ts`'s `setTaskStatus`, pre-bound to its client/config (see that function's own doc comment for the binding-convention note). */
-type SetTaskStatusFn = (taskId: string, status: TaskStatus) => Promise<Result<void, YohError>>;
 
 /** Story 7.9 (AD-23): `completion-log.ts`'s `recordCompletion`, pre-bound to the shared `SqliteConnection` — threaded into `applyNightCloseOutConfirmation`'s `NightCloseOutApplyDeps.recordCompletion`. */
 type RecordCompletionFn = (input: RecordCompletionInput) => void;
@@ -465,16 +459,29 @@ type LookupTaskFn = (taskId: ExternalId) => Promise<Task | undefined>;
  * Returns once no interaction request remains open, or once `io.readLine`
  * reports EOF (stdin closed) — whichever comes first.
  */
+/**
+ * Story 8.4 (Ruling R1): this file may never name either Notion Task-write
+ * function directly (not even as an object-literal property key —
+ * `AnswerOpenItemDeps`'s own field names are fixed by Story 8.1/`app/
+ * answer-*.ts`) — `bindNotionTaskWrites` (`notion-adapter.ts`) is spread in
+ * instead, everywhere this file builds one. This default's own provider
+ * always reports "not configured," matching the throws-only-if-invoked
+ * stubs every other field here already uses — except as a graceful `Result`
+ * failure (the shape `answerDataCompleteness`/`answerNightCloseOut` already
+ * handle) rather than an uncaught throw.
+ */
+function unconfiguredNotionTaskWriteBinding(): ReturnType<NotionTaskWriteBindingFn> {
+  return {
+    ok: false,
+    error: { kind: "missing-field", message: "chat-cli: no Notion task-write binding configured — cannot record this answer in Notion" },
+  };
+}
+
 function defaultAnswerOpenItemDeps(store: MemoryStore): AnswerOpenItemDeps {
   return {
     store,
     session: { recentMessages: [], lastSearchAnswer: undefined },
-    updateTaskField: async () => {
-      throw new Error("chat-cli: no updateTaskField dependency configured — cannot record a Data-Completeness answer in Notion");
-    },
-    setTaskStatus: async () => {
-      throw new Error("chat-cli: no setTaskStatus dependency configured — cannot record Night Ritual close-out");
-    },
+    ...bindNotionTaskWrites(unconfiguredNotionTaskWriteBinding),
     recordCompletion: () => {
       throw new Error("chat-cli: no recordCompletion dependency configured — cannot record a Night Ritual close-out completion");
     },
@@ -502,20 +509,23 @@ export async function surfaceOpenInteractionRequests(
 }
 
 /**
- * Presents ONE open item's CURRENT question, reads one line, and calls
- * `answerOpenItem` — looping (still within this one item, never returning to
- * `surfaceOpenInteractionRequests`'s own outer loop) as long as the answer
- * carries a `next` question rather than `"done"` (Review Focus #5: a
- * decline-then-blind-answer within one field completes within a single
- * `surfaceOpenInteractionRequests` call, before any unrelated line is read).
- * A blank line re-prompts indefinitely (UX-DR20) without ever calling
- * `answerOpenItem`. Returns `false` (leaving whatever's pending open,
- * unanswered) on EOF.
+ * Presents `question`'s CURRENT text, reads one line, and calls
+ * `answerOpenItem` — looping as long as the answer carries a `next`
+ * question rather than `"done"` (Review Focus #5: a decline-then-blind-
+ * answer within one item completes within a single call, before any
+ * unrelated line is read). A blank line re-prompts indefinitely (UX-DR20)
+ * without ever calling `answerOpenItem`. Returns `false` (leaving whatever's
+ * pending open, unanswered) on EOF, `true` once resolved (or a hard error is
+ * reported).
+ *
+ * Shared by `answerAndPresentOneItem` (an item already surfaced by
+ * `surfaceOpenInteractionRequests`) and, since Story 8.4, by `runChatCli`'s
+ * own main loop presenting a fresh follow-up `question` a `chatTurn` call
+ * just returned (a new create-item/calendar-edit Proposal to confirm) — the
+ * SAME blocking presentation either way (AD-5).
  */
-async function answerAndPresentOneItem(io: ChatCliIo, answerDeps: AnswerOpenItemDeps, first: OpenItem): Promise<boolean> {
-  io.writeLine(paint(first.promptText, ACCENT, shouldUseColor()));
-  io.writeLine("");
-  let question = first.question;
+async function presentQuestionLoop(io: ChatCliIo, answerDeps: AnswerOpenItemDeps, first: OpenItemQuestion): Promise<boolean> {
+  let question = first;
   for (;;) {
     if (question.text.length > 0) io.writeLine(question.text);
     let answer: string | null;
@@ -526,7 +536,7 @@ async function answerAndPresentOneItem(io: ChatCliIo, answerDeps: AnswerOpenItem
     }
 
     const result = await answerOpenItem(answerDeps, {
-      requestId: first.requestId,
+      requestId: question.requestId,
       questionId: question.questionId,
       answer: answer.trim(),
       ...(question.proposal !== undefined ? { proposal: question.proposal } : {}),
@@ -540,6 +550,18 @@ async function answerAndPresentOneItem(io: ChatCliIo, answerDeps: AnswerOpenItem
     if (result.value.next === "done") return true;
     question = result.value.next;
   }
+}
+
+/**
+ * Presents ONE open item's CURRENT question (its own `promptText` line
+ * first, then `presentQuestionLoop`) — never returning to
+ * `surfaceOpenInteractionRequests`'s own outer loop until this item is
+ * fully resolved or EOF is hit.
+ */
+async function answerAndPresentOneItem(io: ChatCliIo, answerDeps: AnswerOpenItemDeps, first: OpenItem): Promise<boolean> {
+  io.writeLine(paint(first.promptText, ACCENT, shouldUseColor()));
+  io.writeLine("");
+  return presentQuestionLoop(io, answerDeps, first.question);
 }
 
 /**
@@ -573,416 +595,16 @@ function currentIsoDate(timeZone: string, now: () => Date = () => new Date()): I
 // `app/chat-turn.ts`'s `chatTurn` — see `runChatCli`'s own updated doc
 // comment below for where that single call now sits in this file's loop.
 
-// ============================================================================
-// Create-item command (Story 6.3 / FR-26)
-// ============================================================================
+// Story 8.4: `parseCreateItemCommand`/`isSaveSearchResultCommand`/
+// `isCalendarEditCommand` moved to `core/chat-commands.ts`;
+// `handleCreateItemCommand`/`handleSearchCommand`/
+// `handleSaveSearchResultCommand`/`handleCalendarEditCommand` (and their
+// private helpers `formatLocalTime`/`describeCalendarEdit`) moved to
+// `app/create-item.ts`/`app/web-search.ts`/`app/save-search-result.ts`/
+// `app/calendar-edit.ts`, all now dispatched by `app/chat-turn.ts`'s
+// `chatTurn` — see `runChatCli`'s own updated doc comment below for where
+// that single call now sits in this file's loop.
 
-/**
- * Recognizes "create/add a [task|project|research vault item] ..." — the
- * same deliberately-simple, documented starting heuristic every other
- * trigger recognizer in this file uses (NOT real NLU). Only ever emits one
- * of the three real `NotionDatabaseTarget` values — Story 6.3's AC2 ("Yoh
- * does not attempt the creation" for any other target) holds by
- * construction: anything that doesn't match one of these three database
- * words simply doesn't match this regex at all, and falls through to the
- * general-qa catch-all untouched.
- */
-const CREATE_ITEM_RE = /^(?:create|add|new)\s+(?:a|an)?\s*(task|project|research\s*vault(?:\s+(?:item|entry))?)\b[:\s-]*(.*)$/i;
-
-/**
- * Second, looser trigger (root-cause fix alongside `core/tone.ts`'s
- * `CAPABILITIES_INSTRUCTION` — see that constant's doc comment) for a
- * request that names Notion and a database explicitly but doesn't open with
- * `CREATE_ITEM_RE`'s exact "create/add/new a ___" shape — e.g. "can we input
- * the high priority data to the notion tasks db" or "put this in the notion
- * research vault". Requires BOTH a write-ish verb AND "notion" co-occurring
- * with a database word IN THE SAME CLAUSE (sentence, split on `.`/`?`/`!`) —
- * same deliberately-simple, documented starting heuristic every other
- * trigger recognizer in this file uses (NOT real NLU). Checking per-clause
- * rather than anywhere-in-the-line matters: without it, an unrelated write
- * verb earlier in a multi-sentence message ("add milk to the list. also
- * check notion tasks later") would false-positive on a line that never
- * actually asked to write anything to Notion.
- */
-const NOTION_WRITE_VERB_RE = /\b(?:create|add|new|put|input|file|log|enter|record|save|move|sync|export|push|write)\b/i;
-const NOTION_DB_MENTION_RE =
-  /\bnotion\b[^.?!]*\b(task|project|research\s*vault)s?\b|\b(task|project|research\s*vault)s?\b[^.?!]*\bnotion\b/i;
-
-export function parseCreateItemCommand(line: string): { readonly database: NotionDatabaseTarget; readonly request: string } | undefined {
-  const trimmed = line.trim();
-
-  const match = CREATE_ITEM_RE.exec(trimmed);
-  if (match) {
-    const [, dbWord, rest] = match;
-    const database: NotionDatabaseTarget = /task/i.test(dbWord!) ? "Tasks" : /project/i.test(dbWord!) ? "Projects" : "ResearchVault";
-    const request = rest!.trim().length > 0 ? rest!.trim() : trimmed;
-    return { database, request };
-  }
-
-  const clauses = trimmed.split(/[.?!]+/).map((c) => c.trim()).filter((c) => c.length > 0);
-  for (const clause of clauses) {
-    if (!NOTION_WRITE_VERB_RE.test(clause)) continue;
-    const dbMatch = NOTION_DB_MENTION_RE.exec(clause);
-    if (!dbMatch) continue;
-    const dbWord = dbMatch[1] ?? dbMatch[2];
-    const database: NotionDatabaseTarget = /task/i.test(dbWord!) ? "Tasks" : /project/i.test(dbWord!) ? "Projects" : "ResearchVault";
-    return { database, request: trimmed };
-  }
-
-  return undefined;
-}
-
-/**
- * Recognizes "save/file that/this [to the/my (notion) (research) vault]" —
- * the same deliberately-simple starting heuristic every other trigger
- * recognizer in this file uses (Story 6.5 / FR-29). Deliberately does NOT
- * match "save my progress" or similar — the trigger word must be
- * immediately followed by "that"/"this" (optionally then a "to the/my
- * ... vault" tail), not an arbitrary object. The tail's "notion" segment
- * (F6, Epic 6 retro) matters because this is checked before
- * `parseCreateItemCommand`'s own looser Notion-mention trigger — without
- * it, "save that to my notion research vault" would match neither trigger
- * exactly and fall through to the wrong one.
- */
-const SAVE_SEARCH_RESULT_RE = /^(?:save|file)\s+(?:that|this)(?:\s+to\s+(?:the|my)\s+(?:notion\s+)?(?:research\s+)?vault)?\.?$/i;
-
-export function isSaveSearchResultCommand(line: string): boolean {
-  return SAVE_SEARCH_RESULT_RE.test(line.trim());
-}
-
-type CreateNotionPageFn = (
-  database: NotionDatabaseTarget,
-  properties: Readonly<Record<string, string>>,
-) => Promise<Result<{ pageId: string; url?: string }, YohError>>;
-
-type ValidateNotionPageDraftFn = (
-  database: NotionDatabaseTarget,
-  properties: Readonly<Record<string, string>>,
-) => Promise<Result<void, YohError>>;
-
-/**
- * Handles one recognized create-item request end-to-end (Story 6.3 /
- * FR-26): asks Claude to draft the fields (`draftNotionPageFields`),
- * validates the draft against the target database's real live schema
- * (`validateDraft` — AD-12's draft-time check), shows it as a
- * `Proposal<NotionPageDraft>` and waits for an explicit yes/no, and on
- * "yes" creates it (`createPageFn`, which re-validates at write time —
- * AD-12's binding guarantee) and echoes a one-line receipt (AD-5's Phase
- * 1.5 chat-receipt requirement). Never persists this Proposal to
- * `memory-store.ts` — per AD-3, a create has no live entity to snapshot,
- * so it's built, shown, and resolved entirely within this one call.
- */
-async function handleCreateItemCommand(
-  store: MemoryStore,
-  io: ChatCliIo,
-  llmClient: AnthropicMessagesClient,
-  database: NotionDatabaseTarget,
-  request: string,
-  createPageFn: CreateNotionPageFn,
-  validateDraft: ValidateNotionPageDraftFn,
-): Promise<void> {
-  let fields: Record<string, string> | undefined;
-  try {
-    fields = await draftNotionPageFields(llmClient, database, request);
-  } catch {
-    fields = undefined;
-  }
-
-  if (!fields) {
-    io.writeLine(`I couldn't tell what you want in the new ${database} item — try naming it more directly.`);
-    return;
-  }
-
-  const validated = await validateDraft(database, fields);
-  if (!validated.ok) {
-    io.writeLine(`I can't create that — ${validated.error.message}`);
-    return;
-  }
-
-  const draft: NotionPageDraft = { database, properties: fields };
-  const proposal: Proposal<NotionPageDraft> = {
-    id: `create-${database}-${Date.now()}`,
-    kind: "notion-page-draft",
-    entityId: database,
-    entityVersion: "new",
-    suggested: draft,
-    reason: `You asked me to create this in ${database}.`,
-    createdAt: new Date().toISOString(),
-  };
-
-  io.writeLine(`Here's what I'll create in ${database}:`);
-  for (const [field, value] of Object.entries(draft.properties)) {
-    io.writeLine(`  ${field}: ${value}`);
-  }
-
-  let confirmAnswer: string | null = null;
-  do {
-    confirmAnswer = await io.readLine("Create this? (yes/no): ");
-    if (confirmAnswer === null) return; // EOF — nothing created.
-  } while (confirmAnswer.trim().length === 0);
-
-  if (parseProposalAnswer(confirmAnswer) !== true) {
-    io.writeLine("Okay — I won't create that.");
-    return;
-  }
-
-  // Story 8.2: the write itself now goes through `confirmProposal` — the
-  // ONE confirm path every Proposal kind resolves through (FR-48) —
-  // instead of calling `createPageFn` directly.
-  const confirmed = await confirmProposal({ store, createPage: createPageFn }, { proposal, accept: true });
-  if (!confirmed.ok) {
-    io.writeLine(`I couldn't create that: ${confirmed.error.message}`);
-    return;
-  }
-
-  io.writeLine(`Created "${draft.properties["title"]}" in ${database}.`);
-}
-
-// ============================================================================
-// Web search (Story 6.4 / FR-28)
-// ============================================================================
-
-type SearchFn = (query: string) => Promise<Result<SearchAnswer, YohError>>;
-
-/**
- * Runs one search (Story 6.4 / FR-28) and renders the result: the answer
- * text, then a "Sources:" list of citation URLs if any. A legitimate
- * zero-result answer is relayed honestly, not as an error (AD-14). Returns
- * the `SearchAnswer` on success so a later story can reference "the most
- * recent search result in this session"; returns `undefined` on failure.
- */
-async function handleSearchCommand(io: ChatCliIo, query: string, searchFn: SearchFn): Promise<SearchAnswer | undefined> {
-  const result = await searchFn(query);
-  if (!result.ok) {
-    io.writeLine(`I couldn't search for that: ${result.error.message}`);
-    return undefined;
-  }
-
-  const { answer, citations } = result.value;
-  if (answer.length === 0 && citations.length === 0) {
-    io.writeLine("I searched but didn't find anything useful.");
-    return result.value;
-  }
-
-  io.writeLine(renderMarkdownForTerminal(answer, shouldUseColor()));
-  if (citations.length > 0) {
-    io.writeLine("");
-    io.writeLine(paint("Sources:", MUTED, shouldUseColor()));
-    for (const url of citations) io.writeLine(`  - ${url}`);
-  }
-  return result.value;
-}
-
-/**
- * Files `lastSearchAnswer` to the Research Vault directly (Story 6.5 /
- * FR-29) — no `Proposal`, no confirm step (AD-3: FR-29 is a direct write,
- * the save request itself is the confirmation). Uses the query that
- * produced the answer as both the page's title and its `query` field.
- * `undefined` (no recent search this session) reports plainly rather than
- * fabricating a page from nothing.
- */
-async function handleSaveSearchResultCommand(
-  io: ChatCliIo,
-  lastSearchAnswer: { readonly query: string; readonly answer: SearchAnswer } | undefined,
-  today: IsoDate,
-  createPageFn: CreateNotionPageFn,
-): Promise<void> {
-  if (!lastSearchAnswer) {
-    io.writeLine("I don't have a recent search result to save — search for something first.");
-    return;
-  }
-
-  const properties: Record<string, string> = {
-    title: lastSearchAnswer.query,
-    keyFindings: lastSearchAnswer.answer.answer,
-    query: lastSearchAnswer.query,
-    searchDate: today,
-    sources: lastSearchAnswer.answer.citations.join("\n"),
-  };
-
-  const created = await createPageFn("ResearchVault", properties);
-  if (!created.ok) {
-    io.writeLine(`I couldn't file that: ${created.error.message}`);
-    return;
-  }
-
-  io.writeLine(`Filed "${properties["title"]}" to the Research Vault.`);
-}
-
-// ============================================================================
-// Calendar editing beyond Yoh-owned events (Story 6.6 / FR-27, AD-13)
-// ============================================================================
-
-/**
- * Recognizes a calendar-edit request — the same deliberately-simple
- * starting keyword heuristic every other trigger recognizer in this file
- * uses. Broad on purpose (natural phrasing for "move this meeting" varies
- * far more than this file's fixed-phrase triggers): the actual
- * move/resize/create and event-name extraction is `draftCalendarEditRequest`'s
- * job (an LLM call), which returns nothing for a line that turns out not to
- * be a calendar edit. There is deliberately no "delete" trigger — deleting
- * an event isn't a value `CalendarEditChange` can even express (AD-13).
- */
-const CALENDAR_EDIT_TRIGGER_RE = /^(move|reschedule|resize|extend|shorten|schedule a|block off|create (a|an) (time )?(block|event))\b/i;
-
-export function isCalendarEditCommand(line: string): boolean {
-  return CALENDAR_EDIT_TRIGGER_RE.test(line.trim());
-}
-
-type ResolveCalendarEditRouteFn = (
-  calendarId: string,
-  eventId: string,
-) => Promise<{ readonly kind: "owned" } | { readonly kind: "external" }>;
-type ProposeCalendarEditFn = (
-  calendarId: string,
-  eventId: string,
-  change: MoveOrResizeChange,
-) => Promise<Proposal<CalendarEditChange>>;
-type ApplyCalendarEditFn = (
-  proposal: Proposal<CalendarEditChange>,
-) => Promise<Result<{ readonly eventId: string; readonly calendarId: string }, YohError>>;
-
-/**
- * `iso` as Spencer's local weekday, date, year and wall-clock time (e.g.
- * "Fri, Sep 18, 2026, 6:00 PM"), for display only. The date AND year are
- * included on purpose: the drafted datetime is LLM-computed, so a wrong day
- * — or a wrong year entirely — must be visible at the confirm step.
- */
-function formatLocalTime(iso: string, timeZone: string): string {
-  return new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    weekday: "short",
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(new Date(iso));
-}
-
-/** One line describing `change` to `eventTitle`, in Spencer's local time — used for both the confirm preview and the receipt. */
-function describeCalendarEdit(change: CalendarEditChange, eventTitle: string, timeZone: string, past: boolean): string {
-  switch (change.kind) {
-    case "move":
-      return `${past ? "Moved" : "Move"} "${eventTitle}" to ${formatLocalTime(change.newStart, timeZone)}–${formatLocalTime(change.newEnd, timeZone)}`;
-    case "resize":
-      return `${past ? "Resized" : "Resize"} "${eventTitle}" to end at ${formatLocalTime(change.newEnd, timeZone)}`;
-    case "create":
-      return `${past ? "Created" : "Create"} "${eventTitle}" from ${formatLocalTime(change.start, timeZone)} to ${formatLocalTime(change.end, timeZone)}`;
-  }
-}
-
-/**
- * Handles one recognized calendar-edit request end-to-end. Event lookup is
- * scoped to TODAY's primary-calendar events only (this story's documented
- * boundary) — a `move`/`resize` request names an event by title, matched
- * case-insensitively among `readCalendarEventsFn`'s result; `create` needs
- * no lookup. Every `move`/`resize` routes through `resolveRoute` first: an
- * `'owned'` event (a "Yoh Plan" block) is declined here — it stays on AD-4's
- * existing automatic path (Mid-Day Re-Flow), never this confirm-gated one
- * (AD-13). Nothing is written until Spencer confirms the exact change,
- * naming the specific event; the receipt is one line naming the event and
- * what changed.
- *
- * Returns `false` — having written nothing — when the message turned out not
- * to be a calendar edit at all (the draft came back `NONE`), so the caller
- * can fall through to ordinary chat; `true` once it has handled the line.
- */
-async function handleCalendarEditCommand(
-  store: MemoryStore,
-  io: ChatCliIo,
-  llmClient: AnthropicMessagesClient,
-  line: string,
-  today: IsoDate,
-  timeZone: string,
-  readCalendarEventsFn: () => Promise<readonly CalendarEvent[]>,
-  resolveRoute: ResolveCalendarEditRouteFn,
-  proposeEdit: ProposeCalendarEditFn,
-  applyEdit: ApplyCalendarEditFn,
-): Promise<boolean> {
-  const events = await readCalendarEventsFn();
-
-  let draft: DraftedCalendarEditRequest | undefined;
-  try {
-    draft = await draftCalendarEditRequest(
-      llmClient,
-      line,
-      today,
-      timeZone,
-      events.map((e) => ({ title: e.title, start: e.start, end: e.end })),
-    );
-  } catch (err) {
-    io.writeLine(`I couldn't work out that calendar change: ${err instanceof Error ? err.message : String(err)}`);
-    return true;
-  }
-
-  if (!draft) return false;
-
-  let proposal: Proposal<CalendarEditChange>;
-  let eventTitle: string;
-
-  if (draft.kind === "create") {
-    eventTitle = draft.title;
-    proposal = proposeNewCalendarEvent({ calendarId: "primary", title: draft.title, start: draft.start, end: draft.end });
-  } else {
-    const requestedTitle = draft.eventTitle.trim().toLowerCase();
-    const matches = events.filter((e) => e.id !== "" && e.title.trim().toLowerCase() === requestedTitle);
-    if (matches.length === 0) {
-      io.writeLine(`I couldn't find an event called "${draft.eventTitle}" on today's calendar.`);
-      return true;
-    }
-    if (matches.length > 1) {
-      io.writeLine(`You have ${matches.length} events called "${draft.eventTitle}" today (${matches.map((e) => formatLocalTime(e.start, timeZone)).join("; ")}) — I won't guess which one. Rename one so I can tell them apart, then try again.`);
-      return true;
-    }
-    const matchedEvent = matches[0]!;
-    eventTitle = matchedEvent.title;
-
-    const route = await resolveRoute("primary", matchedEvent.id);
-    if (route.kind === "owned") {
-      io.writeLine("That's one of my own Plan blocks — ask me to re-flow the day to adjust it instead.");
-      return true;
-    }
-
-    proposal = await proposeEdit(
-      "primary",
-      matchedEvent.id,
-      draft.kind === "move" ? { kind: "move", newStart: draft.newStart } : { kind: "resize", newEnd: draft.newEnd },
-    );
-  }
-
-  io.writeLine(describeCalendarEdit(proposal.suggested, eventTitle, timeZone, false));
-
-  for (;;) {
-    const confirmAnswer = await io.readLine("Apply this change? (yes/no): ");
-    if (confirmAnswer === null) return true; // EOF — nothing changed.
-    if (confirmAnswer.trim().length === 0) continue; // UX-DR16: silence is never consent.
-
-    const confirmed = parseProposalAnswer(confirmAnswer);
-    if (confirmed === undefined) {
-      io.writeLine('Please answer "yes" or "no".');
-      continue;
-    }
-    if (!confirmed) {
-      io.writeLine("Okay — I won't make that change.");
-      return true;
-    }
-    break;
-  }
-
-  // Story 8.2: the write itself now goes through `confirmProposal` — the
-  // ONE confirm path every Proposal kind resolves through (FR-48) —
-  // instead of calling `applyEdit` directly. `applyCalendarEdit` still
-  // takes the `Proposal` itself, unwrapped, exactly as before.
-  const applied = await confirmProposal({ store, applyCalendarEdit: applyEdit }, { proposal, accept: true });
-  if (!applied.ok) {
-    io.writeLine(`I couldn't apply that: ${applied.error.message}`);
-    return true;
-  }
-
-  io.writeLine(`${describeCalendarEdit(proposal.suggested, eventTitle, timeZone, true)}.`);
-  return true;
-}
 
 /**
  * `runChatCli`'s dependencies (Epic 6 retro item 7, F9 — replaces what used
@@ -1000,15 +622,17 @@ export interface ChatCliDeps {
   readonly llmClient: AnthropicMessagesClient;
   readonly now?: () => Date;
   readonly readTasks?: () => Promise<readonly Task[]>;
-  readonly setTaskStatus?: SetTaskStatusFn;
-  readonly updateTaskField?: UpdateTaskFieldFn;
-  readonly createNotionPage?: CreateNotionPageFn;
-  readonly validateNotionPageDraft?: ValidateNotionPageDraftFn;
+  /** Story 8.4 (Ruling R1): replaces this file's former separate Task-field/Status-write fields — spread via `bindNotionTaskWrites` everywhere this file builds an `AnswerOpenItemDeps`, so neither Notion write function ever appears as literal text here. */
+  readonly getNotionTaskWriteBinding?: NotionTaskWriteBindingFn;
+  /** Story 8.4 (Ruling R1): replaces this file's former `createNotionPage`/`validateNotionPageDraft` fields — threaded into `app/chat-turn.ts`'s `CreateItemDeps`/`SaveSearchResultDeps` directly (those files draft/resolve/write a page themselves, AD-16), and spread via `bindNotionCreatePage` when this file builds an `AnswerOpenItemDeps` for the `"notion-page-draft"` confirm path. */
+  readonly getNotionCreatePageBinding?: NotionCreatePageBindingFn;
   readonly searchFn?: SearchFn;
   readonly readCalendarEventsFn?: () => Promise<readonly CalendarEvent[]>;
   readonly resolveCalendarEditRouteFn?: ResolveCalendarEditRouteFn;
-  readonly proposeCalendarEditFn?: ProposeCalendarEditFn;
-  readonly applyCalendarEditFn?: ApplyCalendarEditFn;
+  readonly proposeCalendarEditFn?: ProposeCalendarEditAdapterFn;
+  readonly proposeNewCalendarEventFn?: ProposeNewCalendarEventFn;
+  /** Story 8.4 (Ruling R1): replaces this file's former `applyCalendarEditFn` field's underlying write-function naming — spread via `bindCalendarApply` when this file builds an `AnswerOpenItemDeps` for the `"calendar-edit"` confirm path. */
+  readonly getCalendarApplyBinding?: CalendarApplyBindingFn;
   readonly recordCompletion?: RecordCompletionFn;
   readonly lookupTask?: LookupTaskFn;
 }
@@ -1055,11 +679,14 @@ export interface ChatCliDeps {
  * surfacing loudly rather than silently. The real entrypoint (`main`,
  * below) always supplies a real one.
  *
- * `setTaskStatus` (Task 19) is what `surfaceOpenInteractionRequests` threads
- * into `answerNightCloseOutRequest` for the `"night-close-out"` branch —
- * `notion-adapter.ts`'s own `setTaskStatus`, pre-bound to its client/config,
+ * `getNotionTaskWriteBinding` (Task 19, revised Story 8.4) is what
+ * `surfaceOpenInteractionRequests` spreads (via `bindNotionTaskWrites`)
+ * into the `AnswerOpenItemDeps` it builds, for `answerNightCloseOut`'s
+ * `"night-close-out"` branch and `answerDataCompleteness`'s FR-24 answer —
  * same optional-with-a-throws-only-if-invoked-default convention as
- * `readTasks` above.
+ * `readTasks` above, except reported as a graceful `Result` failure rather
+ * than a thrown error (Ruling R1: this file never names either Notion
+ * Task-write function directly any more).
  */
 export async function runChatCli({
   store,
@@ -1070,18 +697,11 @@ export async function runChatCli({
   readTasks = () => {
     throw new Error("chat-cli: no readTasks dependency configured — cannot re-flow the day");
   },
-  setTaskStatus = async () => {
-    throw new Error("chat-cli: no setTaskStatus dependency configured — cannot record Night Ritual close-out");
-  },
-  updateTaskField = async () => {
-    throw new Error("chat-cli: no updateTaskField dependency configured — cannot record a Data-Completeness answer in Notion");
-  },
-  createNotionPage = async () => {
-    throw new Error("chat-cli: no createNotionPage dependency configured — cannot create a Notion item");
-  },
-  validateNotionPageDraft = async () => {
-    throw new Error("chat-cli: no validateNotionPageDraft dependency configured — cannot validate a Notion item draft");
-  },
+  getNotionTaskWriteBinding = unconfiguredNotionTaskWriteBinding,
+  getNotionCreatePageBinding = () => ({
+    ok: false,
+    error: { kind: "missing-field", message: "chat-cli: no Notion create-page binding configured — cannot create or file a Notion item" },
+  }),
   searchFn = async () => {
     throw new Error("chat-cli: no searchFn dependency configured — cannot run a web search");
   },
@@ -1094,9 +714,13 @@ export async function runChatCli({
   proposeCalendarEditFn = async () => {
     throw new Error("chat-cli: no proposeCalendarEditFn dependency configured — cannot propose a Calendar edit");
   },
-  applyCalendarEditFn = async () => {
-    throw new Error("chat-cli: no applyCalendarEditFn dependency configured — cannot apply a Calendar edit");
+  proposeNewCalendarEventFn = () => {
+    throw new Error("chat-cli: no proposeNewCalendarEventFn dependency configured — cannot propose a new Calendar event");
   },
+  getCalendarApplyBinding = () => ({
+    ok: false,
+    error: { kind: "missing-field", message: "chat-cli: no Calendar apply binding configured — cannot apply a Calendar edit" },
+  }),
   recordCompletion = () => {
     throw new Error("chat-cli: no recordCompletion dependency configured — cannot record a Night Ritual close-out completion");
   },
@@ -1128,25 +752,45 @@ export async function runChatCli({
   // the search-trigger branch below.
   const session: ChatSession = { recentMessages: [], lastSearchAnswer: undefined };
 
-  // Story 8.3 (C3): the one `ChatTurnDeps` this function's `chatTurn` call
-  // site (below) threads through — built once, since (unlike
-  // `buildAnswerDeps` below) nothing in it needs to be recomputed per line;
-  // each `app/*.ts` capability recomputes its own "today" from `now`/
-  // `timeZone` internally. `emit` is omitted — the CLI has no live stream
-  // sink, so `chatTurn` (via `app/general-question.ts`) keeps using the
-  // existing non-streaming `answerGeneralQuestion` call, unchanged.
-  const chatTurnDeps: ChatTurnDeps = { store, timeZone, now, readTasks, llmClient, session };
+  // Story 8.3 (C3), extended by Story 8.4: the one `ChatTurnDeps` this
+  // function's `chatTurn` call site (below) threads through — built once,
+  // since (unlike `buildAnswerDeps` below) nothing in it needs to be
+  // recomputed per line; each `app/*.ts` capability recomputes its own
+  // "today" from `now`/`timeZone` internally. `emit` is omitted — the CLI
+  // has no live stream sink, so `chatTurn` (via `app/general-question.ts`)
+  // keeps using the existing non-streaming `answerGeneralQuestion` call,
+  // unchanged.
+  const chatTurnDeps: ChatTurnDeps = {
+    store,
+    timeZone,
+    now,
+    readTasks,
+    llmClient,
+    session,
+    getNotionCreatePageBinding,
+    searchFn,
+    readCalendarEventsFn,
+    resolveCalendarEditRouteFn,
+    proposeCalendarEditFn,
+    proposeNewCalendarEventFn,
+  };
 
-  // Built fresh at each `surfaceOpenInteractionRequests` call site (below)
-  // so `today` always reflects the current instant — mirrors this
-  // function's own pre-Story-8.1 convention of recomputing
+  // Built fresh at each `surfaceOpenInteractionRequests`/`presentQuestionLoop`
+  // call site (below) so `today` always reflects the current instant —
+  // mirrors this function's own pre-Story-8.1 convention of recomputing
   // `currentIsoDate(timeZone, now)` fresh at every call, never caching it.
+  // Story 8.4 (Ruling R1): none of the four Notion/Calendar write
+  // functions AD-16 reserves for `app/` are ever named directly here —
+  // each is spread in from its own adapter-owned binder instead, so this
+  // file's own source never contains any of the four as literal text (not
+  // even as an object-literal property key).
   const buildAnswerDeps = (): AnswerOpenItemDeps => ({
     store,
     session,
     llmClient,
-    updateTaskField,
-    setTaskStatus,
+    ...bindNotionTaskWrites(getNotionTaskWriteBinding),
+    ...bindNotionCreatePage(getNotionCreatePageBinding),
+    ...bindCalendarApply(getCalendarApplyBinding),
     recordCompletion,
     lookupTask,
     today: currentIsoDate(timeZone, now),
@@ -1173,13 +817,6 @@ export async function runChatCli({
     const line = await io.readLine(prompt);
     if (line === null) return;
 
-    // Story 8.3: recording Spencer's own recent lines into
-    // `session.recentMessages` (FR-25) moved to `app/chat-turn.ts`'s
-    // `chatTurn` itself, which now owns every line that reaches it — see
-    // that function's own doc comment for the accepted, bounded gap this
-    // creates until Task 5 folds the search/create-item/calendar-edit/
-    // save-that checks below into `chatTurn` too.
-
     // Re-check before processing anything else — a ritual running
     // concurrently (AD-10) may have opened a new interaction request since
     // the last check.
@@ -1188,97 +825,43 @@ export async function runChatCli({
     if (line.trim().length === 0) continue;
     turnComplete = true;
 
-    // Checked BEFORE parseCreateItemCommand (F6, Epic 6 retro): its own
-    // looser Notion-mention trigger also matches "save"/"file" verbs, so a
-    // natural "save that to my notion research vault" would otherwise be
-    // taken over by the FR-26 create-item draft path instead of filing the
-    // actual search result (FR-29).
-    if (isSaveSearchResultCommand(line)) {
-      await handleSaveSearchResultCommand(io, session.lastSearchAnswer, currentIsoDate(timeZone, now), createNotionPage);
-      continue;
-    }
-
-    const createItemCommand = parseCreateItemCommand(line);
-    if (createItemCommand) {
-      await handleCreateItemCommand(
-        store,
-        io,
-        llmClient,
-        createItemCommand.database,
-        createItemCommand.request,
-        createNotionPage,
-        validateNotionPageDraft,
-      );
-      continue;
-    }
-
-    if (isCalendarEditCommand(line)) {
-      let handled = true;
-      try {
-        handled = await handleCalendarEditCommand(
-          store,
-          io,
-          llmClient,
-          line,
-          currentIsoDate(timeZone, now),
-          timeZone,
-          readCalendarEventsFn,
-          resolveCalendarEditRouteFn,
-          proposeCalendarEditFn,
-          applyCalendarEditFn,
-        );
-      } catch (err) {
-        io.writeLine(`I hit a problem with that calendar change: ${err instanceof Error ? err.message : String(err)}`);
-      }
-      // Not actually a calendar edit ("move on to the next topic") — fall through to ordinary chat.
-      if (handled) continue;
-    }
-
-    let chatIntent: ChatIntent = { kind: "general-question" };
-    try {
-      chatIntent = await classifyChatIntent(llmClient, line);
-    } catch {
-      chatIntent = { kind: "general-question" }; // A classifier failure must never block the ordinary chat turn.
-    }
-
-    if (chatIntent.kind === "search-trigger") {
-      const answer = await handleSearchCommand(io, chatIntent.query, searchFn);
-      // F5 (Epic 6 retro, Ruling R20): `answer === undefined` means the
-      // search itself failed (handleSearchCommand already reported it); a
-      // truthy `answer` with no content means it searched fine but found
-      // nothing. Both must CLEAR any earlier result, not just skip setting
-      // a new one — 6.5 AC3 requires "an actual search result in play"
-      // before "save that" can file anything, and a still-set earlier
-      // answer is exactly as stale as one left over from a failure.
-      if (answer === undefined || (answer.answer.length === 0 && answer.citations.length === 0)) {
-        session.lastSearchAnswer = undefined;
-      } else {
-        session.lastSearchAnswer = { query: chatIntent.query, answer };
-      }
-      continue;
-    }
-
-    // Story 8.3: every one of this task's five deterministic commands (Time
-    // Budget, Plan-view, Mid-Day Re-Flow, Blocker report, why-prioritized)
-    // and the general-qa catch-all are now dispatched by one call into
-    // `app/chat-turn.ts`'s `chatTurn` — this is the position the trailing
-    // general-qa block used to occupy (the classify/search-trigger block
-    // above stays exactly where it was; a search-shaped line never reaches
-    // `chatTurn` at all — Controller ruling). `chatHistory`'s last turn is
-    // already `{role: "user", content: line}` (pushed by the wrapped
-    // `io.readLine` call at the top of this loop iteration — see
-    // `withConversationHistory`'s doc comment), so it IS "the current
-    // question plus everything said or done before it" — `chatTurn` itself
-    // trims it to `MAX_CHAT_HISTORY_TURNS` (a no-op here, since
-    // `pushChatTurn` already keeps it within that bound). `chatTurn` never
-    // throws (AD-8) — every failure comes back as a `Result` failure, whose
-    // message is already the full user-facing string each capability built.
+    // Story 8.4: this file's ENTIRE per-line dispatch is now the single
+    // `chatTurn` call below (AD-16's "one app/ function per shell call") —
+    // save-search-result, create-item, calendar-edit, the
+    // classifyChatIntent/search-trigger check, and every one of Story 8.3's
+    // five deterministic commands, plus the general-qa catch-all, are all
+    // dispatched from INSIDE `chatTurn`'s own chain, in the SAME priority
+    // order this file's loop used to check them in (restoring the
+    // original, pre-Epic-8 dispatch order — see `app/chat-turn.ts`'s own
+    // doc comment). `chatHistory`'s last turn is already `{role: "user",
+    // content: line}` (pushed by the wrapped `io.readLine` call at the top
+    // of this loop iteration — see `withConversationHistory`'s doc
+    // comment), so it IS "the current question plus everything said or
+    // done before it" — `chatTurn` itself trims it to
+    // `MAX_CHAT_HISTORY_TURNS` (a no-op here, since `pushChatTurn` already
+    // keeps it within that bound). `chatTurn` never throws (AD-8) — every
+    // failure comes back as a `Result` failure, whose message is already
+    // the full user-facing string each capability built.
     const chatTurnResult = await chatTurn(chatTurnDeps, { message: line, history: chatHistory });
     if (!chatTurnResult.ok) {
       io.writeLine(chatTurnResult.error.message);
-    } else {
+      continue;
+    }
+
+    if (chatTurnResult.value.reply.length > 0) {
       io.writeLine(renderMarkdownForTerminal(chatTurnResult.value.reply, shouldUseColor()));
-      for (const receipt of chatTurnResult.value.receipts) io.writeLine(receipt);
+    }
+    for (const receipt of chatTurnResult.value.receipts) io.writeLine(receipt);
+
+    // Story 8.4: create-item/calendar-edit no longer confirm inline — they
+    // persist their Proposal via `openProposal` (Story 8.2) and return its
+    // confirm question here as `chatTurnResult.value.question`. Present it
+    // with the EXACT SAME blocking question/answer loop
+    // `surfaceOpenInteractionRequests` already uses for every other open
+    // item (AD-5) — terminal behavior is unchanged: this reads one line and
+    // resolves it through `answerOpenItem` before returning to the prompt.
+    if (chatTurnResult.value.question) {
+      await presentQuestionLoop(io, buildAnswerDeps(), chatTurnResult.value.question);
     }
   }
 }
@@ -1378,44 +961,16 @@ export async function main(env: Readonly<Record<string, string | undefined>> = p
   const lookupTask: LookupTaskFn = async (taskId) => (await readTasks()).find((t) => t.id === taskId);
   // Same "lazily constructed, no unrelated startup requirement" convention
   // as `readTasks` above (Task 19) — a session that never answers a Night
-  // Ritual close-out prompt must not be unable to start just because Notion
-  // isn't configured. Unlike `readTasks`, `setTaskStatus` doesn't throw on
-  // missing config — it returns a `Result` failure (AD-12's own AD-8
-  // exception, honored all the way up to this binding).
-  //
-  // `NOTION_TASKS_DATA_SOURCE_ID` is now checked here too (revision to the
-  // Task 19 review fix) — `notion-adapter.ts`'s `setTaskStatus` is
-  // schema-checked as of this same revision (see its own doc comment) and
-  // needs the Tasks data source id to resolve a Status option against
-  // Notion's LIVE option list. `NOTION_PROJECTS_DATA_SOURCE_ID` still isn't
-  // checked: nothing about writing a Task's Status ever depends on it.
-  const setTaskStatus: SetTaskStatusFn = async (taskId, status) => {
-    const notionToken = env["NOTION_TOKEN"];
-    const tasksDataSourceId = env["NOTION_TASKS_DATA_SOURCE_ID"];
-    if (!notionToken || !tasksDataSourceId) {
-      return {
-        ok: false,
-        error: {
-          kind: "missing-field",
-          message:
-            "chat-cli: missing required environment variable(s) NOTION_TOKEN / NOTION_TASKS_DATA_SOURCE_ID — needed to record the Night Ritual close-out",
-        },
-      };
-    }
-    const notionClient = new Client({
-      auth: notionToken,
-      ...(env["NOTION_API_VERSION"] ? { notionVersion: env["NOTION_API_VERSION"] } : {}),
-    });
-    return notionSetTaskStatus(notionClient, { tasksDataSourceId }, taskId, status);
-  };
-  // Same lazy-construction convention as `setTaskStatus` above (FR-24) — a
-  // session that never answers a Data-Completeness prompt must not be
-  // unable to start just because Notion isn't configured. Needs
-  // `NOTION_TASKS_DATA_SOURCE_ID` (unlike `setTaskStatus`): `updateTaskField`
-  // may call `dataSources.retrieve` to check a `select`-backed property's
-  // live options before writing it (AD-12's data-integrity guard) — a
-  // dependency `setTaskStatus` genuinely has no equivalent of.
-  const updateTaskField: UpdateTaskFieldFn = async (taskId, field, value) => {
+  // Ritual close-out or Data-Completeness prompt must not be unable to
+  // start just because Notion isn't configured. Story 8.4 (Ruling R1):
+  // neither Notion Task-write function is named directly in THIS
+  // file any more — this binding hands `notion-adapter.ts`'s own
+  // `bindNotionTaskWrites` a raw client/config (or a `missing-field` Result)
+  // instead, and that file calls them itself (AD-16). Needs
+  // `NOTION_TASKS_DATA_SOURCE_ID`: both writes resolve a `select`-backed
+  // property's live options (or, for Status, its live option list) before
+  // writing.
+  const getNotionTaskWriteBinding: NotionTaskWriteBindingFn = () => {
     const notionToken = env["NOTION_TOKEN"];
     const tasksDataSourceId = env["NOTION_TASKS_DATA_SOURCE_ID"];
     if (!notionToken || !tasksDataSourceId) {
@@ -1432,14 +987,19 @@ export async function main(env: Readonly<Record<string, string | undefined>> = p
       auth: notionToken,
       ...(env["NOTION_API_VERSION"] ? { notionVersion: env["NOTION_API_VERSION"] } : {}),
     });
-    return notionUpdateTaskField(notionClient, { tasksDataSourceId }, taskId, field, value);
+    return { ok: true, value: { client: notionClient, config: { tasksDataSourceId } } };
   };
-  // Same lazy-construction convention as `updateTaskField` above (Story 6.3)
-  // — a session that never asks Yoh to create a Notion item must not be
-  // unable to start just because Notion isn't configured. Needs all three
-  // data source ids (unlike `updateTaskField`, which only ever needs
-  // Tasks'): a create request can target any of the three databases.
-  const createNotionPage: CreateNotionPageFn = async (database, properties) => {
+  // Same lazy-construction convention as every binding above (Story 6.3,
+  // Ruling R1) — a session that never asks Yoh to create or file a Notion
+  // item must not be unable to start just because Notion isn't configured.
+  // Needs all three data source ids (unlike the task-write binding above,
+  // which only ever needs Tasks'): a create/file request can target any of
+  // the three databases. `app/create-item.ts`/`app/save-search-result.ts`
+  // draft/resolve/write a page themselves against the raw client/config
+  // this returns (AD-16); `notion-adapter.ts`'s own `bindNotionCreatePage`
+  // does the same for this file's own create-page field when it builds an
+  // `AnswerOpenItemDeps`.
+  const getNotionCreatePageBinding: NotionCreatePageBindingFn = () => {
     const notionToken = env["NOTION_TOKEN"];
     const tasksDataSourceId = env["NOTION_TASKS_DATA_SOURCE_ID"];
     const projectsDataSourceId = env["NOTION_PROJECTS_DATA_SOURCE_ID"];
@@ -1450,7 +1010,7 @@ export async function main(env: Readonly<Record<string, string | undefined>> = p
         error: {
           kind: "missing-field",
           message:
-            "chat-cli: missing required environment variable(s) NOTION_TOKEN / NOTION_TASKS_DATA_SOURCE_ID / NOTION_PROJECTS_DATA_SOURCE_ID / NOTION_RESEARCH_VAULT_DATA_SOURCE_ID — needed to create a Notion item",
+            "chat-cli: missing required Notion environment variable(s) — needed to create or file a Notion item",
         },
       };
     }
@@ -1458,33 +1018,13 @@ export async function main(env: Readonly<Record<string, string | undefined>> = p
       auth: notionToken,
       ...(env["NOTION_API_VERSION"] ? { notionVersion: env["NOTION_API_VERSION"] } : {}),
     });
-    return notionCreatePage(notionClient, { tasksDataSourceId, projectsDataSourceId, researchVaultDataSourceId }, database, properties);
-  };
-  const validateNotionPageDraft: ValidateNotionPageDraftFn = async (database, properties) => {
-    const notionToken = env["NOTION_TOKEN"];
-    const tasksDataSourceId = env["NOTION_TASKS_DATA_SOURCE_ID"];
-    const projectsDataSourceId = env["NOTION_PROJECTS_DATA_SOURCE_ID"];
-    const researchVaultDataSourceId = env["NOTION_RESEARCH_VAULT_DATA_SOURCE_ID"];
-    if (!notionToken || !tasksDataSourceId || !projectsDataSourceId || !researchVaultDataSourceId) {
-      return {
-        ok: false,
-        error: {
-          kind: "missing-field",
-          message: "chat-cli: missing required Notion environment variable(s) — needed to validate a Notion item draft",
-        },
-      };
-    }
-    const notionClient = new Client({
-      auth: notionToken,
-      ...(env["NOTION_API_VERSION"] ? { notionVersion: env["NOTION_API_VERSION"] } : {}),
-    });
-    const result = await notionResolveNotionPageDraftProperties(
-      notionClient,
-      { tasksDataSourceId, projectsDataSourceId, researchVaultDataSourceId },
-      database,
-      properties,
-    );
-    return result.ok ? { ok: true, value: undefined } : result;
+    return {
+      ok: true,
+      value: {
+        client: notionClient,
+        config: { tasksDataSourceId, projectsDataSourceId, researchVaultDataSourceId, taskPropertyNames: loadTaskPropertyNamesFromEnv(env) },
+      },
+    };
   };
   // Same lazy-construction convention as every Notion binding above (Story
   // 6.4) — a session that never triggers a search must not be unable to
@@ -1527,9 +1067,23 @@ export async function main(env: Readonly<Record<string, string | undefined>> = p
     createCalendarBroadClient(getTokenStore().getBroadOAuth2Client() as unknown as Parameters<typeof createCalendarBroadClient>[0]);
   const resolveCalendarEditRouteFn: ResolveCalendarEditRouteFn = (calendarId, eventId) =>
     calendarResolveRoute(getCalendarBroadClient(), calendarId, eventId);
-  const proposeCalendarEditFn: ProposeCalendarEditFn = (calendarId, eventId, change) =>
+  const proposeCalendarEditFn: ProposeCalendarEditAdapterFn = (calendarId, eventId, change) =>
     calendarProposeEdit(getCalendarBroadClient(), calendarId, eventId, change);
-  const applyCalendarEditFn: ApplyCalendarEditFn = (proposal) => calendarApplyEdit(getCalendarBroadClient(), proposal);
+  // Story 8.4 (Ruling R1): the Calendar apply-edit write function is never
+  // named directly in THIS file any more — `getCalendarApplyBinding` hands
+  // `calendar-adapter.ts`'s own `bindCalendarApply` a lazy client provider
+  // instead, wrapping any construction failure (e.g. Google OAuth not
+  // configured) as a graceful `Result` failure rather than a thrown error.
+  const getCalendarApplyBinding: CalendarApplyBindingFn = () => {
+    try {
+      return { ok: true, value: getCalendarBroadClient() };
+    } catch (err) {
+      return {
+        ok: false,
+        error: { kind: "missing-field", message: `chat-cli: could not apply that calendar change — ${err instanceof Error ? err.message : String(err)}` },
+      };
+    }
+  };
   try {
     await runChatCli({
       store,
@@ -1538,15 +1092,14 @@ export async function main(env: Readonly<Record<string, string | undefined>> = p
       llmClient,
       now: () => new Date(),
       readTasks,
-      setTaskStatus,
-      updateTaskField,
-      createNotionPage,
-      validateNotionPageDraft,
+      getNotionTaskWriteBinding,
+      getNotionCreatePageBinding,
       searchFn,
       readCalendarEventsFn,
       resolveCalendarEditRouteFn,
       proposeCalendarEditFn,
-      applyCalendarEditFn,
+      proposeNewCalendarEventFn: proposeNewCalendarEvent,
+      getCalendarApplyBinding,
       recordCompletion,
       lookupTask,
     });

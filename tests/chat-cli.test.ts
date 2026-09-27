@@ -10,7 +10,6 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import {
   createMemoryStore,
   getOpenInteractionRequest,
@@ -29,15 +28,16 @@ import { runSelfCheckRitual, SELF_CHECK_REQUEST_ID } from "../src/rituals/self-c
 import type { MemoryStore } from "../src/adapters/memory-store.ts";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
-import {
-  surfaceOpenInteractionRequests,
-  runChatCli,
-  parseCreateItemCommand,
-  isSaveSearchResultCommand,
-  isCalendarEditCommand,
-  type ChatCliIo,
-} from "../src/shell/chat-cli.ts";
+import { surfaceOpenInteractionRequests, runChatCli, type ChatCliIo } from "../src/shell/chat-cli.ts";
 import type { AnswerOpenItemDeps } from "../src/app/answer-open-item.ts";
+import type {
+  NotionCreatePageClient,
+  NotionCreatePageConfig,
+  NotionSchemaClient,
+  NotionTaskWriteBindingFn,
+  NotionWriteClient,
+} from "../src/adapters/notion-adapter.ts";
+import type { CalendarBroadClient } from "../src/adapters/calendar-adapter.ts";
 import { localIsoDate } from "../src/rituals/ritual-shared.ts";
 // The Data-Completeness merge/gate/sync trio is its own capability and lives
 // in its own file (Task 10 review fix); `chat-cli.ts` imports it rather than
@@ -58,7 +58,6 @@ import type {
   CalendarEditChange,
   CalendarEvent,
   IsoDate,
-  NotionDatabaseTarget,
   Plan,
   PlanBlock,
   PlanningFieldNames,
@@ -92,6 +91,8 @@ function tempStore(): MemoryStore {
 const TEST_TIME_ZONE = "America/New_York";
 
 const NOW = "2026-08-22T12:00:00.000Z";
+
+const TEAM_SYNC: CalendarEvent = { id: "evt-1", title: "Team sync", start: "2026-09-18T15:00:00.000Z", end: "2026-09-18T16:00:00.000Z" };
 
 function makeTask(
   id: string,
@@ -377,7 +378,7 @@ test("runChatCli surfaces an open interaction request before accepting any other
   // "unrelated command" if it were processed before the prompt.
   const io = makeScriptedIo(["Work", "show me today's plan"]);
 
-  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), updateTaskField: makeFakeUpdateTaskField() });
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), getNotionTaskWriteBinding: fakeNotionTaskWriteBinding() });
 
   const promptIndex = io.written.findIndex((line) => line.includes("Call dentist"));
   assert.ok(promptIndex !== -1, "expected the interaction request to be surfaced");
@@ -479,293 +480,17 @@ test("mergeStoredOverrides applies each Task's own stored override (if any) from
 // one-question-per-turn shape) to `tests/answer-data-completeness.test.ts`
 // and `tests/surface-open-items.test.ts`.
 
-// ============================================================================
-// parseCreateItemCommand — pure trigger recognition (Story 6.3 / FR-26)
-// ============================================================================
-
-test("parseCreateItemCommand recognizes 'create a task ...' and targets Tasks", () => {
-  const result = parseCreateItemCommand("create a task to buy hiking boots");
-  assert.deepEqual(result, { database: "Tasks", request: "to buy hiking boots" });
-});
-
-test("parseCreateItemCommand recognizes 'add a project ...' and targets Projects", () => {
-  const result = parseCreateItemCommand("add a project called Kitchen Remodel");
-  assert.equal(result?.database, "Projects");
-});
-
-test("parseCreateItemCommand recognizes a research vault request and targets ResearchVault", () => {
-  const result = parseCreateItemCommand("create a research vault entry about hiking boots");
-  assert.equal(result?.database, "ResearchVault");
-});
-
-test("parseCreateItemCommand returns undefined for an unrelated database name — no fourth target is ever produced", () => {
-  assert.equal(parseCreateItemCommand("create a shopping list"), undefined);
-});
-
-test("parseCreateItemCommand returns undefined for ordinary conversational input", () => {
-  assert.equal(parseCreateItemCommand("what's my plan today"), undefined);
-});
-
-test("parseCreateItemCommand recognizes a Notion-mention request that isn't phrased as 'create a ...'", () => {
-  const result = parseCreateItemCommand("can we input the high priority data to the notion tasks db");
-  assert.deepEqual(result, {
-    database: "Tasks",
-    request: "can we input the high priority data to the notion tasks db",
-  });
-});
-
-test("parseCreateItemCommand recognizes 'put this in the notion research vault'", () => {
-  const result = parseCreateItemCommand("put this in the notion research vault");
-  assert.equal(result?.database, "ResearchVault");
-});
-
-test("parseCreateItemCommand's Notion-mention branch requires a write verb, not just a question about Notion", () => {
-  assert.equal(parseCreateItemCommand("what's in the notion tasks db"), undefined);
-});
-
-test("parseCreateItemCommand's Notion-mention branch requires 'notion' and the database word in the same clause", () => {
-  assert.equal(parseCreateItemCommand("add milk to the list. also check notion tasks later"), undefined);
-});
-
-// ============================================================================
-// Create-item flow, end-to-end via runChatCli (Story 6.3 / FR-26)
-// ============================================================================
-
-test("a create-item request is drafted, validated, shown, and — on 'yes' — created via createPage, with a one-line receipt", async () => {
-  const store = tempStore();
-  const llmClient = makeFakeLlmClient("title=Buy hiking boots\narea=Errands");
-  const createPageFn = makeFakeCreatePage();
-  const validateDraft = makeFakeValidateDraft();
-  const io = makeScriptedIo(["create a task to buy hiking boots", "yes"]);
-
-  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => new Date(NOW), readTasks: async () => [], createNotionPage: createPageFn, validateNotionPageDraft: validateDraft });
-
-  assert.equal(createPageFn.calls.length, 1);
-  assert.equal(createPageFn.calls[0]!.database, "Tasks");
-  assert.equal(createPageFn.calls[0]!.properties["title"], "Buy hiking boots");
-  assert.ok(io.written.some((line) => /created/i.test(line)), "expected a one-line creation receipt");
-  store.close();
-});
-
-test("declining the draft does not create anything", async () => {
-  const store = tempStore();
-  const llmClient = makeFakeLlmClient("title=Buy hiking boots");
-  const createPageFn = makeFakeCreatePage();
-  const validateDraft = makeFakeValidateDraft();
-  const io = makeScriptedIo(["create a task to buy hiking boots", "no"]);
-
-  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => new Date(NOW), readTasks: async () => [], createNotionPage: createPageFn, validateNotionPageDraft: validateDraft });
-
-  assert.equal(createPageFn.calls.length, 0);
-  store.close();
-});
-
-test("a draft that fails validation is never shown for confirmation, and nothing is created", async () => {
-  const store = tempStore();
-  const llmClient = makeFakeLlmClient("title=Buy hiking boots\narea=Astronomy");
-  const createPageFn = makeFakeCreatePage();
-  const validateDraft = makeFakeValidateDraft({ ok: false, error: { kind: "validation", message: "no close match for Area" } });
-  const io = makeScriptedIo(["create a task to buy hiking boots"]);
-
-  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => new Date(NOW), readTasks: async () => [], createNotionPage: createPageFn, validateNotionPageDraft: validateDraft });
-
-  assert.equal(createPageFn.calls.length, 0);
-  store.close();
-});
-
-test("when the LLM can't extract a title, Yoh says so and does not attempt validation or creation", async () => {
-  const store = tempStore();
-  const llmClient = makeFakeLlmClient("NONE");
-  const createPageFn = makeFakeCreatePage();
-  const io = makeScriptedIo(["create a task, uh, something"]);
-
-  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => new Date(NOW), readTasks: async () => [], createNotionPage: createPageFn });
-
-  assert.equal(createPageFn.calls.length, 0);
-  assert.equal(llmClient.calls.length, 1, "the create-item path must never fall through to the general-qa catch-all too");
-  store.close();
-});
-
-// ============================================================================
-// Web search via chat (Story 6.4 / FR-28)
-// ============================================================================
-
-test("an explicit search request routes to search() and renders the answer with its citations", async () => {
-  const store = tempStore();
-  const llmClient = makeFakeLlmClient("SEARCH: best hiking boots under $150");
-  const searchFn = makeFakeSearch({ ok: true, value: { answer: "Salomon and Merrell test well.", citations: ["https://example.com/a"] } });
-  const io = makeScriptedIo(["search for the best hiking boots under $150"]);
-
-  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => new Date(NOW), readTasks: async () => [], searchFn });
-
-  assert.deepEqual(searchFn.calls, ["best hiking boots under $150"]);
-  assert.ok(io.written.some((line) => line.includes("Salomon and Merrell")));
-  assert.ok(io.written.some((line) => line.includes("https://example.com/a")));
-  store.close();
-});
-
-test("an ordinary message classified as general-question never calls search(), and still answers via the general-qa path", async () => {
-  const store = tempStore();
-  const llmClient = makeFakeLlmClient("GENERAL");
-  const searchFn = makeFakeSearch();
-  const io = makeScriptedIo(["how's the weather looking"]);
-
-  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => new Date(NOW), readTasks: async () => [], searchFn });
-
-  assert.equal(searchFn.calls.length, 0);
-  store.close();
-});
-
-test("a search returning zero usable results is relayed honestly, not as an error", async () => {
-  const store = tempStore();
-  const llmClient = makeFakeLlmClient("SEARCH: an obscure query");
-  const searchFn = makeFakeSearch({ ok: true, value: { answer: "", citations: [] } });
-  const io = makeScriptedIo(["search for an obscure query"]);
-
-  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => new Date(NOW), readTasks: async () => [], searchFn });
-
-  assert.ok(io.written.some((line) => /didn't find|couldn't find|no results/i.test(line)));
-  store.close();
-});
-
-test("a search failure (YohError) is reported plainly, not thrown", async () => {
-  const store = tempStore();
-  const llmClient = makeFakeLlmClient("SEARCH: query");
-  const searchFn = makeFakeSearch({ ok: false, error: { kind: "unreachable", message: "search-adapter: Perplexity returned HTTP 500" } });
-  const io = makeScriptedIo(["search for query"]);
-
-  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => new Date(NOW), readTasks: async () => [], searchFn });
-
-  assert.ok(io.written.some((line) => line.includes("Perplexity returned HTTP 500")));
-  store.close();
-});
-
-test("F5 regression: a search returning an empty answer does not set lastSearchAnswer — 'save that' afterward reports no recent result, not a blank page", async () => {
-  const store = tempStore();
-  const llmClient = makeFakeLlmClient("SEARCH: an obscure query");
-  const createPageFn = makeFakeCreatePage();
-  const searchFn = makeFakeSearch({ ok: true, value: { answer: "", citations: [] } });
-  const io = makeScriptedIo(["search for an obscure query", "save that"]);
-
-  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => new Date(NOW), readTasks: async () => [], createNotionPage: createPageFn, searchFn });
-
-  assert.equal(createPageFn.calls.length, 0, "an empty search answer must never be filed to the Research Vault");
-  assert.ok(io.written.some((line) => /don't have|no recent/i.test(line)));
-  store.close();
-});
-
-test("F5 regression: a search failure clears lastSearchAnswer — 'save that' afterward does not file the earlier, now-stale result", async () => {
-  const store = tempStore();
-  const llmClient = makeFakeLlmClient("SEARCH: best hiking boots under $150");
-  const createPageFn = makeFakeCreatePage();
-  let call = 0;
-  const searchFn = async (_query: string): Promise<Result<SearchAnswer, YohError>> => {
-    call += 1;
-    if (call === 1) return { ok: true, value: { answer: "Salomon and Merrell test well.", citations: ["https://example.com/a"] } };
-    return { ok: false, error: { kind: "unreachable", message: "search-adapter: Perplexity returned HTTP 500" } };
-  };
-  const io = makeScriptedIo(["search for the best hiking boots under $150", "search again", "save that"]);
-
-  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => new Date(NOW), readTasks: async () => [], createNotionPage: createPageFn, searchFn });
-
-  assert.equal(createPageFn.calls.length, 0, "a failed search must clear the earlier result, not leave it filable");
-  assert.ok(io.written.some((line) => /don't have|no recent/i.test(line)));
-  store.close();
-});
-
-test("F5 (Ruling R20) regression: a valid search followed by an EMPTY search clears lastSearchAnswer — 'save that' afterward files nothing and reports no recent result, not the earlier answer", async () => {
-  const store = tempStore();
-  const llmClient = makeFakeLlmClient("SEARCH: best hiking boots under $150");
-  const createPageFn = makeFakeCreatePage();
-  let call = 0;
-  const searchFn = async (_query: string): Promise<Result<SearchAnswer, YohError>> => {
-    call += 1;
-    if (call === 1) return { ok: true, value: { answer: "Salomon and Merrell test well.", citations: ["https://example.com/a"] } };
-    return { ok: true, value: { answer: "", citations: [] } };
-  };
-  const io = makeScriptedIo(["search for the best hiking boots under $150", "search for an obscure query", "save that"]);
-
-  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => new Date(NOW), readTasks: async () => [], createNotionPage: createPageFn, searchFn });
-
-  assert.equal(
-    createPageFn.calls.length,
-    0,
-    "an empty search must clear the earlier valid result too (Ruling R20) — 6.5 AC3 requires an actual search result in play, not a stale one",
-  );
-  assert.ok(io.written.some((line) => /don't have|no recent/i.test(line)));
-  store.close();
-});
-
-// ============================================================================
-// isSaveSearchResultCommand — pure trigger recognition (Story 6.5 / FR-29)
-// ============================================================================
-
-test("isSaveSearchResultCommand recognizes 'save that'/'save this'/'file that' phrasings, case-insensitively", () => {
-  for (const line of ["save that", "Save This", "file that", "save that to the vault", "file this to the research vault"]) {
-    assert.equal(isSaveSearchResultCommand(line), true, `expected "${line}" to be recognized`);
-  }
-});
-
-test("isSaveSearchResultCommand returns false for unrelated input", () => {
-  for (const line of ["what's my plan", "create a task to buy boots", "save my progress"]) {
-    assert.equal(isSaveSearchResultCommand(line), false, `expected "${line}" NOT to be recognized`);
-  }
-});
-
-// ============================================================================
-// "save that" -> file the last search result to Research Vault (Story 6.5 / FR-29)
-// ============================================================================
-
-test("'save that' after a search files it to Research Vault directly, with no confirm step, and echoes a receipt", async () => {
-  const store = tempStore();
-  const llmClient = makeFakeLlmClient("SEARCH: best hiking boots under $150");
-  const createPageFn = makeFakeCreatePage();
-  const searchFn = makeFakeSearch({ ok: true, value: { answer: "Salomon and Merrell test well.", citations: ["https://example.com/a"] } });
-  const io = makeScriptedIo(["search for the best hiking boots under $150", "save that"]);
-
-  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => new Date(NOW), readTasks: async () => [], createNotionPage: createPageFn, searchFn });
-
-  assert.equal(createPageFn.calls.length, 1);
-  assert.equal(createPageFn.calls[0]!.database, "ResearchVault");
-  assert.equal(createPageFn.calls[0]!.properties["keyFindings"], "Salomon and Merrell test well.");
-  assert.equal(createPageFn.calls[0]!.properties["sources"], "https://example.com/a");
-  assert.ok(createPageFn.calls[0]!.properties["searchDate"]);
-  assert.ok(io.written.some((line) => /filed/i.test(line)));
-  store.close();
-});
-
-test("'save that' with no recent search result in the session does not fabricate a page — nothing is created", async () => {
-  const store = tempStore();
-  const llmClient = makeFakeLlmClient("GENERAL");
-  const createPageFn = makeFakeCreatePage();
-  const io = makeScriptedIo(["save that"]);
-
-  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => new Date(NOW), readTasks: async () => [], createNotionPage: createPageFn });
-
-  assert.equal(createPageFn.calls.length, 0);
-  assert.ok(io.written.some((line) => /don't have|no recent|nothing to save/i.test(line)));
-  store.close();
-});
-
-test("F6 regression: 'save that to my notion research vault' routes to the FR-29 save-search path, not the FR-26 create-item draft path", async () => {
-  const store = tempStore();
-  const llmClient = makeFakeLlmClient("SEARCH: best hiking boots under $150");
-  const createPageFn = makeFakeCreatePage();
-  const searchFn = makeFakeSearch({ ok: true, value: { answer: "Salomon and Merrell test well.", citations: ["https://example.com/a"] } });
-  const io = makeScriptedIo(["search for the best hiking boots under $150", "save that to my notion research vault"]);
-
-  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => new Date(NOW), readTasks: async () => [], createNotionPage: createPageFn, searchFn });
-
-  assert.equal(createPageFn.calls.length, 1, "must file the search result directly (FR-29), not open a create-item draft (FR-26)");
-  assert.equal(createPageFn.calls[0]!.database, "ResearchVault");
-  assert.equal(createPageFn.calls[0]!.properties["keyFindings"], "Salomon and Merrell test well.");
-  assert.ok(io.written.some((line) => /filed/i.test(line)));
-  store.close();
-});
-
-// Story 8.1: the multi-field, unparseable-answer, and FR-24 Notion-write-
-// failure Data-Completeness scenarios moved to
-// `tests/answer-data-completeness.test.ts`.
+// Story 8.4: parseCreateItemCommand's own pure tests moved to
+// tests/chat-commands.test.ts; handleCreateItemCommand's own end-to-end
+// tests moved (adapted to the one-shot draft-then-openProposal shape) to
+// tests/create-item.test.ts. isSaveSearchResultCommand's own pure tests
+// moved to tests/chat-commands.test.ts; handleSaveSearchResultCommand's own
+// tests moved to tests/save-search-result.test.ts. handleSearchCommand's own
+// tests moved (adapted) to tests/web-search.test.ts. The F6 regression
+// ("save that to my notion research vault" routes to save-search-result, not
+// create-item) and the "an ordinary message classified as general-question
+// never calls search()" test moved to tests/app-chat-turn.test.ts (both are
+// chat-turn.ts dispatch-ordering assertions now, not this file's own).
 
 // ============================================================================
 // runChatCli — the declare/change command path end-to-end
@@ -778,7 +503,7 @@ test("F6 regression: 'save that to my notion research vault' routes to the FR-29
 // classifyChatIntent/search-trigger check), not `declareTimeBudget` alone.
 // ============================================================================
 
-test("runChatCli: typing a Time Budget command persists it and confirms back to Spencer, costing exactly one LLM call (Story 8.3: `chatTurn`'s five recognizers are reached only after `chat-cli.ts`'s own `classifyChatIntent` call — an accepted, temporary dispatch-reorder cost until Task 5 restores the original zero-call priority; see `app/chat-turn.ts`'s own doc comment)", async () => {
+test("runChatCli: typing a Time Budget command persists it and confirms back to Spencer, costing ZERO LLM calls (Story 8.4 restores the original, pre-Epic-8 dispatch order — chatTurn's own recognizers are checked before its classifyChatIntent call, so a recognized deterministic command never reaches it)", async () => {
   const store = tempStore();
   const llmClient = makeFakeLlmClient();
   const io = makeScriptedIo(["time budget 6h"]);
@@ -791,7 +516,7 @@ test("runChatCli: typing a Time Budget command persists it and confirms back to 
     io.written.some((line) => /360|6h|6 hours?/i.test(line)),
     "expected a confirmation line mentioning the new Time Budget",
   );
-  assert.equal(llmClient.calls.length, 1, "expected exactly one Claude call: chat-cli.ts's own classifyChatIntent — chatTurn itself never calls it");
+  assert.equal(llmClient.calls.length, 0, "a recognized Time Budget command must never call the LLM client (Story 8.4)");
   store.close();
 });
 
@@ -966,13 +691,11 @@ test("runChatCli: a deterministic flow's own output (never touching Claude) stil
 
   await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient });
 
-  // "time budget 6 hours" costs one classify call (Story 8.3's accepted
-  // dispatch-reorder cost — see app/chat-turn.ts's own doc comment) but
-  // still zero further Claude calls (declareTimeBudget itself never calls
-  // Claude): calls[0] is that first classify, calls[1]/[2] are the SECOND
-  // line's classify + general-qa calls.
-  assert.equal(llmClient.calls.length, 3);
-  const historySent = llmClient.calls[2]!.messages as Array<{ role: string; content: string }>;
+  // "time budget 6 hours" is recognized deterministically — zero Claude
+  // calls (Story 8.4 restores the original dispatch order). calls[0]/[1]
+  // are the SECOND line's own classify + general-qa calls.
+  assert.equal(llmClient.calls.length, 2);
+  const historySent = llmClient.calls[1]!.messages as Array<{ role: string; content: string }>;
   assert.equal(historySent[0]!.role, "user");
   assert.equal(historySent[0]!.content, "time budget 6 hours");
   assert.equal(historySent[1]!.role, "assistant");
@@ -1070,16 +793,30 @@ test("ChatCliDeps (Epic 6 retro item 7): an omitted optional dependency still de
 // answering `requestKind: "night-close-out"` via chat-cli.ts
 // ============================================================================
 
-/** Scripted fake `setTaskStatus` (mirrors `makeFakeLlmClient`'s recording convention) — no live Notion account is available in this environment. */
-function makeFakeSetTaskStatus(): ((taskId: string, status: TaskStatus) => Promise<Result<void, YohError>>) & {
-  readonly calls: Array<{ readonly taskId: string; readonly status: TaskStatus }>;
-} {
-  const calls: Array<{ taskId: string; status: TaskStatus }> = [];
-  const fn = async (taskId: string, status: TaskStatus): Promise<Result<void, YohError>> => {
-    calls.push({ taskId, status });
-    return { ok: true, value: undefined };
+/**
+ * A fake `NotionTaskWriteBindingFn` (Story 8.4, Ruling R1) — `runChatCli`
+ * no longer accepts a bare `setTaskStatus`/`updateTaskField` closure
+ * directly (that binding construction moved into `notion-adapter.ts`'s own
+ * `bindNotionTaskWrites`), so a test that just needs either write to
+ * SUCCEED (without asserting on its own call shape) supplies this instead:
+ * a permissive fake `NotionWriteClient`/`NotionSchemaClient` whose every
+ * relevant property is `rich_text`-typed, so `writeSelectLikeField` writes
+ * whatever raw value it's given rather than needing a live option match.
+ */
+function fakeNotionTaskWriteBinding(): NotionTaskWriteBindingFn {
+  const schema = {
+    object: "data_source",
+    properties: {
+      Area: { id: "area", name: "Area", description: null, type: "rich_text", rich_text: {} },
+      Energy: { id: "energy", name: "Energy", description: null, type: "rich_text", rich_text: {} },
+      Status: { id: "status", name: "Status", description: null, type: "rich_text", rich_text: {} },
+    },
+  } as unknown as Awaited<ReturnType<NotionSchemaClient["dataSources"]["retrieve"]>>;
+  const client: NotionWriteClient & NotionSchemaClient = {
+    pages: { update: (async () => ({})) as unknown as NotionWriteClient["pages"]["update"] },
+    dataSources: { retrieve: (async () => schema) as NotionSchemaClient["dataSources"]["retrieve"] },
   };
-  return Object.assign(fn, { calls });
+  return () => ({ ok: true, value: { client, config: { tasksDataSourceId: "tasks-ds" } } });
 }
 
 /**
@@ -1115,29 +852,73 @@ function makeFakeUpdateTaskField(
   return Object.assign(fn, { calls });
 }
 
-/** Fake `createNotionPage` binding (Story 6.3 / FR-26) — records every call, returns a fixed `Result` by default. */
-function makeFakeCreatePage(
-  result: Result<{ pageId: string; url?: string }, YohError> = { ok: true, value: { pageId: "page-1", url: "https://notion.so/page-1" } },
-): ((
-  database: NotionDatabaseTarget,
-  properties: Readonly<Record<string, string>>,
-) => Promise<Result<{ pageId: string; url?: string }, YohError>>) & {
-  readonly calls: Array<{ readonly database: NotionDatabaseTarget; readonly properties: Readonly<Record<string, string>> }>;
-} {
-  const calls: Array<{ database: NotionDatabaseTarget; properties: Readonly<Record<string, string>> }> = [];
-  const fn = async (database: NotionDatabaseTarget, properties: Readonly<Record<string, string>>) => {
-    calls.push({ database, properties });
-    return result;
+/**
+ * A minimal real `NotionCreatePageClient` fake (Story 8.4 — mirrors
+ * `tests/notion-adapter.test.ts`'s own `fakeSchemaFor`/`fakeCreatePageClient`
+ * fixtures) covering both databases the smoke tests below actually draft
+ * into — `draftItem`/`saveSearchResult` call the REAL
+ * `resolveNotionPageDraftProperties`/`createPage` against it.
+ */
+function fakeNotionCreatePageClient(): NotionCreatePageClient & { readonly createCalls: Array<{ readonly parent: unknown; readonly properties: unknown }> } {
+  const createCalls: Array<{ parent: unknown; properties: unknown }> = [];
+  const baseSchema = {
+    object: "data_source",
+    title: [],
+    description: [],
+    parent: { type: "database_id", database_id: "db" },
+    database_parent: { type: "database_id", database_id: "db" },
+    is_inline: false,
+    in_trash: false,
+    archived: false,
+    created_time: "2026-08-01T09:00:00.000Z",
+    last_edited_time: "2026-08-01T09:00:00.000Z",
+    created_by: { object: "user", id: "user-1" },
+    last_edited_by: { object: "user", id: "user-1" },
+    icon: null,
+    cover: null,
+    url: "https://notion.so/db",
+    public_url: null,
   };
-  return Object.assign(fn, { calls });
+  const schemasByDataSourceId: Record<string, unknown> = {
+    "tasks-ds": {
+      ...baseSchema,
+      id: "tasks-ds",
+      properties: {
+        Name: { id: "title", name: "Name", description: null, type: "title", title: {} },
+        Area: { id: "area", name: "Area", description: null, type: "rich_text", rich_text: {} },
+      },
+    },
+    "research-vault-ds": {
+      ...baseSchema,
+      id: "research-vault-ds",
+      properties: {
+        "Research Title": { id: "title", name: "Research Title", description: null, type: "title", title: {} },
+        "Key Findings": { id: "kf", name: "Key Findings", description: null, type: "rich_text", rich_text: {} },
+        Query: { id: "q", name: "Query", description: null, type: "rich_text", rich_text: {} },
+        Date: { id: "date", name: "Date", description: null, type: "date", date: {} },
+        Sources: { id: "src", name: "Sources", description: null, type: "rich_text", rich_text: {} },
+      },
+    },
+  };
+  return {
+    createCalls,
+    dataSources: {
+      retrieve: (async ({ data_source_id }: { data_source_id: string }) => schemasByDataSourceId[data_source_id]) as NotionCreatePageClient["dataSources"]["retrieve"],
+    },
+    pages: {
+      create: (async (args: { parent: unknown; properties: unknown }) => {
+        createCalls.push(args);
+        return { object: "page", id: "new-page-id", url: "https://notion.so/new-page-id" };
+      }) as NotionCreatePageClient["pages"]["create"],
+    },
+  };
 }
 
-/** Fake `validateNotionPageDraft` binding — returns a fixed `Result<void, YohError>` (draft-time check, Story 6.3). */
-function makeFakeValidateDraft(
-  result: Result<void, YohError> = { ok: true, value: undefined },
-): (database: NotionDatabaseTarget, properties: Readonly<Record<string, string>>) => Promise<Result<void, YohError>> {
-  return async () => result;
-}
+const FAKE_NOTION_CREATE_PAGE_CONFIG: NotionCreatePageConfig = {
+  tasksDataSourceId: "tasks-ds",
+  projectsDataSourceId: "projects-ds",
+  researchVaultDataSourceId: "research-vault-ds",
+};
 
 /** Fake `search` binding (Story 6.4 / FR-28) — records every call, returns a fixed `Result` by default. */
 function makeFakeSearch(
@@ -1191,17 +972,28 @@ function makeFakeProposeCalendarEdit(): ((
   return Object.assign(fn, { calls });
 }
 
-function makeFakeApplyCalendarEdit(
-  result: Result<{ eventId: string; calendarId: string }, YohError> = { ok: true, value: { eventId: "evt-1", calendarId: "primary" } },
-): ((proposal: Proposal<CalendarEditChange>) => Promise<Result<{ eventId: string; calendarId: string }, YohError>>) & {
-  readonly calls: Array<Proposal<CalendarEditChange>>;
-} {
-  const calls: Array<Proposal<CalendarEditChange>> = [];
-  const fn = async (proposal: Proposal<CalendarEditChange>) => {
-    calls.push(proposal);
-    return result;
+/**
+ * A minimal fake `CalendarBroadClient` (Story 8.4) — `getCalendarApplyBinding`
+ * now hands `bindCalendarApply` a raw client (never a pre-bound write
+ * closure, AD-16), so the smoke test below exercises the REAL
+ * `applyCalendarEdit` against this fixture. `getResult`'s `etag` must match
+ * whatever `entityVersion` the test's own `proposeCalendarEditFn` fake
+ * returns (`makeFakeProposeCalendarEdit`'s own `"etag-1"`, by default) or
+ * `applyCalendarEdit`'s staleness check rejects it.
+ */
+function fakeCalendarBroadClient(
+  overrides: { readonly getResult?: { readonly etag: string; readonly summary: string; readonly start: string; readonly end: string } } = {},
+): CalendarBroadClient {
+  const getResult = overrides.getResult ?? { etag: "etag-1", summary: "Team sync", start: "2026-09-18T15:00:00.000Z", end: "2026-09-18T16:00:00.000Z" };
+  return {
+    events: {
+      get: (async () => ({
+        data: { etag: getResult.etag, summary: getResult.summary, start: { dateTime: getResult.start }, end: { dateTime: getResult.end } },
+      })) as CalendarBroadClient["events"]["get"],
+      patch: (async () => ({ data: {} })) as CalendarBroadClient["events"]["patch"],
+      insert: (async () => ({ data: { id: "new-event-id" } })) as CalendarBroadClient["events"]["insert"],
+    },
   };
-  return Object.assign(fn, { calls });
 }
 
 function closeOutPlan(date: IsoDate): Plan {
@@ -1242,11 +1034,20 @@ test("runChatCli surfaces the Night Ritual close-out prompt first and accepts pe
   assert.ok(promptRun.ok && promptRun.value.status === "prompted");
   assert.ok(getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID));
 
-  const setTaskStatus = makeFakeSetTaskStatus();
   const io = makeScriptedIo(["completed", "slipped"]);
   const llmClient = makeFakeLlmClient();
 
-  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => NIGHT_NOW, readTasks: async () => [], setTaskStatus, recordCompletion: noOpRecordCompletion, lookupTask: noOpLookupTask });
+  await runChatCli({
+    store,
+    io,
+    timeZone: TEST_TIME_ZONE,
+    llmClient,
+    now: () => NIGHT_NOW,
+    readTasks: async () => [],
+    getNotionTaskWriteBinding: fakeNotionTaskWriteBinding(),
+    recordCompletion: noOpRecordCompletion,
+    lookupTask: noOpLookupTask,
+  });
 
   assert.ok(io.written.some((l) => l.includes("Draft the memo")), "expected the combined close-out prompt to be printed");
   assert.equal(llmClient.calls.length, 0, "the close-out prompt is fully resolved before the ordinary loop ever reaches the LLM catch-all");
@@ -1318,225 +1119,103 @@ test("runChatCli: EOF mid-Self-Check-answer leaves the request open, unanswered,
   assert.ok(getOpenInteractionRequest(store, SELF_CHECK_REQUEST_ID), "the request must survive an EOF mid-answer");
 });
 
-// ============================================================================
-// isCalendarEditCommand — pure trigger recognition (Story 6.6 / FR-27)
-// ============================================================================
-
-test("isCalendarEditCommand recognizes move/reschedule/resize/extend/schedule/block-off phrasings", () => {
-  for (const line of [
-    "move team sync to 6pm",
-    "reschedule my meeting to 5",
-    "resize team sync to end at 6",
-    "extend team sync to 6pm",
-    "schedule a focus block from 2 to 3",
-    "block off 2-3pm for deep work",
-  ]) {
-    assert.equal(isCalendarEditCommand(line), true, `expected "${line}" to be recognized`);
-  }
-});
-
-test("isCalendarEditCommand returns false for unrelated input — including a delete request, which has no trigger at all", () => {
-  for (const line of ["what's my plan", "create a task to buy boots", "search for the weather", "delete my team sync", "remove the 3pm meeting"]) {
-    assert.equal(isCalendarEditCommand(line), false, `expected "${line}" NOT to be recognized`);
-  }
-});
+// Story 8.4: isCalendarEditCommand's own pure tests moved to
+// tests/chat-commands.test.ts; handleCalendarEditCommand's own end-to-end
+// tests moved (adapted to the one-shot draft-then-openProposal shape) to
+// tests/calendar-edit.test.ts. The "an ambiguous confirm answer re-prompts"
+// and "an apply failure" scenarios exercise confirmProposal's own
+// retry/apply behavior (Story 8.2's own tests), not this file's propose-only
+// behavior. FR-29's own "never calls confirmProposal" isolation check moved
+// to tests/save-search-result.test.ts (handleSaveSearchResultCommand no
+// longer exists in this file).
 
 // ============================================================================
-// Calendar editing flow, end-to-end via runChatCli (Story 6.6 / FR-27)
+// Story 8.4 — thin transport-level smoke tests: chat-cli.ts still presents a
+// create-item/calendar-edit follow-up question (and a search/save-search-
+// result reply) correctly end-to-end, now that every one of these four
+// capabilities is dispatched from app/chat-turn.ts's chatTurn rather than
+// handled inline in this file's own loop.
 // ============================================================================
 
-const TEAM_SYNC: CalendarEvent = { id: "evt-1", title: "Team sync", start: "2026-09-18T15:00:00.000Z", end: "2026-09-18T16:00:00.000Z" };
-
-async function runCalendarEditSession(
-  lines: readonly string[],
-  llmResponse: string,
-  deps: {
-    readonly events?: readonly CalendarEvent[];
-    readonly route?: { readonly kind: "owned" } | { readonly kind: "external" };
-    readonly propose?: ReturnType<typeof makeFakeProposeCalendarEdit>;
-    readonly apply?: ReturnType<typeof makeFakeApplyCalendarEdit>;
-    readonly readEvents?: () => Promise<readonly CalendarEvent[]>;
-  } = {},
-): Promise<{
-  readonly io: ReturnType<typeof makeScriptedIo>;
-  readonly propose: ReturnType<typeof makeFakeProposeCalendarEdit>;
-  readonly apply: ReturnType<typeof makeFakeApplyCalendarEdit>;
-}> {
+test("runChatCli: a recognized create-item request shows the draft, waits for yes/no, and echoes a receipt on confirm", async () => {
   const store = tempStore();
-  const io = makeScriptedIo(lines);
-  const propose = deps.propose ?? makeFakeProposeCalendarEdit();
-  const apply = deps.apply ?? makeFakeApplyCalendarEdit();
-  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(llmResponse), now: () => new Date(NOW), readTasks: async () => [], readCalendarEventsFn: deps.readEvents ?? makeFakeReadCalendarEvents(deps.events ?? []), resolveCalendarEditRouteFn: makeFakeResolveCalendarEditRoute(deps.route ?? { kind: "external" }), proposeCalendarEditFn: propose, applyCalendarEditFn: apply });
-  store.close();
-  return { io, propose, apply };
-}
+  const llmClient = makeFakeLlmClient("title=Buy hiking boots\narea=Errands");
+  const io = makeScriptedIo(["create a task to buy hiking boots", "yes"]);
 
-test("moving a named event: draft -> route (external) -> propose -> confirm -> apply, with a receipt naming the event and change", async () => {
-  const { io, propose, apply } = await runCalendarEditSession(
-    ["move team sync to 6pm", "yes"],
-    "MOVE: Team sync | 2026-09-18T18:00:00.000Z",
-    { events: [TEAM_SYNC] },
-  );
+  await runChatCli({
+    store,
+    io,
+    timeZone: TEST_TIME_ZONE,
+    llmClient,
+    now: () => new Date(NOW),
+    readTasks: async () => [],
+    getNotionCreatePageBinding: () => ({ ok: true, value: { client: fakeNotionCreatePageClient(), config: FAKE_NOTION_CREATE_PAGE_CONFIG } }),
+  });
+
+  assert.ok(io.written.some((line) => /Here's what I'll create in Tasks/.test(line)), `expected the draft preview, got: ${io.written.join(" | ")}`);
+  assert.ok(io.written.some((line) => /Created "Buy hiking boots" in Tasks/.test(line)), `expected a one-line creation receipt, got: ${io.written.join(" | ")}`);
+  store.close();
+});
+
+test("runChatCli: a recognized calendar-edit request shows the confirm preview, waits for yes/no, and echoes a receipt on confirm", async () => {
+  const store = tempStore();
+  const llmClient = makeFakeLlmClient("MOVE: Team sync | 2026-09-18T18:00:00.000Z");
+  const io = makeScriptedIo(["move team sync to 6pm", "yes"]);
+  const propose = makeFakeProposeCalendarEdit();
+
+  await runChatCli({
+    store,
+    io,
+    timeZone: TEST_TIME_ZONE,
+    llmClient,
+    now: () => new Date("2026-09-18T12:00:00.000Z"),
+    readTasks: async () => [],
+    readCalendarEventsFn: makeFakeReadCalendarEvents([TEAM_SYNC]),
+    resolveCalendarEditRouteFn: makeFakeResolveCalendarEditRoute({ kind: "external" }),
+    proposeCalendarEditFn: propose,
+    getCalendarApplyBinding: () => ({ ok: true, value: fakeCalendarBroadClient() }),
+  });
 
   assert.equal(propose.calls.length, 1);
-  assert.equal(apply.calls.length, 1);
-  assert.ok(io.written.some((line) => /Moved "Team sync" to/.test(line)), `expected a receipt naming the event, got: ${io.written.join(" | ")}`);
-});
-
-test("resizing a named event proposes a resize and applies it on confirm", async () => {
-  const { io, apply } = await runCalendarEditSession(
-    ["extend team sync to 5:30", "yes"],
-    "RESIZE: Team sync | 2026-09-18T21:30:00.000Z",
-    { events: [TEAM_SYNC] },
-  );
-
-  assert.equal(apply.calls.length, 1);
-  assert.equal(apply.calls[0]!.suggested.kind, "resize");
-  assert.ok(io.written.some((line) => /Resized "Team sync" to end at/.test(line)));
-});
-
-test("the confirm preview names the specific event before anything is applied", async () => {
-  const { io } = await runCalendarEditSession(["move team sync to 6pm", "no"], "MOVE: Team sync | 2026-09-18T18:00:00.000Z", {
-    events: [TEAM_SYNC],
-  });
-
-  assert.ok(io.written.some((line) => /Move "Team sync" to/.test(line)));
-});
-
-test("declining the proposed edit applies nothing", async () => {
-  const { io, apply } = await runCalendarEditSession(["move team sync to 6pm", "no"], "MOVE: Team sync | 2026-09-18T18:00:00.000Z", {
-    events: [TEAM_SYNC],
-  });
-
-  assert.equal(apply.calls.length, 0);
-  assert.ok(io.written.some((line) => /won't make that change/i.test(line)));
-});
-
-test("an event resolveCalendarEditRoute reports as 'owned' is declined — this path never touches it, deferring to the automatic re-flow path", async () => {
-  const { propose, apply } = await runCalendarEditSession(["move yoh block to 6pm"], "MOVE: Yoh block | 2026-09-18T18:00:00.000Z", {
-    events: [{ ...TEAM_SYNC, title: "Yoh block" }],
-    route: { kind: "owned" },
-  });
-
-  assert.equal(propose.calls.length, 0);
-  assert.equal(apply.calls.length, 0);
-});
-
-test("creating a new time block skips route resolution entirely and proposes/applies directly on the primary calendar", async () => {
-  const { io, apply } = await runCalendarEditSession(
-    ["block off 2-3pm for focus time", "yes"],
-    "CREATE: Focus block | 2026-09-18T18:00:00.000Z | 2026-09-18T19:00:00.000Z",
-  );
-
-  assert.equal(apply.calls.length, 1);
-  assert.equal(apply.calls[0]!.suggested.kind, "create");
-  if (apply.calls[0]!.suggested.kind === "create") assert.equal(apply.calls[0]!.suggested.calendarId, "primary");
-  assert.ok(io.written.some((line) => /Created "Focus block" from/.test(line)));
-});
-
-test("an event named in the request that isn't found among today's events reports plainly, nothing is proposed", async () => {
-  const { io, propose, apply } = await runCalendarEditSession(
-    ["move nonexistent meeting to 6pm"],
-    "MOVE: Nonexistent meeting | 2026-09-18T18:00:00.000Z",
-  );
-
-  assert.equal(propose.calls.length, 0);
-  assert.equal(apply.calls.length, 0);
-  assert.ok(io.written.some((line) => /couldn't find/i.test(line)));
-});
-
-test("a message that only looks like a calendar edit (draft is NONE) falls through to ordinary chat — nothing is proposed or applied", async () => {
-  const { io, propose, apply } = await runCalendarEditSession(["move on to the next topic"], "NONE", { events: [TEAM_SYNC] });
-
-  assert.equal(propose.calls.length, 0);
-  assert.equal(apply.calls.length, 0);
-  assert.ok(!io.written.some((line) => /couldn't tell what calendar change/i.test(line)));
-  assert.ok(io.written.some((line) => /NONE/.test(line)), "expected the ordinary chat path to have answered");
-});
-
-test("a MOVE/RESIZE/CREATE-shaped but malformed draft is reported distinctly, NOT silently sent to ordinary chat like a NONE response", async () => {
-  const { io, propose, apply } = await runCalendarEditSession(["move team sync to 6pm"], "MOVE: Team sync | not a real time", { events: [TEAM_SYNC] });
-
-  assert.equal(propose.calls.length, 0);
-  assert.equal(apply.calls.length, 0);
-  assert.ok(io.written.some((line) => /I couldn't work out that calendar change/i.test(line)), `got: ${io.written.join(" | ")}`);
-});
-
-test("the confirm preview includes the date and year, so a wrong LLM-computed day or year is visible before confirming", async () => {
-  const { io } = await runCalendarEditSession(["move team sync to 6pm", "no"], "MOVE: Team sync | 2026-09-18T18:00:00.000Z", {
-    events: [TEAM_SYNC],
-  });
-
-  assert.ok(io.written.some((line) => /Move "Team sync" to Fri, Sep 18, 2026, 2:00 PM/.test(line)), `got: ${io.written.join(" | ")}`);
-});
-
-test("an ambiguous confirm answer re-prompts instead of ending the flow, and a later 'yes' still applies", async () => {
-  const { io, apply } = await runCalendarEditSession(["move team sync to 6pm", "sure thing", "yes"], "MOVE: Team sync | 2026-09-18T18:00:00.000Z", {
-    events: [TEAM_SYNC],
-  });
-
-  assert.ok(io.written.some((line) => /Please answer "yes" or "no"/.test(line)));
-  assert.equal(apply.calls.length, 1);
-});
-
-test("two events with the same title are not guessed between — nothing is proposed", async () => {
-  const { io, propose, apply } = await runCalendarEditSession(["move standup to 6pm"], "MOVE: Standup | 2026-09-18T18:00:00.000Z", {
-    events: [
-      { id: "a", title: "Standup", start: "2026-09-18T13:00:00.000Z", end: "2026-09-18T13:15:00.000Z" },
-      { id: "b", title: "standup", start: "2026-09-18T20:00:00.000Z", end: "2026-09-18T20:15:00.000Z" },
-    ],
-  });
-
-  assert.equal(propose.calls.length, 0);
-  assert.equal(apply.calls.length, 0);
-  assert.ok(io.written.some((line) => /2 events called "Standup"/.test(line)));
+  const moveLines = io.written.filter((line) => /Move "Team sync" to/.test(line));
   assert.ok(
-    io.written.some((line) => /Rename one so I can tell them apart/.test(line)),
-    "the recovery suggestion must not promise unsupported by-time disambiguation",
+    moveLines.length >= 2,
+    `expected the confirm preview AND a receipt naming the event and change, got: ${io.written.join(" | ")}`,
   );
+  store.close();
 });
 
-test("an event with no id is never matched", async () => {
-  const { io, propose } = await runCalendarEditSession(["move standup to 6pm"], "MOVE: Standup | 2026-09-18T18:00:00.000Z", {
-    events: [{ id: "", title: "Standup", start: "2026-09-18T13:00:00.000Z", end: "2026-09-18T13:15:00.000Z" }],
+test("runChatCli: an explicit search request renders the answer with its citations", async () => {
+  const store = tempStore();
+  const llmClient = makeFakeLlmClient("SEARCH: best hiking boots under $150");
+  const searchFn = makeFakeSearch({ ok: true, value: { answer: "Salomon and Merrell test well.", citations: ["https://example.com/a"] } });
+  const io = makeScriptedIo(["search for the best hiking boots under $150"]);
+
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => new Date(NOW), readTasks: async () => [], searchFn });
+
+  assert.deepEqual(searchFn.calls, ["best hiking boots under $150"]);
+  assert.ok(io.written.some((line) => line.includes("Salomon and Merrell")));
+  assert.ok(io.written.some((line) => line.includes("https://example.com/a")));
+  store.close();
+});
+
+test("runChatCli: 'save that' after a search files it to the Research Vault directly, with no confirm step, and echoes a receipt", async () => {
+  const store = tempStore();
+  const llmClient = makeFakeLlmClient("SEARCH: best hiking boots under $150");
+  const searchFn = makeFakeSearch({ ok: true, value: { answer: "Salomon and Merrell test well.", citations: ["https://example.com/a"] } });
+  const io = makeScriptedIo(["search for the best hiking boots under $150", "save that"]);
+
+  await runChatCli({
+    store,
+    io,
+    timeZone: TEST_TIME_ZONE,
+    llmClient,
+    now: () => new Date(NOW),
+    readTasks: async () => [],
+    searchFn,
+    getNotionCreatePageBinding: () => ({ ok: true, value: { client: fakeNotionCreatePageClient(), config: FAKE_NOTION_CREATE_PAGE_CONFIG } }),
   });
 
-  assert.equal(propose.calls.length, 0);
-  assert.ok(io.written.some((line) => /couldn't find/i.test(line)));
-});
-
-test("an apply failure (e.g. a stale proposal) is reported instead of a success receipt", async () => {
-  const apply = makeFakeApplyCalendarEdit({ ok: false, error: { kind: "stale-proposal", message: "the event has changed" } });
-  const { io } = await runCalendarEditSession(["move team sync to 6pm", "yes"], "MOVE: Team sync | 2026-09-18T18:00:00.000Z", {
-    events: [TEAM_SYNC],
-    apply,
-  });
-
-  assert.ok(io.written.some((line) => /couldn't apply that: the event has changed/i.test(line)));
-  assert.ok(!io.written.some((line) => /^Moved /.test(line)));
-});
-
-test("a thrown error while reading today's events (e.g. Google auth not configured) is surfaced as a line, not a crash", async () => {
-  const { io, apply } = await runCalendarEditSession(["move team sync to 6pm"], "MOVE: Team sync | 2026-09-18T18:00:00.000Z", {
-    readEvents: async () => {
-      throw new Error("no Google credentials");
-    },
-  });
-
-  assert.equal(apply.calls.length, 0);
-  assert.ok(io.written.some((line) => /no Google credentials/.test(line)));
-});
-
-// ============================================================================
-// FR-29 isolation (Story 8.2, Review Focus #5) — "save that" is a direct
-// write and must never route through confirm-proposal.ts.
-// ============================================================================
-
-test("FR-29's handleSaveSearchResultCommand never calls confirmProposal — it stays a direct createPage write (AD-3)", () => {
-  const source = readFileSync(new URL("../src/shell/chat-cli.ts", import.meta.url), "utf8");
-  const start = source.indexOf("async function handleSaveSearchResultCommand");
-  assert.ok(start >= 0, "handleSaveSearchResultCommand must still exist in chat-cli.ts");
-  const nextFunctionStart = source.indexOf("\nasync function ", start + 1);
-  const body = source.slice(start, nextFunctionStart === -1 ? undefined : nextFunctionStart);
-  assert.ok(!body.includes("confirmProposal"), "FR-29's direct write must never route through confirm-proposal.ts");
+  assert.ok(io.written.some((line) => /filed/i.test(line)), `expected a filing receipt, got: ${io.written.join(" | ")}`);
+  store.close();
 });

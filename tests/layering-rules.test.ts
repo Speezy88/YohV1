@@ -12,10 +12,9 @@
  *   1. AD-1 — nothing in `rituals/`, and not `shell/ritual-cli.ts`, imports
  *      from `app/` (a cron one-shot can never reach the interactive layer).
  *   2. AD-16 — no `shell/*.ts` file names one of the closed Notion/Calendar
- *      write functions, except the named allowlist entry `chat-cli.ts`
- *      (Ruling R1: Phase 1 call sites Epic 8 moves into `app/`; delete the
- *      entry when `chat-cli.ts` is deleted, FR-50 — tracked in
- *      `_bmad-output/implementation-artifacts/deferred-work.md`).
+ *      write functions — the allowlist is now empty (Ruling R1, resolved in
+ *      Story 8.4: `chat-cli.ts`'s last four call sites moved into `app/`);
+ *      every `shell/*.ts` file is checked.
  *   3. AD-16 — every function exported from `app/*.ts` is shaped
  *      `(deps, input) => Promise<Result<Output, YohError>>`.
  *   4. AD-9/AD-17 (Ruling R2) — `types/` never depends on `shell/`, except
@@ -64,8 +63,15 @@ function importsFromApp(contents: string): string[] {
 
 /** AD-12's Notion writes + AD-13's Calendar edit — callable only from `app/` (AD-16). */
 const ADAPTER_WRITE_FUNCTIONS = ["setTaskStatus", "updateTaskField", "createPage", "applyCalendarEdit"] as const;
-/** Ruling R1. Delete this entry in the same change that deletes `shell/chat-cli.ts` (FR-50, Epic 8). */
-const SHELL_WRITE_ALLOWLIST: ReadonlySet<string> = new Set(["chat-cli.ts"]);
+/**
+ * Ruling R1 (Story 8.4): empty, not deleted — the "no shell/*.ts file...
+ * names a Notion/Calendar write function" test below still needs a set to
+ * check membership against, and a future write-surface exception (if one is
+ * ever needed again) has a documented place to go. `chat-cli.ts`'s last four
+ * call sites (create-item, calendar-edit, search, save-search-result) moved
+ * into `app/*.ts` in this same story, so it no longer needs an entry here.
+ */
+const SHELL_WRITE_ALLOWLIST: ReadonlySet<string> = new Set([]);
 
 function adapterWriteReferences(contents: string): string[] {
   return ADAPTER_WRITE_FUNCTIONS.filter((fn) => new RegExp(`\\b${fn}\\b`).test(contents));
@@ -211,7 +217,11 @@ test("AD-1: rituals/ and shell/ritual-cli.ts never import from app/", () => {
   assert.deepEqual(offenders, [], "a cron one-shot must never reach the interactive app/ layer (AD-1)");
 });
 
-test("AD-16: no shell/*.ts file except the allowlisted chat-cli.ts names a Notion/Calendar write function", () => {
+test("Ruling R1: SHELL_WRITE_ALLOWLIST is empty — chat-cli.ts is no longer allowlisted", () => {
+  assert.deepEqual([...SHELL_WRITE_ALLOWLIST], []);
+});
+
+test("AD-16: no shell/*.ts file names a Notion/Calendar write function (Ruling R1: the allowlist is now empty)", () => {
   const shellDir = join(SRC_DIR, "shell");
   const offenders: string[] = [];
   for (const full of listTsFiles(shellDir)) {
@@ -222,7 +232,7 @@ test("AD-16: no shell/*.ts file except the allowlisted chat-cli.ts names a Notio
   assert.deepEqual(offenders, [], "only app/ may call setTaskStatus/updateTaskField/createPage/applyCalendarEdit (AD-16)");
 });
 
-test("AD-16: the chat-cli.ts allowlist entry still names a real file (delete it with chat-cli.ts, FR-50)", () => {
+test("AD-16: every SHELL_WRITE_ALLOWLIST entry (if any) still names a real file", () => {
   for (const name of SHELL_WRITE_ALLOWLIST) {
     assert.ok(existsSync(join(SRC_DIR, "shell", name)), `stale allowlist entry ${name} — remove it from SHELL_WRITE_ALLOWLIST`);
   }

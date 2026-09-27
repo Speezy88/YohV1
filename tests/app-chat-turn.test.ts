@@ -85,14 +85,38 @@ function baseDeps(overrides: Partial<ChatTurnDeps> = {}): ChatTurnDeps {
     },
     llmClient: makeFakeLlmClient(),
     session: makeSession(),
+    // Story 8.4's four new capabilities' own dependencies — throws-only-if-
+    // invoked stubs (same convention as `readTasks` above, and as
+    // `shell/chat-cli.ts`'s own defaults) for every test in this file that
+    // doesn't exercise create-item/calendar-edit/search.
+    getNotionCreatePageBinding: () => ({
+      ok: false,
+      error: { kind: "missing-field", message: "chat-turn test: no Notion binding configured for this test" },
+    }),
+    readCalendarEventsFn: async () => {
+      throw new Error("chat-turn test: readCalendarEventsFn not configured for this test");
+    },
+    resolveCalendarEditRouteFn: async () => {
+      throw new Error("chat-turn test: resolveCalendarEditRouteFn not configured for this test");
+    },
+    proposeCalendarEditFn: async () => {
+      throw new Error("chat-turn test: proposeCalendarEditFn not configured for this test");
+    },
+    proposeNewCalendarEventFn: () => {
+      throw new Error("chat-turn test: proposeNewCalendarEventFn not configured for this test");
+    },
+    searchFn: async () => {
+      throw new Error("chat-turn test: searchFn not configured for this test");
+    },
     ...overrides,
   };
 }
 
 // ============================================================================
-// Dispatch order: a recognized command never calls the LLM client at all;
-// an unmatched line costs exactly one LLM call (answerQuestion's — chatTurn
-// itself never calls classifyChatIntent).
+// Dispatch order (Story 8.3, restored to its original priority by Story 8.4):
+// a recognized deterministic command never calls the LLM client at all; an
+// unmatched line costs exactly two LLM calls — chatTurn's OWN
+// classifyChatIntent call (Story 8.4), then answerQuestion's own call.
 // ============================================================================
 
 test("chatTurn recognizes a Time Budget command and never calls the LLM client", async () => {
@@ -109,7 +133,17 @@ test("chatTurn recognizes a Time Budget command and never calls the LLM client",
   assert.equal(getCurrentTimeBudget(store)?.data.totalMinutes, 360);
 });
 
-test("chatTurn falls through to answerQuestion for an unmatched line, costing exactly one LLM call", async () => {
+test("Story 8.4: a recognized Plan-view command never reaches classifyChatIntent at all — zero Claude calls, same as every other Task-4/8.3 recognizer", async () => {
+  const llmClient = makeFakeLlmClient();
+  const deps = baseDeps({ llmClient });
+
+  const result = await chatTurn(deps, { message: "what's my plan", history: [] });
+
+  assert.equal(result.ok, true);
+  assert.equal((llmClient as any).calls.length, 0, "a Task-4 recognizer match must short-circuit BEFORE classifyChatIntent ever runs");
+});
+
+test("chatTurn falls through to answerQuestion for an unmatched line, costing exactly two LLM calls (Story 8.4: chatTurn's own classifyChatIntent, then answerQuestion's own call)", async () => {
   const llmClient = makeFakeLlmClient("It's sunny where you are, probably.");
   const deps = baseDeps({ llmClient });
 
@@ -118,7 +152,7 @@ test("chatTurn falls through to answerQuestion for an unmatched line, costing ex
   assert.equal(result.ok, true);
   if (!result.ok) return;
   assert.equal(result.value.reply, "It's sunny where you are, probably.");
-  assert.equal((llmClient as any).calls.length, 1, "chatTurn itself must never call classifyChatIntent — only answerQuestion's own call");
+  assert.equal((llmClient as any).calls.length, 2, "expected exactly two Claude calls for the unmatched input: classifyChatIntent, then the general-qa answer");
 });
 
 // ============================================================================
@@ -137,7 +171,10 @@ test("chatTurn trims an untrimmed history down to MAX_CHAT_HISTORY_TURNS before 
 
   await chatTurn(deps, { message: "turn-49", history: longHistory });
 
-  const sentMessages = (llmClient as any).calls[0].messages as ReadonlyArray<{ role: string; content: string }>;
+  // calls[0] is chatTurn's own classifyChatIntent call (Story 8.4, sent
+  // only the current line, not the history); calls[1] is answerQuestion's
+  // own call, the one this test is actually about.
+  const sentMessages = (llmClient as any).calls[1].messages as ReadonlyArray<{ role: string; content: string }>;
   assert.equal(sentMessages.length, MAX_CHAT_HISTORY_TURNS);
   assert.deepEqual(sentMessages, longHistory.slice(longHistory.length - MAX_CHAT_HISTORY_TURNS));
   assert.equal(sentMessages[0]!.role, "user", "trimming must remove complete pairs, never leaving an assistant turn first");
@@ -216,4 +253,109 @@ test("chatTurn emits an additional capability-specific status before a Tasks-rea
   assert.equal(events[0]!.type, "status");
   assert.equal(events[1]!.type, "status");
   assert.notEqual((events[1] as { readonly text: string }).text, STATUS_THINKING);
+});
+
+// ============================================================================
+// Story 8.4: the four new dispatch branches (save-search-result, create-item,
+// calendar-edit, classify->search/general), F6 ordering, the calendar
+// NONE-fallback convention, and session threading across two chatTurn calls.
+// ============================================================================
+
+test("Review Focus #3 (F6, Epic 6 retro): 'save that to my notion research vault' routes to saveSearchResult, never draftItem", async () => {
+  const llmClient = makeFakeLlmClient();
+  const session = makeSession();
+  session.lastSearchAnswer = { query: "hiking boots", answer: { answer: "x", citations: [] } };
+  const deps = baseDeps({ llmClient, session });
+
+  const result = await chatTurn(deps, { message: "save that to my notion research vault", history: [] });
+
+  assert.equal(result.ok, true);
+  assert.equal(
+    (llmClient as any).calls.length,
+    0,
+    "draftItem (create-item) must never be reached for this line — it would call draftNotionPageFields via the LLM client",
+  );
+});
+
+test("Review Focus #4: a calendar-edit line whose draft is NONE falls through to classify/answerQuestion, not an empty reply", async () => {
+  const llmClient = makeFakeLlmClient("NONE");
+  const deps = baseDeps({ llmClient, readCalendarEventsFn: async () => [] });
+
+  const result = await chatTurn(deps, {
+    message: "move on to the next topic",
+    history: [{ role: "user", content: "move on to the next topic" }],
+  });
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  // draftCalendarEditRequest's own call returns "NONE" -> proposeCalendarEdit
+  // returns the empty fall-through convention -> classifyChatIntent (also
+  // "NONE", not "SEARCH: ...", so GENERAL) -> answerQuestion, which answers
+  // with this same fake client's fixed response text.
+  assert.equal(result.value.reply, "NONE");
+  assert.equal(
+    (llmClient as any).calls.length,
+    3,
+    "expected draftCalendarEditRequest, then classifyChatIntent, then answerQuestion — the empty fall-through must never be handed back to Spencer as a real (blank) answer",
+  );
+});
+
+test("an ordinary message classified as general-question never calls search(), and still answers via the general-qa path", async () => {
+  const searchCalls: string[] = [];
+  const llmClient = makeFakeLlmClient("Yoh's own answer.");
+  const deps = baseDeps({
+    llmClient,
+    searchFn: async (query) => {
+      searchCalls.push(query);
+      return { ok: true, value: { answer: "", citations: [] } };
+    },
+  });
+
+  const result = await chatTurn(deps, {
+    message: "what should I have for lunch",
+    history: [{ role: "user", content: "what should I have for lunch" }],
+  });
+
+  assert.equal(result.ok, true);
+  if (result.ok) assert.equal(result.value.reply, "Yoh's own answer.");
+  assert.equal(searchCalls.length, 0);
+});
+
+test("Review Focus #5: session is threaded by reference across two chatTurn calls — search, then 'save that' on the NEXT turn", async () => {
+  const session = makeSession();
+  const deps1 = baseDeps({
+    session,
+    llmClient: makeFakeLlmClient("SEARCH: best hiking boots"),
+    searchFn: async () => ({ ok: true, value: { answer: "Salomon test well.", citations: [] } }),
+  });
+  await chatTurn(deps1, { message: "search for the best hiking boots", history: [] });
+  assert.ok(session.lastSearchAnswer, "expected the first turn to set session.lastSearchAnswer");
+
+  const createPageBindingCalls: unknown[] = [];
+  const deps2 = baseDeps({
+    session,
+    getNotionCreatePageBinding: () => {
+      createPageBindingCalls.push(true);
+      return { ok: false, error: { kind: "missing-field", message: "no Notion config configured for this test" } };
+    },
+  });
+  await chatTurn(deps2, { message: "save that", history: [] });
+  assert.equal(
+    createPageBindingCalls.length,
+    1,
+    "expected the SECOND turn's saveSearchResult to see the FIRST turn's lastSearchAnswer and attempt to file it",
+  );
+});
+
+test("Story 8.4: session.recentMessages records every line that reaches chatTurn — including a save-search-result/create-item/calendar-edit/search line, none of which bypass chatTurn any more", async () => {
+  for (const message of ["save that", "create a task to buy milk", "move team sync to 6pm", "search for something"]) {
+    const session = makeSession();
+    const deps = baseDeps({
+      session,
+      llmClient: makeFakeLlmClient("NONE"),
+      readCalendarEventsFn: async () => [],
+    });
+    await chatTurn(deps, { message, history: [] });
+    assert.deepEqual(session.recentMessages, [message], `expected "${message}" to be recorded into session.recentMessages`);
+  }
 });

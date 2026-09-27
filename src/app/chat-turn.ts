@@ -1,20 +1,23 @@
 /**
  * src/app/chat-turn.ts
  *
- * Story 8.3 (AD-16, C3). The one surface-agnostic entry point every
- * non-slash chat line goes through: `chatTurn(deps, input)` dispatches, in
- * priority order, on this task's five deterministic recognizers
- * (`core/chat-commands.ts`) — Time Budget, Plan-view, Mid-Day Re-Flow,
- * Blocker report, why-prioritized — then falls through to
- * `app/general-question.ts`'s `answerQuestion` as the sole, unconditional
- * fallback. It never calls `classifyChatIntent` itself (Controller ruling —
- * `shell/chat-cli.ts` still runs that, plus its save-search/create-item/
- * calendar-edit checks, inline, ahead of this function; Task 5 folds all of
- * that into `chatTurn` itself), and it never itself emits a `"done"`/
- * `"error"` stream event — only `"status"` and (relayed from
- * `answerQuestion`) `"delta"`. The caller that owns the stream's terminal
- * event (a future server, Task 6) builds it from this function's own
- * returned `Result`, after the last delta.
+ * Story 8.3 (AD-16, C3), extended by Story 8.4. The one surface-agnostic
+ * entry point every non-slash chat line goes through: `chatTurn(deps,
+ * input)` dispatches, in priority order, on this file's eight deterministic
+ * recognizers (`core/chat-commands.ts`) — Time Budget, Plan-view, Mid-Day
+ * Re-Flow, Blocker report, why-prioritized (Story 8.3), then
+ * save-search-result, create-item, calendar-edit (Story 8.4, F6/Epic 6
+ * retro order) — then a `classifyChatIntent` call for a `"search-trigger"`
+ * vs. everything else, and only once NONE of the above matched does it fall
+ * through to `app/general-question.ts`'s `answerQuestion` as the final,
+ * unconditional fallback. This restores the original, pre-Epic-8 dispatch
+ * order (every deterministic recognizer checked before the one paid
+ * classifier call) and its two invariants: a recognized command costs ZERO
+ * Claude calls, and a truly unmatched line costs exactly two (classify, then
+ * the general-qa answer). It never itself emits a `"done"`/`"error"` stream
+ * event — only `"status"` and (relayed from `answerQuestion`) `"delta"`. The
+ * caller that owns the stream's terminal event (a future server) builds it
+ * from this function's own returned `Result`, after the last delta.
  *
  * Also owns `MAX_CHAT_HISTORY_TURNS` (moved from `chat-cli.ts`'s private
  * const of the same name/value — that file's own `pushChatTurn` now imports
@@ -26,22 +29,31 @@
  */
 import {
   isBlockerReportCommand,
+  isCalendarEditCommand,
   isMidDayReflowCommand,
   isPlanViewCommand,
+  isSaveSearchResultCommand,
+  parseCreateItemCommand,
   parseTimeBudgetCommand,
   parseWhyPrioritizedCommand,
 } from "../core/chat-commands.ts";
+import { classifyChatIntent } from "../adapters/llm-adapter.ts";
 import { reportBlocker } from "./blocker-report.ts";
 import { RECENT_MESSAGES_WINDOW, type ChatSession } from "./chat-session.ts";
+import { proposeCalendarEdit, type CalendarEditDeps } from "./calendar-edit.ts";
+import { draftItem, type CreateItemDeps } from "./create-item.ts";
 import { answerQuestion } from "./general-question.ts";
 import { reflowDay } from "./mid-day-reflow.ts";
 import { showPlan } from "./plan-view.ts";
+import { saveSearchResult, type SaveSearchResultDeps } from "./save-search-result.ts";
 import { declareTimeBudget } from "./time-budget.ts";
+import { searchWeb, type WebSearchDeps } from "./web-search.ts";
 import { explainPriority } from "./why-prioritized.ts";
+import { localIsoDate } from "../rituals/ritual-shared.ts";
 import type { AnthropicMessagesClient } from "../adapters/llm-adapter.ts";
 import type { MemoryStore } from "../adapters/memory-store.ts";
 import type { ChatStreamEvent, ChatTurnRequest, ChatTurnResponse } from "../types/api.ts";
-import type { ChatTurn, Result, Task, YohError } from "../types/domain.ts";
+import type { ChatIntent, ChatTurn, Result, Task, YohError } from "../types/domain.ts";
 
 /**
  * The largest number of `ChatTurn`s `chatTurn` will ever send to Claude —
@@ -66,7 +78,7 @@ export const STATUS_THINKING = "Thinking…";
  */
 export const STATUS_CHECKING_TASKS = "Checking your Tasks…";
 
-export interface ChatTurnDeps {
+export interface ChatTurnDeps extends CreateItemDeps, CalendarEditDeps, WebSearchDeps, SaveSearchResultDeps {
   readonly store: MemoryStore;
   readonly timeZone: string;
   readonly now: () => Date;
@@ -92,11 +104,10 @@ function emitStatus(deps: ChatTurnDeps, text: string): void {
  * bounded window of Spencer's own recent (non-blank) chat lines
  * (`app/surface-open-items.ts`'s inference reads it). Moved here from
  * `chat-cli.ts`'s main loop, which used to push every non-blank line before
- * any dispatch check ran; `chatTurn` now owns this for every line that
- * reaches it (a line intercepted by `chat-cli.ts`'s own still-inline
- * search/create-item/calendar-edit/save-that checks isn't recorded until
- * Task 5 folds those into `chatTurn` too — an accepted, bounded gap, same
- * shape as this story's dispatch-reorder cost).
+ * any dispatch check ran; as of Story 8.4, EVERY line `chat-cli.ts` reads —
+ * including a save-search-result/create-item/calendar-edit/search line, now
+ * that all four route through `chatTurn` too — is recorded here, since
+ * `chat-cli.ts` no longer intercepts any of them before calling `chatTurn`.
  */
 function recordRecentMessage(deps: ChatTurnDeps, message: string): void {
   const trimmed = message.trim();
@@ -142,6 +153,34 @@ export async function chatTurn(deps: ChatTurnDeps, input: ChatTurnRequest): Prom
     emitStatus(deps, STATUS_CHECKING_TASKS);
     return explainPriority({ store: deps.store, readTasks: deps.readTasks }, { taskName: whyPrioritizedTaskName });
   }
+
+  // Story 8.4 — checked in the SAME order chat-cli.ts's loop used before
+  // this story (F6, Epic 6 retro): save-search-result BEFORE create-item,
+  // because its own looser Notion-mention trigger also matches "save"/
+  // "file" verbs (e.g. "save that to my notion research vault" must file
+  // the search result, not open a create-item draft).
+  if (isSaveSearchResultCommand(input.message)) return saveSearchResult(deps, {});
+
+  const createItemCommand = parseCreateItemCommand(input.message);
+  if (createItemCommand) return draftItem(deps, createItemCommand);
+
+  if (isCalendarEditCommand(input.message)) {
+    const today = localIsoDate(deps.now(), deps.timeZone);
+    const calendarResult = await proposeCalendarEdit(deps, { line: input.message, today });
+    if (!calendarResult.ok) return calendarResult;
+    const isEmptyFallThrough = calendarResult.value.reply === "" && calendarResult.value.receipts.length === 0 && calendarResult.value.question === undefined;
+    if (!isEmptyFallThrough) return calendarResult;
+    // else: not actually a calendar edit ("move on to the next topic") —
+    // fall through to the classify/general-chat path below.
+  }
+
+  let chatIntent: ChatIntent = { kind: "general-question" };
+  try {
+    chatIntent = await classifyChatIntent(deps.llmClient, input.message);
+  } catch {
+    chatIntent = { kind: "general-question" }; // a classifier failure must never block the ordinary chat turn.
+  }
+  if (chatIntent.kind === "search-trigger") return searchWeb(deps, { query: chatIntent.query });
 
   return answerQuestion(
     { llmClient: deps.llmClient, ...(deps.emit ? { emit: deps.emit } : {}) },

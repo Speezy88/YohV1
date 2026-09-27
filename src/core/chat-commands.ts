@@ -9,10 +9,14 @@
  * state — `core/*.ts` imports only `types/` and other `core/*.ts` (AD-1);
  * none of these five need any import at all.
  *
- * Task 5 adds this file's other three recognizers
+ * Story 8.4 adds this file's other three recognizers
  * (`parseCreateItemCommand`/`isSaveSearchResultCommand`/`isCalendarEditCommand`),
- * still owned by `chat-cli.ts` inline for this task (Controller ruling).
+ * moved verbatim from `shell/chat-cli.ts` — `app/chat-turn.ts` now dispatches
+ * all eight in one chain (F6/Epic 6 retro order: save-search-result before
+ * create-item, since create-item's own looser Notion-mention trigger also
+ * matches "save"/"file" verbs).
  */
+import type { NotionDatabaseTarget } from "../types/domain.ts";
 
 // ============================================================================
 // Time Budget declare/change command (originally Task 6 / Story 1.6, FR-5)
@@ -188,4 +192,101 @@ const WHY_PRIORITIZED_COMMAND_RE = /^why\s+is\s+(.+?)\s+prioritized(?:\s+today)?
 export function parseWhyPrioritizedCommand(line: string): string | undefined {
   const match = WHY_PRIORITIZED_COMMAND_RE.exec(line.trim());
   return match?.[1];
+}
+
+// ============================================================================
+// parseCreateItemCommand — pure trigger recognition (Story 6.3 / FR-26,
+// moved from shell/chat-cli.ts by Story 8.4 / AD-16)
+// ============================================================================
+
+/**
+ * Recognizes "create/add a [task|project|research vault item] ..." — the
+ * same deliberately-simple, documented starting heuristic every other
+ * trigger recognizer in this file uses (NOT real NLU). Only ever emits one
+ * of the three real `NotionDatabaseTarget` values — Story 6.3's AC2 ("Yoh
+ * does not attempt the creation" for any other target) holds by
+ * construction: anything that doesn't match one of these three database
+ * words simply doesn't match this regex at all, and falls through to the
+ * general-qa catch-all untouched.
+ */
+const CREATE_ITEM_RE = /^(?:create|add|new)\s+(?:a|an)?\s*(task|project|research\s*vault(?:\s+(?:item|entry))?)\b[:\s-]*(.*)$/i;
+
+/**
+ * Second, looser trigger (root-cause fix alongside `core/tone.ts`'s
+ * `CAPABILITIES_INSTRUCTION` — see that constant's doc comment) for a
+ * request that names Notion and a database explicitly but doesn't open with
+ * `CREATE_ITEM_RE`'s exact "create/add/new a ___" shape — e.g. "can we input
+ * the high priority data to the notion tasks db" or "put this in the notion
+ * research vault". Requires BOTH a write-ish verb AND "notion" co-occurring
+ * with a database word IN THE SAME CLAUSE (sentence, split on `.`/`?`/`!`) —
+ * same deliberately-simple, documented starting heuristic every other
+ * trigger recognizer in this file uses (NOT real NLU). Checking per-clause
+ * rather than anywhere-in-the-line matters: without it, an unrelated write
+ * verb earlier in a multi-sentence message ("add milk to the list. also
+ * check notion tasks later") would false-positive on a line that never
+ * actually asked to write anything to Notion.
+ */
+const NOTION_WRITE_VERB_RE = /\b(?:create|add|new|put|input|file|log|enter|record|save|move|sync|export|push|write)\b/i;
+const NOTION_DB_MENTION_RE =
+  /\bnotion\b[^.?!]*\b(task|project|research\s*vault)s?\b|\b(task|project|research\s*vault)s?\b[^.?!]*\bnotion\b/i;
+
+export function parseCreateItemCommand(line: string): { readonly database: NotionDatabaseTarget; readonly request: string } | undefined {
+  const trimmed = line.trim();
+
+  const match = CREATE_ITEM_RE.exec(trimmed);
+  if (match) {
+    const [, dbWord, rest] = match;
+    const database: NotionDatabaseTarget = /task/i.test(dbWord!) ? "Tasks" : /project/i.test(dbWord!) ? "Projects" : "ResearchVault";
+    const request = rest!.trim().length > 0 ? rest!.trim() : trimmed;
+    return { database, request };
+  }
+
+  const clauses = trimmed.split(/[.?!]+/).map((c) => c.trim()).filter((c) => c.length > 0);
+  for (const clause of clauses) {
+    if (!NOTION_WRITE_VERB_RE.test(clause)) continue;
+    const dbMatch = NOTION_DB_MENTION_RE.exec(clause);
+    if (!dbMatch) continue;
+    const dbWord = dbMatch[1] ?? dbMatch[2];
+    const database: NotionDatabaseTarget = /task/i.test(dbWord!) ? "Tasks" : /project/i.test(dbWord!) ? "Projects" : "ResearchVault";
+    return { database, request: trimmed };
+  }
+
+  return undefined;
+}
+
+// ============================================================================
+// isSaveSearchResultCommand — pure trigger recognition (Story 6.5 / FR-29,
+// moved from shell/chat-cli.ts by Story 8.4 / AD-16)
+// ============================================================================
+
+/**
+ * Recognizes "save/file that/this [to the/my (notion) (research) vault]" —
+ * the same deliberately-simple starting heuristic every other trigger
+ * recognizer in this file uses (Story 6.5 / FR-29). Deliberately does NOT
+ * match "save my progress" or similar — the trigger word must be
+ * immediately followed by "that"/"this" (optionally then a "to the/my
+ * ... vault" tail), not an arbitrary object. The tail's "notion" segment
+ * (F6, Epic 6 retro) matters because this is checked before
+ * `parseCreateItemCommand`'s own looser Notion-mention trigger — without
+ * it, "save that to my notion research vault" would match neither trigger
+ * exactly and fall through to the wrong one.
+ */
+const SAVE_SEARCH_RESULT_RE = /^(?:save|file)\s+(?:that|this)(?:\s+to\s+(?:the|my)\s+(?:notion\s+)?(?:research\s+)?vault)?\.?$/i;
+
+export function isSaveSearchResultCommand(line: string): boolean {
+  return SAVE_SEARCH_RESULT_RE.test(line.trim());
+}
+
+// ============================================================================
+// isCalendarEditCommand — pure trigger recognition (Story 6.6 / FR-27,
+// moved from shell/chat-cli.ts by Story 8.4 / AD-16). Broad on purpose: the
+// actual move/resize/create parsing is draftCalendarEditRequest's job (an
+// LLM call, in llm-adapter.ts). There is deliberately no "delete" trigger
+// (AD-13).
+// ============================================================================
+
+const CALENDAR_EDIT_TRIGGER_RE = /^(move|reschedule|resize|extend|shorten|schedule a|block off|create (a|an) (time )?(block|event))\b/i;
+
+export function isCalendarEditCommand(line: string): boolean {
+  return CALENDAR_EDIT_TRIGGER_RE.test(line.trim());
 }
