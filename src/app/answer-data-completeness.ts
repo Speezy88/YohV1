@@ -8,6 +8,7 @@
  * state (Controller Ruling 1).
  */
 import { clearInteractionRequest, getOpenInteractionRequest, getTaskFieldOverride, mergeTaskFieldOverride, updateInteractionRequestDetail, type MemoryStore } from "../adapters/memory-store.ts";
+import { errorCopy } from "../core/error-copy.ts";
 import { parsePlanningFieldValue, PLANNING_FIELD_LABELS } from "../core/planning-field-value.ts";
 import { parseProposalAnswer } from "../core/open-item-answers.ts";
 import { buildDataCompletenessQuestion, declinedSuggestionKey, nextDataCompletenessQuestion, type DataCompletenessCursor } from "../core/open-item-questions.ts";
@@ -131,7 +132,9 @@ export async function answerDataCompleteness(deps: AnswerDataCompletenessDeps, i
   const parsed = parsePlanningFieldValue(pending.field, input.answer);
   if (!parsed.ok) return withNext(deps, record.id, parsed.message, []);
   const written = await deps.updateTaskField(pending.taskId, pending.field, parsed.value as NonNullable<Task[PlanningFieldNames]>);
-  if (!written.ok) return withNext(deps, record.id, `I couldn't record that in Notion: ${written.error.message} — try again with a value closer to what's already in Notion.`, []);
+  if (!written.ok) {
+    return withNext(deps, record.id, `${errorCopy(written.error, { service: "Notion" })} Try again with a value closer to what's already in Notion.`, []);
+  }
   mergeTaskFieldOverride(deps.store, pending.taskId, { [pending.field]: parsed.value } as TaskFieldOverride);
   return withNext(deps, record.id, undefined, [`${pending.taskTitle} — ${label}: set to "${parsed.value}".`]);
 }

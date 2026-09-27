@@ -45,7 +45,10 @@ test("a search failure is reported plainly and clears lastSearchAnswer (F5, Epic
   const deps: WebSearchDeps = { session, searchFn: async () => ({ ok: false, error: { kind: "unreachable", message: "Perplexity is down" } }) };
   const result = await searchWeb(deps, { query: "anything" });
   assert.equal(result.ok, true);
-  if (result.ok) assert.match(result.value.reply, /couldn't search for that: Perplexity is down/);
+  // Task 4 (real-use fixes plan): a plain, honest sentence from
+  // `core/error-copy.ts` — never the raw adapter message ("Perplexity is
+  // down") verbatim.
+  if (result.ok) assert.equal(result.value.reply, "I couldn't reach web search right now; nothing was changed.");
   assert.equal(session.lastSearchAnswer, undefined);
 });
 

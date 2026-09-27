@@ -4,6 +4,7 @@
  * Story 8.1. Self-Check is always exactly one question — no cursor.
  */
 import { clearInteractionRequest, getOpenInteractionRequest } from "../adapters/memory-store.ts";
+import { errorCopy } from "../core/error-copy.ts";
 import { applySelfCheckAnswer, SELF_CHECK_REQUEST_ID } from "../rituals/self-check.ts";
 import { parseSelfCheckAnswer } from "../core/open-item-answers.ts";
 import { buildOpenItemQuestion, type SurfaceOpenItemsDeps } from "./surface-open-items.ts";
@@ -31,7 +32,14 @@ export async function answerSelfCheck(deps: AnswerSelfCheckDeps, input: AnswerOp
   const applied = applySelfCheckAnswer(deps.store, { today: deps.today, score: parsed.score, reason: parsed.reason, random: deps.random });
   if (!applied.ok) {
     const next = await buildOpenItemQuestion(deps, { requestId: record.id });
-    return { ok: true, value: { message: `I couldn't record that: ${applied.error.message} — try again.`, receipts: [], next: next.ok && next.value !== "done" ? next.value : "done" } };
+    return {
+      ok: true,
+      value: {
+        message: `${errorCopy(applied.error)} Try again.`,
+        receipts: [],
+        next: next.ok && next.value !== "done" ? next.value : "done",
+      },
+    };
   }
   clearInteractionRequest(deps.store, SELF_CHECK_REQUEST_ID, record.version);
   return { ok: true, value: { message: "Thanks — got it. I'll check in again before too long.", receipts: [], next: "done" } };

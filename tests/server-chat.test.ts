@@ -104,21 +104,50 @@ test("a Result failure from chatTurn becomes exactly one error event, never a ha
     ["error"],
   );
   // `detail` (a raw adapter error) never crosses the wire — same rule as `wire()`.
-  assert.deepEqual(JSON.parse(events[0]!.data), { type: "error", error: { kind: "unreachable", message: "llm down" } });
+  // `sseMessage` maps `message` through `errorCopyForWire` (review fix): "llm
+  // down" carries no raw-leak/module-prefix marker, so it passes through
+  // unchanged apart from the terminal-punctuation guarantee.
+  assert.deepEqual(JSON.parse(events[0]!.data), { type: "error", error: { kind: "unreachable", message: "llm down." } });
 });
 
-test("a thrown error inside chatTurn becomes exactly one error event (never propagates)", async () => {
+test("review fix: a Result failure from chatTurn carrying a raw, never-mapped adapter message comes out mapped over the wire, not verbatim", async () => {
+  const { stream, events } = fakeChatStream();
+  const fakeChatTurn: ChatTurnFn = async () => ({
+    ok: false,
+    error: { kind: "unreachable", message: "llm-adapter: could not reach Claude — ECONNRESET" },
+  });
+  await runChatStream(stream, {} as ChatTurnDeps, REQUEST, fakeChatTurn);
+  const parsed = JSON.parse(events[0]!.data) as { type: string; error: { kind: string; message: string } };
+  assert.equal(parsed.error.message, "Something went wrong on my side answering that. Nothing was changed.");
+  assert.doesNotMatch(parsed.error.message, /llm-adapter/);
+  assert.doesNotMatch(parsed.error.message, /ECONNRESET/);
+});
+
+test("a thrown error inside chatTurn becomes exactly one error event (never propagates), with a plain generic message — never the raw thrown text", async () => {
+  const logged: Array<{ event: string; detail: unknown }> = [];
   const { stream, events } = fakeChatStream();
   const fakeChatTurn: ChatTurnFn = async (deps) => {
     deps.emit?.({ type: "status", text: "Thinking…" });
     throw new Error("boom");
   };
-  await runChatStream(stream, {} as ChatTurnDeps, REQUEST, fakeChatTurn);
+  await runChatStream(
+    stream,
+    { log: (entry) => { logged.push({ event: entry.event, detail: entry.detail }); } } as ChatTurnDeps,
+    REQUEST,
+    fakeChatTurn,
+  );
   assert.deepEqual(
     events.map((e) => e.event),
     ["status", "error"],
   );
-  assert.deepEqual(JSON.parse(events[1]!.data), { type: "error", error: { kind: "unreachable", message: "boom" } });
+  // Review fix: never the raw thrown message ("boom") — a plain, generic
+  // sentence via `core/error-copy.ts`'s `GENERIC_SERVER_ERROR_MESSAGE`.
+  assert.deepEqual(JSON.parse(events[1]!.data), {
+    type: "error",
+    error: { kind: "unreachable", message: "Something went wrong on my side answering that. Nothing was changed." },
+  });
+  // The raw error is still logged server-side — never silently dropped.
+  assert.deepEqual(logged, [{ event: "server.chat-stream-failed", detail: "boom" }]);
 });
 
 test("every stream ends in exactly one terminal event even when chatTurn emits nothing", async () => {
@@ -179,8 +208,11 @@ test("POST /api/chat with no chat deps configured streams a single unreachable e
   assert.match(res.headers.get("content-type") ?? "", /text\/event-stream/);
   const text = await res.text();
   assert.match(text, /^event: error\n/);
+  // Review fix: `sseMessage` maps this through `errorCopyForWire` too — the
+  // raw "server: chat dependencies not configured" text never reaches
+  // `ChatMessage.tsx`'s `errorText` caption.
   assert.deepEqual(parseSseBody(text), [
-    { type: "error", error: { kind: "unreachable", message: "server: chat dependencies not configured" } },
+    { type: "error", error: { kind: "unreachable", message: "Something went wrong on my side answering that. Nothing was changed." } },
   ]);
   connection.close();
 });
@@ -204,14 +236,17 @@ test("POST /api/chat streams chatTurn's events over real SSE framing, ending in 
   connection.close();
 });
 
-test("POST /api/chat: a thrown error inside chatTurn still ends the stream in exactly one error event", async () => {
+test("POST /api/chat: a thrown error inside chatTurn still ends the stream in exactly one error event, with a plain generic message — never the raw thrown text", async () => {
   const { app, connection } = chatApp(
     seamOnly(async () => {
       throw new Error("kaboom");
     }),
   );
   const text = await (await postChat(app, REQUEST)).text();
-  assert.deepEqual(parseSseBody(text), [{ type: "error", error: { kind: "unreachable", message: "kaboom" } }]);
+  assert.deepEqual(parseSseBody(text), [
+    { type: "error", error: { kind: "unreachable", message: "Something went wrong on my side answering that. Nothing was changed." } },
+  ]);
+  assert.doesNotMatch(text, /kaboom/);
   connection.close();
 });
 

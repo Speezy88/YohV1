@@ -93,7 +93,10 @@ test("catches a thrown error from the Claude call and returns it as a Result, ne
   const result = await answerQuestion({ llmClient }, { message: "what's the weather", history: [{ role: "user", content: "what's the weather" }] });
   assert.equal(result.ok, false);
   if (result.ok) return;
-  assert.match(result.error.message, /I hit a problem trying to answer that: simulated API failure/);
+  // Task 4 (real-use fixes plan): never the raw thrown message — a plain,
+  // honest sentence from `core/error-copy.ts` instead.
+  assert.equal(result.error.message, "I couldn't reach Claude right now; nothing was changed.");
+  assert.doesNotMatch(result.error.message, /simulated API failure/);
 });
 
 test("with emit present, answerQuestion streams deltas and returns the concatenated full reply", async () => {

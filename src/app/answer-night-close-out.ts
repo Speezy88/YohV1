@@ -14,6 +14,7 @@ import {
   type NightCloseOutRequestDetail,
 } from "../rituals/night-ritual.ts";
 import { isSkipAnswer, parseNightCloseOutAnswer } from "../core/open-item-answers.ts";
+import { errorCopy } from "../core/error-copy.ts";
 import { nextNightCloseOutTask, type NightCloseOutCursor } from "../core/open-item-questions.ts";
 import { buildOpenItemQuestion, type SurfaceOpenItemsDeps } from "./surface-open-items.ts";
 import type { ExternalId, IsoDate, Result, Task, TaskStatus, YohError } from "../types/domain.ts";
@@ -111,7 +112,16 @@ export async function answerNightCloseOut(deps: AnswerNightCloseOutDeps, input: 
     new Date().toISOString(),
   );
   if (!applied.ok) {
-    return withNext(deps, record.id, closeOutDate, tasks, resolvedTaskIds, skippedTaskIds, `I couldn't record that in Notion: ${applied.error.message} — try again, or type "skip" to leave it for now and move on.`, []);
+    return withNext(
+      deps,
+      record.id,
+      closeOutDate,
+      tasks,
+      resolvedTaskIds,
+      skippedTaskIds,
+      `${errorCopy(applied.error, { service: "Notion" })} Try again, or type "skip" to leave it for now and move on.`,
+      [],
+    );
   }
   return withNext(deps, record.id, closeOutDate, tasks, new Set([...resolvedTaskIds, pending.taskId]), skippedTaskIds, undefined, [`Recorded "${pending.taskTitle}" as ${parsed}.`]);
 }

@@ -23,6 +23,7 @@
 import { randomUUID } from "node:crypto";
 import { draftCalendarEditRequest, type AnthropicMessagesClient, type DraftedCalendarEditRequest } from "../adapters/llm-adapter.ts";
 import { lineStatesDurationOrEnd } from "../core/calendar-duration.ts";
+import { errorCopyForThrown } from "../core/error-copy.ts";
 import { openProposal, type OpenProposalDeps } from "./open-proposal.ts";
 import type { ChatTurnResponse } from "../types/api.ts";
 import type { CalendarEditChange, CalendarEvent, ExternalId, IsoDate, Proposal, Result, YohError } from "../types/domain.ts";
@@ -164,14 +165,21 @@ export async function proposeCalendarEdit(deps: CalendarEditDeps, input: Calenda
   try {
     events = await deps.readCalendarEventsFn();
   } catch (err) {
-    return { ok: true, value: { reply: `I hit a problem with that calendar change: ${err instanceof Error ? err.message : String(err)}`, receipts: [] } };
+    return { ok: true, value: { reply: errorCopyForThrown(err, { service: "Google Calendar" }), receipts: [] } };
   }
 
   let draft: DraftedCalendarEditRequest | undefined;
   try {
     draft = await draftCalendarEditRequest(deps.llmClient, input.line, input.today, deps.timeZone, events.map((e) => ({ title: e.title, start: e.start, end: e.end })));
   } catch (err) {
-    return { ok: true, value: { reply: `I couldn't work out that calendar change: ${err instanceof Error ? err.message : String(err)}`, receipts: [] } };
+    // Known leftover from Task 2: a malformed CREATE response used to leak
+    // `llm-adapter: CREATE response has an invalid or out-of-range
+    // datetime: ...` verbatim. `errorCopyForThrown` (Task 4,
+    // `core/error-copy.ts`) always drops a thrown adapter's raw `.message`
+    // for an `"unreachable"`-shaped failure — a bad/unparseable model
+    // response is, from Spencer's side, indistinguishable from "couldn't
+    // reach it."
+    return { ok: true, value: { reply: errorCopyForThrown(err, { service: "Claude" }), receipts: [] } };
   }
 
   if (!draft) return { ok: true, value: EMPTY }; // not actually a calendar edit — chat-turn.ts falls through.
@@ -208,7 +216,7 @@ export async function proposeCalendarEdit(deps: CalendarEditDeps, input: Calenda
     try {
       proposal = await deps.proposeCalendarEditFn("primary", matchedEvent.id, draft.kind === "move" ? { kind: "move", newStart: draft.newStart } : { kind: "resize", newEnd: draft.newEnd });
     } catch (err) {
-      return { ok: true, value: { reply: `I hit a problem with that calendar change: ${err instanceof Error ? err.message : String(err)}`, receipts: [] } };
+      return { ok: true, value: { reply: errorCopyForThrown(err, { service: "Google Calendar" }), receipts: [] } };
     }
   }
 

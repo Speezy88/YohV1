@@ -28,7 +28,15 @@ function makeUpdateTaskField(failOnce: readonly string[] = []) {
     calls.push({ taskId, field, value });
     if (failOnce.includes(field) && !failed.has(field)) {
       failed.add(field);
-      return { ok: false, error: { kind: "validation", message: "notion-adapter: no confident match" } };
+      // The exact shape notion-adapter.ts's writeSelectLikeField select-guard
+      // rejection has (no trailing period) — review fix: errorCopy must
+      // still name the field/value AND end in terminal punctuation so this
+      // file's own appended "Try again..." follow-up never reads as a
+      // run-on.
+      return {
+        ok: false,
+        error: { kind: "validation", message: 'notion-adapter: no existing "Area" option is a close enough match to "bio" — refusing to write raw text or create a new option' },
+      };
     }
     return { ok: true, value: undefined };
   };
@@ -72,6 +80,13 @@ test("a Notion write failure re-asks the SAME question — the override is never
   if (first.ok) {
     assert.notEqual(first.value.next, "done");
     assert.equal(getTaskFieldOverride(store, "t1"), undefined);
+    // Review fix: names the field/value plainly, never leaks "notion-adapter:",
+    // and reads as two proper sentences (errorCopy's guaranteed terminal
+    // punctuation) rather than a run-on into "Try again...".
+    assert.match(first.value.message ?? "", /Area/);
+    assert.match(first.value.message ?? "", /bio/);
+    assert.doesNotMatch(first.value.message ?? "", /notion-adapter/);
+    assert.match(first.value.message ?? "", /\. Try again/);
   }
   const second = await answerDataCompleteness({ store, session: session(), updateTaskField }, { requestId: "data-completeness", questionId: "t1:area", answer: "Health" });
   assert.equal(second.ok, true);

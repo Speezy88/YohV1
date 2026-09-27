@@ -18,6 +18,7 @@
 import { randomUUID } from "node:crypto";
 import { draftNotionPageFields, DRAFT_NOTION_PAGE_DATE_FIELDS, type AnthropicMessagesClient } from "../adapters/llm-adapter.ts";
 import { resolveNotionPageDraftProperties, type NotionCreatePageClient, type NotionCreatePageConfig } from "../adapters/notion-adapter.ts";
+import { errorCopy } from "../core/error-copy.ts";
 import { resolveRelativeDate, resolveRelativeDateTime } from "../core/relative-date.ts";
 import { localIsoDate } from "../rituals/ritual-shared.ts";
 import { openProposal, type OpenProposalDeps } from "./open-proposal.ts";
@@ -129,12 +130,12 @@ export async function draftItem(deps: CreateItemDeps, input: CreateItemInput): P
 
   const binding = deps.getNotionCreatePageBinding();
   if (!binding.ok) {
-    return { ok: true, value: { reply: `I can't create that — ${binding.error.message}`, receipts: [] } };
+    return { ok: true, value: { reply: errorCopy(binding.error, { service: "Notion" }), receipts: [] } };
   }
 
   const validated = await resolveNotionPageDraftProperties(binding.value.client, binding.value.config, input.database, fields);
   if (!validated.ok) {
-    return { ok: true, value: { reply: `I can't create that — ${validated.error.message}`, receipts: [] } };
+    return { ok: true, value: { reply: errorCopy(validated.error, { service: "Notion" }), receipts: [] } };
   }
 
   const draft: NotionPageDraft = { database: input.database, properties: fields };

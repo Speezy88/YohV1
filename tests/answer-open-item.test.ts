@@ -173,5 +173,66 @@ test("answerOpenItem: a stale Time Budget proposal is reported plainly and the r
   assert.equal(result.value.next, "done");
   assert.equal(getCurrentTimeBudget(store)?.data.totalMinutes, 200);
   assert.equal(getOpenInteractionRequest(store, "time-budget-proposal"), undefined);
+  // Task 4 (real-use fixes plan): the ONE fixed, honest sentence for
+  // `kind: "stale-proposal"` — via `core/error-copy.ts`, never a message
+  // that claims something else went wrong.
+  assert.equal(result.value.message, "That changed since I suggested it, so I didn't apply it.");
+  store.close();
+});
+
+// ============================================================================
+// Task 4 (real-use fixes plan): honest, plain-language error messages. The
+// incident this fixes — Spencer confirmed a "notion-page-draft" proposal
+// (an unresolved literal-text Due Date that slipped past Task 3's own
+// draft-time date resolution) and saw "I can't apply that any more —
+// notion-adapter: could not create the "Tasks" page — body failed
+// validation: body.properties.Due Date.date.start should be a valid ISO
+// 8601 date string, instead was `"tomorrow at 10:45 AM"`." — wording that
+// falsely claimed the proposal was stale AND leaked raw Notion API/JSON-path
+// text. `answerProposalOpenItem` (src/app/answer-open-item.ts) now routes
+// every `confirmProposal` failure through `core/error-copy.ts`'s
+// `errorCopy`, which never repeats "any more" and never leaks `body.`/
+// `properties.` text.
+// ============================================================================
+
+test("answerOpenItem: a notion-page-draft proposal that fails Notion's own validation at write time is reported as a plain sentence naming the field — never 'any more', never raw body./properties. text (the incident)", async () => {
+  const store = tempStore();
+  putOpenInteractionRequest(store, "create-tasks-proposal", {
+    requestKind: "proposal",
+    promptText: "Create this in Tasks?",
+    detail: {
+      proposal: {
+        id: "create-Tasks-1",
+        kind: "notion-page-draft",
+        entityId: "create-Tasks-1",
+        entityVersion: "new",
+        suggested: { database: "Tasks", properties: { title: "Draft the memo", dueDate: "tomorrow at 10:45 AM" } },
+        reason: 'Here\'s what I\'ll create in Tasks:\n  title: Draft the memo\n  dueDate: tomorrow at 10:45 AM',
+        createdAt: "2026-09-27T12:00:00.000Z",
+      },
+    },
+    createdAt: "2026-09-27T12:00:00.000Z",
+  });
+  const deps = {
+    ...fullDeps(store),
+    createPage: async () => ({
+      ok: false as const,
+      error: {
+        kind: "validation" as const,
+        message:
+          'notion-adapter: could not create the "Tasks" page — body failed validation: body.properties.Due Date.date.start should be a valid ISO 8601 date string, instead was `"tomorrow at 10:45 AM"`.',
+      },
+    }),
+  };
+  const result = await answerOpenItem(deps, { requestId: "create-tasks-proposal", questionId: "confirm", answer: "yes" });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.value.next, "done");
+  assert.match(result.value.message ?? "", /Due Date/);
+  assert.doesNotMatch(result.value.message ?? "", /\bbody\./);
+  assert.doesNotMatch(result.value.message ?? "", /\bproperties\./);
+  assert.doesNotMatch(result.value.message ?? "", /notion-adapter/);
+  assert.doesNotMatch(result.value.message ?? "", /any more/i);
+  assert.doesNotMatch(result.value.message ?? "", /stale/i);
   store.close();
 });

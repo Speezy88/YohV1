@@ -89,7 +89,12 @@ test("a MOVE-shaped but malformed draft is reported distinctly (not the empty fa
   const deps = tempDeps({ events: [TEAM_SYNC], llmResponse: "MOVE: Team sync | not a real time" });
   const result = await proposeCalendarEdit(deps, { line: "move team sync to 6pm", today: TODAY });
   assert.equal(result.ok, true);
-  if (result.ok) assert.match(result.value.reply, /I couldn't work out that calendar change/i);
+  // Task 4 (real-use fixes plan): the known leftover from Task 2 — a
+  // malformed CREATE used to leak `llm-adapter: CREATE response has an
+  // invalid or out-of-range datetime: ...` verbatim. Now a plain, honest
+  // sentence with no adapter wording.
+  if (result.ok) assert.equal(result.value.reply, "I couldn't reach Claude right now; nothing was changed.");
+  if (result.ok) assert.doesNotMatch(result.value.reply, /llm-adapter/);
   deps.connection.close();
 });
 
@@ -97,7 +102,9 @@ test("a thrown error while reading today's events is reported as a reply, not a 
   const deps = tempDeps({ readEventsThrows: true });
   const result = await proposeCalendarEdit(deps, { line: "move team sync to 6pm", today: TODAY });
   assert.equal(result.ok, true);
-  if (result.ok) assert.match(result.value.reply, /no Google credentials/);
+  // Task 4 (real-use fixes plan): a plain, honest sentence — never the raw
+  // thrown message ("no Google credentials") verbatim.
+  if (result.ok) assert.equal(result.value.reply, "I couldn't reach Google Calendar right now; nothing was changed.");
   deps.connection.close();
 });
 

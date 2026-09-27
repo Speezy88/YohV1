@@ -53,6 +53,7 @@ import { getPlan, listSlipHistories, type MemoryStore } from "../adapters/memory
 import type { LogEntry } from "../adapters/logger.ts";
 import { runMorningRitual } from "../rituals/morning-ritual.ts";
 import { localIsoDate } from "../rituals/ritual-shared.ts";
+import { errorCopy } from "../core/error-copy.ts";
 import { computeSlipBumpLevels } from "../core/slip-bump.ts";
 import { surfaceOpenItems, type SurfaceOpenItemsDeps } from "./surface-open-items.ts";
 import type { ChatTurnResponse, OpenItem } from "../types/api.ts";
@@ -148,7 +149,7 @@ export async function planDay(deps: PlanDayDeps, _input: Record<string, never>):
   });
 
   if (!outcome.ok) {
-    return { ok: false, error: { kind: outcome.error.kind, message: `I couldn't build today's Plan: ${outcome.error.message}` } };
+    return { ok: false, error: { kind: outcome.error.kind, message: errorCopy(outcome.error) } };
   }
 
   switch (outcome.value.status) {

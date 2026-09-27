@@ -47,6 +47,19 @@ test("a 'completed' answer applies and reports the next Task", async () => {
   store.close();
 });
 
+test("a Notion write failure is reported as a plain sentence naming Notion, ending properly so the appended 'Try again...' follow-up never reads as a run-on (review fix)", async () => {
+  const store = tempStore();
+  openReq(store, [{ taskId: "t1", taskTitle: "Draft the memo" }]);
+  const setTaskStatus = makeSetTaskStatus({ t1: false });
+  const result = await answerNightCloseOut(deps(store, setTaskStatus), { requestId: "night-close-out", questionId: "t1", answer: "completed" });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.match(result.value.message ?? "", /Notion/);
+  assert.doesNotMatch(result.value.message ?? "", /notion: 500/);
+  assert.match(result.value.message ?? "", /\. Try again/);
+  store.close();
+});
+
 test("'skip' leaves the Task unresolved and moves on, with no Notion call and no Slip-Bump write", async () => {
   const store = tempStore();
   openReq(store, [{ taskId: "t1", taskTitle: "Draft the memo" }]);

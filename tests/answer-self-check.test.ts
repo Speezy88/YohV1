@@ -3,7 +3,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createMemoryStore, getOpenInteractionRequest, getSelfCheckState, putOpenInteractionRequest } from "../src/adapters/memory-store.ts";
+import { ConflictError, createMemoryStore, getOpenInteractionRequest, getSelfCheckState, putOpenInteractionRequest, type MemoryStore } from "../src/adapters/memory-store.ts";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { initNotificationStoreSchema, listUnreadNotifications } from "../src/adapters/notification-store.ts";
 import { answerSelfCheck } from "../src/app/answer-self-check.ts";
@@ -17,6 +17,21 @@ function openReq(store: ReturnType<typeof tempStore>) {
   putOpenInteractionRequest(store, "self-check", { requestKind: "self-check", promptText: "How are things going?", createdAt: "x" });
 }
 const deps = (store: ReturnType<typeof tempStore>) => ({ store, session: { recentMessages: [], lastSearchAnswer: undefined }, today: "2026-08-22", random: () => 0 });
+
+/** Wraps `store` so `putSelfCheckState`'s own `readModifyWrite` call always throws `ConflictError` (AD-10) — simulates a genuine concurrent write, without needing a second real writer racing it. */
+function wrapWithSimulatedConflict(store: MemoryStore): MemoryStore {
+  return new Proxy(store, {
+    get(target, prop) {
+      if (prop === "readModifyWrite") {
+        return () => {
+          throw new ConflictError("memory-store: simulated concurrent write");
+        };
+      }
+      const value = Reflect.get(target, prop, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  }) as MemoryStore;
+}
 
 test("a complete answer persists it, clears the request, and reports 'done'", async () => {
   const store = tempStore();
@@ -50,6 +65,18 @@ test("a low score genuinely shortens the next scheduled interval via the real sh
   const days = (Date.parse(`${state!.data.nextDueDate}T00:00:00.000Z`) - Date.parse("2026-08-22T00:00:00.000Z")) / 86_400_000;
   assert.equal(days, 2);
   store.close();
+});
+
+test("a concurrent-write failure while recording the answer is reported as a plain sentence ending properly, so the appended 'Try again.' follow-up never reads as a run-on (review fix)", async () => {
+  const store = tempStore();
+  openReq(store);
+  const conflictingStore = wrapWithSimulatedConflict(store);
+  const result = await answerSelfCheck(deps(conflictingStore), { requestId: "self-check", questionId: "score", answer: "8 fine" });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.doesNotMatch(result.value.message ?? "", /simulated concurrent write/);
+  assert.doesNotMatch(result.value.message ?? "", /memory-store:/);
+  assert.match(result.value.message ?? "", /\. Try again\.$/);
 });
 
 test("an answer to a request that no longer exists, or to the wrong questionId, returns conflict", async () => {

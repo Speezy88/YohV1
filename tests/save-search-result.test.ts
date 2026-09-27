@@ -19,7 +19,14 @@ function tempDeps(overrides: { bindingOk?: boolean; session?: ChatSession; clien
     now: () => new Date("2026-09-26T18:00:00.000Z"),
     getNotionCreatePageBinding: () =>
       overrides.bindingOk === false
-        ? { ok: false, error: { kind: "missing-field", message: "no Notion config" } }
+        ? {
+            // The real shape `shell/server.ts` returns (Task 4, real-use
+            // fixes plan): a `modulename:`-prefixed message naming raw
+            // environment-variable jargon — `core/error-copy.ts` must never
+            // let this leak verbatim to Spencer.
+            ok: false,
+            error: { kind: "missing-field", message: "server: missing required Notion environment variable(s) — needed to create or file a Notion item" },
+          }
         : { ok: true, value: { client: overrides.client ?? ({} as NotionCreatePageClient), config: overrides.config ?? ({} as NotionCreatePageConfig) } },
   };
 }
@@ -34,7 +41,9 @@ test("Notion not configured -> a plain reply naming the problem", async () => {
   const session: ChatSession = { recentMessages: [], lastSearchAnswer: { query: "hiking boots", answer: { answer: "Salomon test well.", citations: [] } } };
   const result = await saveSearchResult(tempDeps({ bindingOk: false, session }), {});
   assert.equal(result.ok, true);
-  if (result.ok) assert.match(result.value.reply, /couldn't file that: no Notion config/);
+  // Task 4 (real-use fixes plan): a plain, honest sentence naming Notion —
+  // never the raw "environment variable" jargon.
+  if (result.ok) assert.equal(result.value.reply, "I'm not set up to do that yet — my Notion connection isn't configured.");
 });
 
 /**

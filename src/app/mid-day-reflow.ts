@@ -13,6 +13,7 @@
  * `tests/mid-day-reflow.test.ts`'s structural "sole caller" check still has
  * a single, meaningful file to name.
  */
+import { errorCopy } from "../core/error-copy.ts";
 import { runMidDayReflow, type MidDayReflowOutcome } from "../rituals/mid-day-reflow.ts";
 import type { MemoryStore } from "../adapters/memory-store.ts";
 import type { ChatTurnResponse } from "../types/api.ts";
@@ -60,7 +61,7 @@ export async function reflowDay(
   const result = await runReflow(deps, {});
 
   if (!result.ok) {
-    return { ok: false, error: { kind: result.error.kind, message: `I couldn't re-flow the rest of today: ${result.error.message}` } };
+    return { ok: false, error: { kind: result.error.kind, message: errorCopy(result.error) } };
   }
 
   switch (result.value.status) {

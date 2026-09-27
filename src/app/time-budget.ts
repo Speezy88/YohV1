@@ -11,6 +11,7 @@
  * directly).
  */
 import { putTimeBudget, type MemoryStore } from "../adapters/memory-store.ts";
+import { errorCopy } from "../core/error-copy.ts";
 import { shapeDeclaredTimeBudget } from "../core/time-budget.ts";
 import { localIsoDate } from "../rituals/ritual-shared.ts";
 import type { Result, YohError } from "../types/domain.ts";
@@ -51,7 +52,7 @@ export async function declareTimeBudget(
   const today = localIsoDate(deps.now(), deps.timeZone);
   const shaped = shapeDeclaredTimeBudget({ totalMinutes: input.totalMinutes, date: today });
   if (!shaped.ok) {
-    return { ok: false, error: { kind: "validation", message: `I couldn't set that Time Budget: ${shaped.error.message}` } };
+    return { ok: false, error: { kind: "validation", message: `I couldn't set that Time Budget — ${errorCopy(shaped.error)}` } };
   }
   putTimeBudget(deps.store, shaped.value);
   return {

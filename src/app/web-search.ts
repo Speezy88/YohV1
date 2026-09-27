@@ -9,6 +9,7 @@
  * R20 clearing rules (Epic 6 retro) apply unchanged: a failure OR a
  * legitimate empty result both CLEAR any earlier answer.
  */
+import { errorCopy } from "../core/error-copy.ts";
 import type { ChatSession } from "./chat-session.ts";
 import type { ChatStreamEvent, ChatTurnResponse } from "../types/api.ts";
 import type { Result, SearchAnswer, YohError } from "../types/domain.ts";
@@ -31,7 +32,7 @@ export async function searchWeb(deps: WebSearchDeps, input: WebSearchInput): Pro
 
   if (!result.ok) {
     deps.session.lastSearchAnswer = undefined;
-    return { ok: true, value: { reply: `I couldn't search for that: ${result.error.message}`, receipts: [] } };
+    return { ok: true, value: { reply: errorCopy(result.error, { service: "web search" }), receipts: [] } };
   }
 
   const { answer, citations } = result.value;

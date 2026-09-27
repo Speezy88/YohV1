@@ -13,6 +13,7 @@
  * file itself).
  */
 import { createPage } from "../adapters/notion-adapter.ts";
+import { errorCopy } from "../core/error-copy.ts";
 import { localIsoDate } from "../rituals/ritual-shared.ts";
 import type { NotionCreatePageBindingFn } from "./create-item.ts";
 import type { ChatSession } from "./chat-session.ts";
@@ -34,7 +35,7 @@ export async function saveSearchResult(deps: SaveSearchResultDeps, _input: Recor
 
   const binding = deps.getNotionCreatePageBinding();
   if (!binding.ok) {
-    return { ok: true, value: { reply: `I couldn't file that: ${binding.error.message}`, receipts: [] } };
+    return { ok: true, value: { reply: errorCopy(binding.error, { service: "Notion" }), receipts: [] } };
   }
 
   const properties: Record<string, string> = {
@@ -47,7 +48,7 @@ export async function saveSearchResult(deps: SaveSearchResultDeps, _input: Recor
 
   const created = await createPage(binding.value.client, binding.value.config, "ResearchVault", properties);
   if (!created.ok) {
-    return { ok: true, value: { reply: `I couldn't file that: ${created.error.message}`, receipts: [] } };
+    return { ok: true, value: { reply: errorCopy(created.error, { service: "Notion" }), receipts: [] } };
   }
 
   return { ok: true, value: { reply: "", receipts: [`Filed "${properties["title"]}" to the Research Vault.`] } };

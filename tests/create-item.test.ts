@@ -85,7 +85,14 @@ function tempDeps(overrides: { bindingOk?: boolean; llmResponse?: string } = {})
     timeZone: "America/Los_Angeles",
     getNotionCreatePageBinding: () =>
       overrides.bindingOk === false
-        ? { ok: false, error: { kind: "missing-field", message: "no Notion config" } }
+        ? {
+            // The real shape `shell/server.ts` returns (Task 4, real-use
+            // fixes plan): a `modulename:`-prefixed message naming raw
+            // environment-variable jargon — `core/error-copy.ts` must never
+            // let this leak verbatim to Spencer.
+            ok: false,
+            error: { kind: "missing-field", message: "server: missing required Notion environment variable(s) — needed to create or file a Notion item" },
+          }
         : { ok: true, value: { client: fakeTasksClient(), config: CREATE_PAGE_CONFIG } },
   };
 }
@@ -102,7 +109,9 @@ test("Notion not configured -> a plain reply naming the problem, nothing propose
   const deps = tempDeps({ bindingOk: false, llmResponse: "title=Buy hiking boots\narea=Errands" });
   const result = await draftItem(deps, { database: "Tasks", request: "buy hiking boots" });
   assert.equal(result.ok, true);
-  if (result.ok) assert.match(result.value.reply, /no Notion config/);
+  // Task 4 (real-use fixes plan): a plain, honest sentence naming Notion —
+  // never the raw "environment variable" jargon.
+  if (result.ok) assert.equal(result.value.reply, "I'm not set up to do that yet — my Notion connection isn't configured.");
   deps.connection.close();
 });
 

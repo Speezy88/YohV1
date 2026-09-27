@@ -107,6 +107,8 @@ test("explainPriority returns a clean Result, never a rejection, when readTasks 
   assert.equal(result.ok, false);
   if (result.ok) return;
   assert.equal(result.error.kind, "unreachable");
-  assert.match(result.error.message, /notion down/);
+  // Task 4 (real-use fixes plan): a plain, honest sentence — never the raw
+  // thrown message ("notion down") verbatim.
+  assert.equal(result.error.message, "I couldn't reach Notion right now; nothing was changed.");
   store.close();
 });

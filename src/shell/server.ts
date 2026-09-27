@@ -90,6 +90,7 @@ import {
   type NotionTaskWriteBindingFn,
 } from "../adapters/notion-adapter.ts";
 import { createAnthropicMessagesClient, loadLlmAdapterConfigFromEnv, type AnthropicMessagesClient } from "../adapters/llm-adapter.ts";
+import { errorCopyForWire, GENERIC_SERVER_ERROR_MESSAGE } from "../core/error-copy.ts";
 import { search as runSearch } from "../adapters/search-adapter.ts";
 import { listNotifications, markNotificationRead } from "../app/notifications.ts";
 import { listCommands } from "../app/commands.ts";
@@ -335,10 +336,18 @@ const CHAT_NOT_CONFIGURED: ChatStreamEvent = {
   error: { kind: "unreachable", message: "server: chat dependencies not configured" },
 };
 
-/** `event: <type>` + `data: <json>` (contract C5). A terminal `error` drops `detail`, the same rule `wire()` applies to JSON envelopes. */
+/**
+ * `event: <type>` + `data: <json>` (contract C5). A terminal `error` drops
+ * `detail`, the same rule `wire()` applies to JSON envelopes, and (review
+ * fix) maps `message` through `errorCopyForWire` — the same transport-level
+ * safety net `wire()` applies — so no stream event (a hardcoded "not
+ * configured" constant, a bubbled-up adapter/rituals message that never
+ * passed through `app/`'s own `errorCopy` calls, or anything else) can leak
+ * raw adapter/module text to `ChatMessage.tsx`'s `errorText` caption.
+ */
 function sseMessage(event: ChatStreamEvent): { event: string; data: string } {
   const wireEvent: ChatStreamEvent =
-    event.type === "error" ? { type: "error", error: { kind: event.error.kind, message: event.error.message } } : event;
+    event.type === "error" ? { type: "error", error: { kind: event.error.kind, message: errorCopyForWire(event.error) } } : event;
   return { event: event.type, data: JSON.stringify(wireEvent) };
 }
 
@@ -383,7 +392,14 @@ export async function runChatStream(
     const result = await runChatTurn({ ...deps, emit: (event) => void send(event) }, input);
     terminal = result.ok ? { type: "done", response: result.value } : { type: "error", error: result.error };
   } catch (err) {
-    terminal = { type: "error", error: { kind: "unreachable", message: err instanceof Error ? err.message : String(err) } };
+    // Review fix: a genuinely unexpected thrown error (a bug, not a `Result`
+    // failure `app/chat-turn.ts` already converted) — log the raw message
+    // server-side (never dropped entirely) but never put it on the wire.
+    // `sseMessage` would map this anyway (it isn't a plain, punctuated,
+    // prefix-free sentence), but this is the ONE place that still knows the
+    // real cause, so it's the one place that can log it.
+    deps.log?.({ level: "error", event: "server.chat-stream-failed", detail: err instanceof Error ? err.message : String(err) });
+    terminal = { type: "error", error: { kind: "unreachable", message: GENERIC_SERVER_ERROR_MESSAGE } };
   }
   await send(terminal);
 }
@@ -460,15 +476,19 @@ export interface ServerDeps {
 /** A failure envelope typed without `ApiResult<never>`'s impossible `{ok: true}` arm, so the RPC client's response type stays exact. */
 type ApiFailure = Extract<ApiResult<never>, { ok: false }>;
 
+// Review fix: these two constants are handed straight to `c.json(...)` at
+// their call sites below, never through `wire()` — so each maps its own
+// `message` through `errorCopyForWire` right here, once, at module load,
+// rather than leaking "server: ... not configured" verbatim.
 const CHECK_OFF_NOT_CONFIGURED: ApiFailure = {
   ok: false,
-  error: { kind: "unreachable", message: "server: check-off dependencies not configured" },
+  error: { kind: "unreachable", message: errorCopyForWire({ kind: "unreachable", message: "server: check-off dependencies not configured" }) },
 };
 
 /** Story 8.6 (Task 7): `GET /api/open-items`/`POST /api/open-items/answer`'s "not configured" failure — reuses the exact same `deps.chat` absence `POST /api/chat` already reports (Preflight ruling P2: all three routes share one deps object). */
 const OPEN_ITEMS_NOT_CONFIGURED: ApiFailure = {
   ok: false,
-  error: { kind: "unreachable", message: "server: chat dependencies not configured" },
+  error: { kind: "unreachable", message: errorCopyForWire({ kind: "unreachable", message: "server: chat dependencies not configured" }) },
 };
 
 /** HTTP status for a serialized `Result` — the body is always the envelope; the status just makes logs and devtools honest. */
@@ -486,9 +506,19 @@ function httpStatus(result: ApiResult<unknown>): ContentfulStatusCode {
   return result.ok ? 200 : ERROR_STATUS[result.error.kind];
 }
 
-/** Drops `detail` (a raw adapter error, possibly with internals) before the envelope crosses the wire. */
+/**
+ * Drops `detail` (a raw adapter error, possibly with internals) before the
+ * envelope crosses the wire, and (review fix) maps `message` through
+ * `errorCopyForWire` — the transport-level safety net that catches
+ * whatever an `app/*.ts` call forgot to map, a hardcoded "not configured"
+ * constant, or a raw `ConflictError`/adapter throw a `rituals/*.ts` catch
+ * site converted without going through `core/error-copy.ts` itself. An
+ * already-mapped, service-specific message (the overwhelmingly common
+ * case, since `app/*.ts` now calls `errorCopy` itself per the real-use
+ * fixes plan) passes through unchanged.
+ */
 function wire<T>(result: ApiResult<T>): ApiResult<T> {
-  return result.ok ? result : { ok: false, error: { kind: result.error.kind, message: result.error.message } };
+  return result.ok ? result : { ok: false, error: { kind: result.error.kind, message: errorCopyForWire(result.error) } };
 }
 
 /**

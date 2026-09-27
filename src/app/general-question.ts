@@ -16,6 +16,7 @@ import {
   CLAUDE_CHAT_MODEL_FAST,
   type AnthropicMessagesClient,
 } from "../adapters/llm-adapter.ts";
+import { errorCopyForThrown } from "../core/error-copy.ts";
 import { classifyTone, resolveToneSystemPrompt } from "../core/tone.ts";
 import type { ChatStreamEvent, ChatTurnResponse } from "../types/api.ts";
 import type { ChatTurn, Result, YohError } from "../types/domain.ts";
@@ -28,10 +29,6 @@ export interface GeneralQuestionDeps {
 export interface AnswerQuestionInput {
   readonly message: string;
   readonly history: readonly ChatTurn[];
-}
-
-function describeError(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 /**
@@ -61,6 +58,6 @@ export async function answerQuestion(
     const reply = await answerGeneralQuestion(deps.llmClient, input.history, systemPrompt, model);
     return { ok: true, value: { reply, receipts: [] } };
   } catch (err) {
-    return { ok: false, error: { kind: "unreachable", message: `I hit a problem trying to answer that: ${describeError(err)}` } };
+    return { ok: false, error: { kind: "unreachable", message: errorCopyForThrown(err, { service: "Claude" }) } };
   }
 }

@@ -7,6 +7,7 @@
  * adapter throws and convert them to `Result`.
  */
 import { getSlipHistory, type MemoryStore } from "../adapters/memory-store.ts";
+import { errorCopyForThrown } from "../core/error-copy.ts";
 import { computeSlipBumpLevel } from "../core/slip-bump.ts";
 import type { ChatTurnResponse } from "../types/api.ts";
 import type { Result, Task, YohError } from "../types/domain.ts";
@@ -18,10 +19,6 @@ export interface WhyPrioritizedDeps {
 
 export interface ExplainPriorityInput {
   readonly taskName: string;
-}
-
-function describeError(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 /**
@@ -45,7 +42,7 @@ export async function explainPriority(
   try {
     tasks = await deps.readTasks();
   } catch (err) {
-    return { ok: false, error: { kind: "unreachable", message: `I couldn't check why that's prioritized: ${describeError(err)}` } };
+    return { ok: false, error: { kind: "unreachable", message: errorCopyForThrown(err, { service: "Notion" }) } };
   }
 
   const normalized = input.taskName.trim().toLowerCase();

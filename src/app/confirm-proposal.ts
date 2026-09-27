@@ -274,7 +274,13 @@ export async function confirmProposal(
     const reparsed = parsePlanningFieldValue(suggestion.field, String(suggestion.value));
     if (!reparsed.ok) {
       clearRequestIfGiven(deps.store, requestId);
-      return { ok: false, error: { kind: "validation", message: `confirm-proposal: ${reparsed.message}` } };
+      // `reparsed.message` (core/planning-field-value.ts) is already a
+      // plain, Spencer-facing sentence — never re-prefixed with this
+      // module's own internal name (Task 4: `core/error-copy.ts`'s
+      // validation branch keeps an already-plain sentence verbatim, but
+      // only if nothing here glues an adapter-style prefix back onto it
+      // first).
+      return { ok: false, error: { kind: "validation", message: reparsed.message } };
     }
     const written = await deps.updateTaskField(suggestion.taskId, suggestion.field, reparsed.value as NonNullable<Task[PlanningFieldNames]>);
     clearRequestIfGiven(deps.store, requestId);

@@ -8,6 +8,7 @@
  * still doesn't recognize keeps the pre-Epic-8 generic behavior.
  */
 import { clearInteractionRequest, getOpenInteractionRequest, type InteractionRequest, type MemoryStore, type StoredRecord } from "../adapters/memory-store.ts";
+import { errorCopy, serviceForProposalKind } from "../core/error-copy.ts";
 import { parseProposalAnswer } from "../core/open-item-answers.ts";
 import { PROPOSAL_QUESTION_ID } from "../core/open-item-questions.ts";
 import { answerDataCompleteness, type AnswerDataCompletenessDeps } from "./answer-data-completeness.ts";
@@ -79,7 +80,11 @@ async function answerProposalOpenItem(
 
   const result = await confirmProposal(deps, { proposal, accept: parsed, requestId: record.id });
   if (!result.ok) {
-    return { ok: true, value: { message: `I can't apply that any more — ${result.error.message}`, receipts: [], next: "done" } };
+    const service = serviceForProposalKind(proposal.kind);
+    return {
+      ok: true,
+      value: { message: errorCopy(result.error, service !== undefined ? { service } : {}), receipts: [], next: "done" },
+    };
   }
 
   return {
