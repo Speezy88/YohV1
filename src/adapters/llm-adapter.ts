@@ -498,6 +498,57 @@ export async function classifyChatIntent(client: AnthropicMessagesClient, line: 
 }
 
 // ============================================================================
+// detectTaskCapture (Story 8.8 / FR-26 extended, AD-14's cost discipline) —
+// chat-turn.ts calls this ONLY after every deterministic recognizer
+// (time-budget, plan-view, mid-day-reflow, blocker, why-prioritized,
+// save-search-result, create-item's explicit Notion mention, calendar-edit)
+// has already failed to match — never on every message unconditionally. It
+// answers one question only: "does this line describe something Spencer
+// wants tracked as a new Task?" It does NOT draft the Task's fields itself —
+// a hit is handed off to the existing draftNotionPageFields/createPage
+// pipeline via app/create-item.ts's draftItem, unchanged, so a captured Task
+// goes through the exact same confirm-then-write trust boundary as an
+// explicit "create a task ..." command. Controller ruling: `ChatIntent`
+// (domain.ts) is not widened for this — this is its own function/shape.
+// ============================================================================
+
+const DETECT_TASK_CAPTURE_MAX_TOKENS = 16;
+
+const DETECT_TASK_CAPTURE_SYSTEM_PROMPT = [
+  "You are Yoh's task-capture detector. Decide whether Spencer's message describes something he needs to DO or produce later — a new Task he wants tracked (an assignment, an errand, a chore, a deliverable, with or without a stated due date) — as opposed to a question he's asking, a status update, or ordinary conversation.",
+  "If it clearly describes a new Task to track, respond with exactly: CAPTURE",
+  "Otherwise (a question, a greeting, a status update, small talk, or anything ambiguous) respond with exactly: NONE",
+].join("\n");
+
+/**
+ * Returns `{request: line}` (the ONE input `app/create-item.ts`'s `draftItem`
+ * needs — the same shape `parseCreateItemCommand` already returns as
+ * `.request`) when Claude confidently says `line` describes a new Task, else
+ * `undefined`. Never throws for "not a capture" — only a genuine API/
+ * transport failure propagates (AD-8), exactly like
+ * `classifyChatIntent`/`draftCalendarEditRequest` above.
+ */
+export async function detectTaskCapture(
+  client: AnthropicMessagesClient,
+  line: string,
+): Promise<{ readonly request: string } | undefined> {
+  const message = await client.messages.create({
+    model: CLAUDE_CHAT_MODEL_FAST,
+    max_tokens: DETECT_TASK_CAPTURE_MAX_TOKENS,
+    system: DETECT_TASK_CAPTURE_SYSTEM_PROMPT,
+    messages: [{ role: "user", content: line }],
+  });
+
+  const text = message.content
+    .filter((block): block is Anthropic.TextBlock => block.type === "text")
+    .map((block) => block.text)
+    .join("\n")
+    .trim();
+
+  return /^CAPTURE\b/i.test(text) ? { request: line } : undefined;
+}
+
+// ============================================================================
 // draftCalendarEditRequest (Story 6.6 / FR-27) — extracts a structured
 // move/resize/create request from Spencer's free-text calendar-edit
 // message. Never validates against the live Calendar itself (that's

@@ -82,4 +82,35 @@ describe("CommandPalette", () => {
     await waitFor(() => expect(screen.getAllByRole("option")).toHaveLength(2));
     expect(screen.getByTestId("command-row-/morning")).toHaveAttribute("aria-selected", "true");
   });
+
+  // ==========================================================================
+  // Story 8.8 review carry-in (from 8.7): combobox semantics — a stable id
+  // per option, reported to the owning input via onHighlightedOptionChange
+  // as ↑/↓ move the highlight, so it can set its own aria-activedescendant.
+  // ==========================================================================
+
+  it("reports the top row's own id on mount, via onHighlightedOptionChange", async () => {
+    const onHighlightedOptionChange = vi.fn();
+    render(<CommandPalette query="/" onRun={() => {}} onClose={() => {}} onHighlightedOptionChange={onHighlightedOptionChange} />);
+    await waitFor(() => expect(screen.getByTestId("command-row-/morning")).toBeInTheDocument());
+    const morningId = screen.getByTestId("command-row-/morning").id;
+    expect(morningId).toBeTruthy();
+    expect(onHighlightedOptionChange).toHaveBeenLastCalledWith(morningId);
+  });
+
+  it("↓ reports the NEXT row's id, matching that row's own DOM id", async () => {
+    const onHighlightedOptionChange = vi.fn();
+    render(<CommandPalette query="/" onRun={() => {}} onClose={() => {}} onHighlightedOptionChange={onHighlightedOptionChange} />);
+    await waitFor(() => expect(screen.getByTestId("command-row-/night")).toBeInTheDocument());
+    fireEvent.keyDown(document, { key: "ArrowDown" });
+    const nightId = screen.getByTestId("command-row-/night").id;
+    expect(onHighlightedOptionChange).toHaveBeenLastCalledWith(nightId);
+  });
+
+  it("reports undefined when no command matches (nothing to point at)", async () => {
+    const onHighlightedOptionChange = vi.fn();
+    render(<CommandPalette query="/zzz" onRun={() => {}} onClose={() => {}} onHighlightedOptionChange={onHighlightedOptionChange} />);
+    await waitFor(() => expect(screen.getByText("No matching command")).toBeInTheDocument());
+    expect(onHighlightedOptionChange).toHaveBeenLastCalledWith(undefined);
+  });
 });

@@ -14,8 +14,16 @@
  * Input's own bubble-phase Enter-to-send handler, and `stopPropagation()`
  * here keeps that handler from also firing.
  *
- * The highlighted row gets a 1.5px accent-solid rim (`--rim-width`). No
- * match shows "No matching command" plus the full list.
+ * The highlighted row gets an accent-solid rim (`--rim-width`). No match
+ * shows "No matching command" plus the full list.
+ *
+ * Story 8.8 review carry-in (from 8.7): full combobox semantics. Each row
+ * has a stable `id` (`role="option"` was already there); the OWNING text
+ * input (`ChatInput.tsx` / `ChatBubble.tsx` — this component never renders
+ * the input itself, so it can't set the attribute on itself) sets
+ * `aria-activedescendant` to the highlighted row's id via
+ * `onHighlightedOptionChange`, so a screen reader announces the highlighted
+ * command as ↑/↓ move it, without moving DOM focus off the input.
  */
 import { useEffect, useState } from "react";
 import { fetchCommands, filterCommands } from "../lib/commands.ts";
@@ -25,9 +33,16 @@ export interface CommandPaletteProps {
   readonly query: string;
   readonly onRun: (name: string) => void;
   readonly onClose: () => void;
+  /** Story 8.8 review carry-in: called whenever the highlighted row's id changes (including on mount and back to `undefined` if the list becomes empty), so the owning input can mirror it as its own `aria-activedescendant`. */
+  readonly onHighlightedOptionChange?: (id: string | undefined) => void;
 }
 
-export function CommandPalette({ query, onRun, onClose }: CommandPaletteProps): React.JSX.Element {
+/** A stable DOM id for `command`'s row — `aria-activedescendant` needs an id it can point at; `/` is stripped since it reads oddly in an id. */
+function optionId(command: CommandDescriptor): string {
+  return `command-option-${command.name.replace(/\//g, "")}`;
+}
+
+export function CommandPalette({ query, onRun, onClose, onHighlightedOptionChange }: CommandPaletteProps): React.JSX.Element {
   const [commands, setCommands] = useState<readonly CommandDescriptor[]>([]);
   const [highlighted, setHighlighted] = useState(0);
 
@@ -47,6 +62,14 @@ export function CommandPalette({ query, onRun, onClose }: CommandPaletteProps): 
   useEffect(() => {
     setHighlighted(0); // a new keystroke changed the filtered set — re-highlight the top row.
   }, [query, commands.length]);
+
+  useEffect(() => {
+    onHighlightedOptionChange?.(filtered.length > 0 ? optionId(filtered[highlighted]!) : undefined);
+    // filtered is re-derived every render from commands/query, so listing it
+    // as a dep would fire this on every render — highlighted/commands/query
+    // are the only real triggers.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [highlighted, commands, query, onHighlightedOptionChange]);
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent): void {
@@ -79,12 +102,13 @@ export function CommandPalette({ query, onRun, onClose }: CommandPaletteProps): 
       {rows.map((c, i) => (
         <div
           key={c.name}
+          id={optionId(c)}
           role="option"
           data-testid={`command-row-${c.name}`}
           aria-selected={filtered.length > 0 && i === highlighted}
           onClick={() => onRun(c.name)}
           className={
-            "flex cursor-pointer items-baseline justify-between gap-2 rounded-sm border-[1.5px] px-2 py-1 " +
+            "flex cursor-pointer items-baseline justify-between gap-2 rounded-sm border-[length:var(--rim-width)] px-2 py-1 " +
             (filtered.length > 0 && i === highlighted ? "border-accent-solid" : "border-transparent")
           }
         >

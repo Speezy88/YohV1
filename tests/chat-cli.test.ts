@@ -570,8 +570,8 @@ test("runChatCli: input that isn't a Time Budget or Plan-view command routes thr
   assert.ok(io.written.includes("It's sunny where you are, probably."));
   assert.equal(
     llmClient.calls.length,
-    2,
-    "expected exactly two Claude calls for the unmatched input: classifyChatIntent (Story 6.4), then the general-qa answer",
+    3,
+    "expected exactly three Claude calls for the unmatched input: detectTaskCapture (Story 8.8), classifyChatIntent (Story 6.4), then the general-qa answer",
   );
   store.close();
 });
@@ -601,10 +601,11 @@ test("runChatCli: passes core/tone.ts's resolveToneSystemPrompt(line) as the sys
 
   await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient });
 
-  // calls[0] is classifyChatIntent's own system prompt (Story 6.4);
-  // calls[1] is the actual general-qa answer call this test is about.
-  assert.equal(llmClient.calls.length, 2);
-  assert.equal(llmClient.calls[1]!.system, resolveToneSystemPrompt("hey, what's up"));
+  // calls[0] is detectTaskCapture's own call (Story 8.8); calls[1] is
+  // classifyChatIntent's (Story 6.4); calls[2] is the actual general-qa
+  // answer call this test is about.
+  assert.equal(llmClient.calls.length, 3);
+  assert.equal(llmClient.calls[2]!.system, resolveToneSystemPrompt("hey, what's up"));
   store.close();
 });
 
@@ -615,8 +616,8 @@ test("runChatCli: passes core/tone.ts's resolveToneSystemPrompt(line) as the sys
 
   await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient });
 
-  assert.equal(llmClient.calls.length, 2);
-  const sentSystemPrompt = llmClient.calls[1]!.system;
+  assert.equal(llmClient.calls.length, 3);
+  const sentSystemPrompt = llmClient.calls[2]!.system;
   assert.equal(sentSystemPrompt, resolveToneSystemPrompt("What's the difference between TCP and UDP?"));
   assert.notEqual(sentSystemPrompt, resolveToneSystemPrompt("hey, what's up"));
   store.close();
@@ -637,8 +638,8 @@ test("runChatCli: an ordinary casual message routes the general-qa answer to CLA
 
   await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient });
 
-  assert.equal(llmClient.calls.length, 2);
-  assert.equal(llmClient.calls[1]!.model, CLAUDE_CHAT_MODEL_FAST);
+  assert.equal(llmClient.calls.length, 3);
+  assert.equal(llmClient.calls[2]!.model, CLAUDE_CHAT_MODEL_FAST);
   store.close();
 });
 
@@ -649,8 +650,8 @@ test("runChatCli: a factual/analytical message escalates the general-qa answer t
 
   await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient });
 
-  assert.equal(llmClient.calls.length, 2);
-  assert.equal(llmClient.calls[1]!.model, CLAUDE_CHAT_MODEL_CAPABLE);
+  assert.equal(llmClient.calls.length, 3);
+  assert.equal(llmClient.calls[2]!.model, CLAUDE_CHAT_MODEL_CAPABLE);
   store.close();
 });
 
@@ -670,9 +671,9 @@ test("runChatCli: a second general-qa turn's history includes the first turn's q
 
   await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient });
 
-  // calls: [classify #1, general-qa #1, classify #2, general-qa #2].
-  assert.equal(llmClient.calls.length, 4);
-  const history = llmClient.calls[3]!.messages as Array<{ role: string; content: string }>;
+  // calls: [capture #1, classify #1, general-qa #1, capture #2, classify #2, general-qa #2].
+  assert.equal(llmClient.calls.length, 6);
+  const history = llmClient.calls[5]!.messages as Array<{ role: string; content: string }>;
   assert.deepEqual(history[0], { role: "user", content: "what's 2+2" });
   assert.equal(history[1]!.role, "assistant");
   // The assistant turn also folds in the divider/next-prompt text printed
@@ -692,10 +693,11 @@ test("runChatCli: a deterministic flow's own output (never touching Claude) stil
   await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient });
 
   // "time budget 6 hours" is recognized deterministically — zero Claude
-  // calls (Story 8.4 restores the original dispatch order). calls[0]/[1]
-  // are the SECOND line's own classify + general-qa calls.
-  assert.equal(llmClient.calls.length, 2);
-  const historySent = llmClient.calls[1]!.messages as Array<{ role: string; content: string }>;
+  // calls (Story 8.4 restores the original dispatch order). calls[0..2]
+  // are the SECOND line's own capture (Story 8.8) + classify + general-qa
+  // calls.
+  assert.equal(llmClient.calls.length, 3);
+  const historySent = llmClient.calls[2]!.messages as Array<{ role: string; content: string }>;
   assert.equal(historySent[0]!.role, "user");
   assert.equal(historySent[0]!.content, "time budget 6 hours");
   assert.equal(historySent[1]!.role, "assistant");

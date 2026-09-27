@@ -10,8 +10,21 @@
  * typed, trimmed line); the caller (`OpenItems.tsx` / `ChatMessage.tsx`)
  * turns that into an `AnswerOpenItemRequest` and records Spencer's turn
  * (UX-DR38: "recorded as Spencer's turn").
+ *
+ * Story 8.8 AC3: the first option chip is pre-focused the moment a question
+ * mounts, so Enter alone confirms it (used by the capture flow's "Create"
+ * chip — `app/create-item.ts`'s `CREATE_ITEM_OPTIONS` puts it first). This
+ * is a plain mount-only effect, not a prop-driven key: every real caller
+ * already gives a genuinely NEW question its own fresh component instance —
+ * `OpenItems.tsx` keys each card by `requestId:questionId` (so a
+ * DIFFERENT question remounts and re-focuses, while a re-render of the
+ * SAME item, e.g. an unrelated refetch, reuses the same instance and never
+ * steals focus back), and `ChatMessage.tsx` mounts this element fresh the
+ * instant `message.question` first appears. So an effect that fires once,
+ * on mount, is exactly the right behavior for both callers without adding
+ * any new prop to this component.
  */
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 
 export interface StructuredQuestionOption {
   readonly label: string;
@@ -30,6 +43,13 @@ export interface StructuredQuestionProps {
 export function StructuredQuestion({ text, options, allowsFreeText, busy = false, onAnswer }: StructuredQuestionProps): React.JSX.Element {
   const [picked, setPicked] = useState<string | undefined>(undefined);
   const [freeText, setFreeText] = useState("");
+  const firstChipRef = useRef<HTMLButtonElement>(null);
+
+  useLayoutEffect(() => {
+    firstChipRef.current?.focus();
+    // Mount-only, intentionally: see this component's own doc comment above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const pick = (value: string): void => {
     if (busy) return;
@@ -49,11 +69,12 @@ export function StructuredQuestion({ text, options, allowsFreeText, busy = false
       <p>{text}</p>
       {options.length > 0 && (
         <div className="flex flex-wrap gap-2" role="group" aria-label="Answer options">
-          {options.map((option) => {
+          {options.map((option, i) => {
             const selected = picked === option.value;
             return (
               <button
                 key={option.value}
+                ref={i === 0 ? firstChipRef : undefined}
                 type="button"
                 disabled={busy}
                 aria-pressed={selected}

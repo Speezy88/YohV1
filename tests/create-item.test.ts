@@ -13,7 +13,7 @@ import assert from "node:assert/strict";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { createMemoryStore } from "../src/adapters/memory-store.ts";
 import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
-import { draftItem, type CreateItemDeps } from "../src/app/create-item.ts";
+import { draftItem, CREATE_ITEM_OPTIONS, type CreateItemDeps } from "../src/app/create-item.ts";
 import type { AnthropicMessagesClient } from "../src/adapters/llm-adapter.ts";
 import type { NotionCreatePageClient, NotionCreatePageConfig } from "../src/adapters/notion-adapter.ts";
 
@@ -125,5 +125,23 @@ test("a valid draft is persisted as an open Proposal and returned as `question`,
   assert.ok(result.value.question, "expected a follow-up confirm question");
   assert.equal(result.value.question?.questionId, "confirm");
   assert.match(result.value.question?.text ?? "", /Here's what I'll create in Tasks/);
+  deps.connection.close();
+});
+
+test("draftItem's confirm question leads with 'Create', not a bare 'Yes' (Story 8.8 AC3) — the VALUE stays 'yes'/'no'", async () => {
+  const deps = tempDeps({ llmResponse: "title=Buy hiking boots\narea=Errands" });
+  const result = await draftItem(deps, { database: "Tasks", request: "create a task to buy hiking boots" });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.ok(result.value.question, "a valid draft always opens a confirm question");
+  assert.deepEqual(result.value.question?.options, CREATE_ITEM_OPTIONS);
+  assert.deepEqual(
+    result.value.question?.options.map((o) => o.label),
+    ["Create", "Cancel"],
+  );
+  assert.deepEqual(
+    result.value.question?.options.map((o) => o.value),
+    ["yes", "no"],
+  );
   deps.connection.close();
 });

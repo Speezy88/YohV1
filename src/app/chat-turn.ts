@@ -1,23 +1,28 @@
 /**
  * src/app/chat-turn.ts
  *
- * Story 8.3 (AD-16, C3), extended by Story 8.4. The one surface-agnostic
- * entry point every non-slash chat line goes through: `chatTurn(deps,
- * input)` dispatches, in priority order, on this file's eight deterministic
- * recognizers (`core/chat-commands.ts`) — Time Budget, Plan-view, Mid-Day
- * Re-Flow, Blocker report, why-prioritized (Story 8.3), then
- * save-search-result, create-item, calendar-edit (Story 8.4, F6/Epic 6
- * retro order) — then a `classifyChatIntent` call for a `"search-trigger"`
+ * Story 8.3 (AD-16, C3), extended by Story 8.4 and Story 8.8. The one
+ * surface-agnostic entry point every non-slash chat line goes through:
+ * `chatTurn(deps, input)` dispatches, in priority order, on this file's
+ * eight deterministic recognizers (`core/chat-commands.ts`) — Time Budget,
+ * Plan-view, Mid-Day Re-Flow, Blocker report, why-prioritized (Story 8.3),
+ * then save-search-result, create-item, calendar-edit (Story 8.4, F6/Epic 6
+ * retro order) — then, once every deterministic recognizer above has
+ * failed, a `detectTaskCapture` call (Story 8.8, FR-26 extended: a
+ * free-text Task description with none of the above phrasing routes
+ * through the SAME `draftItem` create-path an explicit "create a task ..."
+ * line uses) — then a `classifyChatIntent` call for a `"search-trigger"`
  * vs. everything else, and only once NONE of the above matched does it fall
  * through to `app/general-question.ts`'s `answerQuestion` as the final,
  * unconditional fallback. This restores the original, pre-Epic-8 dispatch
- * order (every deterministic recognizer checked before the one paid
+ * order (every deterministic recognizer checked before either paid
  * classifier call) and its two invariants: a recognized command costs ZERO
- * Claude calls, and a truly unmatched line costs exactly two (classify, then
- * the general-qa answer). It never itself emits a `"done"`/`"error"` stream
- * event — only `"status"` and (relayed from `answerQuestion`) `"delta"`. The
- * caller that owns the stream's terminal event (a future server) builds it
- * from this function's own returned `Result`, after the last delta.
+ * Claude calls, and a truly unmatched line costs exactly three
+ * (`detectTaskCapture`, then `classifyChatIntent`, then the general-qa
+ * answer). It never itself emits a `"done"`/`"error"` stream event — only
+ * `"status"` and (relayed from `answerQuestion`) `"delta"`. The caller that
+ * owns the stream's terminal event (a future server) builds it from this
+ * function's own returned `Result`, after the last delta.
  *
  * Also owns `MAX_CHAT_HISTORY_TURNS` (moved from `chat-cli.ts`'s private
  * const of the same name/value — that file's own `pushChatTurn` now imports
@@ -37,7 +42,7 @@ import {
   parseTimeBudgetCommand,
   parseWhyPrioritizedCommand,
 } from "../core/chat-commands.ts";
-import { classifyChatIntent } from "../adapters/llm-adapter.ts";
+import { classifyChatIntent, detectTaskCapture } from "../adapters/llm-adapter.ts";
 import { reportBlocker } from "./blocker-report.ts";
 import { RECENT_MESSAGES_WINDOW, type ChatSession } from "./chat-session.ts";
 import { proposeCalendarEdit, type CalendarEditDeps } from "./calendar-edit.ts";
@@ -200,6 +205,30 @@ export async function chatTurn(deps: ChatTurnDeps, input: ChatTurnRequest): Prom
     if (!isEmptyFallThrough) return calendarResult;
     // else: not actually a calendar edit ("move on to the next topic") —
     // fall through to the classify/general-chat path below.
+  }
+
+  // Story 8.8 (FR-26 extended): "Lab report draft, due Thursday" matches
+  // none of the deterministic recognizers above (no "create/add/new", no
+  // Notion mention) — one more LLM call, but ONLY once every deterministic
+  // check has already failed, mirroring classifyChatIntent's own AD-14 cost
+  // discipline immediately below. A hit routes through the SAME
+  // confirm-then-write pipeline an explicit "create a task ..." command
+  // uses — draftItem persists its Proposal via openProposal and returns it
+  // as this turn's `question`; nothing is written yet. `detectTaskCapture`
+  // is a bare adapter call (unlike every other capability above, which is
+  // itself an `app/*.ts` function that already converts a thrown adapter
+  // failure into a `Result`), so this try/catch is what keeps AD-8's "app/
+  // catches and converts" contract true for `chatTurn` as a whole — a
+  // transport failure here must never block the ordinary chat turn, same
+  // as `classifyChatIntent`'s own catch immediately below.
+  let captured: { readonly request: string } | undefined;
+  try {
+    captured = await detectTaskCapture(deps.llmClient, input.message);
+  } catch {
+    captured = undefined;
+  }
+  if (captured) {
+    return draftItem(deps, { database: "Tasks", request: captured.request });
   }
 
   let chatIntent: ChatIntent = { kind: "general-question" };

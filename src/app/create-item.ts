@@ -19,8 +19,21 @@ import { randomUUID } from "node:crypto";
 import { draftNotionPageFields, type AnthropicMessagesClient } from "../adapters/llm-adapter.ts";
 import { resolveNotionPageDraftProperties, type NotionCreatePageClient, type NotionCreatePageConfig } from "../adapters/notion-adapter.ts";
 import { openProposal, type OpenProposalDeps } from "./open-proposal.ts";
-import type { ChatTurnResponse } from "../types/api.ts";
+import type { ChatTurnResponse, OpenItemOption } from "../types/api.ts";
 import type { NotionDatabaseTarget, NotionPageDraft, Proposal, Result, YohError } from "../types/domain.ts";
+
+/**
+ * Story 8.8 AC3: a generic Yes/No reads oddly for "did you want me to
+ * CREATE this" — every notion-page-draft confirm leads with "Create",
+ * pre-focused by `StructuredQuestion.tsx` so Enter alone confirms it. The
+ * VALUES are unchanged ("yes"/"no") — only the label changes;
+ * `answerOpenItem`/`parseProposalAnswer` read the value, never the label, so
+ * this is purely cosmetic and touches no other file.
+ */
+export const CREATE_ITEM_OPTIONS: readonly OpenItemOption[] = [
+  { label: "Create", value: "yes" },
+  { label: "Cancel", value: "no" },
+];
 
 /**
  * The one place this task's code names `resolveNotionPageDraftProperties` —
@@ -110,5 +123,6 @@ export async function draftItem(deps: CreateItemDeps, input: CreateItemInput): P
     };
   }
 
-  return { ok: true, value: { reply: "", receipts: [], question: opened.value } };
+  const question = { ...opened.value, options: CREATE_ITEM_OPTIONS };
+  return { ok: true, value: { reply: "", receipts: [], question } };
 }

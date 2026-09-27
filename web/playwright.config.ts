@@ -17,6 +17,18 @@ const E2E_PORT = 8788;
 
 export default defineConfig({
   testDir: "./e2e",
+  // Story 8.8 (controller ruling): every spec file shares ONE
+  // `tests/e2e/fixture-server.ts` process and ONE stateful SQLite DB behind
+  // it (module-level store, fake Notion clients, etc.) — some specs already
+  // depend on run ORDER within their own file (open-items.spec.ts's own
+  // comment: "non-destructive case runs FIRST... consumes the fixture's one
+  // seeded item, runs LAST"). Playwright's default worker count runs
+  // DIFFERENT spec files in parallel, which races two files' requests
+  // against that one shared process/DB. Serial execution (one worker) is
+  // the correct isolation boundary here, not a workaround — it keeps the
+  // whole suite's execution order deterministic without changing any spec
+  // or standing up a fixture server/DB per file.
+  workers: 1,
   webServer: {
     command: `cd .. && npm run build:web && YOH_SERVER_PORT=${E2E_PORT} node tests/e2e/fixture-server.ts`,
     url: `http://127.0.0.1:${E2E_PORT}/api/health`,

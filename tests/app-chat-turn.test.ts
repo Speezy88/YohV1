@@ -148,7 +148,7 @@ test("Story 8.4: a recognized Plan-view command never reaches classifyChatIntent
   assert.equal((llmClient as any).calls.length, 0, "a Task-4 recognizer match must short-circuit BEFORE classifyChatIntent ever runs");
 });
 
-test("chatTurn falls through to answerQuestion for an unmatched line, costing exactly two LLM calls (Story 8.4: chatTurn's own classifyChatIntent, then answerQuestion's own call)", async () => {
+test("chatTurn falls through to answerQuestion for an unmatched line, costing exactly three LLM calls (Story 8.8: chatTurn's own detectTaskCapture, then classifyChatIntent, then answerQuestion's own call)", async () => {
   const llmClient = makeFakeLlmClient("It's sunny where you are, probably.");
   const deps = baseDeps({ llmClient });
 
@@ -157,7 +157,11 @@ test("chatTurn falls through to answerQuestion for an unmatched line, costing ex
   assert.equal(result.ok, true);
   if (!result.ok) return;
   assert.equal(result.value.reply, "It's sunny where you are, probably.");
-  assert.equal((llmClient as any).calls.length, 2, "expected exactly two Claude calls for the unmatched input: classifyChatIntent, then the general-qa answer");
+  assert.equal(
+    (llmClient as any).calls.length,
+    3,
+    "expected exactly three Claude calls for the unmatched input: detectTaskCapture, classifyChatIntent, then the general-qa answer",
+  );
 });
 
 // ============================================================================
@@ -176,10 +180,11 @@ test("chatTurn trims an untrimmed history down to MAX_CHAT_HISTORY_TURNS before 
 
   await chatTurn(deps, { message: "turn-49", history: longHistory });
 
-  // calls[0] is chatTurn's own classifyChatIntent call (Story 8.4, sent
-  // only the current line, not the history); calls[1] is answerQuestion's
-  // own call, the one this test is actually about.
-  const sentMessages = (llmClient as any).calls[1].messages as ReadonlyArray<{ role: string; content: string }>;
+  // calls[0] is chatTurn's own detectTaskCapture call (Story 8.8), calls[1]
+  // is its classifyChatIntent call (Story 8.4, sent only the current line,
+  // not the history); calls[2] is answerQuestion's own call, the one this
+  // test is actually about.
+  const sentMessages = (llmClient as any).calls[2].messages as ReadonlyArray<{ role: string; content: string }>;
   assert.equal(sentMessages.length, MAX_CHAT_HISTORY_TURNS);
   assert.deepEqual(sentMessages, longHistory.slice(longHistory.length - MAX_CHAT_HISTORY_TURNS));
   assert.equal(sentMessages[0]!.role, "user", "trimming must remove complete pairs, never leaving an assistant turn first");
@@ -205,7 +210,8 @@ test("Story 8.6 (Task 7): trimming drops a leading assistant turn if one slips t
 
   await chatTurn(deps, { message: "turn-49", history });
 
-  const sentMessages = (llmClient as any).calls[1].messages as ReadonlyArray<{ role: string; content: string }>;
+  // calls[0] is detectTaskCapture, calls[1] is classifyChatIntent, calls[2] is answerQuestion (see the test above).
+  const sentMessages = (llmClient as any).calls[2].messages as ReadonlyArray<{ role: string; content: string }>;
   assert.equal(sentMessages[0]!.role, "user", "the trimmed history handed to the Messages API must never start with 'assistant'");
 });
 
@@ -318,14 +324,15 @@ test("Review Focus #4: a calendar-edit line whose draft is NONE falls through to
   assert.equal(result.ok, true);
   if (!result.ok) return;
   // draftCalendarEditRequest's own call returns "NONE" -> proposeCalendarEdit
-  // returns the empty fall-through convention -> classifyChatIntent (also
-  // "NONE", not "SEARCH: ...", so GENERAL) -> answerQuestion, which answers
-  // with this same fake client's fixed response text.
+  // returns the empty fall-through convention -> detectTaskCapture (Story
+  // 8.8, also "NONE") -> classifyChatIntent (also "NONE", not "SEARCH: ...",
+  // so GENERAL) -> answerQuestion, which answers with this same fake
+  // client's fixed response text.
   assert.equal(result.value.reply, "NONE");
   assert.equal(
     (llmClient as any).calls.length,
-    3,
-    "expected draftCalendarEditRequest, then classifyChatIntent, then answerQuestion — the empty fall-through must never be handed back to Spencer as a real (blank) answer",
+    4,
+    "expected draftCalendarEditRequest, then detectTaskCapture, then classifyChatIntent, then answerQuestion — the empty fall-through must never be handed back to Spencer as a real (blank) answer",
   );
 });
 
@@ -447,6 +454,125 @@ test("command matching is case-insensitive, and a trailing word after the comman
   assert.ok(result.ok);
   if (!result.ok) return;
   assert.doesNotMatch(result.value.reply, /No command named/);
+});
+
+// ============================================================================
+// Story 8.8 (FR-26 extended): capture detection — inserted after every
+// deterministic recognizer, before classifyChatIntent. A hit routes through
+// draftItem's SAME confirm-then-write pipeline an explicit "create a task
+// ..." command uses; a genuine question or an ordinary statement must never
+// be captured.
+// ============================================================================
+
+/** Dispatches a fake client's response by a distinguishing substring of the system prompt — detectTaskCapture's, draftNotionPageFields', and classifyChatIntent's system prompts are each worded distinctly (mirrors how each real function's own prompt already reads distinctly to a human). */
+function fakeCaptureRoutingClient(capture: "CAPTURE" | "NONE", draftFields = "title=Lab report draft") {
+  const calls: any[] = [];
+  return {
+    calls,
+    messages: {
+      create: async (params: any) => {
+        calls.push(params);
+        const system = typeof params.system === "string" ? params.system : "";
+        const text = system.includes("task-capture detector") ? capture : system.includes("structured draft for a new") ? draftFields : "GENERAL";
+        return {
+          id: "msg_test",
+          container: null,
+          content: [{ type: "text", text, citations: null }],
+          model: "test-model",
+          role: "assistant",
+          stop_details: null,
+          stop_reason: "end_turn",
+          stop_sequence: null,
+          type: "message",
+          usage: { input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: null, cache_read_input_tokens: null, server_tool_use: null, service_tier: null },
+        };
+      },
+    },
+  } as unknown as AnthropicMessagesClient & { readonly calls: any[] };
+}
+
+/** A minimal real-shaped `NotionCreatePageClient` fake for the Tasks database (mirrors `tests/create-item.test.ts`'s own `fakeTasksClient` fixture — `isFullDataSource` needs every one of these fields, not just `properties`). */
+function fakeTasksNotionCreateClient() {
+  const schema = {
+    object: "data_source",
+    id: "tasks-ds",
+    title: [],
+    description: [],
+    parent: { type: "database_id", database_id: "tasks-ds-db" },
+    database_parent: { type: "database_id", database_id: "tasks-ds-db" },
+    is_inline: false,
+    in_trash: false,
+    archived: false,
+    created_time: "2026-08-01T09:00:00.000Z",
+    last_edited_time: "2026-08-01T09:00:00.000Z",
+    created_by: { object: "user", id: "user-1" },
+    last_edited_by: { object: "user", id: "user-1" },
+    icon: null,
+    cover: null,
+    url: "https://notion.so/tasks-ds",
+    public_url: null,
+    properties: {
+      Name: { id: "title", name: "Name", description: null, type: "title", title: {} },
+    },
+  } as any;
+  return {
+    dataSources: { retrieve: async () => schema },
+    pages: { create: async () => ({ object: "page", id: "new-page-id", url: "https://notion.so/new-page-id" }) as any },
+  };
+}
+
+test("chatTurn routes a captured Task description through draftItem's Tasks-database path, not general chat", async () => {
+  const llmClient = fakeCaptureRoutingClient("CAPTURE");
+  const deps = baseDeps({
+    llmClient,
+    getNotionCreatePageBinding: () => ({
+      ok: true,
+      value: {
+        client: fakeTasksNotionCreateClient(),
+        config: { tasksDataSourceId: "tasks-ds", projectsDataSourceId: "projects-ds", researchVaultDataSourceId: "vault-ds" },
+      },
+    }),
+  });
+
+  const result = await chatTurn(deps, { message: "Lab report draft, due Thursday", history: [] });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.match(result.value.question?.text ?? "", /Here's what I'll create in Tasks/);
+  assert.deepEqual(
+    result.value.question?.options.map((o) => o.label),
+    ["Create", "Cancel"],
+  );
+});
+
+test("chatTurn does NOT capture a question — it falls through to the ordinary chat/search path", async () => {
+  const llmClient = fakeCaptureRoutingClient("NONE");
+  const deps = baseDeps({ llmClient });
+  const result = await chatTurn(deps, {
+    message: "What's my next meeting?",
+    history: [{ role: "user", content: "What's my next meeting?" }],
+  });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.value.question, undefined);
+});
+
+test("chatTurn does NOT capture an ordinary statement", async () => {
+  const llmClient = fakeCaptureRoutingClient("NONE");
+  const deps = baseDeps({ llmClient });
+  const result = await chatTurn(deps, {
+    message: "That lecture ran long today.",
+    history: [{ role: "user", content: "That lecture ran long today." }],
+  });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.value.question, undefined);
+});
+
+test("chatTurn's capture check runs AFTER every deterministic recognizer — an explicit time-budget line never reaches any LLM call, capture included", async () => {
+  const llmClient = fakeCaptureRoutingClient("NONE");
+  const deps = baseDeps({ llmClient });
+  await chatTurn(deps, { message: "time budget 6h", history: [] });
+  assert.equal((llmClient as any).calls.length, 0, "a deterministic time-budget line must never reach any LLM call, capture included");
 });
 
 // --- Review Focus #4: /morning's formatted reply must never leak a raw proposal object ---

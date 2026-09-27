@@ -15,10 +15,25 @@ import HomePage from "./Home.tsx";
 import * as homeViewModule from "../lib/homeView.ts";
 import { __resetReadinessForTests, useAppReady } from "../lib/readiness.ts";
 import { renderHook } from "@testing-library/react";
+import { PageNavigationContext } from "../lib/navigationContext.tsx";
+import type { PageNavigation } from "../lib/pages.ts";
 
 function mockState(state: homeViewModule.HomeViewState): void {
   vi.spyOn(homeViewModule, "useHomeView").mockReturnValue(state);
   vi.spyOn(homeViewModule, "startHomeViewStream").mockReturnValue(() => {});
+}
+
+// Story 8.8: HomePage now renders `<ChatBubble />`, which reads
+// `usePageNavigationContext()` (production always supplies it via
+// `PageShell`) — every render/rerender below needs the same provider.
+const NAV: PageNavigation = { index: 0, goTo: vi.fn(), next: vi.fn(), prev: vi.fn() };
+
+function HomeWithNav(): React.JSX.Element {
+  return (
+    <PageNavigationContext.Provider value={NAV}>
+      <HomePage />
+    </PageNavigationContext.Provider>
+  );
 }
 
 describe("HomePage", () => {
@@ -29,15 +44,32 @@ describe("HomePage", () => {
 
   it("shows skeleton rows and a calendar skeleton while loading, never a static spinner", () => {
     mockState({ status: "loading" });
-    render(<HomePage />);
+    render(<HomeWithNav />);
     expect(screen.getAllByTestId("plan-row-skeleton").length).toBeGreaterThan(0);
     expect(screen.getByTestId("calendar-skeleton")).toBeInTheDocument();
     expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
   });
 
+  // Story 8.8 (Review Focus #5): the Chat Bubble must be focusable before
+  // Home's own data has loaded, and register no readiness gate of its own —
+  // it renders across every status branch, not just "loaded".
+  it("renders the Chat Bubble across every status branch — loading, error, and loaded (UX-DR35: 'the Chat Bubble stays live')", () => {
+    mockState({ status: "loading" });
+    const { rerender } = render(<HomeWithNav />);
+    expect(screen.getByTestId("chat-bubble")).toBeInTheDocument();
+
+    mockState({ status: "error", message: "network down" });
+    rerender(<HomeWithNav />);
+    expect(screen.getByTestId("chat-bubble")).toBeInTheDocument();
+
+    mockState({ status: "loaded", value: { today: "2026-09-25", plan: undefined, calendar: { blocks: [] } } });
+    rerender(<HomeWithNav />);
+    expect(screen.getByTestId("chat-bubble")).toBeInTheDocument();
+  });
+
   it("shows 'No Plan yet today.' when plan is undefined", () => {
     mockState({ status: "loaded", value: { today: "2026-09-25", plan: undefined, calendar: { blocks: [] } } });
-    render(<HomePage />);
+    render(<HomeWithNav />);
     expect(screen.getByText("No Plan yet today.")).toBeInTheDocument();
   });
 
@@ -50,7 +82,7 @@ describe("HomePage", () => {
         calendar: { blocks: [{ id: "b1", kind: "work", label: "Draft the memo", start: "2026-09-25T13:00:00.000Z", end: "2026-09-25T14:00:00.000Z", completed: true, past: true }] },
       },
     });
-    render(<HomePage />);
+    render(<HomeWithNav />);
     expect(screen.getByText("Nothing left on today's Plan.")).toBeInTheDocument();
     expect(screen.getByTestId("calendar-day-view")).toBeInTheDocument();
   });
@@ -69,7 +101,7 @@ describe("HomePage", () => {
         calendar: { blocks: [] },
       },
     });
-    render(<HomePage />);
+    render(<HomeWithNav />);
     const rows = screen.getAllByTestId("plan-row");
     expect(rows.map((r) => r.textContent)).toEqual(["Z Task", "A Task"]);
   });
@@ -86,7 +118,7 @@ describe("HomePage", () => {
         calendar: { blocks: [] },
       },
     });
-    render(<HomePage />);
+    render(<HomeWithNav />);
     expect(screen.getByTestId("plan-row")).toHaveAttribute("aria-disabled", "false");
     expect(screen.getByTestId("plan-row")).toHaveClass("opacity-70");
     expect(screen.getByRole("checkbox", { name: "Draft the memo" })).toBeEnabled();
@@ -106,7 +138,7 @@ describe("HomePage", () => {
         calendar: { blocks: [] },
       },
     });
-    render(<HomePage />);
+    render(<HomeWithNav />);
     const [row] = screen.getAllByTestId("plan-row");
     expect(row).toHaveAttribute("aria-disabled", "true");
     expect(row).toHaveClass("line-through");
@@ -114,24 +146,24 @@ describe("HomePage", () => {
 
   it("registers the home-data readiness gate: not ready while loading, ready once loaded", () => {
     mockState({ status: "loading" });
-    const { rerender } = render(<HomePage />);
+    const { rerender } = render(<HomeWithNav />);
     const { result } = renderHook(() => useAppReady());
     expect(result.current).toBe(false);
 
     mockState({ status: "loaded", value: { today: "2026-09-25", plan: undefined, calendar: { blocks: [] } } });
-    rerender(<HomePage />);
+    rerender(<HomeWithNav />);
     expect(result.current).toBe(true);
   });
 
   it("an error state shows neutral copy, not a crash", () => {
     mockState({ status: "error", message: "network down" });
-    render(<HomePage />);
+    render(<HomeWithNav />);
     expect(screen.getByText(/couldn't load home/i)).toBeInTheDocument();
   });
 
   it("renders the Confetti component with the server's 'today', never the browser's date", () => {
     mockState({ status: "loaded", value: { today: "2026-02-19", plan: undefined, calendar: { blocks: [] } } });
-    render(<HomePage />);
+    render(<HomeWithNav />);
     // Confetti itself is unit-tested in Confetti.test.tsx; here we only
     // prove Home passes the SERVER's today through, via its real rendering
     // (reduced motion is off by default in jsdom, so a real Feb 19 burst

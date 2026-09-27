@@ -134,4 +134,26 @@ describe("ChatInput", () => {
     expect(sendSpy).toHaveBeenCalledWith("/morning");
     expect(sendSpy).not.toHaveBeenCalledWith("/");
   });
+
+  // ==========================================================================
+  // Story 8.8 review carry-in (from 8.7): combobox semantics — the textarea
+  // mirrors the palette's highlighted row as its own aria-activedescendant.
+  // ==========================================================================
+
+  it("sets aria-activedescendant on the textarea to the highlighted command row's id, and moves it on ArrowDown", async () => {
+    render(<ChatInput />);
+    fireEvent.change(box(), { target: { value: "/" } });
+    await waitFor(() => expect(screen.getByTestId("command-row-/night")).toBeInTheDocument());
+    await waitFor(() => expect(box()).toHaveAttribute("aria-activedescendant", screen.getByTestId("command-row-/morning").id));
+    fireEvent.keyDown(document, { key: "ArrowDown" });
+    await waitFor(() => expect(box()).toHaveAttribute("aria-activedescendant", screen.getByTestId("command-row-/night").id));
+  });
+
+  it("has no aria-activedescendant once the palette is closed", async () => {
+    render(<ChatInput />);
+    fireEvent.change(box(), { target: { value: "/" } });
+    await waitFor(() => expect(screen.getByTestId("command-palette")).toBeInTheDocument());
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(box()).not.toHaveAttribute("aria-activedescendant");
+  });
 });

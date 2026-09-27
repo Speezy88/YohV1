@@ -12,9 +12,11 @@ interface FixtureState {
   readonly completedToday: boolean;
 }
 
+/** Picks only the two fields this file cares about — the fixture's `/__fixture/state` endpoint grew a `createdPages` field in Story 8.8 (unrelated to check-off), and this suite's shared webServer process means that array can carry an entry from an earlier spec file's own test. */
 async function fixtureState(page: Page, taskId: string): Promise<FixtureState> {
   const res = await page.request.get(`/__fixture/state?taskId=${encodeURIComponent(taskId)}`);
-  return (await res.json()) as FixtureState;
+  const body = (await res.json()) as FixtureState & { readonly createdPages?: unknown };
+  return { statusWrites: body.statusWrites, completedToday: body.completedToday };
 }
 
 /** Clicks a row's Checkbox and returns the undo window the server granted (ms). */

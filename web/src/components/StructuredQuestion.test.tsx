@@ -7,7 +7,7 @@
  * Enter/Space activation come for free (WCAG 2.1.1).
  */
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { StructuredQuestion } from "./StructuredQuestion.tsx";
 
 describe("StructuredQuestion", () => {
@@ -65,5 +65,78 @@ describe("StructuredQuestion", () => {
     render(<StructuredQuestion text="Q" options={[{ label: "Yes", value: "yes" }]} allowsFreeText busy onAnswer={vi.fn()} />);
     expect(screen.getByRole("button", { name: "Yes" })).toBeDisabled();
     expect(screen.getByLabelText("Other")).toBeDisabled();
+  });
+
+  // ==========================================================================
+  // Story 8.8 AC3: the first chip is pre-focused on mount, so Enter alone
+  // confirms it (the capture flow's "Create" chip). Every real caller gives
+  // a genuinely NEW question its own fresh component instance (OpenItems.tsx
+  // keys by requestId:questionId; ChatMessage.tsx mounts fresh the instant
+  // `question` first appears) — a plain mount-only effect is pinned here by
+  // simulating exactly that: unmount + remount for "new question", and a
+  // bare rerender (same instance) for "unrelated re-render".
+  // ==========================================================================
+
+  it("auto-focuses the first chip when the question mounts, so Enter alone confirms it", () => {
+    render(
+      <StructuredQuestion
+        text="Here's what I'll create in Tasks: title: Lab report draft"
+        options={[
+          { label: "Create", value: "yes" },
+          { label: "Cancel", value: "no" },
+        ]}
+        allowsFreeText
+        onAnswer={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Create" })).toHaveFocus();
+  });
+
+  it("does NOT steal focus back on a re-render of the SAME question instance (e.g. an unrelated open-items refetch)", () => {
+    const { rerender } = render(
+      <StructuredQuestion
+        text="Q"
+        options={[
+          { label: "Create", value: "yes" },
+          { label: "Cancel", value: "no" },
+        ]}
+        allowsFreeText={false}
+        onAnswer={vi.fn()}
+      />,
+    );
+    screen.getByRole("button", { name: "Cancel" }).focus();
+    rerender(
+      <StructuredQuestion
+        text="Q"
+        options={[
+          { label: "Create", value: "yes" },
+          { label: "Cancel", value: "no" },
+        ]}
+        allowsFreeText={false}
+        onAnswer={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+  });
+
+  it("focuses the NEW question's first chip when a genuinely new question mounts (e.g. OpenItems.tsx's key-based remount for a fresh confirm)", () => {
+    const { unmount } = render(
+      <StructuredQuestion text="First" options={[{ label: "Yes", value: "yes" }]} allowsFreeText={false} onAnswer={vi.fn()} />,
+    );
+    screen.getByRole("button", { name: "Yes" }).blur();
+    unmount();
+    cleanup();
+    render(
+      <StructuredQuestion
+        text="Second"
+        options={[
+          { label: "Create", value: "yes" },
+          { label: "Cancel", value: "no" },
+        ]}
+        allowsFreeText={false}
+        onAnswer={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Create" })).toHaveFocus();
   });
 });

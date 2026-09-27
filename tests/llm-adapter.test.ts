@@ -16,6 +16,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import {
   answerGeneralQuestion,
   classifyChatIntent,
+  detectTaskCapture,
   draftCalendarEditRequest,
   draftNotionPageFields,
   loadLlmAdapterConfigFromEnv,
@@ -382,6 +383,50 @@ test("classifyChatIntent defaults to general-question for any unrecognized respo
   const { client } = fakeClient(textMessage("I'm not sure."));
   const result = await classifyChatIntent(client, "hmm");
   assert.deepEqual(result, { kind: "general-question" });
+});
+
+// ============================================================================
+// detectTaskCapture (Story 8.8 / FR-26 extended) — a free-text Task
+// description ("Lab report draft, due Thursday") doesn't match
+// parseCreateItemCommand's explicit "create/add/new a ___" phrasing or its
+// Notion-mention heuristic, so capture needs its own classifier.
+// ============================================================================
+
+test("detectTaskCapture returns the line as a draft request when Claude confirms it describes a new Task", async () => {
+  const { calls, client } = fakeClient(textMessage("CAPTURE"));
+  const result = await detectTaskCapture(client, "Lab report draft, due Thursday");
+  assert.deepEqual(result, { request: "Lab report draft, due Thursday" });
+  assert.equal(calls[0]!.params.messages[0]!.content, "Lab report draft, due Thursday");
+  assert.equal(calls[0]!.params.model, CLAUDE_CHAT_MODEL_FAST);
+});
+
+test("detectTaskCapture returns undefined for a question", async () => {
+  const { client } = fakeClient(textMessage("NONE"));
+  const result = await detectTaskCapture(client, "What's my next meeting?");
+  assert.equal(result, undefined);
+});
+
+test("detectTaskCapture returns undefined for an ordinary statement", async () => {
+  const { client } = fakeClient(textMessage("NONE"));
+  const result = await detectTaskCapture(client, "That lecture ran long today.");
+  assert.equal(result, undefined);
+});
+
+test("detectTaskCapture defaults to undefined for any unrecognized response, never throwing", async () => {
+  const { client } = fakeClient(textMessage("I'm not totally sure what you mean."));
+  const result = await detectTaskCapture(client, "hmm");
+  assert.equal(result, undefined);
+});
+
+test("detectTaskCapture propagates a transport failure (AD-8) rather than swallowing it as 'not a capture'", async () => {
+  const client: AnthropicMessagesClient = {
+    messages: {
+      create: (async () => {
+        throw new Error("network down");
+      }) as AnthropicMessagesClient["messages"]["create"],
+    },
+  };
+  await assert.rejects(() => detectTaskCapture(client, "anything"), /network down/);
 });
 
 // ============================================================================
