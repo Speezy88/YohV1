@@ -118,6 +118,9 @@ import { countTasksMissingData, listTasks, type TasksViewDeps } from "../app/tas
 import { createTask, previewQuickAdd, type CreateTaskDeps } from "../app/create-task.ts";
 import { renameTask, updateTask, type UpdateTaskDeps } from "../app/update-task.ts";
 import { listResearch, type ResearchListDeps } from "../app/research-list.ts";
+import { sandboxQueue, type SandboxQueueDeps } from "../app/sandbox-queue.ts";
+import { submitSandboxCard, type SandboxSubmitDeps } from "../app/sandbox-submit.ts";
+import { firstCardView } from "../core/sandbox-card-view.ts";
 import type {
   AnswerOpenItemRequest,
   ApiResult,
@@ -131,6 +134,9 @@ import type {
   HealthResponse,
   QuickAddPreviewRequest,
   RenameTaskRequest,
+  SandboxSaveRequest,
+  SandboxSkipRequest,
+  SandboxStartRequest,
   TasksGroupBy,
   TasksListRequest,
   TimeBudgetRequest,
@@ -515,6 +521,14 @@ export interface ServerDeps {
    * reports a clear `unreachable` error.
    */
   readonly research?: Omit<ResearchListDeps, "log">;
+  /**
+   * Story 9.2: the `/sandbox` card flow's dependencies — the live Notion
+   * read + field-write binding, on the SAME Notion client/store `tasks`
+   * already uses. Optional for the same reason as `tasks`/`research`:
+   * absent, every sandbox route reports a clear `unreachable` error.
+   */
+  readonly sandbox?: Omit<SandboxQueueDeps, "now" | "log"> &
+    Omit<SandboxSubmitDeps, "connection" | "now" | "log"> & { readonly now?: () => Date };
 }
 
 /** A failure envelope typed without `ApiResult<never>`'s impossible `{ok: true}` arm, so the RPC client's response type stays exact. */
@@ -540,6 +554,12 @@ const OPEN_ITEMS_NOT_CONFIGURED: ApiFailure = {
 
 /** Task 6B: the Tasks page routes' "not configured" failure (Notion isn't set up). */
 const TASKS_NOT_CONFIGURED: ApiFailure = {
+  ok: false,
+  error: { kind: "unreachable", message: "I'm not set up to do that yet — my Notion connection isn't configured." },
+};
+
+/** Story 9.2: the /sandbox routes' "not configured" failure (Notion isn't set up). */
+const SANDBOX_NOT_CONFIGURED: ApiFailure = {
   ok: false,
   error: { kind: "unreachable", message: "I'm not set up to do that yet — my Notion connection isn't configured." },
 };
@@ -619,6 +639,12 @@ export function createApp(deps: ServerDeps) {
   // plus the shared logger, the same "spread, default `log` in" convention
   // `tasksDeps` above uses.
   const researchDeps: ResearchListDeps | undefined = deps.research ? { ...deps.research, log } : undefined;
+  // Story 9.2: one merged deps object serves sandboxQueue AND
+  // submitSandboxCard — each reads only its own fields, mirroring
+  // tasksDeps's own spread-and-default-now convention.
+  const sandboxDeps: (SandboxQueueDeps & SandboxSubmitDeps) | undefined = deps.sandbox
+    ? { ...deps.sandbox, now: deps.sandbox.now ?? (() => new Date()), connection: deps.connection, log }
+    : undefined;
   // Preflight ruling P2: the ONE merged deps object `/api/chat`,
   // `/api/open-items`, and `/api/open-items/answer` ALL call into `app/`
   // with — never `deps.chat` directly. `runChatTurn` (a test seam, never a
@@ -920,6 +946,89 @@ export function createApp(deps: ServerDeps) {
           return c.json(result, httpStatus(result));
         },
       )
+      // Story 9.2 (AD-11, E5/E9): /sandbox's card flow. Pure transport over
+      // app/sandbox-queue.ts / app/sandbox-submit.ts — no route computes a
+      // count or a validation rule itself (AD-17).
+      .post(
+        "/api/sandbox/start",
+        validator("json", (value, c) => {
+          const exclude = (value as { exclude?: unknown } | null)?.exclude;
+          if (exclude !== undefined && !(Array.isArray(exclude) && exclude.every((x) => typeof x === "string"))) {
+            const invalid: ApiFailure = { ok: false, error: { kind: "validation", message: "sandbox/start: exclude must be a string array" } };
+            return c.json(invalid, httpStatus(invalid));
+          }
+          return { ...(exclude !== undefined ? { exclude: exclude as string[] } : {}) } satisfies SandboxStartRequest;
+        }),
+        async (c) => {
+          if (!sandboxDeps) return c.json(SANDBOX_NOT_CONFIGURED, httpStatus(SANDBOX_NOT_CONFIGURED));
+          const result = wire(await sandboxQueue(sandboxDeps, c.req.valid("json")));
+          if (!result.ok) return c.json(result, httpStatus(result));
+          return c.json({ ok: true, value: { card: firstCardView(result.value.items) } }, 200);
+        },
+      )
+      .post(
+        "/api/sandbox/:taskId/save",
+        validator("json", (value, c) => {
+          const body = value as { dueDate?: unknown; estimatedDurationMinutes?: unknown; area?: unknown; energy?: unknown; exclude?: unknown } | null;
+          const excludeOk = Array.isArray(body?.exclude) && body.exclude.every((x) => typeof x === "string");
+          if (typeof body?.dueDate !== "string" || typeof body?.estimatedDurationMinutes !== "string" || !excludeOk) {
+            const invalid: ApiFailure = { ok: false, error: { kind: "validation", message: "sandbox/save: missing dueDate/estimatedDurationMinutes/exclude" } };
+            return c.json(invalid, httpStatus(invalid));
+          }
+          if (body.area !== undefined && typeof body.area !== "string") {
+            const invalid: ApiFailure = { ok: false, error: { kind: "validation", message: "sandbox/save: area must be a string" } };
+            return c.json(invalid, httpStatus(invalid));
+          }
+          if (body.energy !== undefined && typeof body.energy !== "string") {
+            const invalid: ApiFailure = { ok: false, error: { kind: "validation", message: "sandbox/save: energy must be a string" } };
+            return c.json(invalid, httpStatus(invalid));
+          }
+          return {
+            dueDate: body.dueDate,
+            estimatedDurationMinutes: body.estimatedDurationMinutes,
+            ...(body.area !== undefined ? { area: body.area } : {}),
+            ...(body.energy !== undefined ? { energy: body.energy } : {}),
+            exclude: body.exclude as string[],
+          } satisfies SandboxSaveRequest;
+        }),
+        async (c) => {
+          if (!sandboxDeps) return c.json(SANDBOX_NOT_CONFIGURED, httpStatus(SANDBOX_NOT_CONFIGURED));
+          const taskId = c.req.param("taskId");
+          const body = c.req.valid("json");
+          const submitted = wire(
+            await submitSandboxCard(sandboxDeps, {
+              taskId,
+              dueDate: body.dueDate,
+              estimatedDurationMinutes: body.estimatedDurationMinutes,
+              ...(body.area !== undefined ? { area: body.area } : {}),
+              ...(body.energy !== undefined ? { energy: body.energy } : {}),
+            }),
+          );
+          if (!submitted.ok) return c.json(submitted, httpStatus(submitted));
+          const next = wire(await sandboxQueue(sandboxDeps, { exclude: [...body.exclude, taskId] }));
+          if (!next.ok) return c.json(next, httpStatus(next));
+          return c.json({ ok: true, value: { receipt: submitted.value.receipt, next: firstCardView(next.value.items) } }, 200);
+        },
+      )
+      .post(
+        "/api/sandbox/:taskId/skip",
+        validator("json", (value, c) => {
+          const exclude = (value as { exclude?: unknown } | null)?.exclude;
+          if (!(Array.isArray(exclude) && exclude.every((x) => typeof x === "string"))) {
+            const invalid: ApiFailure = { ok: false, error: { kind: "validation", message: "sandbox/skip: exclude must be a string array" } };
+            return c.json(invalid, httpStatus(invalid));
+          }
+          return { exclude } satisfies SandboxSkipRequest;
+        }),
+        async (c) => {
+          if (!sandboxDeps) return c.json(SANDBOX_NOT_CONFIGURED, httpStatus(SANDBOX_NOT_CONFIGURED));
+          const taskId = c.req.param("taskId");
+          const body = c.req.valid("json");
+          const next = wire(await sandboxQueue(sandboxDeps, { exclude: [...body.exclude, taskId] }));
+          if (!next.ok) return c.json(next, httpStatus(next));
+          return c.json({ ok: true, value: { next: firstCardView(next.value.items) } }, 200);
+        },
+      )
       // Task 6C (FR-43, UX-DR43): the Research Hub page's one route — pure
       // transport over `app/research-list.ts`'s `listResearch` (a live
       // Notion read of the Research Vault, most recent first, server-
@@ -1046,8 +1155,8 @@ export function startServer(
   connection: SqliteConnection,
   env: Readonly<Record<string, string | undefined>> = process.env,
   serveFn: ServeFn = (options) => serve({ ...options }),
-  /** Story 7.8's `homeView`, Story 7.10's `checkOff`, Story 8.5's `chat`, Task 6C's `research`, and Task 4's `calendarDay`, threaded through the same way `connection` already is. */
-  features: Pick<ServerDeps, "homeView" | "calendarDay" | "checkOff" | "chat" | "tasks" | "research"> = {},
+  /** Story 7.8's `homeView`, Story 7.10's `checkOff`, Story 8.5's `chat`, Task 6C's `research`, Task 4's `calendarDay`, and Story 9.2's `sandbox`, threaded through the same way `connection` already is. */
+  features: Pick<ServerDeps, "homeView" | "calendarDay" | "checkOff" | "chat" | "tasks" | "research" | "sandbox"> = {},
 ): ServerHandle {
   const port = parsePort(env["YOH_SERVER_PORT"]);
   // Contract C3: one ChatSession per server process, shared by every chat route.
@@ -1061,6 +1170,7 @@ export function startServer(
     ...(features.chat ? { chat: features.chat } : {}),
     ...(features.tasks ? { tasks: features.tasks } : {}),
     ...(features.research ? { research: features.research } : {}),
+    ...(features.sandbox ? { sandbox: features.sandbox } : {}),
   });
   return serveFn({ fetch: app.fetch, hostname: LOOPBACK_HOST, port });
 }
@@ -1217,6 +1327,17 @@ function buildTasksDeps(
       value: { client: notion.notionClient, config: { ...config, researchVaultDataSourceId: env["NOTION_RESEARCH_VAULT_DATA_SOURCE_ID"] ?? "" } },
     }),
     ...(llmClient ? { llmClient } : {}),
+    ...bindNotionTaskWrites(() => ({ ok: true, value: { client: notion.notionClient, config } })),
+  };
+}
+
+/** Story 9.2: /sandbox's real dependencies — the same shared Notion client Home/Tasks/check-off already use. */
+function buildSandboxDeps(notion: NotionFeatureConfig): ServerDeps["sandbox"] {
+  const config = { tasksDataSourceId: notion.tasksDataSourceId, projectsDataSourceId: notion.projectsDataSourceId, taskPropertyNames: notion.taskPropertyNames };
+  return {
+    store: notion.store,
+    timeZone: notion.timeZone,
+    readTasks: async () => (await readTasksWith(notion)()).tasks,
     ...bindNotionTaskWrites(() => ({ ok: true, value: { client: notion.notionClient, config } })),
   };
 }
@@ -1517,6 +1638,7 @@ if (import.meta.main) {
   const chat = buildChatDeps(connection, notion, process.env);
   const tasks = notion ? buildTasksDeps(notion, process.env, chat?.llmClient) : undefined;
   const research = buildResearchDeps(notion, process.env);
+  const sandbox = notion ? buildSandboxDeps(notion) : undefined;
   const handle = startServer(connection, process.env, undefined, {
     ...(homeView ? { homeView } : {}),
     ...(calendarDay ? { calendarDay } : {}),
@@ -1524,6 +1646,7 @@ if (import.meta.main) {
     ...(chat ? { chat } : {}),
     ...(tasks ? { tasks } : {}),
     ...(research ? { research } : {}),
+    ...(sandbox ? { sandbox } : {}),
   });
   // Story 7.10, AD-20: the startup sweep commits anything left overdue by a
   // previous process, then the commit timer takes over.

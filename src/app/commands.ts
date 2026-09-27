@@ -27,6 +27,11 @@ export const COMMANDS: readonly CommandDescriptor[] = [
     description: "Builds today's Plan right now, if it doesn't exist yet — same as the 6am Morning Ritual, but on demand and in-app only (no push).",
     example: "/plan",
   },
+  {
+    name: "/sandbox",
+    description: "Walks through every Task missing a Due Date or Estimated Duration, one card at a time, with a live count.",
+    example: "/sandbox",
+  },
 ];
 
 /** `GET /api/commands` (C5) and `chatTurn`'s slash-dispatch both call this — the registry, verbatim, wrapped in a `Result`. */

@@ -1199,3 +1199,49 @@ test("/morning's reply embeds only an open item's promptText, never a raw propos
   assert.equal(result.value.reply.includes("[object Object]"), false);
   assert.equal(/"kind"\s*:/.test(result.value.reply), false, "no raw JSON of a Proposal leaks into the chat reply");
 });
+
+// ============================================================================
+// Story 9.2: /sandbox in chat — dispatches to sandboxQueue/firstCardView,
+// never the LLM client.
+// ============================================================================
+
+function tasksMissingDueDate(): Task[] {
+  return [
+    {
+      id: "t1",
+      title: "Chem problem set",
+      estimatedDurationMinutes: 45,
+      createdAt: "2026-09-27T00:00:00.000Z",
+      updatedAt: "2026-09-27T00:00:00.000Z",
+    },
+  ];
+}
+
+test("/sandbox with a non-empty queue returns the first card as ChatTurnResponse.sandboxCard, empty reply, no LLM call", async () => {
+  const llmClient = makeFakeLlmClient();
+  const deps = baseDeps({ readTasks: async () => tasksMissingDueDate(), llmClient });
+  const result = await chatTurn(deps, { message: "/sandbox", history: [] });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.value.reply, "");
+  assert.deepEqual(result.value.sandboxCard, { taskId: "t1", taskTitle: "Chem problem set", estimatedDurationMinutes: 45, remaining: 0 });
+  assert.equal((llmClient as any).calls.length, 0, "a recognized /sandbox command must never call the LLM client");
+});
+
+// Review Focus #5 — an empty queue must never carry a falsy-but-present sandboxCard.
+test("/sandbox with an empty queue replies plainly and carries NO sandboxCard key at all (Review Focus #5)", async () => {
+  const deps = baseDeps({ readTasks: async () => [] });
+  const result = await chatTurn(deps, { message: "/sandbox", history: [] });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.value.reply, "Nothing's missing a Due Date or Duration.");
+  assert.equal("sandboxCard" in result.value, false);
+});
+
+test("/sandbox is case-insensitive and ignores a trailing word, matching every other slash command", async () => {
+  const deps = baseDeps({ readTasks: async () => tasksMissingDueDate() });
+  const result = await chatTurn(deps, { message: "/SANDBOX please", history: [] });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.ok(result.value.sandboxCard);
+});

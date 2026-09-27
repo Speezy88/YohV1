@@ -235,6 +235,10 @@ const tasksDb = createFakeNotionTasksDb({
     { id: "tp-week", title: "AP Bio ch. 7 reading", dueDate: shiftDays(2), minutes: 90, area: "Bio", status: "Nothing" },
     { id: "tp-soccer", title: "Soccer fundraiser flyers", dueDate: shiftDays(4), minutes: 45, area: "Personal", energy: "medium", status: "In Progress" },
     { id: "tp-nodate", title: "College essay brainstorm", area: "School", energy: "Deep", status: "Nothing" },
+    // Story 9.2: dedicated to /sandbox — missing BOTH Required fields
+    // (Due Date, Estimated Duration), so it is unambiguously eligible for
+    // the card flow regardless of Task 1's exact Refining-tier behavior.
+    { id: "e2e-sandbox", title: "E2E Sandbox Task", area: "Personal", status: "Nothing" },
   ],
 });
 const TASKS_CONFIG = { tasksDataSourceId: "tasks-ds", projectsDataSourceId: "projects-ds" };
@@ -243,6 +247,15 @@ const tasksPage: NonNullable<ServerDeps["tasks"]> = {
   readTasks: async () => (await readNotionTasks(tasksDb.client, TASKS_CONFIG)).tasks,
   readFieldOptions: () => readTaskFieldOptions(tasksDb.client, TASKS_CONFIG),
   getNotionCreatePageBinding: () => ({ ok: true, value: { client: tasksDb.client, config: { ...TASKS_CONFIG, researchVaultDataSourceId: "vault-ds" } } }),
+  ...bindNotionTaskWrites(() => ({ ok: true, value: { client: tasksDb.client, config: TASKS_CONFIG } })),
+};
+
+// Story 9.2: /sandbox's fake dependencies — the SAME fake Notion Tasks data
+// source `tasksPage` already reads/writes, mirrored exactly.
+const sandbox: NonNullable<ServerDeps["sandbox"]> = {
+  store,
+  timeZone: TIME_ZONE,
+  readTasks: async () => (await readNotionTasks(tasksDb.client, TASKS_CONFIG)).tasks,
   ...bindNotionTaskWrites(() => ({ ok: true, value: { client: tasksDb.client, config: TASKS_CONFIG } })),
 };
 
@@ -313,7 +326,7 @@ const handle = startServer(
         return url.pathname === "/__fixture/state" ? fixtureState(url) : options.fetch(request);
       },
     }),
-  { homeView, calendarDay, checkOff, chat, tasks: tasksPage, research },
+  { homeView, calendarDay, checkOff, chat, tasks: tasksPage, research, sandbox },
 );
 const sweep = startCheckOffCommitSweep({ connection, ...checkOff, now: () => new Date() }, { log: quiet });
 

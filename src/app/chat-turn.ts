@@ -49,6 +49,7 @@ import {
   parseWhyPrioritizedCommand,
 } from "../core/chat-commands.ts";
 import { resolveRelativeDate } from "../core/relative-date.ts";
+import { firstCardView } from "../core/sandbox-card-view.ts";
 import { parseSearchIntent } from "../core/search-intent.ts";
 import { classifyCapture, classifyChatIntent } from "../adapters/llm-adapter.ts";
 import { reportBlocker } from "./blocker-report.ts";
@@ -64,6 +65,7 @@ import { startNightCloseOut } from "./night-close-out.ts";
 import { planDay, type PlanDayDeps } from "./plan-day.ts";
 import { showPlan } from "./plan-view.ts";
 import { saveSearchResult, type SaveSearchResultDeps } from "./save-search-result.ts";
+import { sandboxQueue } from "./sandbox-queue.ts";
 import { declareTimeBudget } from "./time-budget.ts";
 import { searchWeb, type WebSearchDeps } from "./web-search.ts";
 import { explainPriority } from "./why-prioritized.ts";
@@ -451,6 +453,13 @@ async function dispatchSlashCommand(deps: ChatTurnDeps, line: string): Promise<R
       return startNightCloseOut(deps, {});
     case "/plan":
       return planDay(planDayDepsFrom(deps), {});
+    case "/sandbox": {
+      const queue = await sandboxQueue(deps, {});
+      if (!queue.ok) return queue;
+      const card = firstCardView(queue.value.items);
+      if (!card) return { ok: true, value: { reply: "Nothing's missing a Due Date or Duration.", receipts: [] } };
+      return { ok: true, value: { reply: "", receipts: [], sandboxCard: card } };
+    }
     default:
       // Unreachable while COMMANDS lists only /morning and /night — a
       // future epic's registry entry gets its own `case` when that story

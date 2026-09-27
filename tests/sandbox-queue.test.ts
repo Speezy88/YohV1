@@ -109,5 +109,8 @@ test("firstCardView: undefined for an empty queue; the first item with remaining
     { taskId: "t2", taskTitle: "Two", missingFields: ["dueDate"] },
     { taskId: "t3", taskTitle: "Three", missingFields: ["dueDate"] },
   ]);
-  assert.deepEqual(view, { taskId: "t1", taskTitle: "One", missingFields: ["dueDate"], remaining: 2 });
+  // Chunk 9.2-B fix: `firstCardView` picks only `SandboxCardView`'s own
+  // fields — `missingFields` (a `SandboxQueueItem`-only field) must never
+  // leak onto the wire shape.
+  assert.deepEqual(view, { taskId: "t1", taskTitle: "One", remaining: 2 });
 });

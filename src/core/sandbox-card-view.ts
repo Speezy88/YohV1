@@ -22,9 +22,21 @@ import type { SandboxCardView } from "../types/api.ts";
 /**
  * `remaining` is what the card itself shows as "N remaining" — the queue's
  * length AFTER this card (E7).
+ *
+ * Picks the `SandboxCardView` fields explicitly rather than spreading `first`
+ * — the caller's own item type (`SandboxQueueItem`) carries extra fields
+ * (e.g. `missingFields`) that must never leak onto the wire shape.
  */
 export function firstCardView<T extends Omit<SandboxCardView, "remaining">>(items: readonly T[]): SandboxCardView | undefined {
   const [first, ...rest] = items;
   if (!first) return undefined;
-  return { ...first, remaining: rest.length };
+  return {
+    taskId: first.taskId,
+    taskTitle: first.taskTitle,
+    ...(first.dueDate !== undefined ? { dueDate: first.dueDate } : {}),
+    ...(first.estimatedDurationMinutes !== undefined ? { estimatedDurationMinutes: first.estimatedDurationMinutes } : {}),
+    ...(first.area !== undefined ? { area: first.area } : {}),
+    ...(first.energy !== undefined ? { energy: first.energy } : {}),
+    remaining: rest.length,
+  };
 }
