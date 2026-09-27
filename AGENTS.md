@@ -54,6 +54,16 @@ and read only failures and the summary.
 - **Conventions**: kebab-case `src/` files; PascalCase React components. Routes `/api/<noun>[/<verb>]`, returning the serialized Result envelope via `wire()`/`httpStatus()`. "Today" uses the host `TZ` (`YOH_TIMEZONE`), never the browser's. Log via `src/adapters/logger.ts` (single-line JSON to stderr), not `console.log`. Each shared tuning constant has one defining export.
 - **Tests**: `node:test` with fake adapters for `src/`; Vitest + React Testing Library for `web/`; Playwright via the fixture server (fake Notion/LLM). Never call real Notion, Google, Anthropic or Perplexity in tests.
 
+## Entry points and recurring idioms (names, not lines — grep for them)
+- **Chat routing:** `chatTurn` in `src/app/chat-turn.ts` — deterministic recognizers (`src/core/chat-commands.ts`, `src/core/search-intent.ts`) → LLM capture (`classifyCapture`) → `classifyChatIntent` (search vs general) → `answerQuestion`. New deterministic routes go before the LLM steps.
+- **Adding an HTTP route:** in `createApp` (`src/shell/server.ts`), copy an existing `.get`/`.post` (e.g. `/api/calendar/day`): validate input in the shell, call ONE app function, return `c.json(wire(result), httpStatus(result))`. Its dependencies go on `ServerDeps` and are built by a `build*Deps` function (`buildHomeViewDeps`, `buildCalendarDayDeps`, `buildChatDeps`, …).
+- **Errors:** adapters throw; app functions catch and return `{ ok: false, error }`, with user copy from `errorCopyForThrown` (`src/core/error-copy.ts`). Never leak raw error text to the UI.
+- **Live updates:** a store write calls `appendOutboxInTx(db, { topic, entityId })` in the same transaction. Topics: `plan`, `tasks`, `research`, `open-items`, `notification` (the `*_TOPIC` constants). Web listens with `onHint` (`web/src/lib/eventBus.ts`) and refetches on `hint.topic`.
+- **Web → server calls:** `apiClient` (`web/src/lib/apiClient.ts`, typed Hono client), e.g. `apiClient.api["open-items"].$get()`. Types come from `src/types/api.ts` via `import type`.
+- **Web data hooks:** module-level store + `use*`/`refetch*`/`start*Stream` trio, e.g. `web/src/lib/homeView.ts`, `web/src/lib/openItems.ts`.
+- **E2E fake data:** `tests/e2e/fixture-server.ts` builds `ServerDeps` with fakes (`FIXTURE_TASKS`, `FIXTURE_OTHER_DAY_*`, a fake `runChatTurn`); add fixture data there, exported for specs to assert on.
+- **Tests with fakes:** each `tests/app-*.test.ts` builds fake deps inline; copy the nearest one.
+
 ## Safety (non-negotiable)
 - Spencer's live server runs from the main checkout on port 8787 (launchd `com.yoh.server`). Never touch port 8787, launchd, or the main checkout. Use port 8788 for the fixture server.
 - Never `pkill`/`killall` by pattern. Stop only processes you started, by exact PID.

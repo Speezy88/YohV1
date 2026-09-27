@@ -38,3 +38,10 @@ The controller says "ready to /clear" and gives the resume prompt. Spencer runs 
 
 ## Measure every resume
 Record in the ledger: turns and context size before the first real action. Target ≤15 turns and ≤80k tokens. A miss means the handoff format needs fixing.
+
+## Caching notes (coordinators)
+- Cache reads are cheap per token (~10% of input) but are paid on **every turn** for the whole context, so cost ≈ context size × turns. Shrinking context and shortening runs are the levers; "caching more" is not.
+- The prompt cache expires after ~1 hour idle. A long idle wait re-writes the whole context (cache writes cost more than fresh input). Prefer clearing at a boundary over idling a huge context.
+- Hand agents inputs as files (brief, contract, report paths). Never paste large content into a dispatch prompt or read a subagent's transcript into your own context — both stay resident for every later turn.
+- Edit `CLAUDE.md` / `AGENTS.md` only between batches. Both load into every agent at start; mid-batch edits can be absorbed into a running implementer's commit and make runs inconsistent.
+- Keep `AGENTS.md` small: it is paid on every turn of every agent. Task-specific detail belongs in the brief.
