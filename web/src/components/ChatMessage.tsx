@@ -9,14 +9,23 @@
  * `Chat Message`). A failed turn always says so (UX-DR48).
  *
  * Story 8.6 (Task 7), UX-DR38: a `response.question` (a follow-up Structured
- * Question — e.g. a new proposal to confirm) renders as a
- * `StructuredQuestion`, not plain text. One pick answers it through the SAME
- * `submitOpenItemAnswer` call `OpenItems.tsx`'s top-of-Chat list uses (the
- * identical `app/answer-open-item.ts` entry point either way), and the
+ * Question — e.g. a new proposal to confirm, or Task 6 addendum's own
+ * pending ritual question injected by `chatStore.ts`'s
+ * `appendPendingOpenItem`) renders as a `StructuredQuestion`, not plain
+ * text. One pick answers it through `submitOpenItemAnswer` (the same
+ * `app/answer-open-item.ts` entry point every answer surface uses), and the
  * exchange is recorded into this SAME transcript via `recordAnsweredOpenItem`
- * — the answer becomes an ordinary later turn, and this turn's own chips
- * hide once answered (`answered` state), independent of whichever OTHER
- * turn or top-of-Chat item is mid-answer.
+ * — independent of whichever OTHER turn is mid-answer.
+ *
+ * Task 6 (Spencer: "the waiting on you questions do not go away when they
+ * are answered"): the old code hid this turn's card on ANY response,
+ * including a "try again" one — so a request that failed to parse looked
+ * answered but stayed open server-side. The card now hides ONLY when the
+ * server actually resolves it: `next === "done"`, or `next` is a genuinely
+ * different question (a new one is appended as its own turn instead). A
+ * retry (`next` is the SAME question, by `requestId`+`questionId`) or a
+ * network/server failure both keep this card and show the server's
+ * message/the honest rejection inline underneath it, via `inlineNote`.
  *
  * Task 6A (2026-09-27): the panel renders Yoh's replies as markdown (bold,
  * lists, etc. — the approved mockup's "what's happening tomorrow" reply)
@@ -31,8 +40,7 @@ import { useState } from "react";
 import Markdown from "react-markdown";
 import { ThinkingIndicator } from "./ThinkingIndicator.tsx";
 import { StructuredQuestion } from "./StructuredQuestion.tsx";
-import { HONEST_REJECTION } from "./OpenItems.tsx";
-import { submitOpenItemAnswer } from "../lib/openItems.ts";
+import { HONEST_REJECTION, submitOpenItemAnswer } from "../lib/openItems.ts";
 import { recordAnsweredOpenItem } from "../lib/chatStore.ts";
 import type { ChatViewMessage } from "../lib/chatStore.ts";
 import type { OpenItemQuestion } from "../../../src/types/api.ts";
@@ -61,6 +69,8 @@ export function ChatMessage({ message }: ChatMessageProps): React.JSX.Element | 
   const thinking = !isUser && message.status === "streaming" && message.text === "";
   const [answered, setAnswered] = useState(false);
   const [busy, setBusy] = useState(false);
+  /** The server's own message from a retry or a network/server failure, shown inline under the still-open card (Task 6: the card itself never hides for either). Cleared once the card actually resolves. */
+  const [inlineNote, setInlineNote] = useState<string | undefined>(undefined);
   const showQuestion = message.question !== undefined && !answered;
   // Polish 4 Task 3 (Spencer: "an empty grey bubble renders above the first
   // receipt"): traced to `recordAnsweredOpenItem` (`chatStore.ts`) — a
@@ -79,9 +89,27 @@ export function ChatMessage({ message }: ChatMessageProps): React.JSX.Element | 
       ...(question.proposal ? { proposal: question.proposal } : {}),
     });
     setBusy(false);
+
+    // Task 6: only a genuine resolution ever hides this card.
+    if (!outcome.ok) {
+      // A network/server failure — keep the card, show the honest rejection inline (never the raw error).
+      setInlineNote(HONEST_REJECTION[outcome.kind] ?? outcome.message);
+      return;
+    }
+    const { next } = outcome.value;
+    if (next === "done") {
+      setAnswered(true);
+      recordAnsweredOpenItem(answerText, { message: outcome.value.message, receipts: outcome.value.receipts });
+      return;
+    }
+    if (next.requestId === question.requestId && next.questionId === question.questionId) {
+      // A "try again" reply: the SAME question comes back — keep the card, show the server's message inline.
+      setInlineNote(outcome.value.message);
+      return;
+    }
+    // A genuinely different question: this card is done, and the new one is appended as its own turn.
     setAnswered(true);
-    if (outcome.ok) recordAnsweredOpenItem(answerText, { message: outcome.value.message, receipts: outcome.value.receipts });
-    else recordAnsweredOpenItem(answerText, { message: HONEST_REJECTION[outcome.kind] ?? outcome.message, receipts: [] });
+    recordAnsweredOpenItem(answerText, { message: outcome.value.message, receipts: outcome.value.receipts, next });
   };
 
   if (!hasVisibleContent) return null;
@@ -102,13 +130,16 @@ export function ChatMessage({ message }: ChatMessageProps): React.JSX.Element | 
           </p>
         ))}
         {showQuestion && (
-          <StructuredQuestion
-            text={message.question!.text}
-            options={message.question!.options}
-            allowsFreeText={message.question!.allowsFreeText}
-            busy={busy}
-            onAnswer={(answerText) => void answerInline(message.question!, answerText)}
-          />
+          <>
+            <StructuredQuestion
+              text={message.question!.text}
+              options={message.question!.options}
+              allowsFreeText={message.question!.allowsFreeText}
+              busy={busy}
+              onAnswer={(answerText) => void answerInline(message.question!, answerText)}
+            />
+            {inlineNote && <p className={CAPTION}>{inlineNote}</p>}
+          </>
         )}
         {message.status === "error" && <p className={CAPTION}>{failureCaption(message)}</p>}
       </div>

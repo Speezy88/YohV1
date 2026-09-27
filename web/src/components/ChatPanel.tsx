@@ -28,14 +28,25 @@
  * "N tasks missing data" chip instead (`lib/missingData.ts`), which closes
  * this panel and opens the Tasks page filtered to those Tasks on click.
  *
- * `OpenItems.tsx`/`lib/openItems.ts` and their server route/store are
- * deliberately NOT deleted, even though nothing imports them from here
- * anymore — see this task's own report for why.
+ * Task 6 addendum (Spencer): Task 2 removed "Waiting on you" and left
+ * ritual-raised open interaction requests (self-check, data-completeness,
+ * night close-out) with NO surface at all. This panel now surfaces them
+ * itself: every open request `GET /api/open-items` reports appears as its
+ * own Yoh message in the stream (`chatStore.ts`'s `appendPendingOpenItem`),
+ * answerable inline exactly like any other Structured Question
+ * (`ChatMessage.tsx`). `lib/openItems.ts`'s `startOpenItemsStream` runs only
+ * while the panel is open (fetches once, then refetches on the shared
+ * event bus's `"open-items"` hint — never a second `EventSource`, AD-18);
+ * each fetch's items are handed to `appendPendingOpenItem`, which is itself
+ * the "shown once per request id per session" dedupe, so this effect can
+ * run on every render without tracking what it already showed. `OpenItems.tsx`
+ * is gone (nothing else used it); the server route/store it read stay.
  */
 import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { useChatStore } from "../lib/chatStore.ts";
+import { appendPendingOpenItem, useChatStore } from "../lib/chatStore.ts";
 import { useChatPanel, closeChatPanel } from "../lib/chatPanel.ts";
 import { useMissingDataCount, missingDataChipLabel, openMissingData } from "../lib/missingData.ts";
+import { startOpenItemsStream, useOpenItems } from "../lib/openItems.ts";
 import { PageNavigationContext } from "../lib/navigationContext.tsx";
 import { useReducedMotion } from "../hooks/useReducedMotion.ts";
 import { ChatMessage } from "./ChatMessage.tsx";
@@ -50,10 +61,24 @@ export function ChatPanel(): React.JSX.Element | null {
   const { messages } = useChatStore();
   const nav = useContext(PageNavigationContext);
   const missingDataCount = useMissingDataCount();
+  const openItems = useOpenItems();
   const reducedMotion = useReducedMotion();
   const panelRef = useRef<HTMLDivElement>(null);
   const streamRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
+
+  // Task 6 addendum: only fetch/subscribe while the panel is actually open.
+  useEffect(() => {
+    if (!open) return;
+    return startOpenItemsStream();
+  }, [open]);
+
+  // Task 6 addendum: hand every currently-open request to the chat store —
+  // a no-op for one already shown this session (dedupe lives there).
+  useEffect(() => {
+    if (!open || openItems.status !== "loaded") return;
+    for (const item of openItems.items) appendPendingOpenItem(item);
+  }, [open, openItems]);
 
   useEffect(() => {
     if (!open) return;

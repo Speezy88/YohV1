@@ -44,16 +44,39 @@ test("a complete answer persists it, clears the request, and reports 'done'", as
   store.close();
 });
 
-test("UX-DR15: a bare number with no reason is rejected and re-asks the SAME question", async () => {
+test("Task 6: a bare number with no reason is now accepted (natural reply), persists it, and reports 'done'", async () => {
   const store = tempStore();
   openReq(store);
   const result = await answerSelfCheck(deps(store), { requestId: "self-check", questionId: "score", answer: "7" });
   assert.equal(result.ok, true);
+  if (result.ok) assert.equal(result.value.next, "done");
+  assert.equal(getSelfCheckState(store)?.data.lastScore, 7);
+  assert.equal(getSelfCheckState(store)?.data.lastReason, "");
+  store.close();
+});
+
+test("Task 6: a reply with no 1-10 number at all is rejected, re-asks the SAME question, and says plainly what's needed", async () => {
+  const store = tempStore();
+  openReq(store);
+  const result = await answerSelfCheck(deps(store), { requestId: "self-check", questionId: "score", answer: "not sure" });
+  assert.equal(result.ok, true);
   if (result.ok) {
-    assert.match(result.value.message ?? "", /reason|both/i);
+    assert.equal(result.value.message, "Just send a number from 1 to 10, plus an optional reason.");
     if (result.value.next !== "done") assert.equal(result.value.next.questionId, "score");
   }
   assert.equal(getSelfCheckState(store)?.data.lastScore, undefined);
+  store.close();
+});
+
+test("Task 6: \"7, feeling good\" resolves the request with the natural reply's score and reason", async () => {
+  const store = tempStore();
+  openReq(store);
+  const result = await answerSelfCheck(deps(store), { requestId: "self-check", questionId: "score", answer: "7, feeling good" });
+  assert.equal(result.ok, true);
+  if (result.ok) assert.equal(result.value.next, "done");
+  assert.equal(getSelfCheckState(store)?.data.lastScore, 7);
+  assert.equal(getSelfCheckState(store)?.data.lastReason, "feeling good");
+  assert.equal(getOpenInteractionRequest(store, "self-check"), undefined);
   store.close();
 });
 

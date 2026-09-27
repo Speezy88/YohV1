@@ -96,7 +96,7 @@ describe("ChatMessage", () => {
     await waitFor(() => expect(screen.queryByRole("button", { name: "Yes" })).not.toBeInTheDocument());
   });
 
-  it("an inline question's stale-proposal rejection renders honestly, never the raw error message", async () => {
+  it("Task 6: an inline question's stale-proposal rejection keeps the card and shows the honest message inline, without recording a new turn", async () => {
     vi.spyOn(openItemsLib, "submitOpenItemAnswer").mockResolvedValue({ ok: false, kind: "stale-proposal", message: "entity changed since suggested" });
     const recordSpy = vi.spyOn(chatStore, "recordAnsweredOpenItem").mockImplementation(() => {});
     render(
@@ -110,7 +110,47 @@ describe("ChatMessage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Yes" }));
 
-    await waitFor(() => expect(recordSpy).toHaveBeenCalledWith("yes", { message: "That proposal is out of date — nothing was changed.", receipts: [] }));
+    await waitFor(() => expect(screen.getByText("That proposal is out of date — nothing was changed.")).toBeInTheDocument());
+    expect(recordSpy).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Yes" })).toBeInTheDocument();
+  });
+
+  it("Task 6: a 'try again' response (next = the SAME question) keeps the card and shows the server's message inline", async () => {
+    const sameQuestion = { requestId: "self-check", questionId: "score", text: 'Score (1-10) + a short reason, e.g. "7 feeling on top of things"', options: [], allowsFreeText: true };
+    vi.spyOn(openItemsLib, "submitOpenItemAnswer").mockResolvedValue({
+      ok: true,
+      value: { message: "Just send a number from 1 to 10, plus an optional reason.", receipts: [], next: sameQuestion },
+    });
+    const recordSpy = vi.spyOn(chatStore, "recordAnsweredOpenItem").mockImplementation(() => {});
+    render(<ChatMessage message={msg({ text: "Quick Self-Check…", question: sameQuestion })} />);
+
+    fireEvent.change(screen.getByLabelText("Other"), { target: { value: "not sure" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(screen.getByText("Just send a number from 1 to 10, plus an optional reason.")).toBeInTheDocument());
+    expect(recordSpy).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
+  });
+
+  it("Task 6: a response with a DIFFERENT next question hides this card and appends the new one via recordAnsweredOpenItem", async () => {
+    const nextQuestion = { requestId: "night-close-out", questionId: "t2", text: "Task 2 — completed or slipped?", options: [], allowsFreeText: true };
+    vi.spyOn(openItemsLib, "submitOpenItemAnswer").mockResolvedValue({ ok: true, value: { message: 'Recorded "Task 1" as completed.', receipts: [], next: nextQuestion } });
+    const recordSpy = vi.spyOn(chatStore, "recordAnsweredOpenItem").mockImplementation(() => {});
+    render(
+      <ChatMessage
+        message={msg({
+          text: "Close-out.",
+          question: { requestId: "night-close-out", questionId: "t1", text: "Task 1 — completed or slipped?", options: [{ label: "Completed", value: "completed" }], allowsFreeText: false },
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Completed" }));
+
+    await waitFor(() =>
+      expect(recordSpy).toHaveBeenCalledWith("completed", { message: 'Recorded "Task 1" as completed.', receipts: [], next: nextQuestion }),
+    );
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Completed" })).not.toBeInTheDocument());
   });
 
   it("a failed turn with no text shows the server's reason in a caption", () => {

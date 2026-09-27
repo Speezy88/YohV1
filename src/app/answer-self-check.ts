@@ -26,7 +26,7 @@ export async function answerSelfCheck(deps: AnswerSelfCheckDeps, input: AnswerOp
     const next = await buildOpenItemQuestion(deps, { requestId: record.id });
     return {
       ok: true,
-      value: { message: 'I need both a number (1-10) and a short reason — e.g. "7 feeling on top of things".', receipts: [], next: next.ok && next.value !== "done" ? next.value : "done" },
+      value: { message: "Just send a number from 1 to 10, plus an optional reason.", receipts: [], next: next.ok && next.value !== "done" ? next.value : "done" },
     };
   }
   const applied = applySelfCheckAnswer(deps.store, { today: deps.today, score: parsed.score, reason: parsed.reason, random: deps.random });

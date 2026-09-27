@@ -12,7 +12,7 @@
 import { useSyncExternalStore } from "react";
 import { streamChat } from "./chatStream.ts";
 import { addLocalFailureNotice } from "./notifications.ts";
-import type { ChatStreamEvent, ChatTurnRequest, OpenItemQuestion } from "../../../src/types/api.ts";
+import type { ChatStreamEvent, ChatTurnRequest, OpenItem, OpenItemQuestion } from "../../../src/types/api.ts";
 
 export interface ChatViewMessage {
   readonly id: string;
@@ -47,6 +47,8 @@ const EMPTY: ChatStoreState = { messages: [], draft: "", sending: false };
 let state: ChatStoreState = EMPTY;
 let nextId = 0;
 const listeners = new Set<() => void>();
+/** Task 6 addendum: which ritual-raised open-item `requestId`s have already been injected into this session's transcript (`appendPendingOpenItem`) — "shown once per request id per session", so a re-fetch/reopen never duplicates the same pending question. Client state only, never persisted. */
+const shownPendingRequestIds = new Set<string>();
 
 function set(next: ChatStoreState): void {
   state = next;
@@ -165,7 +167,10 @@ export async function send(message: string): Promise<void> {
  * placeholder-then-stream shape): the answer already settled server-side by
  * the time this is called, so there's nothing left to stream.
  */
-export function recordAnsweredOpenItem(youText: string, yoh: { message?: string; receipts: readonly string[] }): void {
+export function recordAnsweredOpenItem(
+  youText: string,
+  yoh: { message?: string; receipts: readonly string[]; next?: OpenItemQuestion },
+): void {
   const userId = `chat-${++nextId}`;
   const assistantId = `chat-${++nextId}`;
   set({
@@ -173,13 +178,42 @@ export function recordAnsweredOpenItem(youText: string, yoh: { message?: string;
     messages: [
       ...state.messages,
       { id: userId, role: "user", text: youText, receipts: [], status: "done" },
-      { id: assistantId, role: "assistant", text: yoh.message ?? "", receipts: yoh.receipts, status: "done" },
+      {
+        id: assistantId,
+        role: "assistant",
+        text: yoh.message ?? "",
+        receipts: yoh.receipts,
+        status: "done",
+        ...(yoh.next ? { question: yoh.next } : {}),
+      },
     ],
   });
 }
 
-/** Test-only: clears the module-level transcript between tests. Never called from production code. */
+/**
+ * Task 6 addendum: appends one ritual-raised pending open interaction
+ * request (self-check, data-completeness, night close-out) as a Yoh message
+ * — `item.promptText` as the message text, `item.question` as its inline
+ * Structured Question card, answerable exactly like any other inline
+ * question (`ChatMessage.tsx`'s own `answerInline`). A no-op past the first
+ * call for a given `item.requestId` in this session (dedupe by requestId,
+ * per the brief — a reopen or a later `GET /api/open-items` refetch never
+ * duplicates it), so `ChatPanel.tsx` can call this on every fetch/hint
+ * without tracking what it already showed.
+ */
+export function appendPendingOpenItem(item: OpenItem): void {
+  if (shownPendingRequestIds.has(item.requestId)) return;
+  shownPendingRequestIds.add(item.requestId);
+  const id = `chat-${++nextId}`;
+  set({
+    ...state,
+    messages: [...state.messages, { id, role: "assistant", text: item.promptText, receipts: [], question: item.question, status: "done" }],
+  });
+}
+
+/** Test-only: clears the module-level transcript (and the pending-item dedupe set) between tests. Never called from production code. */
 export function __resetChatStoreForTests(): void {
   state = EMPTY;
   nextId = 0;
+  shownPendingRequestIds.clear();
 }

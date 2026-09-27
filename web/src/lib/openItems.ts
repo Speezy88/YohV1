@@ -15,6 +15,12 @@ import { onHint } from "./eventBus.ts";
 import { apiClient } from "./apiClient.ts";
 import type { AnswerOpenItemRequest, AnswerOpenItemResponse, OpenItem } from "../../../src/types/api.ts";
 
+/** Neutral, guilt-free copy for the two rejection kinds `answerOpenItem` can return (AD-3, AD-5's conflict rule) — never the raw adapter/validation message. Moved here from the retired `OpenItems.tsx` (Task 6 addendum) — `ChatMessage.tsx`'s inline answer flow is now the only caller. */
+export const HONEST_REJECTION: Readonly<Record<string, string>> = {
+  "stale-proposal": "That proposal is out of date — nothing was changed.",
+  conflict: "That's already been answered elsewhere — nothing was changed.",
+};
+
 export type OpenItemsState =
   | { readonly status: "loading" }
   | { readonly status: "loaded"; readonly items: readonly OpenItem[] }

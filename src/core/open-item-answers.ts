@@ -17,15 +17,23 @@ export type NightCloseOutStatus = "completed" | "slipped";
 /**
  * Parses a raw close-out answer into `"completed"` or `"slipped"` — a
  * deliberately-simple, clearly-documented pattern-matching convention (NOT
- * real free-text NLU). Accepts a few natural synonyms case-insensitively;
- * anything else is rejected so the caller can re-prompt rather than guess.
- * Does NOT recognize `"skip"` — that is its own, separately-checked escape
- * hatch (`isSkipAnswer`, below), not a third `NightCloseOutStatus` value.
+ * real free-text NLU). Recognizes a keyword ANYWHERE in the reply (not just
+ * as the whole line), so ordinary free text ("I finished it", "done!",
+ * "yes done", "didn't get to it", "nope") resolves the same as a bare
+ * keyword (Task 6 addendum). A negation cue (`didn't`/`did not`/`not`/
+ * `nope`/`missed`/`slipped`) is checked BEFORE the completed keywords so
+ * "not done" reads as slipped, not completed. Does NOT recognize `"skip"` —
+ * that is its own, separately-checked escape hatch (`isSkipAnswer`, below),
+ * not a third `NightCloseOutStatus` value.
  */
+const NIGHT_CLOSE_OUT_SLIPPED_RE = /\b(slipped?|missed?|nope|didn['’]?t|did not|not)\b/;
+const NIGHT_CLOSE_OUT_COMPLETED_RE = /\b(completed?|done|finished)\b/;
+
 export function parseNightCloseOutAnswer(raw: string): NightCloseOutStatus | undefined {
   const normalized = raw.trim().toLowerCase();
-  if (/^(completed?|done|finished)$/.test(normalized)) return "completed";
-  if (/^(slipped?|missed|didn'?t (do it|finish)|not done)$/.test(normalized)) return "slipped";
+  if (normalized === "") return undefined;
+  if (NIGHT_CLOSE_OUT_SLIPPED_RE.test(normalized)) return "slipped";
+  if (NIGHT_CLOSE_OUT_COMPLETED_RE.test(normalized)) return "completed";
   return undefined;
 }
 
@@ -35,17 +43,38 @@ export function isSkipAnswer(raw: string): boolean {
 }
 
 /**
- * Parses a raw Self-Check answer line into a score/reason pair. Per UX-DR15
- * both are required together — this is enforced structurally by the regex
- * itself: a bare number alone (or a number followed only by whitespace)
- * simply fails to MATCH. A deliberately-simple, clearly-documented
- * pattern-matching convention (NOT real free-text NLU): a leading 1-2 digit
- * whole number, at least one space, then the rest of the line as the reason
- * (trimmed, must be non-blank). `isValidSelfCheckScore` (`rituals/
- * self-check.ts`) is the single source of truth for the valid range (1-10) —
- * duplicated nowhere here.
+ * Task 6 (Spencer: "the waiting on you questions do not go away when they
+ * are answered" — traced to the old strict "number<space>reason" shape,
+ * which sent a natural reply like "7, feeling good" down the "try again"
+ * path forever). Finds the FIRST 1-10 score anywhere in the reply — a bare
+ * digit run ("7"), a spelled-out word ("seven"), or either immediately
+ * followed by its own "/10" or "out of 10" denominator (consumed as part of
+ * the score expression, never treated as reason text) — then takes
+ * whatever follows that match, trimmed of leading punctuation/whitespace,
+ * as the reason. The reason is optional: a bare score, or a score with
+ * nothing but trailing punctuation after it, parses to `reason: ""`. A
+ * deliberately-simple, clearly-documented pattern-matching convention (NOT
+ * real free-text NLU) — text BEFORE the number (e.g. "i'd say a") is
+ * discarded, not folded into the reason. `isValidSelfCheckScore` (`rituals/
+ * self-check.ts`) is the single source of truth for the valid range (1-10)
+ * — duplicated nowhere here; a first number outside that range (e.g. "11",
+ * "0") is rejected outright, with no further search for a second number.
  */
-const SELF_CHECK_ANSWER_RE = /^\s*(\d{1,2})\s+(.+?)\s*$/;
+const SELF_CHECK_NUMBER_WORDS: Readonly<Record<string, number>> = {
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+};
+const SELF_CHECK_SCORE_RE = /\b(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\b(?:\s*\/\s*10\b|\s+out\s+of\s+10\b)?/i;
+/** Leading characters trimmed off the reason once the score expression is removed — whitespace and the punctuation Spencer's own examples use to separate score from reason (",", "-", ".", "!", ":", ";"). */
+const SELF_CHECK_REASON_LEADING_PUNCTUATION_RE = /^[\s,.\-:;!]+/;
 
 export interface SelfCheckAnswer {
   readonly score: number;
@@ -53,11 +82,13 @@ export interface SelfCheckAnswer {
 }
 
 export function parseSelfCheckAnswer(raw: string): SelfCheckAnswer | undefined {
-  const match = SELF_CHECK_ANSWER_RE.exec(raw);
+  const match = SELF_CHECK_SCORE_RE.exec(raw);
   if (!match) return undefined;
-  const score = Number(match[1]);
-  const reason = match[2]!.trim();
-  if (!isValidSelfCheckScore(score) || reason.length === 0) return undefined;
+  const token = match[1]!.toLowerCase();
+  const score = /^\d+$/.test(token) ? Number(token) : SELF_CHECK_NUMBER_WORDS[token];
+  if (score === undefined || !isValidSelfCheckScore(score)) return undefined;
+  const rest = raw.slice(match.index + match[0].length);
+  const reason = rest.replace(SELF_CHECK_REASON_LEADING_PUNCTUATION_RE, "").trim();
   return { score, reason };
 }
 

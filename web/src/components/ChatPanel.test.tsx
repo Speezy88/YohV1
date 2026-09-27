@@ -7,15 +7,16 @@
  * auto-scroll — plus Task 6A's own open/close/focus/Esc contract.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { act, fireEvent, render, renderHook, screen } from "@testing-library/react";
+import { act, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { ChatPanel } from "./ChatPanel.tsx";
 import { __resetChatStoreForTests } from "../lib/chatStore.ts";
 import { __resetChatPanelForTests, openChatPanel } from "../lib/chatPanel.ts";
 import * as chatStreamModule from "../lib/chatStream.ts";
 import * as missingDataModule from "../lib/missingData.ts";
+import * as openItemsModule from "../lib/openItems.ts";
 import * as readiness from "../lib/readiness.ts";
 import * as reducedMotionModule from "../hooks/useReducedMotion.ts";
-import type { ChatStreamEvent } from "../../../src/types/api.ts";
+import type { ChatStreamEvent, OpenItem } from "../../../src/types/api.ts";
 
 function setScrollGeometry(el: HTMLElement, geometry: { scrollHeight: number; clientHeight: number; scrollTop: number }): void {
   Object.defineProperty(el, "scrollHeight", { value: geometry.scrollHeight, configurable: true });
@@ -40,6 +41,10 @@ describe("ChatPanel", () => {
     __resetChatPanelForTests();
     readiness.__resetReadinessForTests();
     vi.spyOn(missingDataModule, "useMissingDataCount").mockReturnValue({ status: "loading" });
+    // Task 6 addendum: no open items by default, and no real network call —
+    // individual tests below override these to exercise the injection flow.
+    vi.spyOn(openItemsModule, "useOpenItems").mockReturnValue({ status: "loading" });
+    vi.spyOn(openItemsModule, "startOpenItemsStream").mockReturnValue(() => {});
   });
   afterEach(() => vi.restoreAllMocks());
 
@@ -188,6 +193,57 @@ describe("ChatPanel", () => {
       pressEnterWith("motion reduced");
       expect(streamChat).toHaveBeenCalledTimes(1);
       expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ behavior: "auto" }));
+    });
+  });
+
+  // Task 6 addendum: Task 2 removed "Waiting on you" with no replacement
+  // surface for ritual-raised open interaction requests. This panel now
+  // injects each one, on open, as its own Yoh message with an inline
+  // Structured Question card.
+  describe("pending ritual questions (Task 6 addendum)", () => {
+    const PENDING_SELF_CHECK: OpenItem = {
+      requestId: "self-check",
+      requestKind: "self-check",
+      promptText: "Quick Self-Check: on a scale of 1-10, how well is this working for you right now? Give me a number and a short written reason.",
+      question: { requestId: "self-check", questionId: "score", text: 'Score (1-10) + a short reason, e.g. "7 feeling on top of things"', options: [], allowsFreeText: true },
+    };
+
+    it("a pending self-check request shows as a chat message with its question card, once the panel is open", async () => {
+      vi.spyOn(openItemsModule, "useOpenItems").mockReturnValue({ status: "loaded", items: [PENDING_SELF_CHECK] });
+      renderOpenPanel();
+      await waitFor(() => expect(screen.getByText(/Quick Self-Check/)).toBeInTheDocument());
+      expect(screen.getByLabelText("Other")).toBeInTheDocument();
+    });
+
+    it("answering a pending self-check inline (\"7, feeling good\") resolves it and the card disappears", async () => {
+      vi.spyOn(openItemsModule, "useOpenItems").mockReturnValue({ status: "loaded", items: [PENDING_SELF_CHECK] });
+      vi.spyOn(openItemsModule, "submitOpenItemAnswer").mockResolvedValue({
+        ok: true,
+        value: { message: "Thanks — got it. I'll check in again before too long.", receipts: [], next: "done" },
+      });
+      renderOpenPanel();
+      await waitFor(() => expect(screen.getByLabelText("Other")).toBeInTheDocument());
+
+      fireEvent.change(screen.getByLabelText("Other"), { target: { value: "7, feeling good" } });
+      fireEvent.click(within(screen.getByTestId("structured-question")).getByRole("button", { name: "Send" }));
+
+      await waitFor(() =>
+        expect(openItemsModule.submitOpenItemAnswer).toHaveBeenCalledWith({ requestId: "self-check", questionId: "score", answer: "7, feeling good" }),
+      );
+      await waitFor(() => expect(screen.queryByLabelText("Other")).not.toBeInTheDocument());
+      expect(screen.getByText("Thanks — got it. I'll check in again before too long.")).toBeInTheDocument();
+    });
+
+    it("the same pending request is never shown twice in one session, even after a refetch", async () => {
+      const { rerender } = render(<>{null}</>);
+      vi.spyOn(openItemsModule, "useOpenItems").mockReturnValue({ status: "loaded", items: [PENDING_SELF_CHECK] });
+      act(() => openChatPanel());
+      rerender(<ChatPanel />);
+      await waitFor(() => expect(screen.getAllByText(/Quick Self-Check/)).toHaveLength(1));
+
+      // A second render with the SAME item still pending (e.g. a hint-driven refetch) must not duplicate it.
+      rerender(<ChatPanel />);
+      expect(screen.getAllByText(/Quick Self-Check/)).toHaveLength(1);
     });
   });
 });

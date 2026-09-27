@@ -21,6 +21,14 @@ test("parseNightCloseOutAnswer recognizes completed/slipped synonyms, rejects an
   assert.equal(parseNightCloseOutAnswer(""), undefined);
 });
 
+test("Task 6 addendum: parseNightCloseOutAnswer tolerates natural free-text phrasing, same two statuses", () => {
+  assert.equal(parseNightCloseOutAnswer("I finished it"), "completed");
+  assert.equal(parseNightCloseOutAnswer("done!"), "completed");
+  assert.equal(parseNightCloseOutAnswer("yes done"), "completed");
+  assert.equal(parseNightCloseOutAnswer("didn't get to it"), "slipped");
+  assert.equal(parseNightCloseOutAnswer("nope"), "slipped");
+});
+
 test("isSkipAnswer recognizes only the literal 'skip' (case-insensitive)", () => {
   assert.equal(isSkipAnswer("skip"), true);
   assert.equal(isSkipAnswer("SKIP"), true);
@@ -29,14 +37,32 @@ test("isSkipAnswer recognizes only the literal 'skip' (case-insensitive)", () =>
   assert.equal(isSkipAnswer("completed"), false);
 });
 
-test("parseSelfCheckAnswer: accepts a valid score + reason, rejects a bare number", () => {
+test("parseSelfCheckAnswer: accepts a valid score + reason", () => {
   assert.deepEqual(parseSelfCheckAnswer("7 feeling good"), { score: 7, reason: "feeling good" });
   assert.deepEqual(parseSelfCheckAnswer("10 everything is on track"), { score: 10, reason: "everything is on track" });
-  assert.equal(parseSelfCheckAnswer("7"), undefined);
-  assert.equal(parseSelfCheckAnswer("7 "), undefined);
   assert.equal(parseSelfCheckAnswer("not a number at all"), undefined);
   assert.equal(parseSelfCheckAnswer("11 out of range"), undefined);
   assert.equal(parseSelfCheckAnswer("0 out of range"), undefined);
+});
+
+// Task 6 (Spencer: "the waiting on you questions do not go away when they
+// are answered" — traced to this parser's old strict "number<space>reason"
+// shape). Every example from the task brief, plus the no-number rejection.
+test("Task 6: parseSelfCheckAnswer accepts natural replies — score required, reason optional", () => {
+  assert.deepEqual(parseSelfCheckAnswer("7"), { score: 7, reason: "" });
+  assert.deepEqual(parseSelfCheckAnswer("7/10"), { score: 7, reason: "" });
+  assert.deepEqual(parseSelfCheckAnswer("7 out of 10"), { score: 7, reason: "" });
+  assert.deepEqual(parseSelfCheckAnswer("7, feeling good"), { score: 7, reason: "feeling good" });
+  assert.deepEqual(parseSelfCheckAnswer("7 - tired but ok"), { score: 7, reason: "tired but ok" });
+  assert.deepEqual(parseSelfCheckAnswer("seven"), { score: 7, reason: "" });
+  assert.deepEqual(parseSelfCheckAnswer("i'd say a 6. slept badly"), { score: 6, reason: "slept badly" });
+  assert.deepEqual(parseSelfCheckAnswer("8!"), { score: 8, reason: "" });
+});
+
+test("Task 6: parseSelfCheckAnswer rejects a reply with no 1-10 number at all", () => {
+  assert.equal(parseSelfCheckAnswer("not a number at all"), undefined);
+  assert.equal(parseSelfCheckAnswer(""), undefined);
+  assert.equal(parseSelfCheckAnswer("eleven"), undefined);
 });
 
 test("parseProposalAnswer recognizes common yes/no variants and rejects anything else", () => {

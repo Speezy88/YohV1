@@ -512,7 +512,7 @@ export async function runSelfCheckRitual(deps: SelfCheckRitualDeps): Promise<Res
 // (`answerSelfCheck`) calls
 // ============================================================================
 
-/** Input to `applySelfCheckAnswer` — a complete, already-validated answer (UX-DR15: both fields required, enforced by `core/open-item-answers.ts`'s `parseSelfCheckAnswer` before this is ever called). */
+/** Input to `applySelfCheckAnswer` — a complete, already-validated answer: a score in range, always present; `reason` may be `""` (Task 6: the score is required, the reason is optional), as decided by `core/open-item-answers.ts`'s `parseSelfCheckAnswer` before this is ever called. */
 export interface ApplySelfCheckAnswerInput {
   /** The local calendar date this check-in is being recorded against — `app/answer-self-check.ts` passes its own current local date. */
   readonly today: IsoDate;
