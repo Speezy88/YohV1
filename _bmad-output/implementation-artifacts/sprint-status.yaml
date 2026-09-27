@@ -118,8 +118,8 @@ development_status:
   8-9-cli-parity-check-and-retirement: done
   epic-8-retrospective: optional
 
-  epic-9: backlog
-  9-1-two-tier-data-completeness-gate: backlog
+  epic-9: in-progress
+  9-1-two-tier-data-completeness-gate: done
   9-2-sandbox-card-flow: backlog
   9-3-sandbox-finale-and-proof-of-action-notification: backlog
   9-4-needs-data-notification-and-indicator: backlog

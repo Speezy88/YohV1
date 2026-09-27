@@ -123,6 +123,32 @@ export type TaskStatus = "not-started" | "in-progress" | "completed" | "slipped"
 export type PlanningFieldNames = "estimatedDurationMinutes" | "area" | "dueDate" | "status" | "energy";
 
 /**
+ * Refining<T> — Story 9.1 (AD-11 amended): the wrapper a Refining Field
+ * (Area, Energy) is carried as on `CompleteTask`. Never `T | undefined`
+ * (that would let a caller silently forget to check) and never a defaulted
+ * `T` (that would fabricate a value Spencer never gave) — a caller MUST
+ * branch on `kind`. `core/data-completeness-gate.ts`'s private
+ * `toCompleteTask` is the only place a `Refining<T>` value is ever
+ * constructed (AD-11).
+ */
+export type Refining<T> = { readonly kind: "set"; readonly value: T } | { readonly kind: "missing" };
+
+/**
+ * The two Required Fields (Story 9.1 / FR-4 amended) — the only fields the
+ * Data-Completeness Gate can hold a Task back for. A narrower, additive
+ * alias: `PlanningFieldNames` itself is UNCHANGED (still all five names —
+ * it's still "a planning field name" for the Tasks page, FR-25 suggestions,
+ * and answer parsing).
+ */
+export type RequiredFieldNames = "dueDate" | "estimatedDurationMinutes";
+
+/**
+ * The two Refining Fields (Story 9.1 / FR-4 amended) — missing one no
+ * longer holds a Task back from planning; see `Refining<T>` above.
+ */
+export type RefiningFieldNames = "area" | "energy";
+
+/**
  * Task 7 (Priority field), binding ruling: what the Tasks page's inline
  * editor may write, widened past `PlanningFieldNames` to include
  * `"priority"` — deliberately NOT added to `PlanningFieldNames` itself
@@ -233,18 +259,24 @@ export interface ResearchVaultRecord {
 }
 
 /**
- * CompleteTask — the shape the Data-Completeness Gate (AD-11) produces.
- * Derived from `Task` by making the planning fields required (via
- * `Required<Pick<...>>`) rather than re-listing them, so `CompleteTask`
- * cannot drift out of sync with `Task`'s own field names/types. Every
- * function downstream of the gate (`derived-priority.ts`, `work-break-fit.ts`,
- * `plan-reasoning.ts`) accepts `CompleteTask`, never `Task`, in its
- * signature — a Task with a missing required field cannot type-check its
- * way into Plan assembly.
+ * CompleteTask — the shape the Data-Completeness Gate (AD-11, reshaped by
+ * Story 9.1) produces. Only the two Required Fields are required outright
+ * (via `Required<Pick<...>>`); the two Refining Fields are always PRESENT
+ * but wrapped as `Refining<T>` — `{kind:"set", value}` when Spencer
+ * supplied one, `{kind:"missing"}` when he didn't. `status` rides through
+ * untouched (it was never in either field-name alias, so `Omit<Task, ...>`
+ * still carries it as the plain, optional `Task["status"]` it always was —
+ * Status decides eligibility for planning generally and is not a gate
+ * field, `[PRD ASSUMPTION, adopted]`). Every function downstream of the
+ * gate (`derived-priority.ts`, `work-break-fit.ts`, `plan-reasoning.ts`)
+ * accepts `CompleteTask`, never `Task`, in its signature.
  */
 export interface CompleteTask
-  extends Omit<Task, PlanningFieldNames>,
-    Required<Pick<Task, PlanningFieldNames>> {}
+  extends Omit<Task, RequiredFieldNames | RefiningFieldNames>,
+    Required<Pick<Task, RequiredFieldNames>> {
+  readonly area: Refining<Area>;
+  readonly energy: Refining<Energy>;
+}
 
 /**
  * TaskFieldOverride — a partial map of planning-field-name to a
@@ -405,6 +437,15 @@ export interface PlanBlock {
   readonly taskId?: ExternalId;
   /** Short human-readable label shown in the Plan notification (Task title, "Break", or the Calendar event's own title). */
   readonly label: string;
+  /**
+   * Story 9.1 (AD-11 amended): present only on a `"work"` block whose
+   * source `CompleteTask` had one or both Refining Fields `{kind:"missing"}`
+   * — set by `rituals/morning-ritual.ts`/`mid-day-reflow.ts` when assembling
+   * the block (`core/work-break-fit.ts` itself has no Refining-field
+   * awareness and never sets this). Absent — never `[]` — when nothing is
+   * missing.
+   */
+  readonly missingRefining?: readonly RefiningFieldNames[];
 }
 
 /**

@@ -24,6 +24,9 @@ import type {
   PlanBlockKind,
   Project,
   Proposal,
+  Refining,
+  RefiningFieldNames,
+  RequiredFieldNames,
   Result,
   Task,
   TaskStatus,
@@ -69,17 +72,26 @@ const taskWithProject: Task = {
   projectId: project.id,
 };
 
+const refiningArea: Refining<Area> = { kind: "set", value: area };
+const missingRefiningArea: Refining<Area> = { kind: "missing" };
+const refiningEnergy: Refining<Energy> = { kind: "set", value: energy };
+
 const completeTask: CompleteTask = {
   id: taskId,
   title: task.title,
   estimatedDurationMinutes: 90,
-  area,
+  area: refiningArea,
   dueDate: today,
   status: "completed",
-  energy,
+  energy: refiningEnergy,
   createdAt: now,
   updatedAt: now,
 };
+
+const completeTaskMissingRefining: CompleteTask = { ...completeTask, area: missingRefiningArea };
+
+const requiredFieldName: RequiredFieldNames = "dueDate";
+const refiningFieldName: RefiningFieldNames = "energy";
 
 const blockKind: PlanBlockKind = "work";
 
@@ -91,6 +103,8 @@ const workBlock: PlanBlock = {
   taskId,
   label: task.title,
 };
+
+const workBlockIncomplete: PlanBlock = { ...workBlock, missingRefining: [refiningFieldName] };
 
 const breakBlock: PlanBlock = {
   id: "block-2",
@@ -184,4 +198,12 @@ test("domain.ts exported types each construct a valid value", () => {
     "conflict",
   ];
   assert.equal(allErrorKinds.length, 7);
+});
+
+test("Refining<T>/RequiredFieldNames/RefiningFieldNames/reshaped CompleteTask/PlanBlock.missingRefining compile and round-trip", () => {
+  assert.deepEqual(completeTask.area, { kind: "set", value: "Work" });
+  assert.deepEqual(completeTaskMissingRefining.area, { kind: "missing" });
+  assert.equal(requiredFieldName, "dueDate");
+  assert.equal(refiningFieldName, "energy");
+  assert.deepEqual(workBlockIncomplete.missingRefining, ["energy"]);
 });

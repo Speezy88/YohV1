@@ -220,11 +220,13 @@ import {
 } from "./ritual-shared.ts";
 import type {
   CalendarEvent,
+  CompleteTask,
   ExternalId,
   IsoDate,
   Plan,
   PlanBlock,
   Proposal,
+  RefiningFieldNames,
   Result,
   Task,
   TimeBudget,
@@ -563,6 +565,22 @@ function describeError(err: unknown): string {
 }
 
 /**
+ * Story 9.1 (AD-11 amended): the list of Refining Fields (Area, Energy)
+ * `task` is missing, in the fixed `["area", "energy"]` order — `undefined`
+ * (never `[]`) when neither is missing. `core/work-break-fit.ts` itself has
+ * no Refining-field awareness (it only ever sees `estimatedDurationMinutes`/
+ * `dueDate`/`id`/`title`), so this file is where a `"work"` `PlanBlock`
+ * actually gets tagged with `missingRefining` — the one place a
+ * `CompleteTask`'s own `Refining<T>` state is read back off after the gate.
+ */
+function missingRefiningFor(task: CompleteTask): readonly RefiningFieldNames[] | undefined {
+  const missing: RefiningFieldNames[] = [];
+  if (task.area.kind === "missing") missing.push("area");
+  if (task.energy.kind === "missing") missing.push("energy");
+  return missing.length > 0 ? missing : undefined;
+}
+
+/**
  * Generates and delivers today's Morning Plan. See the module docstring for
  * the full step-by-step orchestration and the reasoning behind each ordering
  * choice.
@@ -718,6 +736,19 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
     return fitted;
   }
 
+  // Story 9.1 (AD-11 amended): tag every assembled "work" block with
+  // whichever Refining Field(s) its own CompleteTask is missing —
+  // `fitWorkBreakBlocks` itself has no Refining-field awareness, so this is
+  // the one place it's read back off `candidates` (the SAME CompleteTask[]
+  // that produced `ordered`/`fitted`, per the module docstring's "ONE
+  // candidates array" contract) and attached before the Plan is assembled.
+  const candidatesById = new Map<ExternalId, CompleteTask>(candidates.map((t) => [t.id, t]));
+  const blocksWithMissingRefining: readonly PlanBlock[] = fitted.value.blocks.map((block) => {
+    if (block.kind !== "work" || block.taskId === undefined) return block;
+    const missing = missingRefiningFor(candidatesById.get(block.taskId)!);
+    return missing ? { ...block, missingRefining: missing } : block;
+  });
+
   // --- 8.5. Time-Budget-deferral streak + Proposal (Task 23 / Story 4.2,
   // AD-3) --------------------------------------------------------------------
   // `deferredTaskIds` is already computed above by every single Morning
@@ -803,7 +834,7 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
   // "has a block in this Plan" rather than a second derivation that could
   // disagree with the rendered output.
   const plannedTaskIds = new Set<ExternalId>(
-    fitted.value.blocks.flatMap((block) =>
+    blocksWithMissingRefining.flatMap((block) =>
       block.kind === "work" && block.taskId !== undefined ? [block.taskId] : [],
     ),
   );
@@ -854,7 +885,7 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
   const plan: Plan = {
     id: `plan-${today}`,
     date: today,
-    blocks: fitted.value.blocks,
+    blocks: blocksWithMissingRefining,
     reasoning: reasoning.value,
     version: (existingPlan?.data.version ?? 0) + 1,
     createdAt: existingPlan?.data.createdAt ?? nowIso,

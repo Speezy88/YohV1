@@ -27,6 +27,7 @@
  */
 import { useState } from "react";
 import type { HomePlanRow } from "../../../src/types/api.ts";
+import type { RefiningFieldNames } from "../../../src/types/domain.ts";
 import { useReducedMotion } from "../hooks/useReducedMotion.ts";
 import { remainingMs, requestCheckOff, requestUndo } from "../lib/checkOff.ts";
 import { addLocalFailureNotice } from "../lib/notifications.ts";
@@ -34,6 +35,24 @@ import { displayLabel } from "../lib/labels.ts";
 import { formatClockTime } from "../lib/hostTime.ts";
 import { Checkbox } from "./Checkbox.tsx";
 import { UndoToast } from "./UndoToast.tsx";
+
+/** Story 9.1: matches the codebase's existing "Area"/"Energy" capitalized field-name convention (`core/planning-field-value.ts`'s `PLANNING_FIELD_LABELS`, `TaskRow.tsx`'s own `FIELD_NAMES`) — duplicated here rather than imported, since `web/` may only `import type` from `src/types/*.ts` (AD-17), never a runtime const from `core/`. */
+const REFINING_FIELD_LABELS: Record<RefiningFieldNames, string> = { area: "Area", energy: "Energy" };
+
+function missingRefiningText(missing: readonly RefiningFieldNames[]): string {
+  return missing.map((field) => `no ${REFINING_FIELD_LABELS[field]}`).join(", ");
+}
+
+/** aria-hidden — the marker's own text carries the meaning (NFR-Accessibility: glyph plus text, never color alone). A small outlined "i" (information) glyph, not a color-only dot. */
+function IncompleteGlyph(): React.JSX.Element {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" width={12} height={12} fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" />
+      <line x1="12" y1="11" x2="12" y2="16.5" />
+      <circle cx="12" cy="7.5" r="0.75" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
 
 /** A locally checked row: still fading out, or gone. */
 type LocalCheck = "dissolving" | "gone";
@@ -105,6 +124,12 @@ export function PlanChecklist({ rows, timeZone }: PlanChecklistProps): React.JSX
           >
             <Checkbox label={displayLabel(row.label)} checked={checked} disabled={readOnly} onCheck={() => void check(row)} />
             <span className="flex-1">{displayLabel(row.label)}</span>
+            {row.missingRefining && row.missingRefining.length > 0 && (
+              <span data-testid="plan-row-incomplete-marker" className="flex shrink-0 items-center gap-1 whitespace-nowrap font-body text-label font-bold text-ink-secondary">
+                <IncompleteGlyph />
+                {missingRefiningText(row.missingRefining)}
+              </span>
+            )}
             <span className="font-body text-small text-ink-secondary">
               {formatClockTime(new Date(row.start), timeZone)}–{formatClockTime(new Date(row.end), timeZone)}
             </span>

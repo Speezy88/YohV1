@@ -22,26 +22,34 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { generatePlanReasoning } from "../src/core/plan-reasoning.ts";
-import type { CompleteTask, Energy } from "../src/types/domain.ts";
+import type { Area, CompleteTask, Energy, Refining } from "../src/types/domain.ts";
 
 const NOW = "2026-08-22T12:00:00.000Z";
 const TODAY = "2026-08-22";
 
-function makeCompleteTask(
-  id: string,
-  overrides: Partial<Omit<CompleteTask, "id" | "title" | "createdAt" | "updatedAt">> & { title?: string } = {},
-): CompleteTask {
+function toRefining<T>(value: T | "missing" | undefined, fallback: T): Refining<T> {
+  if (value === "missing") return { kind: "missing" };
+  return { kind: "set", value: value ?? fallback };
+}
+
+type CompleteTaskOverrides = Partial<Omit<CompleteTask, "id" | "title" | "createdAt" | "updatedAt" | "area" | "energy">> & {
+  title?: string;
+  area?: Area | "missing";
+  energy?: Energy | "missing";
+};
+
+function makeCompleteTask(id: string, overrides: CompleteTaskOverrides = {}): CompleteTask {
   return {
     id,
     title: overrides.title ?? `Task ${id}`,
     estimatedDurationMinutes: 60,
-    area: "Work",
     dueDate: "2026-08-25",
     status: "not-started",
-    energy: "medium" as Energy,
     createdAt: NOW,
     updatedAt: NOW,
     ...overrides,
+    area: toRefining<Area>(overrides.area, "Work"),
+    energy: toRefining<Energy>(overrides.energy, "medium"),
   };
 }
 

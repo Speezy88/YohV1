@@ -16,7 +16,7 @@
  * the `/api/*` surface. `web/` may `import type` from here (AD-17) and from
  * nothing else in `src/` except other `types/` files.
  */
-import type { ChatTurn, EditableTaskField, Energy, IsoDate, PlanningFieldNames, Proposal, Result, TaskFieldOptions, TaskStatus, YohError } from "./domain.ts";
+import type { ChatTurn, EditableTaskField, Energy, IsoDate, PlanningFieldNames, Proposal, RefiningFieldNames, Result, TaskFieldOptions, TaskStatus, YohError } from "./domain.ts";
 
 // ============================================================================
 // Serialized Result envelope
@@ -135,6 +135,8 @@ export interface HomePlanRow {
   readonly completed: boolean;
   /** `true` once `end` has already passed "now" (server-computed, AD-17) — the client renders this read-only. */
   readonly past: boolean;
+  /** Story 9.1 (additive, C2-style: added, never widened): mirrors the stored Plan block's own `PlanBlock.missingRefining`, passed through by `app/home-view.ts` untouched. Absent when nothing is missing. */
+  readonly missingRefining?: readonly RefiningFieldNames[];
 }
 
 /**

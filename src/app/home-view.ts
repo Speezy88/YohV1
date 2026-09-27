@@ -152,6 +152,7 @@ export async function getHomeView(deps: HomeViewDeps, _input: Record<string, nev
       end: block.end,
       completed: isCompleted(block),
       past: Date.parse(block.end) < nowMs,
+      ...(block.missingRefining ? { missingRefining: block.missingRefining } : {}),
     });
   }
 

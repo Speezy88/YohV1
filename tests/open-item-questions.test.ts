@@ -18,18 +18,22 @@ import type { MissingFieldReport } from "../src/core/data-completeness-gate.ts";
 import type { NightCloseOutTaskDetail } from "../src/rituals/night-ritual.ts";
 import type { Proposal, TaskFieldOverride } from "../src/types/domain.ts";
 
+// Story 9.1: `MissingFieldReport.missingFields` narrowed to `RequiredFieldNames`
+// (`"estimatedDurationMinutes" | "dueDate"`) — these fixtures use only those
+// two field names now (previously "area"/"energy", which the two-tier gate
+// can no longer report as missing).
 const REPORTS: readonly MissingFieldReport[] = [
-  { taskId: "t1", taskTitle: "Call dentist", missingFields: ["area", "dueDate"] },
-  { taskId: "t2", taskTitle: "Plan trip", missingFields: ["energy"] },
+  { taskId: "t1", taskTitle: "Call dentist", missingFields: ["estimatedDurationMinutes", "dueDate"] },
+  { taskId: "t2", taskTitle: "Plan trip", missingFields: ["dueDate"] },
 ];
 
 test("nextDataCompletenessQuestion returns the first (task, field) pair with no stored override, in order", () => {
   const next = nextDataCompletenessQuestion({ incomplete: REPORTS, overridesByTaskId: new Map<string, TaskFieldOverride>(), declinedSuggestions: new Set() });
-  assert.deepEqual(next, { taskId: "t1", taskTitle: "Call dentist", field: "area" });
+  assert.deepEqual(next, { taskId: "t1", taskTitle: "Call dentist", field: "estimatedDurationMinutes" });
 });
 
 test("nextDataCompletenessQuestion skips a pair that already has a stored override", () => {
-  const next = nextDataCompletenessQuestion({ incomplete: REPORTS, overridesByTaskId: new Map([["t1", { area: "Health" }]]), declinedSuggestions: new Set() });
+  const next = nextDataCompletenessQuestion({ incomplete: REPORTS, overridesByTaskId: new Map([["t1", { estimatedDurationMinutes: 90 }]]), declinedSuggestions: new Set() });
   assert.deepEqual(next, { taskId: "t1", taskTitle: "Call dentist", field: "dueDate" });
 });
 
@@ -37,8 +41,8 @@ test("nextDataCompletenessQuestion returns undefined once every field has an ove
   const next = nextDataCompletenessQuestion({
     incomplete: REPORTS,
     overridesByTaskId: new Map([
-      ["t1", { area: "Health", dueDate: "2026-09-01" }],
-      ["t2", { energy: "high" }],
+      ["t1", { estimatedDurationMinutes: 90, dueDate: "2026-09-01" }],
+      ["t2", { dueDate: "2026-09-05" }],
     ]),
     declinedSuggestions: new Set(),
   });
@@ -46,8 +50,8 @@ test("nextDataCompletenessQuestion returns undefined once every field has an ove
 });
 
 test("nextDataCompletenessQuestion reports whether this pair's suggestion was already declined", () => {
-  const next = nextDataCompletenessQuestion({ incomplete: REPORTS, overridesByTaskId: new Map(), declinedSuggestions: new Set(["t1:area"]) });
-  assert.deepEqual(next, { taskId: "t1", taskTitle: "Call dentist", field: "area", suggestionDeclined: true });
+  const next = nextDataCompletenessQuestion({ incomplete: REPORTS, overridesByTaskId: new Map(), declinedSuggestions: new Set(["t1:estimatedDurationMinutes"]) });
+  assert.deepEqual(next, { taskId: "t1", taskTitle: "Call dentist", field: "estimatedDurationMinutes", suggestionDeclined: true });
 });
 
 const TASKS: readonly NightCloseOutTaskDetail[] = [
@@ -68,8 +72,8 @@ test("nextNightCloseOutTask returns undefined once every Task is resolved or ski
 });
 
 test("buildDataCompletenessQuestion with no suggestion builds the blind ask", () => {
-  const q = buildDataCompletenessQuestion("data-completeness", { taskId: "t1", taskTitle: "Call dentist", field: "area" });
-  assert.equal(q.questionId, "t1:area");
+  const q = buildDataCompletenessQuestion("data-completeness", { taskId: "t1", taskTitle: "Call dentist", field: "estimatedDurationMinutes" });
+  assert.equal(q.questionId, "t1:estimatedDurationMinutes");
   assert.equal(q.options.length, 0);
   assert.equal(q.proposal, undefined);
 });

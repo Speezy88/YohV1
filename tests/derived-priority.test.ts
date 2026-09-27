@@ -14,26 +14,35 @@ import {
   REFERENCE_MINUTES_PER_DAY,
   SECONDARY_FACTOR_WEIGHT,
 } from "../src/core/derived-priority.ts";
-import type { CompleteTask, Energy } from "../src/types/domain.ts";
+import type { Area, CompleteTask, Energy, Refining } from "../src/types/domain.ts";
 
 const NOW = "2026-08-22T12:00:00.000Z";
 const TODAY = "2026-08-22";
 
-function makeCompleteTask(
-  id: string,
-  overrides: Partial<Omit<CompleteTask, "id" | "title" | "createdAt" | "updatedAt">> & { title?: string } = {},
-): CompleteTask {
+/** Story 9.1: `"missing"` is a fixture-only convenience sentinel — a real Area is never literally the string `"missing"` in these tests. */
+function toRefining<T>(value: T | "missing" | undefined, fallback: T): Refining<T> {
+  if (value === "missing") return { kind: "missing" };
+  return { kind: "set", value: value ?? fallback };
+}
+
+type CompleteTaskOverrides = Partial<Omit<CompleteTask, "id" | "title" | "createdAt" | "updatedAt" | "area" | "energy">> & {
+  title?: string;
+  area?: Area | "missing";
+  energy?: Energy | "missing";
+};
+
+function makeCompleteTask(id: string, overrides: CompleteTaskOverrides = {}): CompleteTask {
   return {
     id,
     title: overrides.title ?? `Task ${id}`,
     estimatedDurationMinutes: 60,
-    area: "Work",
     dueDate: "2026-08-25",
     status: "not-started",
-    energy: "medium" as Energy,
     createdAt: NOW,
     updatedAt: NOW,
     ...overrides,
+    area: toRefining<Area>(overrides.area, "Work"),
+    energy: toRefining<Energy>(overrides.energy, "medium"),
   };
 }
 
@@ -146,6 +155,68 @@ test("AC3: two CompleteTasks tied on the primary axis are ordered by the seconda
     result.value.map((t) => t.id),
     ["tie-a", "tie-b"],
   );
+});
+
+// ============================================================================
+// Story 9.1 (AD-11 amended): a {kind:"missing"} Refining Field scores the
+// fixed neutral value (0.5, ENERGY_RANK.medium reused verbatim) — neither
+// favoring nor penalizing the Task. Review Focus #1/#2.
+// ============================================================================
+
+test("Story 9.1: a Task missing BOTH Area and Energy still ties on the primary axis and gets the fixed neutral score on both sub-factors at once (Review Focus #1)", () => {
+  // Primary axis tied (same due date, same duration). "Work" is the only
+  // real Area in this candidate set, so it's a single-element ranked set --
+  // its alphabetical rank normalizes to 0 (NOT 0.5; see the "excluded from
+  // the alphabetical-rank set entirely" test below for the neutral-Area
+  // case in isolation). Energy "medium" ranks 0.5, exactly the neutral
+  // value too, so Energy ties while Area does not: missingBoth's
+  // areaSub+energySub (0.5+0.5) is strictly higher (sorts later) than
+  // setBoth's (0+0.5) -- proving {kind:"missing"} on BOTH fields at once
+  // still produces a well-defined, non-crashing secondary score, using the
+  // fixed neutral value on each sub-factor independently.
+  const missingBoth = makeCompleteTask("missing-both", { dueDate: "2026-08-24", estimatedDurationMinutes: 100, area: "missing", energy: "missing" });
+  const setBoth = makeCompleteTask("set-both", { dueDate: "2026-08-24", estimatedDurationMinutes: 100, area: "Work", energy: "medium" });
+
+  const result = orderByDerivedPriority([missingBoth, setBoth], TODAY);
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.deepEqual(result.value.map((t) => t.id), ["set-both", "missing-both"]);
+});
+
+test("Story 9.1: neutral Area (0.5) is a genuine midpoint — a real Area ranking BELOW 0.5 still beats it, and one ranking ABOVE 0.5 still loses to it (Review Focus #2)", () => {
+  // Three distinct Areas -> "Alpha" ranks 0 (first), "Mu" ranks 0.5 (middle,
+  // by construction of 3 evenly-spaced ranks: 0, 0.5, 1), "Zeta" ranks 1
+  // (last). A {kind:"missing"} Area scores the SAME neutral 0.5 regardless
+  // of what other Areas exist in the batch.
+  const belowNeutral = makeCompleteTask("below", { dueDate: "2026-08-24", estimatedDurationMinutes: 100, area: "Alpha", energy: "medium" });
+  const missing = makeCompleteTask("missing", { dueDate: "2026-08-24", estimatedDurationMinutes: 100, area: "missing", energy: "medium" });
+  const aboveNeutral = makeCompleteTask("above", { dueDate: "2026-08-24", estimatedDurationMinutes: 100, area: "Zeta", energy: "medium" });
+  const middleReal = makeCompleteTask("middle", { dueDate: "2026-08-24", estimatedDurationMinutes: 100, area: "Mu", energy: "medium" });
+
+  const result = orderByDerivedPriority([aboveNeutral, missing, belowNeutral, middleReal], TODAY);
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  // Tied on every other axis (equal duration/energy/dueDate), so Area rank
+  // alone decides: Alpha (0) < Mu/missing (tied at 0.5, exact tie broken by
+  // the stable sort's input order -- "missing" precedes "middleReal" in the
+  // call below) < Zeta (1). A {kind:"missing"} Area neither jumps the queue
+  // nor gets buried by it.
+  assert.deepEqual(result.value.map((t) => t.id), ["below", "missing", "middle", "above"]);
+});
+
+test("Story 9.1: a {kind:'missing'} Area is excluded from the alphabetical-rank set entirely — it never shifts a real Area's own rank", () => {
+  const missing = makeCompleteTask("missing", { dueDate: "2026-08-24", estimatedDurationMinutes: 100, area: "missing" });
+  const alpha = makeCompleteTask("alpha", { dueDate: "2026-08-24", estimatedDurationMinutes: 100, area: "Alpha" });
+  const zeta = makeCompleteTask("zeta", { dueDate: "2026-08-24", estimatedDurationMinutes: 100, area: "Zeta" });
+
+  // With only "Alpha"/"Zeta" as real Areas (the {kind:"missing"} Task
+  // contributes no Area to the ranked set), Alpha ranks 0 and Zeta ranks 1
+  // -- exactly as if the missing-Area Task weren't in the batch at all for
+  // THIS sub-factor.
+  const result = orderByDerivedPriority([zeta, missing, alpha], TODAY);
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.deepEqual(result.value.map((t) => t.id), ["alpha", "missing", "zeta"]);
 });
 
 test("SECONDARY_FACTOR_WEIGHT is documented as an even split (1/3) across Area/Energy fit/difficulty", () => {

@@ -320,3 +320,21 @@ test("Yoh-owned blocks and live fixed anchors are merged and sorted by start tim
   if (result.ok) assert.deepEqual(result.value.calendar.blocks.map((b) => b.id), ["b1", "e1", "b2"]);
   deps.store.close();
 });
+
+test("Story 9.1: a stored block's missingRefining passes through to its HomePlanRow untouched; a block with none carries no key", async () => {
+  const deps = tempDeps();
+  putPlan(deps.store, makePlan({
+    blocks: [
+      { id: "b1", kind: "work", start: "2026-09-25T13:00:00.000Z", end: "2026-09-25T14:00:00.000Z", taskId: "t1", label: "Draft the memo", missingRefining: ["energy"] },
+      { id: "b2", kind: "work", start: "2026-09-25T14:15:00.000Z", end: "2026-09-25T15:00:00.000Z", taskId: "t2", label: "Call the dentist" },
+    ],
+  }));
+
+  const result = await getHomeView(deps, {});
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  const rows = result.value.plan?.rows ?? [];
+  assert.deepEqual(rows.find((r) => r.taskId === "t1")?.missingRefining, ["energy"]);
+  assert.equal(rows.find((r) => r.taskId === "t2")?.missingRefining, undefined);
+  deps.store.close();
+});

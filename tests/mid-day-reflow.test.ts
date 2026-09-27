@@ -640,3 +640,33 @@ test("mid-day-reflow.ts is never imported by shell/ritual-cli.ts (the cron entry
   const contents = readFileSync(ritualCliPath, "utf8");
   assert.doesNotMatch(contents, /mid-day-reflow/, "ritual-cli.ts (cron-triggered) must never reference mid-day-reflow.ts");
 });
+
+test("Story 9.1 (Review Focus #3): a re-flowed block for a Task missing only Energy carries missingRefining independently of morning-ritual.ts's own tagging", async () => {
+  const store = tempStore();
+  putTimeBudget(store, { date: TODAY, totalMinutes: 240, workMinutes: 70, breakMinutes: 15 });
+  putPlan(store, morningPlan());
+
+  const refiningOnlyMissing: Task = {
+    id: "t-new",
+    title: "Newly-eligible Task",
+    createdAt: NOW_ISO,
+    updatedAt: NOW_ISO,
+    estimatedDurationMinutes: 20,
+    area: "Errands",
+    dueDate: TODAY,
+    status: "not-started",
+    // energy deliberately absent
+  };
+
+  const h = harness({
+    store,
+    tasks: [makeTask("t1", "Task One"), makeTask("t2", "Task Two"), makeTask("t3", "Task Three"), refiningOnlyMissing],
+  });
+
+  const result = await runMidDayReflow(h.deps);
+  assert.ok(result.ok && result.value.status === "reflowed", `expected reflowed, got ${JSON.stringify(result)}`);
+
+  const refitBlock = result.value.plan.blocks.find((b) => b.kind === "work" && b.taskId === "t-new");
+  assert.ok(refitBlock, "the Refining-only-missing Task is placed by the re-flow");
+  assert.deepEqual(refitBlock?.missingRefining, ["energy"]);
+});

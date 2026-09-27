@@ -308,3 +308,33 @@ describe("PlanChecklist", () => {
     expect(row("t1")).not.toBeVisible();
   });
 });
+
+const rowMissingEnergy: HomePlanRow = { blockId: "b3", taskId: "t3", label: "Renew the passport", start: "2026-09-25T11:00:00.000Z", end: "2026-09-25T11:20:00.000Z", completed: false, past: false, missingRefining: ["energy"] };
+const rowMissingBoth: HomePlanRow = { blockId: "b4", taskId: "t4", label: "Tidy the garage", start: "2026-09-25T11:20:00.000Z", end: "2026-09-25T11:40:00.000Z", completed: false, past: false, missingRefining: ["area", "energy"] };
+
+describe("PlanChecklist — Story 9.1 incomplete marker", () => {
+  beforeEach(() => {
+    mocked.checkOff.mockResolvedValue({ ok: true, value: pending("p1", "t1") });
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+  });
+
+  it("shows 'no Energy' with an aria-hidden glyph when only Energy is missing (Review Focus #4)", () => {
+    renderChecklist([rowMissingEnergy]);
+    const marker = screen.getByTestId("plan-row-incomplete-marker");
+    expect(marker).toHaveTextContent("no Energy");
+    expect(marker.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it("shows 'no Area, no Energy' when both Refining Fields are missing, never bleeding 'no Area' alone (Review Focus #4)", () => {
+    renderChecklist([rowMissingBoth]);
+    expect(screen.getByTestId("plan-row-incomplete-marker")).toHaveTextContent("no Area, no Energy");
+  });
+
+  it("renders NO marker at all — not an empty pill — for a row with no missingRefining (Review Focus #4 regression guard)", () => {
+    renderChecklist(rows); // the existing top-of-file fixture rows, neither carries missingRefining
+    expect(screen.queryByTestId("plan-row-incomplete-marker")).not.toBeInTheDocument();
+  });
+});

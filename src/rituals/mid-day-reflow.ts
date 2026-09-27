@@ -249,10 +249,19 @@ import type {
   IsoDate,
   Plan,
   PlanBlock,
+  RefiningFieldNames,
   Result,
   Task,
   YohError,
 } from "../types/domain.ts";
+
+/** Story 9.1 (AD-11 amended) — see `morning-ritual.ts`'s own copy of this helper for the full doc comment. */
+function missingRefiningFor(task: CompleteTask): readonly RefiningFieldNames[] | undefined {
+  const missing: RefiningFieldNames[] = [];
+  if (task.area.kind === "missing") missing.push("area");
+  if (task.energy.kind === "missing") missing.push("energy");
+  return missing.length > 0 ? missing : undefined;
+}
 
 const MINUTES_TO_MS = 60_000;
 
@@ -625,11 +634,12 @@ export async function runMidDayReflow(deps: MidDayReflowDeps): Promise<Result<Mi
   // why this prefix (keyed by the strictly-increasing new Plan version)
   // guarantees no collision with a past block's id, across any number of
   // successive re-flows of the same day.
+  const outstandingById = new Map<ExternalId, CompleteTask>(outstanding.map((t) => [t.id, t]));
   const reflowIdPrefix = `reflow-v${nextVersion}`;
-  const refitBlocks: readonly PlanBlock[] = fitted.value.blocks.map((b) => ({
-    ...b,
-    id: `${reflowIdPrefix}-${b.id}`,
-  }));
+  const refitBlocks: readonly PlanBlock[] = fitted.value.blocks.map((b) => {
+    const missing = b.kind === "work" && b.taskId !== undefined ? missingRefiningFor(outstandingById.get(b.taskId)!) : undefined;
+    return { ...b, id: `${reflowIdPrefix}-${b.id}`, ...(missing ? { missingRefining: missing } : {}) };
+  });
 
   const mergedBlocks = [...pastBlocks, ...refitBlocks].sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
 

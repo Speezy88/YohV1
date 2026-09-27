@@ -10,26 +10,34 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fitWorkBreakBlocks } from "../src/core/work-break-fit.ts";
-import type { CalendarEvent, CompleteTask, Energy, TimeBudget } from "../src/types/domain.ts";
+import type { Area, CalendarEvent, CompleteTask, Energy, Refining, TimeBudget } from "../src/types/domain.ts";
 
 const NOW = "2026-08-22T00:00:00.000Z";
 const START = "2026-08-22T09:00:00.000Z"; // 09:00 UTC start of the fitting day
 
+function toRefining<T>(value: T | "missing" | undefined, fallback: T): Refining<T> {
+  if (value === "missing") return { kind: "missing" };
+  return { kind: "set", value: value ?? fallback };
+}
+
 function makeTask(
   id: string,
   estimatedDurationMinutes: number,
-  overrides: Partial<Omit<CompleteTask, "id" | "estimatedDurationMinutes" | "createdAt" | "updatedAt">> = {},
+  overrides: Partial<Omit<CompleteTask, "id" | "estimatedDurationMinutes" | "createdAt" | "updatedAt" | "area" | "energy">> & {
+    area?: Area | "missing";
+    energy?: Energy | "missing";
+  } = {},
 ): CompleteTask {
   return {
     id,
     title: overrides.title ?? `Task ${id}`,
     estimatedDurationMinutes,
-    area: overrides.area ?? "Work",
     dueDate: overrides.dueDate ?? "2026-08-25",
     status: overrides.status ?? "not-started",
-    energy: (overrides.energy ?? "medium") as Energy,
     createdAt: NOW,
     updatedAt: NOW,
+    area: toRefining<Area>(overrides.area, "Work"),
+    energy: toRefining<Energy>(overrides.energy, "medium"),
   };
 }
 

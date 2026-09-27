@@ -342,6 +342,52 @@ test("an incomplete Task does not block the complete Tasks from being planned (A
   assert.deepEqual(result.value.incompleteTaskIds, ["t2"]);
 });
 
+test("Story 9.1: a Task missing only a Refining Field (Energy) is still planned, and its block carries missingRefining: ['energy']", async () => {
+  const refiningOnlyMissing: Task = {
+    id: "t9",
+    title: "Water the office plants",
+    createdAt: NOW_ISO,
+    updatedAt: NOW_ISO,
+    estimatedDurationMinutes: 20,
+    area: "Errands",
+    dueDate: TODAY,
+    status: "not-started",
+    // energy deliberately absent — a Refining Field, not a Required one.
+  };
+  const h = harness({ tasks: [refiningOnlyMissing] });
+
+  const result = await runMorningRitual(h.deps);
+  assert.ok(result.ok && result.value.status === "delivered", `expected delivered, got ${JSON.stringify(result)}`);
+
+  const workBlock = result.value.plan.blocks.find((b) => b.kind === "work" && b.taskId === "t9");
+  assert.ok(workBlock, "the Refining-only-missing Task IS placed on the Plan (AD-11 amended)");
+  assert.deepEqual(workBlock?.missingRefining, ["energy"]);
+  assert.equal(result.value.incompleteTaskIds.length, 0, "missing only a Refining Field never opens the Data-Completeness prompt");
+});
+
+test("Story 9.1: a Task missing BOTH Refining Fields carries missingRefining: ['area', 'energy'] in that fixed order; a fully-set Task carries no missingRefining at all", async () => {
+  const bothMissing: Task = {
+    id: "t10",
+    title: "Tidy the garage",
+    createdAt: NOW_ISO,
+    updatedAt: NOW_ISO,
+    estimatedDurationMinutes: 20,
+    dueDate: TODAY,
+    status: "not-started",
+    // area AND energy deliberately absent.
+  };
+  const h = harness({ tasks: [makeTask("t11", "Draft the memo", { estimatedDurationMinutes: 20 }), bothMissing] });
+
+  const result = await runMorningRitual(h.deps);
+  assert.ok(result.ok && result.value.status === "delivered");
+
+  const bothMissingBlock = result.value.plan.blocks.find((b) => b.kind === "work" && b.taskId === "t10");
+  assert.deepEqual(bothMissingBlock?.missingRefining, ["area", "energy"]);
+
+  const fullySetBlock = result.value.plan.blocks.find((b) => b.kind === "work" && b.taskId === "t11");
+  assert.equal(fullySetBlock?.missingRefining, undefined, "a block for a Task with no missing Refining Field carries no key at all, never []");
+});
+
 test("when every Task is incomplete there is nothing to plan: no notification, no ran-today marker, request opened", async () => {
   const incomplete: Task = {
     id: "t1",

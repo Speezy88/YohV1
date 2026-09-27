@@ -78,31 +78,31 @@ function makeTask(
 // ============================================================================
 
 test("buildMissingFieldsPromptText names the missing field(s) and Task title for a single Task", () => {
-  const reports: MissingFieldReport[] = [{ taskId: "t1", taskTitle: "Call dentist", missingFields: ["area"] }];
+  const reports: MissingFieldReport[] = [{ taskId: "t1", taskTitle: "Call dentist", missingFields: ["dueDate"] }];
   const text = buildMissingFieldsPromptText(reports);
   assert.match(text, /Call dentist/);
-  assert.match(text, /Area/);
+  assert.match(text, /Due Date/);
 });
 
 test("buildMissingFieldsPromptText covers multiple incomplete Tasks in one combined prompt (UX-DR10)", () => {
   const reports: MissingFieldReport[] = [
-    { taskId: "t1", taskTitle: "Call dentist", missingFields: ["area"] },
-    { taskId: "t2", taskTitle: "Plan trip", missingFields: ["dueDate", "energy"] },
+    { taskId: "t1", taskTitle: "Call dentist", missingFields: ["dueDate"] },
+    { taskId: "t2", taskTitle: "Plan trip", missingFields: ["estimatedDurationMinutes"] },
   ];
   const text = buildMissingFieldsPromptText(reports);
   assert.match(text, /Call dentist/);
   assert.match(text, /Plan trip/);
   assert.match(text, /Due Date/);
-  assert.match(text, /Energy/);
+  assert.match(text, /Estimated Duration/);
 });
 
 // ============================================================================
 // syncDataCompletenessInteractionRequest — thin wiring: gate -> memory-store
 // ============================================================================
 
-test("syncDataCompletenessInteractionRequest persists one combined interaction request when a Task is missing a field", () => {
+test("syncDataCompletenessInteractionRequest persists one combined interaction request when a Task is missing a Required field", () => {
   const store = tempStore();
-  const incompleteTask = makeTask("t1", "Call dentist", { area: undefined });
+  const incompleteTask = makeTask("t1", "Call dentist", { dueDate: undefined });
 
   syncDataCompletenessInteractionRequest(store, [incompleteTask]);
 
@@ -115,7 +115,7 @@ test("syncDataCompletenessInteractionRequest persists one combined interaction r
 
 test("syncDataCompletenessInteractionRequest covers multiple incomplete Tasks with a single request record, not one per Task", () => {
   const store = tempStore();
-  const t1 = makeTask("t1", "Call dentist", { area: undefined });
+  const t1 = makeTask("t1", "Call dentist", { estimatedDurationMinutes: undefined });
   const t2 = makeTask("t2", "Plan trip", { dueDate: undefined });
 
   syncDataCompletenessInteractionRequest(store, [t1, t2]);
@@ -127,16 +127,16 @@ test("syncDataCompletenessInteractionRequest covers multiple incomplete Tasks wi
   store.close();
 });
 
-test("syncDataCompletenessInteractionRequest does not persist a request when every Task is complete", () => {
+test("syncDataCompletenessInteractionRequest does not persist a request when every Task is complete (missing-Refining-only Tasks are eligible)", () => {
   const store = tempStore();
-  syncDataCompletenessInteractionRequest(store, [makeTask("t1", "Complete task")]);
+  syncDataCompletenessInteractionRequest(store, [makeTask("t1", "Complete task"), makeTask("t2", "Refining-only missing", { area: undefined })]);
   assert.equal(getOpenInteractionRequest(store, DATA_COMPLETENESS_REQUEST_ID), undefined);
   store.close();
 });
 
-test("syncDataCompletenessInteractionRequest clears a previously-open request once the gate re-run's input Task set has the field present (unit-level: caller supplies the now-complete Task directly, not exercising the answer-storage path — see the end-to-end test below for that)", () => {
+test("syncDataCompletenessInteractionRequest clears a previously-open request once the gate re-run's input Task set has the Required field present (unit-level: caller supplies the now-complete Task directly, not exercising the answer-storage path — see the end-to-end test below for that)", () => {
   const store = tempStore();
-  const incompleteTask = makeTask("t1", "Call dentist", { area: undefined });
+  const incompleteTask = makeTask("t1", "Call dentist", { dueDate: undefined });
   syncDataCompletenessInteractionRequest(store, [incompleteTask]);
   assert.ok(getOpenInteractionRequest(store, DATA_COMPLETENESS_REQUEST_ID));
 
@@ -153,12 +153,12 @@ test("syncDataCompletenessInteractionRequest clears a previously-open request on
 
 test("syncDataCompletenessInteractionRequest merges a stored TaskFieldOverride onto the raw Task before running the gate", () => {
   const store = tempStore();
-  const rawTask = makeTask("t1", "Call dentist", { area: undefined });
+  const rawTask = makeTask("t1", "Call dentist", { dueDate: undefined });
 
-  // The raw Task is still missing `area` on every re-read (e.g. from
+  // The raw Task is still missing `dueDate` on every re-read (e.g. from
   // Notion) — but an override for it is already on file from a previous
   // answer.
-  mergeTaskFieldOverride(store, "t1", { area: "Health" });
+  mergeTaskFieldOverride(store, "t1", { dueDate: "2026-08-25" });
 
   syncDataCompletenessInteractionRequest(store, [rawTask]);
 

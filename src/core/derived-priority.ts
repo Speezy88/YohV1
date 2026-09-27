@@ -81,13 +81,19 @@
  *     distinct Area value present in *this call's* candidate set is ranked
  *     alphabetically and normalized to [0, 1] (0 = alphabetically first).
  *     This is a stable, deterministic placeholder for real preference data,
- *     not a claim that alphabetically-earlier Areas matter more.
+ *     not a claim that alphabetically-earlier Areas matter more. Story 9.1
+ *     (AD-11 amended): a `{kind:"missing"}` Area is excluded from this
+ *     ranked set entirely and scores the fixed neutral
+ *     `NEUTRAL_REFINING_SCORE` (0.5) instead.
  *   - **Energy fit** would need "Spencer's current/today's energy level" as
  *     an input to score against, and no earlier task in this plan produces
  *     one. Sub-score: a fixed canonical ranking — `high` (0) < `medium`
  *     (0.5) < `low` (1) — on the reasoning that Yoh's one daily Morning Plan
  *     is generated once, when energy is typically freshest, so higher
- *     Energy Tasks are nudged earlier as a placeholder preference.
+ *     Energy Tasks are nudged earlier as a placeholder preference. A
+ *     `{kind:"missing"}` Energy also scores `NEUTRAL_REFINING_SCORE` — the
+ *     same 0.5 `ENERGY_RANK.medium` already used, reused verbatim rather
+ *     than duplicated (controller ruling (c)).
  *   - **Difficulty** has no field anywhere in `Task`/`CompleteTask`, and no
  *     Notion property feeds one — the PRD explicitly lists "Chunk Size" and
  *     "Priority" as Notion Task fields Yoh's planning deliberately does NOT
@@ -219,6 +225,19 @@ function computePrimaryScore(task: CompleteTask, today: IsoDate, bumpLevel: numb
 /** Fixed canonical Energy-fit placeholder ranking -- see the file docstring's "Energy fit" section. */
 const ENERGY_RANK: Readonly<Record<Energy, number>> = { high: 0, medium: 0.5, low: 1 };
 
+/**
+ * Story 9.1 (AD-11 amended): the fixed neutral score a `{kind:"missing"}`
+ * Refining Field (Area or Energy) scores on the secondary axis — "neither
+ * favors nor penalizes" the Task (FR-4 amended). Reuses `ENERGY_RANK.medium`
+ * (`0.5`) VERBATIM rather than inventing a second constant (controller
+ * ruling (c)) — a documented coincidence, not a hidden one: `0.5` is both
+ * "medium energy" and "no Refining data at all," and the two must never be
+ * confused for anything other than sharing the same numeric midpoint. This
+ * value exists only inside this computation — never stored, never sent to
+ * the client as a real Area/Energy, never written to Notion.
+ */
+const NEUTRAL_REFINING_SCORE = ENERGY_RANK.medium;
+
 /** Per-Task breakdown of the three even-split secondary sub-scores plus their combined weighted total. */
 interface SecondaryScoreDetail {
   readonly areaSub: number;
@@ -237,7 +256,10 @@ interface SecondaryScoreDetail {
  * any lookup-by-id step that could risk an unguaranteed-present key.
  */
 function computeSecondaryScoreDetails(tasks: readonly CompleteTask[]): readonly SecondaryScoreDetail[] {
-  const distinctAreasSorted = [...new Set(tasks.map((t) => t.area))].sort();
+  // Story 9.1: a {kind:"missing"} Area contributes NOTHING to the
+  // alphabetical-rank set -- it neither claims a rank slot nor shifts any
+  // real Area's own rank (Review Focus, pinned above).
+  const distinctAreasSorted = [...new Set(tasks.flatMap((t) => (t.area.kind === "set" ? [t.area.value] : [])))].sort();
   const areaRank = new Map<string, number>(
     distinctAreasSorted.map((area, index) => [
       area,
@@ -251,8 +273,10 @@ function computeSecondaryScoreDetails(tasks: readonly CompleteTask[]): readonly 
   const durationRange = maxDuration - minDuration;
 
   return tasks.map((task) => {
-    const areaSub = areaRank.get(task.area) ?? 0;
-    const energySub = ENERGY_RANK[task.energy];
+    // Story 9.1: {kind:"missing"} on either Refining Field scores the fixed
+    // neutral value -- never looked up, never defaulted to a real value.
+    const areaSub = task.area.kind === "missing" ? NEUTRAL_REFINING_SCORE : (areaRank.get(task.area.value) ?? 0);
+    const energySub = task.energy.kind === "missing" ? NEUTRAL_REFINING_SCORE : ENERGY_RANK[task.energy.value];
     const normalizedDuration = durationRange > 0 ? (task.estimatedDurationMinutes - minDuration) / durationRange : 0;
     // Directionality matches the primary axis (see the file docstring's
     // "Difficulty" reconciliation paragraph): longer duration is a *cost*

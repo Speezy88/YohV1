@@ -66,7 +66,7 @@ function makeTask(id: string, title: string, overrides: Partial<Task> = {}): Tas
   };
 }
 
-/** A Task missing "area" — one of `core/data-completeness-gate.ts`'s five planning fields — so the gate reports it incomplete rather than planning it. */
+/** A Task missing "dueDate" — one of `core/data-completeness-gate.ts`'s two Required Fields (Story 9.1) — so the gate reports it incomplete rather than planning it. */
 function incompleteTask(id: string, title: string): Task {
   return {
     id,
@@ -74,10 +74,10 @@ function incompleteTask(id: string, title: string): Task {
     createdAt: NOW_ISO,
     updatedAt: NOW_ISO,
     estimatedDurationMinutes: 30,
-    dueDate: TODAY,
+    area: "Work",
     status: "not-started",
     energy: "medium",
-    // area deliberately absent
+    // dueDate deliberately absent
   };
 }
 

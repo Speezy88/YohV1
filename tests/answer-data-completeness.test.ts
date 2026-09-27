@@ -7,8 +7,25 @@ import { createMemoryStore, getOpenInteractionRequest, getTaskFieldOverride, mer
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
 import { answerDataCompleteness } from "../src/app/answer-data-completeness.ts";
-import type { MissingFieldReport } from "../src/core/data-completeness-gate.ts";
-import type { Result, YohError } from "../src/types/domain.ts";
+import type { PlanningFieldNames, Result, YohError } from "../src/types/domain.ts";
+
+/**
+ * Story 9.1: `MissingFieldReport.missingFields` (the real gate's output
+ * shape) narrowed to `RequiredFieldNames` — Area/Energy can no longer
+ * appear there in production. This test file hand-constructs an
+ * interaction-request record directly (bypassing the gate entirely) to
+ * exercise `answerDataCompleteness`'s own generic, field-name-agnostic
+ * answering machinery — including its Area-specific live-option-matching
+ * path (`liveAreaOptions`/`matchLiveOption`), which is still live code, just
+ * no longer reachable via a real Data-Completeness Gate run post-9.1. A
+ * locally widened field-name type (rather than the narrowed
+ * `MissingFieldReport`) keeps that coverage intact.
+ */
+interface TestMissingFieldReport {
+  readonly taskId: string;
+  readonly taskTitle: string;
+  readonly missingFields: readonly PlanningFieldNames[];
+}
 
 function tempStore() {
   const connection = openSqliteConnection({ databasePath: ":memory:" });
@@ -18,7 +35,7 @@ function tempStore() {
 function session() {
   return { recentMessages: [], lastSearchAnswer: undefined };
 }
-function openReq(store: ReturnType<typeof tempStore>, incomplete: MissingFieldReport[]) {
+function openReq(store: ReturnType<typeof tempStore>, incomplete: TestMissingFieldReport[]) {
   putOpenInteractionRequest(store, "data-completeness", { requestKind: "data-completeness", promptText: "x", detail: { incomplete }, createdAt: "2026-09-25T00:00:00.000Z" });
 }
 function makeUpdateTaskField(failOnce: readonly string[] = []) {

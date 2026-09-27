@@ -1,5 +1,6 @@
 /**
- * Tests for `src/core/data-completeness-gate.ts` (Story 1.5 / Task 5, AD-11).
+ * Tests for `src/core/data-completeness-gate.ts` (Story 1.5 / Task 5, AD-11;
+ * reshaped into a two-tier gate by Story 9.1, AD-11 amended 2026-09-27).
  *
  * Per AD-2/AD-8, this is a pure `core/*.ts` function: no I/O, no
  * module-level state, `Result<T, YohError>`, never throws. These tests
@@ -27,7 +28,7 @@ function makeCompleteTaskFields(): Omit<Task, "id" | "title" | "createdAt" | "up
  * Overrides for just Task's optional fields (the five planning fields plus
  * `projectId`) — deliberately excludes the required fields (`id`, `title`,
  * `createdAt`, `updatedAt`) so this type permits explicitly setting a field
- * to `undefined` (to simulate a missing planning field) under
+ * to `undefined` (to simulate a missing field) under
  * `exactOptionalPropertyTypes`, without widening a required field's type.
  */
 type TaskOverrides = {
@@ -35,13 +36,6 @@ type TaskOverrides = {
 };
 
 function makeTask(id: string, title: string, overrides: TaskOverrides = {}): Task {
-  // `exactOptionalPropertyTypes` treats a spread-merged `field: T | undefined`
-  // as incompatible with `Task`'s own `field?: T` even though, at runtime,
-  // an explicit `undefined` and an absent key are indistinguishable to
-  // `checkDataCompleteness`'s `task[field] === undefined` check (which is
-  // exactly what this fixture builder exists to exercise) — the cast below
-  // is a test-fixture-only escape hatch for that static/runtime mismatch,
-  // not a widening of `Task` itself.
   return {
     id,
     title,
@@ -52,7 +46,7 @@ function makeTask(id: string, title: string, overrides: TaskOverrides = {}): Tas
   } as Task;
 }
 
-test("a Task with all 5 planning fields present produces a CompleteTask", () => {
+test("a Task with both Required Fields present produces a CompleteTask, with Area/Energy wrapped Refining<T>", () => {
   const task = makeTask("task-1", "Write report");
   const result = checkDataCompleteness([task]);
 
@@ -63,14 +57,49 @@ test("a Task with all 5 planning fields present produces a CompleteTask", () => 
   const complete: CompleteTask = result.value.completeTasks[0]!;
   assert.equal(complete.id, "task-1");
   assert.equal(complete.estimatedDurationMinutes, 30);
-  assert.equal(complete.area, "Work");
   assert.equal(complete.dueDate, "2026-08-23");
   assert.equal(complete.status, "not-started");
-  assert.equal(complete.energy, "medium");
+  assert.deepEqual(complete.area, { kind: "set", value: "Work" });
+  assert.deepEqual(complete.energy, { kind: "set", value: "medium" });
 });
 
-test("a Task missing one planning field does not produce a CompleteTask", () => {
+test("a Task missing Area only (a Refining Field) is FULLY ELIGIBLE — placed in completeTasks with area {kind:'missing'}, never in incomplete", () => {
   const task = makeTask("task-2", "Call dentist", { area: undefined });
+  const result = checkDataCompleteness([task]);
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.value.incomplete.length, 0);
+  assert.equal(result.value.completeTasks.length, 1);
+  assert.deepEqual(result.value.completeTasks[0]!.area, { kind: "missing" });
+  assert.deepEqual(result.value.completeTasks[0]!.energy, { kind: "set", value: "medium" });
+});
+
+test("a Task missing BOTH Refining Fields (Area AND Energy) is still fully eligible, with both wrapped {kind:'missing'} (Review Focus #1)", () => {
+  const task = makeTask("task-2b", "Water the plants", { area: undefined, energy: undefined });
+  const result = checkDataCompleteness([task]);
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.value.incomplete.length, 0);
+  assert.equal(result.value.completeTasks.length, 1);
+  assert.deepEqual(result.value.completeTasks[0]!.area, { kind: "missing" });
+  assert.deepEqual(result.value.completeTasks[0]!.energy, { kind: "missing" });
+});
+
+test("a Task with an empty Status is treated as eligible, not gated — Status is not in the gate's field list at all (AC5, [PRD ASSUMPTION, adopted])", () => {
+  const task = makeTask("task-2c", "File taxes", { status: undefined });
+  const result = checkDataCompleteness([task]);
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.value.incomplete.length, 0);
+  assert.equal(result.value.completeTasks.length, 1);
+  assert.equal(result.value.completeTasks[0]!.status, undefined);
+});
+
+test("a Task missing a Required Field (Due Date) is NOT placed and does not become a CompleteTask", () => {
+  const task = makeTask("task-3", "Plan trip", { dueDate: undefined });
   const result = checkDataCompleteness([task]);
 
   assert.equal(result.ok, true);
@@ -78,34 +107,51 @@ test("a Task missing one planning field does not produce a CompleteTask", () => 
   assert.equal(result.value.completeTasks.length, 0);
   assert.equal(result.value.incomplete.length, 1);
   const report: MissingFieldReport = result.value.incomplete[0]!;
-  assert.equal(report.taskId, "task-2");
-  assert.equal(report.taskTitle, "Call dentist");
-  assert.deepEqual(report.missingFields, ["area"]);
+  assert.equal(report.taskId, "task-3");
+  assert.deepEqual(report.missingFields, ["dueDate"]);
 });
 
-test("a Task missing multiple planning fields reports every missing field, in stable order", () => {
-  const task = makeTask("task-3", "Plan trip", { dueDate: undefined, energy: undefined, status: undefined });
+test("a Task missing both Required Fields reports both, in the fixed order, and Refining/Status fields never appear in missingFields", () => {
+  const task = makeTask("task-3b", "Ship the release", {
+    estimatedDurationMinutes: undefined,
+    dueDate: undefined,
+    area: undefined,
+    energy: undefined,
+    status: undefined,
+  });
   const result = checkDataCompleteness([task]);
 
   assert.equal(result.ok, true);
   if (!result.ok) return;
   assert.equal(result.value.incomplete.length, 1);
-  assert.deepEqual(result.value.incomplete[0]!.missingFields, ["dueDate", "status", "energy"]);
+  assert.deepEqual(result.value.incomplete[0]!.missingFields, ["estimatedDurationMinutes", "dueDate"]);
 });
 
-test("mixed candidate set: complete Tasks produce CompleteTask, incomplete Tasks do not, each independently", () => {
+test("a Task missing a Required Field AND a Refining Field is reported ONLY in incomplete — never double-counted into completeTasks too (Review Focus #5)", () => {
+  const task = makeTask("task-3c", "Renew the passport", { dueDate: undefined, area: undefined });
+  const result = checkDataCompleteness([task]);
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.value.completeTasks.length, 0);
+  assert.equal(result.value.incomplete.length, 1);
+  assert.deepEqual(result.value.incomplete[0]!.missingFields, ["dueDate"]);
+});
+
+test("mixed candidate set: Required-complete Tasks (Refining Fields present or missing alike) produce CompleteTask; Required-incomplete Tasks do not, each independently", () => {
   const complete1 = makeTask("task-4", "Complete one");
+  const refiningOnlyMissing = makeTask("task-4b", "Refining-only missing", { area: undefined });
   const incomplete1 = makeTask("task-5", "Incomplete one", { estimatedDurationMinutes: undefined });
   const complete2 = makeTask("task-6", "Complete two");
-  const incomplete2 = makeTask("task-7", "Incomplete two", { status: undefined });
+  const incomplete2 = makeTask("task-7", "Incomplete two", { dueDate: undefined });
 
-  const result = checkDataCompleteness([complete1, incomplete1, complete2, incomplete2]);
+  const result = checkDataCompleteness([complete1, refiningOnlyMissing, incomplete1, complete2, incomplete2]);
 
   assert.equal(result.ok, true);
   if (!result.ok) return;
   assert.deepEqual(
     result.value.completeTasks.map((t) => t.id),
-    ["task-4", "task-6"],
+    ["task-4", "task-4b", "task-6"],
   );
   assert.deepEqual(
     result.value.incomplete.map((r) => r.taskId),
@@ -121,7 +167,7 @@ test("an empty candidate set produces no complete Tasks and no incomplete report
   assert.deepEqual(result.value.incomplete, []);
 });
 
-test("projectId, an unrelated optional field, never counts as a missing planning field", () => {
+test("projectId, an unrelated optional field, never counts as a missing field", () => {
   const task = makeTask("task-8", "Has no project", { projectId: undefined });
   const result = checkDataCompleteness([task]);
   assert.equal(result.ok, true);
