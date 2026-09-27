@@ -348,6 +348,8 @@ export interface ChatTurnResponse {
   readonly receipts: readonly string[];
   /** A follow-up Structured Question (e.g. a new proposal to confirm) — unused before Task 5/8. */
   readonly question?: OpenItemQuestion;
+  /** `/sandbox`'s first card (Story 9.2) — a fifth kind of follow-up alongside `question`, never both on the same turn. */
+  readonly sandboxCard?: SandboxCardView;
 }
 
 /**
@@ -518,6 +520,52 @@ export interface MorningViewResponse {
   readonly today: string;
   readonly plan: { readonly text: string; readonly reasoning: string } | undefined;
   readonly openItems: readonly OpenItem[];
+}
+
+// ============================================================================
+// /sandbox card flow (Story 9.2) — new shapes only.
+// ============================================================================
+
+/** One Sandbox Card as the client renders it — the queue's first item, plus how many remain AFTER it. */
+export interface SandboxCardView {
+  readonly taskId: string;
+  readonly taskTitle: string;
+  readonly dueDate?: IsoDate;
+  readonly estimatedDurationMinutes?: number;
+  readonly area?: string;
+  readonly energy?: Energy;
+  readonly remaining: number;
+}
+
+export interface SandboxStartRequest {
+  readonly exclude?: readonly string[];
+}
+
+/** `card: undefined` means the queue is empty. */
+export interface SandboxStartResponse {
+  readonly card: SandboxCardView | undefined;
+}
+
+export interface SandboxSaveRequest {
+  readonly dueDate: string;
+  readonly estimatedDurationMinutes: string;
+  readonly area?: string;
+  readonly energy?: string;
+  /** This session's already-handled taskIds, NOT including this card. */
+  readonly exclude: readonly string[];
+}
+
+export interface SandboxSaveResponse {
+  readonly receipt: string;
+  readonly next: SandboxCardView | undefined;
+}
+
+export interface SandboxSkipRequest {
+  readonly exclude: readonly string[];
+}
+
+export interface SandboxSkipResponse {
+  readonly next: SandboxCardView | undefined;
 }
 
 /**

@@ -13,12 +13,20 @@ import assert from "node:assert/strict";
 import type {
   AnswerOpenItemRequest,
   AnswerOpenItemResponse,
+  ChatTurnResponse,
   CheckOffRequest,
   ConfirmProposalResponse,
   OpenItem,
   OpenItemQuestion,
   OpenItemsResponse,
   PendingCheckOffResponse,
+  SandboxCardView,
+  SandboxSaveRequest,
+  SandboxSaveResponse,
+  SandboxSkipRequest,
+  SandboxSkipResponse,
+  SandboxStartRequest,
+  SandboxStartResponse,
   UndoCheckOffResponse,
   ApiResult,
   EventHint,
@@ -186,4 +194,37 @@ test("ConfirmProposalResponse carries exactly applied/receipts", () => {
   // @ts-expect-error — applied is a required boolean, never absent.
   const missingApplied: ConfirmProposalResponse = { receipts: [] };
   assert.ok(missingApplied);
+});
+
+test("SandboxCardView/SandboxStartRequest/SandboxStartResponse are exactly the wire shape E7 names", () => {
+  const view: SandboxCardView = { taskId: "t1", taskTitle: "Chem problem set", dueDate: "2026-09-30", remaining: 2 };
+  const startReq: SandboxStartRequest = { exclude: ["t2"] };
+  const startRes: SandboxStartResponse = { card: view };
+  const emptyRes: SandboxStartResponse = { card: undefined };
+  // @ts-expect-error — remaining is required, never absent.
+  const missingRemaining: SandboxCardView = { taskId: "t1", taskTitle: "x" };
+  assert.deepEqual(startRes.card, view);
+  assert.equal(emptyRes.card, undefined);
+  assert.ok(startReq.exclude && missingRemaining);
+});
+
+test("SandboxSaveRequest/Response and SandboxSkipRequest/Response are exactly E7's own shapes", () => {
+  const saveReq: SandboxSaveRequest = { dueDate: "2026-09-30", estimatedDurationMinutes: "45", exclude: [] };
+  const saveRes: SandboxSaveResponse = { receipt: "Due Date, Estimated Duration saved.", next: undefined };
+  const skipReq: SandboxSkipRequest = { exclude: ["t1"] };
+  const skipRes: SandboxSkipResponse = { next: undefined };
+  // @ts-expect-error — exclude is required on a save request, never optional.
+  const missingExclude: SandboxSaveRequest = { dueDate: "2026-09-30", estimatedDurationMinutes: "45" };
+  assert.ok(saveReq && saveRes && skipReq && skipRes && missingExclude);
+});
+
+test("ChatTurnResponse.sandboxCard is additive and optional — a plain reply never requires it", () => {
+  const plain: ChatTurnResponse = { reply: "Nothing's missing a Due Date or Duration.", receipts: [] };
+  const withCard: ChatTurnResponse = {
+    reply: "",
+    receipts: [],
+    sandboxCard: { taskId: "t1", taskTitle: "Chem problem set", remaining: 0 },
+  };
+  assert.equal("sandboxCard" in plain, false);
+  assert.ok(withCard.sandboxCard);
 });
