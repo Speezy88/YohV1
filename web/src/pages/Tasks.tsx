@@ -1,7 +1,17 @@
 /**
  * web/src/pages/Tasks.tsx — Task 6B (FR-43), the approved Tasks.dc.html
- * mockup: a header with search and a Due/Area/Status grouping control, the
- * quick-add card, then every Task in grouped, raised rows.
+ * mockup: every Task in grouped, raised rows, a quick-add card, and a
+ * search + Due/Area/Status grouping control.
+ *
+ * Polish-3 (Spencer's live-app report: "make the text box and filtering at
+ * the bottom, and have the task db at the top"): the grouped table now sits
+ * directly under the title, fills the available height, and scrolls
+ * internally with its own column-header row pinned (`position: sticky`) to
+ * the top of that scroll area. The quick-add line and the search/grouping
+ * controls moved into ONE bottom dock (`data-testid="tasks-dock"`), pinned
+ * below the table by the same `pb-24` bottom clearance every page already
+ * reserves for the floating Ask Yoh pill (`PageShell.tsx`/`AskYohPill.tsx`)
+ * — the dock never scrolls away and the pill never covers it.
  *
  * Built to be as quick as Notion:
  *  - Arriving on the page focuses the quick-add line; `N` or `/` focuses it
@@ -304,10 +314,90 @@ export default function TasksPage(): React.JSX.Element {
     // this subtree only ever scrolls Tasks' own content, even at an edge
     // that would otherwise trigger a page change. Sidebar clicks and the
     // ↑/↓ buttons/keys are unaffected.
-    <div ref={rootRef} data-wheel-nav="off" className="flex h-full flex-col gap-[22px] p-8 pb-24">
-      <header className="flex items-center justify-between gap-4">
-        <h1 className="m-0 font-body text-display font-bold tracking-tight text-ink-primary">Tasks</h1>
-        <div className="flex items-center gap-3">
+    <div ref={rootRef} data-wheel-nav="off" className="flex h-full flex-col gap-[18px] p-8 pb-24">
+      <h1 className="m-0 shrink-0 font-body text-display font-bold tracking-tight text-ink-primary">Tasks</h1>
+
+      {/* Polish-3 (Spencer: "make the text box and filtering at the bottom,
+          and have the task db at the top"): the grouped Task table is now
+          the first thing under the title, fills the space between the
+          title and the bottom dock, and scrolls internally — its own
+          column-header row is `position: sticky` so it never scrolls out
+          of view. */}
+      <section aria-label="All tasks" className="flex min-h-0 flex-1 flex-col gap-2">
+        {state.status === "loaded" && state.refreshFailed && (
+          <p className="m-0 shrink-0 px-[18px] font-body text-small text-ink-secondary">
+            Couldn't refresh from Notion — showing the list from {state.refreshFailed.at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.
+          </p>
+        )}
+        <div ref={listRef} data-captures-arrow-keys="" onKeyDown={onListKeyDown} className="-mx-4 flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-4 pb-4">
+          <div aria-hidden="true" className={`sticky top-0 z-10 bg-surface-base ${TASK_ROW_GRID} h-8 px-[18px] font-body text-label font-bold uppercase tracking-wide text-ink-secondary`}>
+            <span />
+            <span>Task</span>
+            <span>Due</span>
+            <span>Duration</span>
+            <span>Area</span>
+            <span>Energy</span>
+            <span>Status</span>
+          </div>
+          {state.status === "loading" && justAdded.length === 0 ? (
+            [0, 1, 2, 3, 4].map((i) => <RowSkeleton key={i} reducedMotion={reducedMotion} />)
+          ) : state.status === "error" && justAdded.length === 0 ? (
+            <p className="m-0 p-5 font-body text-body text-ink-secondary">Couldn't load Tasks right now. {state.message}</p>
+          ) : groups.length === 0 ? (
+            <p className="m-0 p-5 font-body text-body text-ink-secondary">
+              {query ? `No Tasks match "${query}".` : "No Tasks yet. Type one above and press Enter."}
+            </p>
+          ) : (
+            groups.map((group) => (
+              <section key={group.key} aria-label={group.label} className="flex flex-col gap-2">
+                <h2 className={`m-0 px-[18px] pb-0.5 pt-2.5 font-body text-small font-bold uppercase tracking-wide ${TONE_CLASS[group.tone]}`}>
+                  {group.label} · {group.rows.length}
+                </h2>
+                <ul className="m-0 flex list-none flex-col gap-2 p-0">
+                  {group.rows.map(({ item: raw, creating }) => {
+                    const item = today ? withOverrides(raw, overrides.get(raw.id), today) : raw;
+                    const checked = item.status === "completed" || checks.has(item.id);
+                    const saving = new Set([...(overrides.get(raw.id) ?? [])].filter(([, o]) => o.state === "saving").map(([f]) => f));
+                    return (
+                      <TaskRow
+                        key={raw.id}
+                        item={item}
+                        rowIndex={rowIndex++}
+                        today={today ?? ""}
+                        options={options ?? { area: [], energy: [], status: [] }}
+                        editing={editing?.taskId === raw.id ? editing.field : undefined}
+                        saving={saving}
+                        checked={checked}
+                        creating={creating}
+                        onCheck={() => void toggleCheck(item, checked)}
+                        onStartEdit={(field) => setEditing({ taskId: raw.id, field })}
+                        onCommit={(field, value) => void commitField(item, field, value)}
+                        onCancel={() => setEditing(undefined)}
+                      />
+                    );
+                  })}
+                </ul>
+              </section>
+            ))
+          )}
+        </div>
+      </section>
+
+      {/* Polish-3: one bottom dock, pinned below the table (never scrolls
+          away, keeps clear of the floating Ask Yoh pill via the same
+          `pb-24` bottom clearance every page reserves for it) — quick-add
+          full width on top, search + grouping on one row underneath. */}
+      <div data-testid="tasks-dock" className="flex shrink-0 flex-col gap-3 rounded-xl bg-surface-raised px-[18px] py-4 shadow-extruded-lg">
+        <TaskQuickAdd
+          ref={quickAddRef}
+          today={today}
+          options={options}
+          onSubmit={(text, preview) => void create(text, preview)}
+          onArrowDown={() => focusRow(0, "0")}
+          onPageUp={() => nav?.prev()}
+          onPageDown={() => nav?.next()}
+        />
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <label className="flex h-[46px] w-[280px] items-center gap-2.5 rounded-full bg-surface-sunken px-4 shadow-inset">
             <svg aria-hidden="true" viewBox="0 0 24 24" width={18} height={18} fill="none" stroke="currentColor" className="shrink-0 text-ink-secondary">
               <path d="M11 17a6 6 0 1 0 0-12 6 6 0 0 0 0 12z M20 20l-4.5-4.5" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
@@ -352,77 +442,7 @@ export default function TasksPage(): React.JSX.Element {
             })}
           </div>
         </div>
-      </header>
-
-      <TaskQuickAdd
-        ref={quickAddRef}
-        today={today}
-        options={options}
-        onSubmit={(text, preview) => void create(text, preview)}
-        onArrowDown={() => focusRow(0, "0")}
-        onPageUp={() => nav?.prev()}
-        onPageDown={() => nav?.next()}
-      />
-
-      <section aria-label="All tasks" className="flex min-h-0 flex-1 flex-col gap-2">
-        <div aria-hidden="true" className={`${TASK_ROW_GRID} h-8 px-[18px] font-body text-label font-bold uppercase tracking-wide text-ink-secondary`}>
-          <span />
-          <span>Task</span>
-          <span>Due</span>
-          <span>Duration</span>
-          <span>Area</span>
-          <span>Energy</span>
-          <span>Status</span>
-        </div>
-        {state.status === "loaded" && state.refreshFailed && (
-          <p className="m-0 px-[18px] font-body text-small text-ink-secondary">
-            Couldn't refresh from Notion — showing the list from {state.refreshFailed.at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.
-          </p>
-        )}
-        <div ref={listRef} data-captures-arrow-keys="" onKeyDown={onListKeyDown} className="-mx-4 flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-4 pb-4 pt-1">
-          {state.status === "loading" && justAdded.length === 0 ? (
-            [0, 1, 2, 3, 4].map((i) => <RowSkeleton key={i} reducedMotion={reducedMotion} />)
-          ) : state.status === "error" && justAdded.length === 0 ? (
-            <p className="m-0 p-5 font-body text-body text-ink-secondary">Couldn't load Tasks right now. {state.message}</p>
-          ) : groups.length === 0 ? (
-            <p className="m-0 p-5 font-body text-body text-ink-secondary">
-              {query ? `No Tasks match "${query}".` : "No Tasks yet. Type one above and press Enter."}
-            </p>
-          ) : (
-            groups.map((group) => (
-              <section key={group.key} aria-label={group.label} className="flex flex-col gap-2">
-                <h2 className={`m-0 px-[18px] pb-0.5 pt-2.5 font-body text-small font-bold uppercase tracking-wide ${TONE_CLASS[group.tone]}`}>
-                  {group.label} · {group.rows.length}
-                </h2>
-                <ul className="m-0 flex list-none flex-col gap-2 p-0">
-                  {group.rows.map(({ item: raw, creating }) => {
-                    const item = today ? withOverrides(raw, overrides.get(raw.id), today) : raw;
-                    const checked = item.status === "completed" || checks.has(item.id);
-                    const saving = new Set([...(overrides.get(raw.id) ?? [])].filter(([, o]) => o.state === "saving").map(([f]) => f));
-                    return (
-                      <TaskRow
-                        key={raw.id}
-                        item={item}
-                        rowIndex={rowIndex++}
-                        today={today ?? ""}
-                        options={options ?? { area: [], energy: [], status: [] }}
-                        editing={editing?.taskId === raw.id ? editing.field : undefined}
-                        saving={saving}
-                        checked={checked}
-                        creating={creating}
-                        onCheck={() => void toggleCheck(item, checked)}
-                        onStartEdit={(field) => setEditing({ taskId: raw.id, field })}
-                        onCommit={(field, value) => void commitField(item, field, value)}
-                        onCancel={() => setEditing(undefined)}
-                      />
-                    );
-                  })}
-                </ul>
-              </section>
-            ))
-          )}
-        </div>
-      </section>
+      </div>
 
       <p role="status" className="sr-only">
         {receipt}

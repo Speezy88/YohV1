@@ -39,6 +39,24 @@ test("no page bleed: after Home -> Tasks, the Tasks search box is not covered by
   expect(groupResolvesInsideTasks).toBe(true);
 });
 
+test("Polish-3: the Tasks quick-add input sits below the table region and isn't covered by the Ask Yoh pill", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks", exact: true }).click();
+  await expect.poll(async () => (await page.getByTestId("page-tasks").boundingBox())?.y).toBe(0);
+
+  const table = page.getByRole("region", { name: "All tasks" });
+  const quickAdd = page.getByRole("textbox", { name: "New task" });
+  await expect(table).toBeVisible();
+  await expect(quickAdd).toBeVisible();
+  const tableBox = (await table.boundingBox())!;
+  const inputBox = (await quickAdd.boundingBox())!;
+  expect(inputBox.y).toBeGreaterThanOrEqual(tableBox.y + tableBox.height);
+
+  const center = { x: inputBox.x + inputBox.width / 2, y: inputBox.y + inputBox.height / 2 };
+  const resolvesToInput = await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest('[aria-label="New task"]') != null, center);
+  expect(resolvesToInput).toBe(true);
+});
+
 test("wheel-scrolling up at the Tasks list's top edge does not change the active page", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Tasks", exact: true }).click();

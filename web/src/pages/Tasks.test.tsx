@@ -327,6 +327,21 @@ describe("TasksPage", () => {
     expect(notice).toHaveBeenCalledWith('Couldn\'t change the title for "Calc problem set 4". I couldn\'t reach Notion right now; nothing was changed.');
   });
 
+  // Polish-3 (Spencer: "make the text box and filtering at the bottom, and
+  // have the task db at the top"): the table region must precede the
+  // bottom dock in DOM order, not just visually — this is what "at the
+  // top"/"at the bottom" mean structurally.
+  it("the table region comes before the bottom dock (quick-add + filters) in DOM order", async () => {
+    await renderLoaded();
+    const table = screen.getByRole("region", { name: "All tasks" });
+    const dock = screen.getByTestId("tasks-dock");
+    expect(table.compareDocumentPosition(dock) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The dock holds both the quick-add input and the search/grouping controls.
+    expect(within(dock).getByRole("textbox", { name: "New task" })).toBeInTheDocument();
+    expect(within(dock).getByRole("searchbox", { name: "Search tasks" })).toBeInTheDocument();
+    expect(within(dock).getByRole("group", { name: "Group by" })).toBeInTheDocument();
+  });
+
   it("while loading, skeleton rows — never a spinner — and the quick-add is already usable", () => {
     api.tasks.$get.mockImplementation(() => new Promise(() => {}));
     render(<TasksPage />);

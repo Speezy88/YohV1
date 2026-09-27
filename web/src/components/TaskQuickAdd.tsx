@@ -106,7 +106,35 @@ export const TaskQuickAdd = forwardRef<HTMLInputElement, TaskQuickAddProps>(func
   };
 
   return (
-    <section aria-label="Add a task" className="flex flex-col gap-3 rounded-xl bg-surface-raised px-[18px] py-4 shadow-extruded-lg">
+    // Polish-3 (Spencer: "make the text box and filtering at the bottom, and
+    // have the task db at the top"): this component no longer owns the
+    // dock's outer card — `Tasks.tsx` wraps it (plus the search/grouping
+    // row) in ONE bottom dock now — and the hint/chips row renders BEFORE
+    // the input, since the input sits at the very bottom of the page.
+    <section aria-label="Add a task" className="flex flex-col gap-3">
+      <div id="quick-add-reads" aria-live="polite" className="flex min-h-[30px] flex-wrap items-center gap-2.5 pl-1">
+        {chips.length > 0 || (current?.unmatchedAreas.length ?? 0) > 0 ? (
+          <>
+            <span className="font-body text-small text-ink-secondary">Yoh reads:</span>
+            {chips.map((chip) => (
+              <span
+                key={chip}
+                data-testid="quick-add-chip"
+                className="inline-flex h-[30px] items-center rounded-full bg-surface-raised px-3 font-body text-small font-bold text-ink-primary shadow-extruded-sm"
+              >
+                {chip}
+              </span>
+            ))}
+            {current?.unmatchedAreas.map((tag) => (
+              <span key={tag} className="font-body text-small text-ink-secondary">
+                #{tag} isn't an Area in Notion — it stays in the title.
+              </span>
+            ))}
+          </>
+        ) : (
+          <span className="font-body text-small text-ink-secondary">Add a date, a time like 30m, high/medium/low, or a #area — Yoh shows what it reads here.</span>
+        )}
+      </div>
       <label
         className={
           "flex h-[58px] items-center gap-3.5 rounded-lg border-[length:var(--rim-width)] bg-surface-sunken px-4 shadow-inset " +
@@ -134,29 +162,6 @@ export const TaskQuickAdd = forwardRef<HTMLInputElement, TaskQuickAddProps>(func
         />
         <span className="shrink-0 font-body text-small text-ink-secondary">Enter to add</span>
       </label>
-      <div id="quick-add-reads" aria-live="polite" className="flex min-h-[30px] flex-wrap items-center gap-2.5 pl-1">
-        {chips.length > 0 || (current?.unmatchedAreas.length ?? 0) > 0 ? (
-          <>
-            <span className="font-body text-small text-ink-secondary">Yoh reads:</span>
-            {chips.map((chip) => (
-              <span
-                key={chip}
-                data-testid="quick-add-chip"
-                className="inline-flex h-[30px] items-center rounded-full bg-surface-raised px-3 font-body text-small font-bold text-ink-primary shadow-extruded-sm"
-              >
-                {chip}
-              </span>
-            ))}
-            {current?.unmatchedAreas.map((tag) => (
-              <span key={tag} className="font-body text-small text-ink-secondary">
-                #{tag} isn't an Area in Notion — it stays in the title.
-              </span>
-            ))}
-          </>
-        ) : (
-          <span className="font-body text-small text-ink-secondary">Add a date, a time like 30m, high/medium/low, or a #area — Yoh shows what it reads here.</span>
-        )}
-      </div>
     </section>
   );
 });
