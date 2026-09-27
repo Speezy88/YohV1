@@ -26,6 +26,9 @@ class FakeEventSource {
   emitOpen(): void {
     this.onopen?.();
   }
+  emitError(): void {
+    this.onerror?.();
+  }
   emitMessage(data: unknown): void {
     this.onmessage?.({ data: JSON.stringify(data) } as MessageEvent);
   }
@@ -78,14 +81,37 @@ describe("connectEventStream", () => {
     expect(FakeEventSource.instances[1]!.url).toBe("/api/events?lastEventId=7");
   });
 
-  it("a real message resets the unreachable timer — a healthy connection never fires onUnreachable", () => {
+  it("an open but quiet connection is healthy — minutes with no message never fire onUnreachable", () => {
+    const onUnreachable = vi.fn();
+    connectEventStream({ onHint: () => {}, onUnreachable, onReachable: () => {} });
+    FakeEventSource.instances[0]!.emitOpen();
+    vi.advanceTimersByTime(10 * 60_000);
+    expect(onUnreachable).not.toHaveBeenCalled();
+    expect(FakeEventSource.instances).toHaveLength(1);
+  });
+
+  it("an error on an open connection that doesn't reopen within UNREACHABLE_AFTER_MS fires onUnreachable once", () => {
     const onUnreachable = vi.fn();
     connectEventStream({ onHint: () => {}, onUnreachable, onReachable: () => {} });
     const es = FakeEventSource.instances[0]!;
-    for (let i = 0; i < 5; i++) {
-      vi.advanceTimersByTime(UNREACHABLE_AFTER_MS - 1_000);
-      es.emitMessage({ seq: i, topic: "plan", entityId: "x" });
-    }
+    es.emitOpen();
+    es.emitError();
+    vi.advanceTimersByTime(UNREACHABLE_AFTER_MS / 2);
+    es.emitError(); // the browser's own retry failing again must not push the deadline back
+    vi.advanceTimersByTime(UNREACHABLE_AFTER_MS / 2);
+    expect(onUnreachable).toHaveBeenCalledTimes(1);
+    expect(es.closed).toBe(true);
+  });
+
+  it("an error followed by the browser's own reconnect within the deadline never fires onUnreachable", () => {
+    const onUnreachable = vi.fn();
+    connectEventStream({ onHint: () => {}, onUnreachable, onReachable: () => {} });
+    const es = FakeEventSource.instances[0]!;
+    es.emitOpen();
+    es.emitError();
+    vi.advanceTimersByTime(UNREACHABLE_AFTER_MS - 1_000);
+    es.emitOpen();
+    vi.advanceTimersByTime(10 * 60_000);
     expect(onUnreachable).not.toHaveBeenCalled();
   });
 
