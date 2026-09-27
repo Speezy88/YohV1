@@ -17,7 +17,22 @@
 
 ## Context management
 
-- Since I can't invoke /compact on myself, proactively flag it: if a
-  session's context is visibly ballooning (long tool outputs, many
-  files read, long-running subagent chains), tell the user it's a good
-  point to /compact or /clear rather than silently continuing.
+- Follow `docs/process/context-hygiene.md`. In short: clear at natural
+  boundaries — after each merge/milestone, when context passes ~250k, or
+  before switching topic (ops Q&A goes in its own short session). Never
+  mid-task, never while subagents run, and not below ~80k.
+- Before a clear: ledger lines written, work committed, and the living
+  handoff `~/Documents/Yoh-previews/HANDOFF.md` rewritten (current state /
+  next action / binding rulings as pointers / standing rules / reminders).
+  Then tell the user "ready to /clear" with the resume prompt: "Read
+  ~/Documents/Yoh-previews/HANDOFF.md and follow it exactly. Work autonomously."
+- After each resume, log turns and context before the first real action
+  (target ≤15 turns, ≤80k).
+- Since I can't invoke /compact or /clear on myself, proactively flag it
+  when those triggers are hit rather than silently continuing.
+
+## Implementer subagents
+
+- Every implementer gets `docs/process/implementer-contract.md` (copied into
+  the plan workspace) plus a brief with a controller-built Code Map and
+  "Idioms to copy" block. Implementers never open plan/architecture/PRD files.
