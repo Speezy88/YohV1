@@ -9,8 +9,10 @@
  * while `src/app/` is still empty), and once against the real `src/` tree.
  *
  * Rules:
- *   1. AD-1 — nothing in `rituals/`, and not `shell/ritual-cli.ts`, imports
- *      from `app/` (a cron one-shot can never reach the interactive layer).
+ *   1. AD-1 — nothing in `rituals/`, and not `shell/ritual-cli.ts` or its
+ *      per-subcommand deps builders under `shell/ritual-cli/` (Task 12's
+ *      pure-move split), imports from `app/` (a cron one-shot can never
+ *      reach the interactive layer).
  *   2. AD-16 — no `shell/*.ts` file names one of the closed Notion/Calendar
  *      write functions — the allowlist is now empty (Ruling R1, resolved in
  *      Story 8.4: `chat-cli.ts`'s last four call sites moved into `app/`);
@@ -210,9 +212,19 @@ test("detector: disallowedShellEdges permits only api.ts's type-only AppType re-
 // The real tree
 // ===========================================================================
 
-test("AD-1: rituals/ and shell/ritual-cli.ts never import from app/", () => {
-  const files = [...listTsFiles(join(SRC_DIR, "rituals")), join(SRC_DIR, "shell", "ritual-cli.ts")];
+test("AD-1: rituals/, shell/ritual-cli.ts, and shell/ritual-cli/'s per-subcommand deps builders never import from app/", () => {
+  const files = [
+    ...listTsFiles(join(SRC_DIR, "rituals")),
+    join(SRC_DIR, "shell", "ritual-cli.ts"),
+    // Task 12: shell/ritual-cli.ts's pure-move split put each subcommand's
+    // real adapter wiring in its own file here — same AD-1 rule applies.
+    ...listTsFiles(join(SRC_DIR, "shell", "ritual-cli")),
+  ];
   assert.ok(files.length > 1, "expected to scan rituals/ and ritual-cli.ts");
+  assert.ok(
+    files.some((f) => f.includes(`${sep}ritual-cli${sep}`)),
+    "expected to also scan shell/ritual-cli/'s per-subcommand deps builders",
+  );
   const offenders = files.flatMap((f) =>
     importsFromApp(readFileSync(f, "utf8")).map((s) => `${relative(SRC_DIR, f)} imports ${s}`),
   );

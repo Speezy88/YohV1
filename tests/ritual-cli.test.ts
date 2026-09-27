@@ -19,17 +19,19 @@ import {
   checkDailyRitualMissedRun,
   checkMorningPlanGenerationDegraded,
   checkSelfCheckMissedRun,
-  createMorningRitualDeps,
-  createNightEscalateRitualDeps,
-  createNightPromptRitualDeps,
   createOperationalNotifier,
-  createSelfCheckRitualDeps,
   runRitualCli,
   DAILY_RITUAL_MISSED_RUN_GRACE_HOURS,
   SELF_CHECK_MISSED_RUN_GRACE_DAYS,
   type MissedRunCheckResult,
   type RitualCliDeps,
 } from "../src/shell/ritual-cli.ts";
+// Task 12: the per-subcommand deps builders moved out of ritual-cli.ts into
+// their own files under shell/ritual-cli/ (a pure-move split) — import-path
+// edit only, per the task brief.
+import { createMorningRitualDeps } from "../src/shell/ritual-cli/morning-deps.ts";
+import { createNightEscalateRitualDeps, createNightPromptRitualDeps } from "../src/shell/ritual-cli/night-deps.ts";
+import { createSelfCheckRitualDeps } from "../src/shell/ritual-cli/self-check-deps.ts";
 import { PLAN_GENERATION_DEGRADED_THRESHOLD_MS } from "../src/rituals/morning-ritual.ts";
 import type { MorningRitualOutcome } from "../src/rituals/morning-ritual.ts";
 import type { PlanNotification } from "../src/rituals/ritual-shared.ts";

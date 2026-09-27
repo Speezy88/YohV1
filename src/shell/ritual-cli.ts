@@ -205,30 +205,18 @@
  * subcommand, unknown subcommand, an unbuilt subcommand, or missing
  * configuration).
  */
-import { createMemoryStore, getRitualInvocation, listSlipHistories, putRitualInvocation, type MemoryStore } from "../adapters/memory-store.ts";
+import { createMemoryStore, getRitualInvocation, putRitualInvocation, type MemoryStore } from "../adapters/memory-store.ts";
 import { openSqliteConnection, type SqliteConnection } from "../adapters/sqlite.ts";
-import { initCompletionLogSchema, listCompletedTaskIdsOnDate } from "../adapters/completion-log.ts";
+import { initCompletionLogSchema } from "../adapters/completion-log.ts";
 import { createNotification, initNotificationStoreSchema } from "../adapters/notification-store.ts";
 import { getLastHeartbeatAt, initPlanStateStoreSchema, isHeartbeatStale } from "../adapters/plan-state-store.ts";
-import {
-  createCalendarReadClient,
-  createCalendarWriteClient,
-  readCalendarEvents,
-  writeTodaysPlanToCalendar,
-} from "../adapters/calendar-adapter.ts";
-import { loadEmailConfigFromEnv, sendEmail } from "../adapters/email-adapter.ts";
-import { writeStructuredLog } from "../adapters/logger.ts";
 import { loadPushoverConfigFromEnv, sendPushoverNotification } from "../adapters/notification-adapter.ts";
-import { loadTaskPropertyNamesFromEnv, readNotionTasks } from "../adapters/notion-adapter.ts";
-import { createTokenStore, loadGoogleOAuthConfigFromEnv } from "../adapters/token-store.ts";
-import { computeSlipBumpLevels } from "../core/slip-bump.ts";
 import {
   PLAN_GENERATION_DEGRADED_THRESHOLD_MS,
   runMorningRitual,
   type MorningRitualDeps,
   type MorningRitualOutcome,
 } from "../rituals/morning-ritual.ts";
-import { localIsoDate } from "../rituals/ritual-shared.ts";
 import type { PlanNotification } from "../rituals/ritual-shared.ts";
 import {
   renderNightEscalateNotice,
@@ -240,8 +228,14 @@ import {
   type NightPromptOutcome,
 } from "../rituals/night-ritual.ts";
 import { runSelfCheckRitual, type SelfCheckOutcome, type SelfCheckRitualDeps } from "../rituals/self-check.ts";
-import { Client } from "@notionhq/client";
-import type { ExternalId, Result, YohError } from "../types/domain.ts";
+import type { Result, YohError } from "../types/domain.ts";
+// Task 12: each subcommand's real adapter wiring lives in its own
+// per-subcommand deps builder under `shell/ritual-cli/` (a pure-move split
+// of what used to be this file's "Real adapter wiring" section) — this file
+// keeps only the entry point, dispatch, and the AD-7 top-level handler.
+import { createMorningRitualDeps } from "./ritual-cli/morning-deps.ts";
+import { createNightEscalateRitualDeps, createNightPromptRitualDeps } from "./ritual-cli/night-deps.ts";
+import { createSelfCheckRitualDeps } from "./ritual-cli/self-check-deps.ts";
 
 // ============================================================================
 // Injectable IO / ritual seams
@@ -1057,236 +1051,8 @@ function handleSelfCheckResult(result: Result<SelfCheckOutcome, YohError>, io: R
 }
 
 // ============================================================================
-// Real adapter wiring
+// Real adapter wiring — see shell/ritual-cli/{morning,night,self-check}-deps.ts
 // ============================================================================
-
-/**
- * Binds the real Notion, Google Calendar, and Pushover adapters (plus the
- * `MemoryStore`) to `runMorningRitual`'s injected seams. Every credential
- * and workspace id is read from the environment once, here, at process start
- * (AD-10) — nothing below this line reads `process.env` again.
- *
- * Note the two adapters are wrapped as zero-argument thunks: the ritual
- * deliberately knows nothing about a Notion `Client` or a Calendar
- * `OAuth2Client`, only "give me today's Tasks" and "give me today's events."
- * Both still throw on I/O failure exactly as AD-8 requires; the ritual is
- * what catches them.
- *
- * **The `bumpLevels` bridge (Task 19 — Task 17's deferred item, closed
- * here).** Task 17 built `slip-bump.ts`'s computation and
- * `memory-store.ts`'s `SlipHistory` storage, but nothing populated a
- * `SlipHistory` row until Task 19's Night Ritual close-out
- * (`applyNightCloseOutConfirmation`, `rituals/night-ritual.ts`) exists, and
- * nothing here ever read `listSlipHistories` to build the `bumpLevels` map
- * `MorningRitualDeps` has always accepted. Both halves now exist: every
- * currently-stored `SlipHistory` row is read (`listSlipHistories`) and
- * turned into the `taskId -> bump level` map `orderByDerivedPriority`/
- * `generatePlanReasoning` expect via the SAME `core/slip-bump.ts`
- * computation (`computeSlipBumpLevels`) the rest of the system uses — not a
- * re-derivation of that arithmetic here. So tomorrow's Morning Ritual now
- * genuinely reflects tonight's close-out: a Task confirmed slipped tonight
- * shows up bumped in tomorrow's Plan ordering, exactly as a mid-day-reported
- * slip already did before this task existed.
- */
-export function createMorningRitualDeps(
-  store: MemoryStore,
-  env: Readonly<Record<string, string | undefined>> = process.env,
-): MorningRitualDeps {
-  const timeZone = env["YOH_TIMEZONE"];
-  if (!timeZone) {
-    // calendar-adapter.ts deliberately refuses to default this to UTC (a
-    // silent default silently drops late-evening events); so does this.
-    throw new Error("ritual-cli: missing required environment variable YOH_TIMEZONE (e.g. America/New_York)");
-  }
-  const tasksDataSourceId = env["NOTION_TASKS_DATA_SOURCE_ID"];
-  const projectsDataSourceId = env["NOTION_PROJECTS_DATA_SOURCE_ID"];
-  const notionToken = env["NOTION_TOKEN"];
-  if (!tasksDataSourceId || !projectsDataSourceId || !notionToken) {
-    throw new Error(
-      "ritual-cli: missing required environment variable(s) NOTION_TOKEN / NOTION_TASKS_DATA_SOURCE_ID / NOTION_PROJECTS_DATA_SOURCE_ID",
-    );
-  }
-  const taskPropertyNames = loadTaskPropertyNamesFromEnv(env);
-
-  const notionClient = new Client({
-    auth: notionToken,
-    ...(env["NOTION_API_VERSION"] ? { notionVersion: env["NOTION_API_VERSION"] } : {}),
-  });
-  const tokenStore = createTokenStore(loadGoogleOAuthConfigFromEnv(env));
-  // `@googleapis/calendar` reaches its Google auth-client types through a
-  // transitively-pinned COPY of that library (10.5.0, nested under
-  // `googleapis-common`) while `token-store.ts` — AD-10's sole holder of the
-  // real client — constructs one from the top-level copy (11.0.2). The two
-  // classes are structurally identical at runtime but declare separate
-  // private fields, so TypeScript treats them as unrelated nominal types.
-  // This one documented cast, at the single seam where the two meet, is the
-  // narrowest possible place to reconcile that; the alternative (importing
-  // the auth library's own types here to line them up) is forbidden outright
-  // by AD-10 and enforced by the repo scan in `tests/token-store.test.ts`.
-  // The cast is expressed via `createCalendarReadClient`'s own parameter type
-  // rather than by naming the package, for that same reason.
-  const calendarClient = createCalendarReadClient(
-    tokenStore.getOAuth2Client() as unknown as Parameters<typeof createCalendarReadClient>[0],
-  );
-  // Final whole-branch review, Finding 1: the "Yoh Plan" Calendar-write
-  // surface (Task 12 / Story 1.12, AD-4) was built, tested, and reviewed but
-  // never wired to a caller. Same `authClient` source and the same
-  // documented cast as the read client just above (see that call's own
-  // comment for the two-copies-of-the-auth-library reasoning). `tokenStore`
-  // already structurally satisfies `CalendarIdStore`
-  // (`getCalendarId`/`setCalendarId`, `token-store.ts` lines ~190-195), so it
-  // is passed directly — no adapter import of `token-store.ts` (AD-1).
-  const calendarWriteClient = createCalendarWriteClient(
-    tokenStore.getOAuth2Client() as unknown as Parameters<typeof createCalendarWriteClient>[0],
-  );
-  const pushoverConfig = loadPushoverConfigFromEnv(env);
-
-  // The bumpLevels bridge (see the doc comment above): every currently-
-  // stored SlipHistory row, turned into a `taskId -> consecutiveSlipCount`
-  // map, then the REAL `core/slip-bump.ts` computation over it — never a
-  // parallel/hand-rolled escalation here.
-  const slipCounts: Record<ExternalId, number> = {};
-  for (const record of listSlipHistories(store)) {
-    slipCounts[record.id] = record.data.consecutiveSlipCount;
-  }
-  const bumpLevels = computeSlipBumpLevels(slipCounts);
-
-  return {
-    store,
-    readTasks: async () =>
-      (await readNotionTasks(notionClient, { tasksDataSourceId, projectsDataSourceId, taskPropertyNames })).tasks,
-    readCalendarEvents: () => readCalendarEvents(calendarClient, { timeZone }),
-    // Final whole-branch review, Finding 1: mirrors `readCalendarEvents`
-    // above — bound to the same `tokenStore`, which structurally satisfies
-    // `CalendarIdStore`. `blocks` is already `"calendar-anchor"`-filtered by
-    // the caller (`runMorningRitual`'s step 12a.5) before this is invoked.
-    writeCalendarPlan: (blocks) => writeTodaysPlanToCalendar(calendarWriteClient, tokenStore, blocks, { timeZone }),
-    sendNotification: (notification) => sendPushoverNotification(pushoverConfig, notification),
-    now: () => new Date(),
-    timeZone,
-    bumpLevels,
-    // Task 27 / Story 5.3 (AD-9): delegates to the ONE shared writer in
-    // `adapters/logger.ts` instead of repeating this closure per subcommand
-    // (all four `create*RitualDeps` functions used to have their own
-    // byte-identical copy of it).
-    log: (entry) => writeStructuredLog(entry),
-  };
-}
-
-/**
- * Binds the real `MemoryStore` and Pushover adapter to
- * `runNightPromptRitual`'s injected seams (Task 19 / Story 3.1; Pushover
- * added by Task 20's review fix — see `rituals/night-ritual.ts`'s "The first
- * attempt's own push notification" docstring section). Still lighter than
- * `createMorningRitualDeps`: `night-prompt` reads the already-stored Plan,
- * persists an interaction request, and sends one Pushover push — no Notion
- * or Calendar credentials are needed, so running it must not require THOSE
- * to be configured (mirrors `shell/server.ts`'s own "don't force unrelated
- * config" convention for its own lazily-constructed dependencies). Pushover
- * credentials ARE required now, same as `morning`.
- */
-export function createNightPromptRitualDeps(
-  connection: SqliteConnection,
-  store: MemoryStore,
-  env: Readonly<Record<string, string | undefined>> = process.env,
-): NightPromptRitualDeps {
-  const timeZone = env["YOH_TIMEZONE"];
-  if (!timeZone) {
-    throw new Error("ritual-cli: missing required environment variable YOH_TIMEZONE (e.g. America/New_York)");
-  }
-  const pushoverConfig = loadPushoverConfigFromEnv(env);
-
-  return {
-    store,
-    sendNotification: (notification) => sendPushoverNotification(pushoverConfig, notification),
-    now: () => new Date(),
-    timeZone,
-    // Task 27 / Story 5.3 (AD-9): delegates to the ONE shared writer in
-    // `adapters/logger.ts` instead of repeating this closure per subcommand
-    // (all four `create*RitualDeps` functions used to have their own
-    // byte-identical copy of it).
-    log: (entry) => writeStructuredLog(entry),
-    // Story 7.9 (FR-41): completion-log.ts's own read, scoped to TODAY's
-    // local date in the same `timeZone` this ritual already uses.
-    getCompletedTaskIdsToday: () => listCompletedTaskIdsOnDate(connection, localIsoDate(new Date(), timeZone), timeZone),
-  };
-}
-
-/**
- * Binds the real `MemoryStore` and `adapters/email-adapter.ts`'s `sendEmail`
- * to `runNightEscalateRitual`'s injected seams (Task 20 / Story 3.2). Like
- * `createNightPromptRitualDeps`, deliberately far lighter than
- * `createMorningRitualDeps`: `night-escalate` needs only the SMTP
- * credentials `email-adapter.ts` reads (`loadEmailConfigFromEnv`) — no
- * Notion, Calendar, or Pushover config is required BY THIS FUNCTION, so
- * building THESE deps must not fail at startup for lack of them.
- *
- * Task 25 update (Story 5.1): running `night-escalate` as a whole now DOES
- * require Pushover credentials anyway — not through this function, but
- * through `main`'s separate `createFailureAlertSender` call for AD-7's
- * failure-alert channel (see that function's own doc comment). This
- * function's own scope is deliberately unchanged by that: it still knows
- * nothing about Pushover, keeping the "one seam, one concern" shape AD-9
- * wants even though the two are now both required to actually run.
- */
-export function createNightEscalateRitualDeps(
-  store: MemoryStore,
-  env: Readonly<Record<string, string | undefined>> = process.env,
-): NightEscalateRitualDeps {
-  const timeZone = env["YOH_TIMEZONE"];
-  if (!timeZone) {
-    throw new Error("ritual-cli: missing required environment variable YOH_TIMEZONE (e.g. America/New_York)");
-  }
-  const emailConfig = loadEmailConfigFromEnv(env);
-
-  return {
-    store,
-    sendEscalationEmail: (message) => sendEmail(emailConfig, message),
-    now: () => new Date(),
-    timeZone,
-    // Task 27 / Story 5.3 (AD-9): delegates to the ONE shared writer in
-    // `adapters/logger.ts` instead of repeating this closure per subcommand
-    // (all four `create*RitualDeps` functions used to have their own
-    // byte-identical copy of it).
-    log: (entry) => writeStructuredLog(entry),
-  };
-}
-
-/**
- * Binds the real `MemoryStore` and Pushover adapter to
- * `runSelfCheckRitual`'s injected seams (Task 24 / Story 4.3; Pushover added
- * by this task's own review fix — see `rituals/self-check.ts`'s "The push
- * notification" docstring section for why this is required from the start,
- * unlike `night-prompt`'s Task 20 review-fix retrofit). Still lighter than
- * `createMorningRitualDeps`: no Notion, Calendar, or SMTP credentials are
- * needed — only `YOH_TIMEZONE` plus Pushover's own
- * `PUSHOVER_APP_TOKEN`/`PUSHOVER_USER_KEY`. `random` binds to the real
- * `Math.random`, injected the same way every other non-deterministic seam in
- * this codebase is.
- */
-export function createSelfCheckRitualDeps(
-  store: MemoryStore,
-  env: Readonly<Record<string, string | undefined>> = process.env,
-): SelfCheckRitualDeps {
-  const timeZone = env["YOH_TIMEZONE"];
-  if (!timeZone) {
-    throw new Error("ritual-cli: missing required environment variable YOH_TIMEZONE (e.g. America/New_York)");
-  }
-  const pushoverConfig = loadPushoverConfigFromEnv(env);
-
-  return {
-    store,
-    now: () => new Date(),
-    timeZone,
-    random: Math.random,
-    sendNotification: (notification) => sendPushoverNotification(pushoverConfig, notification),
-    // Task 27 / Story 5.3 (AD-9): delegates to the ONE shared writer in
-    // `adapters/logger.ts` instead of repeating this closure per subcommand
-    // (all four `create*RitualDeps` functions used to have their own
-    // byte-identical copy of it).
-    log: (entry) => writeStructuredLog(entry),
-  };
-}
 
 /** A `RitualCliDeps` runner that throws if called — used for the OTHER subcommand's slot below, mirroring `shell/server.ts`'s own "throws only if actually invoked" convention for a seam a given run never exercises. */
 function unreachableRunner(label: string): () => Promise<never> {

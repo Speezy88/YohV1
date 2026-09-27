@@ -33,7 +33,7 @@ The final whole-branch review triaged every item below as "defer": none blocks m
 - **`App.tsx` has no `<main>` landmark (7.6).** A small a11y follow-up.
 - **Undo is lost on reload (7.10).** Reloading during the undo window shows the row unchecked with no Undo. Checking it again reuses the same pending record, so nothing is completed twice. Hold/release request failures are also silent: the toast falls back to its own timer, and the server caps holds at 10 min.
 - **Manual in-browser checks:** WCAG contrast of the Calendar Day View's cross-hatch/`event-fixed-ink` and raised-block shadow in both themes (7.8). Screen-reader pass on the notification overlay's single `aria-live` region (7.7).
-- **`ritual-cli.ts` is ~1500 lines.** Split it when Epic 8 restructures the shells.
+- ~~**`ritual-cli.ts` is ~1500 lines.** Split it when Epic 8 restructures the shells.~~ **Resolved (Epic 8, Task 12):** `ritual-cli.ts` now keeps only the entry point, dispatch, and the AD-7 top-level handler; each subcommand's real adapter wiring moved to its own per-subcommand deps builder under `src/shell/ritual-cli/` (`morning-deps.ts`, `night-deps.ts`, `self-check-deps.ts`) — a pure move, no behavior change.
 
 ### Minors
 - 7.1: `writeTx` re-wraps `db.transaction` per call (perf nit). No test distinguishes BEGIN IMMEDIATE from deferred locking.
