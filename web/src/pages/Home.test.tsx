@@ -215,4 +215,17 @@ describe("HomePage", () => {
     expect(screen.getByTestId("calendar-day-view")).toBeInTheDocument();
     window.localStorage.getItem = original;
   });
+
+  // Polish-4 addendum ("only tasks... when it is outside [a card], but
+  // still on the same page, it should be able to scroll between pages"):
+  // the Plan and Calendar cards opt out of wheel page-navigation
+  // (`data-wheel-nav="off"`, `lib/wheelNav.ts`); the greeting above them
+  // does not, so a wheel gesture there still changes page.
+  it("the Plan and Calendar cards opt out of wheel page-navigation, but the greeting does not", () => {
+    mockState(loaded());
+    render(<HomePage />);
+    expect(screen.getByRole("heading", { name: "Today's Plan" }).closest('[data-wheel-nav="off"]')).not.toBeNull();
+    expect(screen.getByRole("complementary", { name: "Calendar" })).toHaveAttribute("data-wheel-nav", "off");
+    expect(screen.getByTestId("home-greeting").closest('[data-wheel-nav="off"]')).toBeNull();
+  });
 });

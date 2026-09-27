@@ -88,6 +88,31 @@ test("buildDataCompletenessQuestion with a suggestion builds the suggest questio
   assert.equal(q.proposal?.kind, "field-value");
 });
 
+// Polish 4 Task 3 (Spencer: the question copy leaked model-internal,
+// third-person reasoning, e.g. "Spencer explicitly stated 'status not
+// started'…"). `suggestion.reason` is Claude's own free-text explanation —
+// never trustworthy as second-person, Spencer-facing copy — so it must
+// never appear in the rendered question text, however third-person or
+// name-dropping the reason is.
+test("buildDataCompletenessQuestion's suggest question never includes the LLM-supplied reason (no third-person leak)", () => {
+  const suggestion = {
+    taskId: "t1",
+    taskTitle: "Call dentist",
+    field: "status" as const,
+    value: "not-started",
+    reason: "Spencer explicitly stated the status is not started in his last message.",
+  };
+  const q = buildDataCompletenessQuestion(
+    "data-completeness",
+    { taskId: "t1", taskTitle: "Call dentist", field: "status" },
+    suggestion,
+    "2026-09-25T00:00:00.000Z",
+  );
+  assert.doesNotMatch(q.text, /Spencer/);
+  assert.doesNotMatch(q.text, new RegExp(suggestion.reason.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.equal(q.text, 'Call dentist — Status: I think it\'s "not-started". Sound right?');
+});
+
 test("buildNightCloseOutQuestion builds the fixed completed/slipped/skip options", () => {
   const q = buildNightCloseOutQuestion("night-close-out", { taskId: "t1", taskTitle: "Draft the memo" });
   assert.equal(q.questionId, "t1");

@@ -134,7 +134,7 @@ import type {
   TimeBudgetRequest,
   UpdateTaskFieldRequest,
 } from "../types/api.ts";
-import type { CalendarEvent, ChatTurn, ExternalId, IsoDate, PlanningFieldNames, Result, Task, YohError, YohErrorKind } from "../types/domain.ts";
+import type { CalendarEvent, ChatTurn, ExternalId, IsoDate, PlanningFieldNames, Result, Task, TaskFieldOptions, YohError, YohErrorKind } from "../types/domain.ts";
 
 // ============================================================================
 // GET /api/events — outbox tail → SSE hints (AD-18)
@@ -1260,6 +1260,27 @@ function buildChatDeps(
     return { ok: true, value: { client: notion?.notionClient ?? notionClientFromEnv(notionToken), config: { tasksDataSourceId } } };
   };
 
+  // Polish 4 Task 3 (Spencer: an Area answer typed in chat wrote "college
+  // apps" free text instead of matching the live "College Apps" option):
+  // `AnswerDataCompletenessDeps.readFieldOptions`, the same live-schema read
+  // `buildTasksDeps` already binds for the Tasks page's own inline selects —
+  // a fresh read every call (never cached), since the live option list can
+  // change while the process runs. Throws when Notion isn't fully
+  // configured; `answer-data-completeness.ts`'s own `liveAreaOptions` treats
+  // any throw as "no live options to check against," so a chat session
+  // still lets Spencer answer even when Notion is unreachable.
+  const readFieldOptions = (): Promise<TaskFieldOptions> => {
+    const notionToken = env["NOTION_TOKEN"];
+    const tasksDataSourceId = env["NOTION_TASKS_DATA_SOURCE_ID"];
+    if (!notionToken || !tasksDataSourceId) {
+      throw new Error("server: missing required Notion environment variable(s) NOTION_TOKEN / NOTION_TASKS_DATA_SOURCE_ID — needed to read the live Area/Energy/Status options");
+    }
+    return readTaskFieldOptions(notion?.notionClient ?? notionClientFromEnv(notionToken), {
+      tasksDataSourceId,
+      taskPropertyNames: loadTaskPropertyNamesFromEnv(env),
+    });
+  };
+
   // Story 8.6 (Task 7): `completion-log.ts`'s `recordCompletion`, pre-bound
   // to the shared `SqliteConnection` — the server's own equivalent of
   // `chat-cli.ts`'s `recordCompletion` closure, before it was retired
@@ -1388,6 +1409,7 @@ function buildChatDeps(
     ...bindNotionTaskWrites(getNotionTaskWriteBinding),
     ...bindNotionCreatePage(getNotionCreatePageBinding),
     ...bindCalendarApply(getCalendarApplyBinding),
+    readFieldOptions,
     recordCompletion,
     lookupTask,
     random: Math.random,

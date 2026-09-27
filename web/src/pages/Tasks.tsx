@@ -6,12 +6,17 @@
  * Polish-3 (Spencer's live-app report: "make the text box and filtering at
  * the bottom, and have the task db at the top"): the grouped table now sits
  * directly under the title, fills the available height, and scrolls
- * internally with its own column-header row pinned (`position: sticky`) to
- * the top of that scroll area. The quick-add line and the search/grouping
- * controls moved into ONE bottom dock (`data-testid="tasks-dock"`), pinned
- * below the table by the same `pb-24` bottom clearance every page already
- * reserves for the floating Ask Yoh pill (`PageShell.tsx`/`AskYohPill.tsx`)
- * — the dock never scrolls away and the pill never covers it.
+ * internally. The quick-add line and the search/grouping controls moved
+ * into ONE bottom dock (`data-testid="tasks-dock"`), pinned below the table
+ * by the same `pb-24` bottom clearance every page already reserves for the
+ * floating Ask Yoh pill (`PageShell.tsx`/`AskYohPill.tsx`) — the dock never
+ * scrolls away and the pill never covers it.
+ *
+ * Polish-4 addendum (Spencer: "remove this text too on the task page. its
+ * redundant: Task Due Duration Area Energy Status"): the column-header row
+ * (previously `position: sticky` above the rows) is gone entirely — the
+ * group labels ("Overdue · 1") are the only heading left, and rows keep
+ * their `TASK_ROW_GRID` column alignment on their own.
  *
  * Built to be as quick as Notion:
  *  - Arriving on the page focuses the quick-add line; `N` or `/` focuses it
@@ -42,7 +47,7 @@ import { remainingMs, requestCheckOff, requestUndo } from "../lib/checkOff.ts";
 import { addLocalFailureNotice } from "../lib/notifications.ts";
 import { setMissingDataFilterActive, useMissingDataFilterActive } from "../lib/missingDataFilter.ts";
 import { useReducedMotion } from "../hooks/useReducedMotion.ts";
-import { TASK_ROW_GRID, TaskRow, type TaskEditField } from "../components/TaskRow.tsx";
+import { TaskRow, type TaskEditField } from "../components/TaskRow.tsx";
 import { TaskQuickAdd } from "../components/TaskQuickAdd.tsx";
 import { UndoToast } from "../components/UndoToast.tsx";
 
@@ -324,31 +329,30 @@ export default function TasksPage(): React.JSX.Element {
     // this subtree only ever scrolls Tasks' own content, even at an edge
     // that would otherwise trigger a page change. Sidebar clicks and the
     // ↑/↓ buttons/keys are unaffected.
-    <div ref={rootRef} data-wheel-nav="off" className="flex h-full flex-col gap-[18px] p-8 pb-24">
+    <div ref={rootRef} className="flex h-full flex-col gap-[18px] p-8 pb-24">
       <h1 className="m-0 shrink-0 font-body text-display font-bold tracking-tight text-ink-primary">Tasks</h1>
 
       {/* Polish-3 (Spencer: "make the text box and filtering at the bottom,
           and have the task db at the top"): the grouped Task table is now
           the first thing under the title, fills the space between the
-          title and the bottom dock, and scrolls internally — its own
-          column-header row is `position: sticky` so it never scrolls out
-          of view. */}
-      <section aria-label="All tasks" className="flex min-h-0 flex-1 flex-col gap-2">
+          title and the bottom dock, and scrolls internally.
+          Polish-4 addendum (Spencer: "remove this text too on the task
+          page. its redundant: Task Due Duration Area Energy Status"): the
+          column-header row is gone — the group labels ("Overdue · 1") are
+          the only heading left; rows keep their `TASK_ROW_GRID` alignment.
+          Polish-4 addendum (wheel paging only outside cards): this whole
+          table region opts out of wheel page-navigation
+          (`data-wheel-nav="off"`, `lib/wheelNav.ts`) — a wheel gesture over
+          it always scrolls the table, never changes page, even at an edge;
+          the page ROOT above no longer carries this, so a wheel gesture
+          over the title still changes page. */}
+      <section aria-label="All tasks" data-wheel-nav="off" className="flex min-h-0 flex-1 flex-col gap-2">
         {state.status === "loaded" && state.refreshFailed && (
           <p className="m-0 shrink-0 px-[18px] font-body text-small text-ink-secondary">
             Couldn't refresh from Notion — showing the list from {state.refreshFailed.at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.
           </p>
         )}
-        <div ref={listRef} data-captures-arrow-keys="" onKeyDown={onListKeyDown} className="-mx-4 flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-4 pb-4">
-          <div aria-hidden="true" className={`sticky top-0 z-10 bg-surface-base ${TASK_ROW_GRID} h-8 px-[18px] font-body text-label font-bold uppercase tracking-wide text-ink-secondary`}>
-            <span />
-            <span>Task</span>
-            <span>Due</span>
-            <span>Duration</span>
-            <span>Area</span>
-            <span>Energy</span>
-            <span>Status</span>
-          </div>
+        <div ref={listRef} data-captures-arrow-keys="" onKeyDown={onListKeyDown} className="-mx-4 flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-4 pb-4 pt-1">
           {state.status === "loading" && justAdded.length === 0 ? (
             [0, 1, 2, 3, 4].map((i) => <RowSkeleton key={i} reducedMotion={reducedMotion} />)
           ) : state.status === "error" && justAdded.length === 0 ? (
@@ -397,7 +401,7 @@ export default function TasksPage(): React.JSX.Element {
           away, keeps clear of the floating Ask Yoh pill via the same
           `pb-24` bottom clearance every page reserves for it) — quick-add
           full width on top, search + grouping on one row underneath. */}
-      <div data-testid="tasks-dock" className="flex shrink-0 flex-col gap-3 rounded-xl bg-surface-raised px-[18px] py-4 shadow-extruded-lg">
+      <div data-testid="tasks-dock" data-wheel-nav="off" className="flex shrink-0 flex-col gap-3 rounded-xl bg-surface-raised px-[18px] py-4 shadow-extruded-lg">
         <TaskQuickAdd
           ref={quickAddRef}
           today={today}

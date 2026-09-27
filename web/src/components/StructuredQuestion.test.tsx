@@ -28,6 +28,29 @@ describe("StructuredQuestion", () => {
     expect(screen.getByRole("button", { name: "Personal" })).toBeInTheDocument();
   });
 
+  // Polish 4 Task 3 (Spencer: "the chip buttons are heavy bold at ~20px"):
+  // one chat type scale — the question text is the body token at regular
+  // weight, chips/Other/Send are the body token at semibold (600), never
+  // font-bold (700, "heavy/black").
+  it("uses the body type-scale token, regular weight, for the question text", () => {
+    render(<StructuredQuestion text="Q" options={[]} allowsFreeText={false} onAnswer={vi.fn()} />);
+    const p = screen.getByText("Q");
+    expect(p).toHaveClass("text-body", "font-normal");
+    expect(p).not.toHaveClass("font-bold");
+  });
+
+  it("uses the body type-scale token, semibold weight (never font-bold), for a chip and for Other/Send", () => {
+    render(<StructuredQuestion text="Q" options={[{ label: "Yes", value: "yes" }]} allowsFreeText onAnswer={vi.fn()} />);
+    const chip = screen.getByRole("button", { name: "Yes" });
+    expect(chip).toHaveClass("text-body", "font-semibold");
+    expect(chip).not.toHaveClass("font-bold");
+    const other = screen.getByLabelText("Other");
+    expect(other).toHaveClass("text-body");
+    const send = screen.getByRole("button", { name: "Send" });
+    expect(send).toHaveClass("text-body", "font-semibold");
+    expect(send).not.toHaveClass("font-bold");
+  });
+
   it("picking a chip calls onAnswer with its value and flips the chip to the Primary style", () => {
     const onAnswer = vi.fn();
     render(<StructuredQuestion text="Q" options={[{ label: "Yes", value: "yes" }]} allowsFreeText={false} onAnswer={onAnswer} />);

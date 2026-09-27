@@ -293,6 +293,59 @@ test("an answer to a questionId that is no longer pending returns conflict and w
   store.close();
 });
 
+// Polish 4 Task 3 (Spencer: an Area answer typed in chat wrote "college
+// apps" free text instead of matching the live "College Apps" option).
+function fixtureAreaOptions(): { area: readonly string[]; energy: []; status: [] } {
+  return { area: ["College Apps", "Wellbeing", "Manatee"], energy: [], status: [] };
+}
+
+test("Area matches the live options case-insensitively, writing the live label's real casing", async () => {
+  const store = tempStore();
+  openReq(store, [{ taskId: "t1", taskTitle: "FAFSA", missingFields: ["area"] }]);
+  const updateTaskField = makeUpdateTaskField();
+  const result = await answerDataCompleteness(
+    { store, session: session(), updateTaskField, readFieldOptions: async () => fixtureAreaOptions() },
+    { requestId: "data-completeness", questionId: "t1:area", answer: "college apps" },
+  );
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.deepEqual(updateTaskField.calls, [{ taskId: "t1", field: "area", value: "College Apps" }]);
+  assert.equal(getTaskFieldOverride(store, "t1")?.data.area, "College Apps");
+  assert.deepEqual(result.value.receipts, ['FAFSA — Area: set to "College Apps".']);
+  store.close();
+});
+
+test("an Area with no close live match is refused, listing the valid options, and never written as free text", async () => {
+  const store = tempStore();
+  openReq(store, [{ taskId: "t1", taskTitle: "FAFSA", missingFields: ["area"] }]);
+  const updateTaskField = makeUpdateTaskField();
+  const result = await answerDataCompleteness(
+    { store, session: session(), updateTaskField, readFieldOptions: async () => fixtureAreaOptions() },
+    { requestId: "data-completeness", questionId: "t1:area", answer: "Astronomy" },
+  );
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(updateTaskField.calls.length, 0);
+  assert.equal(getTaskFieldOverride(store, "t1"), undefined);
+  assert.match(result.value.message ?? "", /don't have an Area called "Astronomy"/);
+  assert.match(result.value.message ?? "", /College Apps/);
+  store.close();
+});
+
+test("Area is written as free text unchanged when no live option list is available (readFieldOptions absent, throws, or Area is free-text on this workspace)", async () => {
+  const store = tempStore();
+  openReq(store, [{ taskId: "t1", taskTitle: "FAFSA", missingFields: ["area"] }]);
+  const updateTaskField = makeUpdateTaskField();
+  const result = await answerDataCompleteness(
+    { store, session: session(), updateTaskField, readFieldOptions: async () => ({ area: undefined, energy: [], status: [] }) },
+    { requestId: "data-completeness", questionId: "t1:area", answer: "college apps" },
+  );
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.deepEqual(updateTaskField.calls, [{ taskId: "t1", field: "area", value: "college apps" }]);
+  store.close();
+});
+
 test("an answer to a request that no longer exists returns conflict", async () => {
   const store = tempStore();
   const result = await answerDataCompleteness({ store, session: session(), updateTaskField: makeUpdateTaskField() }, { requestId: "data-completeness", questionId: "t1:area", answer: "Health" });

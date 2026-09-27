@@ -40,11 +40,18 @@ describe("ChatMessage", () => {
     expect(screen.getByText("Hel")).toBeInTheDocument();
   });
 
-  it("renders each receipt as its own caption-style line", () => {
+  it("renders each receipt as its own caption-style line, in the small type-scale token (never text-caption)", () => {
     render(<ChatMessage message={msg({ text: "Done.", receipts: ['Created "Draft the memo" in Tasks.', "Moved Standup to 10:30."] })} />);
     for (const receipt of ['Created "Draft the memo" in Tasks.', "Moved Standup to 10:30."]) {
-      expect(screen.getByText(receipt)).toHaveClass("text-caption", "text-ink-secondary");
+      expect(screen.getByText(receipt)).toHaveClass("text-small", "text-ink-secondary");
+      expect(screen.getByText(receipt)).not.toHaveClass("text-caption");
     }
+  });
+
+  it("renders nothing for a turn with no visible text, receipt, question, or error (Polish 4 Task 3: no empty bubbles)", () => {
+    const { container } = render(<ChatMessage message={msg({ text: "", receipts: [], status: "done" })} />);
+    expect(screen.queryByTestId("chat-message-m1")).not.toBeInTheDocument();
+    expect(container).toBeEmptyDOMElement();
   });
 
   it("renders a follow-up question as a Structured Question — text plus a chip per option", () => {
@@ -108,7 +115,7 @@ describe("ChatMessage", () => {
 
   it("a failed turn with no text shows the server's reason in a caption", () => {
     render(<ChatMessage message={msg({ status: "error", errorText: "server: chat dependencies not configured" })} />);
-    expect(screen.getByText("Couldn't get a reply: server: chat dependencies not configured")).toHaveClass("text-caption");
+    expect(screen.getByText("Couldn't get a reply: server: chat dependencies not configured")).toHaveClass("text-small");
   });
 
   it("a failed turn with no text and no reason still says it failed", () => {
@@ -119,6 +126,6 @@ describe("ChatMessage", () => {
   it("a turn interrupted mid-reply keeps its partial text and says it was interrupted", () => {
     render(<ChatMessage message={msg({ status: "error", text: "Sure, I" })} />);
     expect(screen.getByText("Sure, I")).toBeInTheDocument();
-    expect(screen.getByText("The reply was interrupted.")).toHaveClass("text-caption");
+    expect(screen.getByText("The reply was interrupted.")).toHaveClass("text-small");
   });
 });

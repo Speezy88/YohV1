@@ -119,10 +119,19 @@ export function buildDataCompletenessQuestion(
       reason: suggestion.reason,
       createdAt: createdAt ?? "",
     };
+    // Polish 4 Task 3 (Spencer: the question copy leaked model-internal,
+    // third-person reasoning — "Spencer explicitly stated 'status not
+    // started'…"). `suggestion.reason` is Claude's own free-text
+    // explanation (`llm-adapter.ts`'s `suggestFieldValue` prompt literally
+    // asks for one "quoting or paraphrasing what Spencer said"), so it can
+    // never be trusted as second-person, Spencer-facing copy — dropped from
+    // the rendered question entirely rather than risk relaying it verbatim.
+    // `suggestion.reason` is still carried on the attached `Proposal` for
+    // anything else that wants it; only this displayed string changes.
     return {
       requestId,
       questionId: `${pending.taskId}:${pending.field}:suggest`,
-      text: `${pending.taskTitle} — ${label}: I think it's "${suggestion.value}" — ${suggestion.reason}. Sound right?`,
+      text: `${pending.taskTitle} — ${label}: I think it's "${suggestion.value}". Sound right?`,
       options: [
         { label: "Yes", value: "yes" },
         { label: "No", value: "no" },

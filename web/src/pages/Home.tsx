@@ -62,7 +62,7 @@ function PlanRowSkeleton(): React.JSX.Element {
 
 function HomeHeader({ today }: { readonly today: string }): React.JSX.Element {
   return (
-    <header className="flex items-end justify-between">
+    <header data-testid="home-greeting" className="flex items-end justify-between">
       <div className="flex flex-col gap-1.5">
         <span className="font-body text-small font-bold tracking-wide text-ink-secondary">{formatDateHeading(today)}</span>
         <h1 className="m-0 font-body text-display font-bold tracking-tight text-ink-primary">
@@ -146,7 +146,12 @@ export default function HomePage(): React.JSX.Element {
           the next page's slot (`PageShell.tsx`'s per-page `overflow-hidden`
           is the other, structural half of this fix). */}
       <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_520px] gap-7">
-        <section className="flex min-h-0 flex-col gap-4 rounded-2xl bg-surface-raised p-7 shadow-extruded-lg">
+        {/* Polish-4 addendum (wheel paging only outside cards): a wheel
+            gesture over this raised card always scrolls its own content,
+            never changes page, even at an edge (`data-wheel-nav="off"`,
+            `lib/wheelNav.ts`) — the greeting above stays un-opted-out, so a
+            wheel gesture there still changes page. */}
+        <section data-wheel-nav="off" className="flex min-h-0 flex-col gap-4 rounded-2xl bg-surface-raised p-7 shadow-extruded-lg">
           <div className="flex items-baseline justify-between">
             <h2 className="m-0 font-body text-heading font-bold text-ink-primary">Today's Plan</h2>
             <TimeBudgetWidget timeBudget={timeBudget} />
@@ -189,7 +194,9 @@ function CalendarColumn({ today, blocks, timeZone }: CalendarColumnProps): React
   };
 
   return (
-    <aside aria-label="Calendar" className="flex min-h-0 flex-col rounded-2xl bg-surface-raised p-5 shadow-extruded-lg">
+    // Polish-4 addendum (wheel paging only outside cards): same opt-out as
+    // the Plan card above.
+    <aside aria-label="Calendar" data-wheel-nav="off" className="flex min-h-0 flex-col rounded-2xl bg-surface-raised p-5 shadow-extruded-lg">
       <header className="flex shrink-0 items-center justify-between pb-4">
         <h2 className="m-0 font-body text-heading font-bold text-ink-primary">Calendar</h2>
         <CalendarViewToggle view={view} onChange={changeView} />

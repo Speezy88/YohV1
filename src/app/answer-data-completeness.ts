@@ -16,11 +16,45 @@ import type { MissingFieldReport } from "../core/data-completeness-gate.ts";
 import { DATA_COMPLETENESS_REQUEST_ID } from "../rituals/data-completeness.ts";
 import { confirmProposal } from "./confirm-proposal.ts";
 import { buildOpenItemQuestion, type SurfaceOpenItemsDeps } from "./surface-open-items.ts";
-import type { ExternalId, FieldValueSuggestion, PlanningFieldNames, Result, Task, TaskFieldOverride, YohError } from "../types/domain.ts";
+import type { ExternalId, FieldValueSuggestion, PlanningFieldNames, Result, Task, TaskFieldOptions, TaskFieldOverride, YohError } from "../types/domain.ts";
 import type { AnswerOpenItemRequest, AnswerOpenItemResponse } from "../types/api.ts";
 
 export interface AnswerDataCompletenessDeps extends SurfaceOpenItemsDeps {
   readonly updateTaskField: (taskId: ExternalId, field: PlanningFieldNames, value: NonNullable<Task[PlanningFieldNames]>) => Promise<Result<void, YohError>>;
+  /**
+   * Real-use fixes plan Polish 4 Task 3 (Spencer: an Area answer typed in
+   * chat wrote "college apps" free text instead of matching the live
+   * "College Apps" option). `notion-adapter.ts`'s `readTaskFieldOptions`,
+   * bound — the SAME dependency `app/update-task.ts`'s `UpdateTaskDeps`
+   * already has. Optional, and any throw is treated as "no live options to
+   * check against": a session that can't read the live schema right now
+   * still lets Spencer answer (falling back to plain free text, the prior
+   * behavior), rather than refusing to ever set Area at all.
+   */
+  readonly readFieldOptions?: () => Promise<TaskFieldOptions>;
+}
+
+/**
+ * Case/whitespace-insensitive exact match against a live option list —
+ * mirrors `app/quick-add-normalize.ts`'s own private `matchLiveOption` (same
+ * rule, different file: Claude's quick-add fallback already trusted its own
+ * prompt's exact live names, and a typed chat answer deserves the identical
+ * courtesy of matching "college apps" to the live "College Apps" rather
+ * than either rejecting it outright or writing it as mismatched-case free
+ * text).
+ */
+function matchLiveOption(raw: string, liveOptions: readonly string[]): string | undefined {
+  const needle = raw.trim().toLowerCase();
+  return liveOptions.find((o) => o.trim().toLowerCase() === needle);
+}
+
+/** `deps.readFieldOptions`'s live Area option list, or `undefined` when Area is a free-text property on this workspace, the dependency isn't configured, or the live read fails. */
+async function liveAreaOptions(deps: AnswerDataCompletenessDeps): Promise<readonly string[] | undefined> {
+  try {
+    return (await deps.readFieldOptions?.())?.area;
+  } catch {
+    return undefined;
+  }
 }
 
 function overridesFor(store: MemoryStore, incomplete: readonly MissingFieldReport[]): Map<string, TaskFieldOverride> {
@@ -131,10 +165,26 @@ export async function answerDataCompleteness(deps: AnswerDataCompletenessDeps, i
 
   const parsed = parsePlanningFieldValue(pending.field, input.answer);
   if (!parsed.ok) return withNext(deps, record.id, parsed.message, []);
-  const written = await deps.updateTaskField(pending.taskId, pending.field, parsed.value as NonNullable<Task[PlanningFieldNames]>);
+
+  // Polish 4 Task 3: Area matches the live options case-insensitively —
+  // never written as mismatched-case (or otherwise unmatched) free text
+  // when a live option list exists to check against.
+  let value = parsed.value as NonNullable<Task[PlanningFieldNames]>;
+  if (pending.field === "area") {
+    const areaOptions = await liveAreaOptions(deps);
+    if (areaOptions !== undefined) {
+      const matched = matchLiveOption(value as string, areaOptions);
+      if (matched === undefined) {
+        return withNext(deps, record.id, `I don't have an Area called "${value}" — try one of: ${areaOptions.join(", ")}.`, []);
+      }
+      value = matched as NonNullable<Task[PlanningFieldNames]>;
+    }
+  }
+
+  const written = await deps.updateTaskField(pending.taskId, pending.field, value);
   if (!written.ok) {
     return withNext(deps, record.id, `${errorCopy(written.error, { service: "Notion" })} Try again with a value closer to what's already in Notion.`, []);
   }
-  mergeTaskFieldOverride(deps.store, pending.taskId, { [pending.field]: parsed.value } as TaskFieldOverride);
-  return withNext(deps, record.id, undefined, [`${pending.taskTitle} — ${label}: set to "${parsed.value}".`]);
+  mergeTaskFieldOverride(deps.store, pending.taskId, { [pending.field]: value } as TaskFieldOverride);
+  return withNext(deps, record.id, undefined, [`${pending.taskTitle} — ${label}: set to "${value}".`]);
 }

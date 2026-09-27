@@ -41,7 +41,12 @@ export interface ChatMessageProps {
   readonly message: ChatViewMessage;
 }
 
-const CAPTION = "font-body text-caption text-ink-secondary";
+// Polish 4 Task 3 (Spencer: "the font size is weird in these spots"): receipts
+// and status/failure lines share one small caption style, from the SAME
+// small type-scale token (`--text-small`, 15px) every other "secondary" chat
+// line uses — never `--text-caption` (10.6px), which read as illegibly tiny
+// next to the ~17.5px message/question-card text.
+const CAPTION = "font-body text-small text-ink-secondary";
 
 /** The small, safe markdown element set a Yoh reply may use — plain text plus emphasis, lists, and paragraphs. Never `img`/`iframe`/raw HTML. */
 const ALLOWED_MARKDOWN_ELEMENTS = ["p", "strong", "em", "ul", "ol", "li", "br", "code"];
@@ -51,11 +56,19 @@ function failureCaption(message: ChatViewMessage): string {
   return message.errorText ? `Couldn't get a reply: ${message.errorText}` : "Couldn't get a reply. Try again.";
 }
 
-export function ChatMessage({ message }: ChatMessageProps): React.JSX.Element {
+export function ChatMessage({ message }: ChatMessageProps): React.JSX.Element | null {
   const isUser = message.role === "user";
   const thinking = !isUser && message.status === "streaming" && message.text === "";
   const [answered, setAnswered] = useState(false);
   const [busy, setBusy] = useState(false);
+  const showQuestion = message.question !== undefined && !answered;
+  // Polish 4 Task 3 (Spencer: "an empty grey bubble renders above the first
+  // receipt"): traced to `recordAnsweredOpenItem` (`chatStore.ts`) — a
+  // declined suggestion, or any answer whose server reply is just an empty
+  // `message`/`receipts: []`, appends an assistant turn with nothing to
+  // show. A turn with no visible text, receipt, question, or error renders
+  // nothing at all, rather than an empty styled row.
+  const hasVisibleContent = thinking || message.text !== "" || message.receipts.length > 0 || showQuestion || message.status === "error";
 
   const answerInline = async (question: OpenItemQuestion, answerText: string): Promise<void> => {
     setBusy(true);
@@ -70,6 +83,8 @@ export function ChatMessage({ message }: ChatMessageProps): React.JSX.Element {
     if (outcome.ok) recordAnsweredOpenItem(answerText, { message: outcome.value.message, receipts: outcome.value.receipts });
     else recordAnsweredOpenItem(answerText, { message: HONEST_REJECTION[outcome.kind] ?? outcome.message, receipts: [] });
   };
+
+  if (!hasVisibleContent) return null;
 
   return (
     <div data-testid={`chat-message-${message.id}`} className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
@@ -86,11 +101,11 @@ export function ChatMessage({ message }: ChatMessageProps): React.JSX.Element {
             {receipt}
           </p>
         ))}
-        {message.question && !answered && (
+        {showQuestion && (
           <StructuredQuestion
-            text={message.question.text}
-            options={message.question.options}
-            allowsFreeText={message.question.allowsFreeText}
+            text={message.question!.text}
+            options={message.question!.options}
+            allowsFreeText={message.question!.allowsFreeText}
             busy={busy}
             onAnswer={(answerText) => void answerInline(message.question!, answerText)}
           />

@@ -57,19 +57,52 @@ test("Polish-3: the Tasks quick-add input sits below the table region and isn't 
   expect(resolvesToInput).toBe(true);
 });
 
-test("wheel-scrolling up at the Tasks list's top edge does not change the active page", async ({ page }) => {
+// Polish-4 addendum ("only tasks... when it is outside [a card], but still
+// on the same page, it should be able to scroll between pages"): the
+// wheel-nav opt-out now lives on the Tasks table region and bottom dock —
+// never the page root — so a gesture over the table never pages, but one
+// over the title area (open page space) still does.
+test("wheel-scrolling up at the Tasks table's top edge does not change the active page", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Tasks", exact: true }).click();
   await expect.poll(async () => (await page.getByTestId("page-tasks").boundingBox())?.y).toBe(0);
 
-  const tasksBox = (await page.getByTestId("page-tasks").boundingBox())!;
-  await page.mouse.move(tasksBox.x + tasksBox.width / 2, tasksBox.y + tasksBox.height / 2);
+  const tableBox = (await page.getByRole("region", { name: "All tasks" }).boundingBox())!;
+  await page.mouse.move(tableBox.x + tableBox.width / 2, tableBox.y + 10);
   // Already at the top; a wheel-up gesture here would, pre-fix, hit the
   // "already at the scroll edge" case and page-navigate to Home instead.
   await page.mouse.wheel(0, -300);
   await page.mouse.wheel(0, -300);
   await expect(page.getByRole("button", { name: "Tasks", exact: true })).toHaveAttribute("aria-current", "page");
   await expect(page.getByRole("heading", { name: "Tasks", level: 1 })).toBeVisible();
+});
+
+test("wheel-scrolling over the Tasks title area (open page space) changes the active page", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks", exact: true }).click();
+  await expect.poll(async () => (await page.getByTestId("page-tasks").boundingBox())?.y).toBe(0);
+
+  const titleBox = (await page.getByRole("heading", { name: "Tasks", level: 1 }).boundingBox())!;
+  await page.mouse.move(titleBox.x + titleBox.width / 2, titleBox.y + titleBox.height / 2);
+  await page.mouse.wheel(0, -300);
+  await expect(page.getByRole("button", { name: "Home", exact: true })).toHaveAttribute("aria-current", "page");
+});
+
+test("wheel-scrolling over Home's Calendar card does not change the active page", async ({ page }) => {
+  await page.goto("/");
+  const calendarBox = (await page.getByRole("complementary", { name: "Calendar" }).boundingBox())!;
+  await page.mouse.move(calendarBox.x + calendarBox.width / 2, calendarBox.y + calendarBox.height / 2);
+  await page.mouse.wheel(0, 300);
+  await page.mouse.wheel(0, 300);
+  await expect(page.getByRole("button", { name: "Home", exact: true })).toHaveAttribute("aria-current", "page");
+});
+
+test("wheel-scrolling over Home's greeting (open page space) changes the active page", async ({ page }) => {
+  await page.goto("/");
+  const greetingBox = (await page.getByTestId("home-greeting").boundingBox())!;
+  await page.mouse.move(greetingBox.x + greetingBox.width / 2, greetingBox.y + greetingBox.height / 2);
+  await page.mouse.wheel(0, 300);
+  await expect(page.getByRole("button", { name: "Tasks", exact: true })).toHaveAttribute("aria-current", "page");
 });
 
 test("Home's calendar panel defaults to Day and switches to Month", async ({ page }) => {

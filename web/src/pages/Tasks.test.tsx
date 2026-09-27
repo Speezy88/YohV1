@@ -105,12 +105,16 @@ describe("TasksPage", () => {
     __resetMissingDataFilterForTests();
   });
 
-  // Polish-2 (Spencer's live-app report: "I do not want to be able to
-  // scroll pages while my cursor is in the tasks section"): the page root
-  // carries the generic wheel-nav opt-out marker `lib/wheelNav.ts` reads.
-  it("the page root opts out of wheel page-navigation (data-wheel-nav=\"off\")", async () => {
+  // Polish-4 addendum ("only tasks... when it is outside [a card], but still
+  // on the same page, it should be able to scroll between pages"): the
+  // wheel-nav opt-out (`lib/wheelNav.ts`) now sits on the table region and
+  // the bottom dock — the two Tasks-page "cards" — never on the page root,
+  // so a wheel gesture over the title still changes page.
+  it("the table region and the bottom dock opt out of wheel page-navigation (data-wheel-nav=\"off\"), but the title area does not", async () => {
     await renderLoaded();
-    expect(screen.getByRole("heading", { name: "Tasks", level: 1 }).closest('[data-wheel-nav="off"]')).not.toBeNull();
+    expect(screen.getByRole("region", { name: "All tasks" })).toHaveAttribute("data-wheel-nav", "off");
+    expect(screen.getByTestId("tasks-dock")).toHaveAttribute("data-wheel-nav", "off");
+    expect(screen.getByRole("heading", { name: "Tasks", level: 1 }).closest('[data-wheel-nav="off"]')).toBeNull();
   });
 
   it("renders the server's groups with counts, overdue dates in danger ink, and Add badges for missing fields", async () => {

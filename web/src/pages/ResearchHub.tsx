@@ -68,7 +68,10 @@ function AskResearchBox(): React.JSX.Element {
   };
 
   return (
-    <section aria-label="Ask a research question" className="flex flex-col gap-3 rounded-xl bg-surface-raised px-[18px] py-4 shadow-extruded-lg">
+    // Polish-4 addendum (wheel paging only outside cards): this raised card
+    // opts out of wheel page-navigation (`data-wheel-nav="off"`,
+    // `lib/wheelNav.ts`).
+    <section aria-label="Ask a research question" data-wheel-nav="off" className="flex flex-col gap-3 rounded-xl bg-surface-raised px-[18px] py-4 shadow-extruded-lg">
       <label
         className={
           "flex h-[58px] items-center gap-3.5 rounded-lg border-[length:var(--rim-width)] bg-surface-sunken px-4 shadow-inset " +
@@ -123,7 +126,9 @@ export default function ResearchHubPage(): React.JSX.Element {
 
       <AskResearchBox />
 
-      <section aria-label="Recent research" className="flex min-h-0 flex-1 flex-col gap-2">
+      {/* Polish-4 addendum (wheel paging only outside cards): same opt-out
+          as the "Ask a research question" card above. */}
+      <section aria-label="Recent research" data-wheel-nav="off" className="flex min-h-0 flex-1 flex-col gap-2">
         {state.status === "loaded" && state.refreshFailed && (
           <p className="m-0 px-[18px] font-body text-small text-ink-secondary">
             Couldn't refresh from Notion — showing the list from {state.refreshFailed.at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.
