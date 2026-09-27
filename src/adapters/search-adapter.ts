@@ -51,8 +51,16 @@ export type FetchLike = (
 
 export const PERPLEXITY_RESPONSES_ENDPOINT = "https://api.perplexity.ai/v1/responses";
 
-/** The cheapest Perplexity model tier that still returns citations — per the Architecture Spine's own Deferred guidance ("pick the cheapest tier/preset that still returns usable citations"). Overridable via `SearchAdapterConfig.model`. */
-export const DEFAULT_PERPLEXITY_MODEL = "sonar";
+/**
+ * The cheapest Agent API preset that still returns citations (Architecture
+ * Spine Deferred guidance: "pick the cheapest tier/preset that still returns
+ * usable citations"). Verified live 2026-09-27: `model: "sonar"` is rejected
+ * by `/v1/responses` with HTTP 400 ("model "sonar" is not supported");
+ * `preset: "fast-search"` returns a `search_results` item (URLs under
+ * `results[]`) plus a `message` item, at ~$0.001 per search.
+ * `SearchAdapterConfig.model`, when set, is sent as `model` instead.
+ */
+export const DEFAULT_PERPLEXITY_PRESET = "fast-search";
 
 export interface SearchAdapterConfig {
   readonly apiKey: string;
@@ -83,6 +91,9 @@ export function loadSearchAdapterConfigFromEnv(
 interface PerplexityOutputItem {
   readonly type?: string;
   readonly content?: ReadonlyArray<{ readonly text?: string }>;
+  /** The live Agent API shape (verified 2026-09-27). */
+  readonly results?: ReadonlyArray<{ readonly url?: string }>;
+  /** The originally documented shape — still accepted. */
   readonly search_results?: ReadonlyArray<{ readonly url?: string }>;
 }
 
@@ -97,8 +108,8 @@ function parseSearchResponse(body: unknown): SearchAnswer {
         if (typeof block.text === "string" && block.text.length > 0) answerParts.push(block.text);
       }
     }
-    if (item.type === "search_results" && item.search_results) {
-      for (const result of item.search_results) {
+    if (item.type === "search_results") {
+      for (const result of item.results ?? item.search_results ?? []) {
         if (typeof result.url === "string" && result.url.length > 0) citations.push(result.url);
       }
     }
@@ -122,14 +133,13 @@ function parseSearchResponse(body: unknown): SearchAnswer {
 export async function search(config: SearchAdapterConfig, query: string): Promise<Result<SearchAnswer, YohError>> {
   const httpFetch = config.fetch ?? (globalThis.fetch as FetchLike);
   const endpoint = config.endpoint ?? PERPLEXITY_RESPONSES_ENDPOINT;
-  const model = config.model ?? DEFAULT_PERPLEXITY_MODEL;
 
   let response: HttpResponseLike;
   try {
     response = await httpFetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.apiKey}` },
-      body: JSON.stringify({ model, input: query }),
+      body: JSON.stringify(config.model ? { model: config.model, input: query } : { preset: DEFAULT_PERPLEXITY_PRESET, input: query }),
     });
   } catch (err) {
     return {

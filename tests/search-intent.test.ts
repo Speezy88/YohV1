@@ -83,7 +83,7 @@ test('parseSearchIntent strips a leading search verb from the query ("search for
 });
 
 test("parseSearchIntent strips a mid-sentence search verb, collapsing the resulting whitespace", () => {
-  assert.deepEqual(parseSearchIntent("can you look up the weather in NYC"), { query: "can you the weather in NYC" });
+  assert.deepEqual(parseSearchIntent("can you look up the weather in NYC"), { query: "the weather in NYC" });
 });
 
 test("parseSearchIntent falls back to the whole line when stripping the verb would leave nothing", () => {
@@ -103,6 +103,23 @@ test("parseSearchIntent keeps the whole line as the query for a cue-only match (
 
 test('parseSearchIntent does not treat "research vault" as the search verb "research"', () => {
   assert.equal(parseSearchIntent("check my research vault"), undefined);
+});
+
+test("parseSearchIntent: search verbs mid-sentence and first-person statements stay tasks/captures (controller fix)", () => {
+  for (const line of [
+    "I need to research colleges this week",
+    "remind me to look up flights tomorrow",
+    "add task: research ACT prep books",
+    "I'm feeling current on my work",
+    "stock up on groceries",
+    "today I finished the history poster",
+  ]) {
+    assert.equal(parseSearchIntent(line), undefined, line);
+  }
+});
+
+test("parseSearchIntent: a polite lead before the verb is stripped from the query", () => {
+  assert.deepEqual(parseSearchIntent("hey Yoh, could you please look up the Seahawks score"), { query: "the Seahawks score" });
 });
 
 test("parseSearchIntent returns undefined for an empty or blank line", () => {

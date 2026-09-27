@@ -44,10 +44,21 @@
 
 const EXPLICIT_SEARCH_PREFIX_RE = /^search:\s*(.+)$/is;
 
-const SEARCH_VERB_RE = /\b(?:search(?:\s+the\s+web)?(?:\s+for)?|look\s+up|google|find\s+out(?:\s+about)?|research\b(?!\s+vault))\b/i;
+/** A leading polite/address phrase before an imperative ("hey Yoh, can you please look up …"). */
+const POLITE_LEAD = String.raw`(?:(?:hey\s+)?yoh[,:]?\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?`;
+
+/** A search verb used as an imperative — only at the start of the message (after an optional polite lead), so "I need to research colleges" or "remind me to look up flights" stay tasks/captures. */
+const SEARCH_VERB_RE = new RegExp(
+  String.raw`^\s*${POLITE_LEAD}(?:search(?:\s+the\s+web)?(?:\s+for)?|look\s+up|google|find\s+out(?:\s+about)?|research(?!\s+vault))\b`,
+  "i",
+);
 
 const CURRENT_INFO_CUE_RE =
-  /\b(?:news|latest|today'?s|this\s+week|current|right\s+now|price\s+of|stock|score|weather|who\s+won|what\s+happened)\b/i;
+  /\b(?:news|latest|today'?s|this\s+week|current(?:ly|\s+events)?|right\s+now|price\s+of|stock\s+(?:price|market)|score|weather|who\s+won|what\s+happened)\b/i;
+
+/** The message reads as a request for information: a question (wh-/aux-word opener or a trailing "?"), "tell me …", or it opens with the cue itself ("price of bitcoin", "latest AI news"). First-person statements ("I'm feeling current…", "stock up on…") don't. */
+const INFO_REQUEST_RE =
+  /^\s*(?:(?:what|what's|whats|who|who's|when|where|which|why|how|how's|is|are|was|were|did|does|do|any|tell\s+me|give\s+me|show\s+me)\b|(?:news|latest|price\s+of|weather|current\s+events|today'?s|this\s+week'?s)\b)|\?\s*$/i;
 
 const PLANNING_NOUN_RE = /\b(?:plan|tasks?|schedule|calendar|priorit\w*)\b/i;
 
@@ -73,7 +84,7 @@ export function parseSearchIntent(line: string): SearchIntent | undefined {
     return { query: stripped.length > 0 ? stripped : trimmed };
   }
 
-  if (CURRENT_INFO_CUE_RE.test(trimmed) && !PLANNING_NOUN_RE.test(trimmed)) {
+  if (CURRENT_INFO_CUE_RE.test(trimmed) && INFO_REQUEST_RE.test(trimmed) && !PLANNING_NOUN_RE.test(trimmed)) {
     return { query: trimmed };
   }
 

@@ -11,7 +11,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  DEFAULT_PERPLEXITY_MODEL,
+  DEFAULT_PERPLEXITY_PRESET,
   loadSearchAdapterConfigFromEnv,
   PERPLEXITY_RESPONSES_ENDPOINT,
   search,
@@ -63,7 +63,30 @@ test("search sends the Bearer auth header and the query as input", async () => {
   assert.equal(init.headers["Authorization"], "Bearer test-key");
   const body = JSON.parse(init.body);
   assert.equal(body.input, "some query");
-  assert.equal(body.model, DEFAULT_PERPLEXITY_MODEL);
+  assert.equal(body.preset, DEFAULT_PERPLEXITY_PRESET);
+  assert.equal(body.model, undefined);
+});
+
+test("search sends config.model instead of the preset when one is configured", async () => {
+  const { fetch, calls } = fakeFetch(jsonResponse(200, { output: [] }));
+  await search({ apiKey: "test-key", fetch, model: "some/model" }, "q");
+  const body = JSON.parse((calls[0]!.init as { body: string }).body);
+  assert.equal(body.model, "some/model");
+  assert.equal(body.preset, undefined);
+});
+
+test("search reads citations from the live Agent API shape (search_results item with results[].url)", async () => {
+  const { fetch } = fakeFetch(
+    jsonResponse(200, {
+      output: [
+        { type: "search_results", queries: ["q"], results: [{ id: 1, url: "https://example.com/x", title: "X" }, { id: 2, url: "https://example.com/y" }] },
+        { type: "message", role: "assistant", content: [{ type: "output_text", text: "The answer.", annotations: [] }] },
+      ],
+    }),
+  );
+  const result = await search({ apiKey: "test-key", fetch }, "q");
+  assert.equal(result.ok, true);
+  if (result.ok) assert.deepEqual(result.value, { answer: "The answer.", citations: ["https://example.com/x", "https://example.com/y"] });
 });
 
 test("search returns a successful empty SearchAnswer for a legitimate zero-result response, never a YohError", async () => {
