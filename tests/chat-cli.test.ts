@@ -37,7 +37,6 @@ import { initNotificationStoreSchema } from "../src/adapters/notification-store.
 import {
   surfaceOpenInteractionRequests,
   runChatCli,
-  parseFieldAnswer,
   parseTimeBudgetCommand,
   declareTimeBudget,
   isMidDayReflowCommand,
@@ -340,7 +339,7 @@ test("runChatCli surfaces an open interaction request before accepting any other
   // "unrelated command" if it were processed before the prompt.
   const io = makeScriptedIo(["Work", "show me today's plan"]);
 
-  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), undefined, undefined, undefined, makeFakeUpdateTaskField());
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), updateTaskField: makeFakeUpdateTaskField() });
 
   const promptIndex = io.written.findIndex((line) => line.includes("Call dentist"));
   assert.ok(promptIndex !== -1, "expected the interaction request to be surfaced");
@@ -355,7 +354,7 @@ test("runChatCli proceeds straight to the ordinary loop when no interaction requ
   const store = tempStore();
   const io = makeScriptedIo(["hello"]);
 
-  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient());
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient() });
 
   assert.ok(!io.written.some((line) => line.includes("I need a bit more")));
   store.close();
@@ -375,7 +374,7 @@ test("runChatCli produces no ambient output while waiting for input — silence 
     writeLine: (line) => written.push(line),
   };
 
-  const done = runChatCli(store, io, TEST_TIME_ZONE, llmClient);
+  const done = runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient });
   // Give any pending microtasks a chance to run before checking — if
   // anything were going to write ambiently, it would have by now.
   await Promise.race([done, new Promise((resolve) => setTimeout(resolve, 10))]);
@@ -402,67 +401,9 @@ test("an interaction request opened by another kind (e.g. a Proposal) is also su
 });
 
 // ============================================================================
-// parseFieldAnswer — per-field parsing/validation of a raw answer (Task 5 fix)
+// parsePlanningFieldValue moved to core/planning-field-value.ts and its own
+// tests/planning-field-value.test.ts (Epic 6 retro item 7, F8/F9).
 // ============================================================================
-
-test("parseFieldAnswer(estimatedDurationMinutes) accepts a positive whole number of minutes", () => {
-  const result = parseFieldAnswer("estimatedDurationMinutes", "30");
-  assert.equal(result.ok, true);
-  if (result.ok) assert.equal(result.value, 30);
-});
-
-test("parseFieldAnswer(estimatedDurationMinutes) rejects non-numeric, zero, negative, and fractional input", () => {
-  for (const raw of ["not a number", "0", "-5", "12.5", ""]) {
-    const result = parseFieldAnswer("estimatedDurationMinutes", raw);
-    assert.equal(result.ok, false, `expected "${raw}" to be rejected`);
-  }
-});
-
-test("parseFieldAnswer(area) accepts any non-blank free-form text", () => {
-  const result = parseFieldAnswer("area", "  Health  ");
-  assert.equal(result.ok, true);
-  if (result.ok) assert.equal(result.value, "Health");
-});
-
-test("parseFieldAnswer(area) rejects blank input", () => {
-  const result = parseFieldAnswer("area", "   ");
-  assert.equal(result.ok, false);
-});
-
-test("parseFieldAnswer(dueDate) accepts a YYYY-MM-DD date", () => {
-  const result = parseFieldAnswer("dueDate", "2026-08-25");
-  assert.equal(result.ok, true);
-  if (result.ok) assert.equal(result.value, "2026-08-25");
-});
-
-test("parseFieldAnswer(dueDate) rejects an unparseable or malformed date", () => {
-  for (const raw of ["not a date", "08/25/2026", "2026-13-40", "2026-02-30"]) {
-    const result = parseFieldAnswer("dueDate", raw);
-    assert.equal(result.ok, false, `expected "${raw}" to be rejected`);
-  }
-});
-
-test("parseFieldAnswer(status) accepts one of the fixed TaskStatus values, case/space-insensitively", () => {
-  const result = parseFieldAnswer("status", "In Progress");
-  assert.equal(result.ok, true);
-  if (result.ok) assert.equal(result.value, "in-progress");
-});
-
-test("parseFieldAnswer(status) rejects a value outside the fixed enum", () => {
-  const result = parseFieldAnswer("status", "done-ish");
-  assert.equal(result.ok, false);
-});
-
-test("parseFieldAnswer(energy) accepts one of the fixed Energy values, case-insensitively", () => {
-  const result = parseFieldAnswer("energy", "HIGH");
-  assert.equal(result.ok, true);
-  if (result.ok) assert.equal(result.value, "high");
-});
-
-test("parseFieldAnswer(energy) rejects a value outside the fixed enum", () => {
-  const result = parseFieldAnswer("energy", "extreme");
-  assert.equal(result.ok, false);
-});
 
 // ============================================================================
 // applyTaskFieldOverride / mergeStoredOverrides — pure merge helpers
@@ -677,18 +618,7 @@ test("a create-item request is drafted, validated, shown, and — on 'yes' — c
   const validateDraft = makeFakeValidateDraft();
   const io = makeScriptedIo(["create a task to buy hiking boots", "yes"]);
 
-  await runChatCli(
-    store,
-    io,
-    TEST_TIME_ZONE,
-    llmClient,
-    () => new Date(NOW),
-    async () => [],
-    undefined,
-    undefined,
-    createPageFn,
-    validateDraft,
-  );
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => new Date(NOW), readTasks: async () => [], createNotionPage: createPageFn, validateNotionPageDraft: validateDraft });
 
   assert.equal(createPageFn.calls.length, 1);
   assert.equal(createPageFn.calls[0]!.database, "Tasks");
@@ -704,18 +634,7 @@ test("declining the draft does not create anything", async () => {
   const validateDraft = makeFakeValidateDraft();
   const io = makeScriptedIo(["create a task to buy hiking boots", "no"]);
 
-  await runChatCli(
-    store,
-    io,
-    TEST_TIME_ZONE,
-    llmClient,
-    () => new Date(NOW),
-    async () => [],
-    undefined,
-    undefined,
-    createPageFn,
-    validateDraft,
-  );
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => new Date(NOW), readTasks: async () => [], createNotionPage: createPageFn, validateNotionPageDraft: validateDraft });
 
   assert.equal(createPageFn.calls.length, 0);
   store.close();
@@ -728,18 +647,7 @@ test("a draft that fails validation is never shown for confirmation, and nothing
   const validateDraft = makeFakeValidateDraft({ ok: false, error: { kind: "validation", message: "no close match for Area" } });
   const io = makeScriptedIo(["create a task to buy hiking boots"]);
 
-  await runChatCli(
-    store,
-    io,
-    TEST_TIME_ZONE,
-    llmClient,
-    () => new Date(NOW),
-    async () => [],
-    undefined,
-    undefined,
-    createPageFn,
-    validateDraft,
-  );
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => new Date(NOW), readTasks: async () => [], createNotionPage: createPageFn, validateNotionPageDraft: validateDraft });
 
   assert.equal(createPageFn.calls.length, 0);
   store.close();
@@ -751,7 +659,7 @@ test("when the LLM can't extract a title, Yoh says so and does not attempt valid
   const createPageFn = makeFakeCreatePage();
   const io = makeScriptedIo(["create a task, uh, something"]);
 
-  await runChatCli(store, io, TEST_TIME_ZONE, llmClient, () => new Date(NOW), async () => [], undefined, undefined, createPageFn);
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => new Date(NOW), readTasks: async () => [], createNotionPage: createPageFn });
 
   assert.equal(createPageFn.calls.length, 0);
   assert.equal(llmClient.calls.length, 1, "the create-item path must never fall through to the general-qa catch-all too");
@@ -768,19 +676,7 @@ test("an explicit search request routes to search() and renders the answer with 
   const searchFn = makeFakeSearch({ ok: true, value: { answer: "Salomon and Merrell test well.", citations: ["https://example.com/a"] } });
   const io = makeScriptedIo(["search for the best hiking boots under $150"]);
 
-  await runChatCli(
-    store,
-    io,
-    TEST_TIME_ZONE,
-    llmClient,
-    () => new Date(NOW),
-    async () => [],
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    searchFn,
-  );
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => new Date(NOW), readTasks: async () => [], searchFn });
 
   assert.deepEqual(searchFn.calls, ["best hiking boots under $150"]);
   assert.ok(io.written.some((line) => line.includes("Salomon and Merrell")));
@@ -794,19 +690,7 @@ test("an ordinary message classified as general-question never calls search(), a
   const searchFn = makeFakeSearch();
   const io = makeScriptedIo(["how's the weather looking"]);
 
-  await runChatCli(
-    store,
-    io,
-    TEST_TIME_ZONE,
-    llmClient,
-    () => new Date(NOW),
-    async () => [],
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    searchFn,
-  );
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => new Date(NOW), readTasks: async () => [], searchFn });
 
   assert.equal(searchFn.calls.length, 0);
   store.close();
@@ -818,19 +702,7 @@ test("a search returning zero usable results is relayed honestly, not as an erro
   const searchFn = makeFakeSearch({ ok: true, value: { answer: "", citations: [] } });
   const io = makeScriptedIo(["search for an obscure query"]);
 
-  await runChatCli(
-    store,
-    io,
-    TEST_TIME_ZONE,
-    llmClient,
-    () => new Date(NOW),
-    async () => [],
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    searchFn,
-  );
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => new Date(NOW), readTasks: async () => [], searchFn });
 
   assert.ok(io.written.some((line) => /didn't find|couldn't find|no results/i.test(line)));
   store.close();
@@ -842,19 +714,7 @@ test("a search failure (YohError) is reported plainly, not thrown", async () => 
   const searchFn = makeFakeSearch({ ok: false, error: { kind: "unreachable", message: "search-adapter: Perplexity returned HTTP 500" } });
   const io = makeScriptedIo(["search for query"]);
 
-  await runChatCli(
-    store,
-    io,
-    TEST_TIME_ZONE,
-    llmClient,
-    () => new Date(NOW),
-    async () => [],
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    searchFn,
-  );
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => new Date(NOW), readTasks: async () => [], searchFn });
 
   assert.ok(io.written.some((line) => line.includes("Perplexity returned HTTP 500")));
   store.close();
@@ -867,19 +727,7 @@ test("F5 regression: a search returning an empty answer does not set lastSearchA
   const searchFn = makeFakeSearch({ ok: true, value: { answer: "", citations: [] } });
   const io = makeScriptedIo(["search for an obscure query", "save that"]);
 
-  await runChatCli(
-    store,
-    io,
-    TEST_TIME_ZONE,
-    llmClient,
-    () => new Date(NOW),
-    async () => [],
-    undefined,
-    undefined,
-    createPageFn,
-    undefined,
-    searchFn,
-  );
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => new Date(NOW), readTasks: async () => [], createNotionPage: createPageFn, searchFn });
 
   assert.equal(createPageFn.calls.length, 0, "an empty search answer must never be filed to the Research Vault");
   assert.ok(io.written.some((line) => /don't have|no recent/i.test(line)));
@@ -898,19 +746,7 @@ test("F5 regression: a search failure clears lastSearchAnswer — 'save that' af
   };
   const io = makeScriptedIo(["search for the best hiking boots under $150", "search again", "save that"]);
 
-  await runChatCli(
-    store,
-    io,
-    TEST_TIME_ZONE,
-    llmClient,
-    () => new Date(NOW),
-    async () => [],
-    undefined,
-    undefined,
-    createPageFn,
-    undefined,
-    searchFn,
-  );
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => new Date(NOW), readTasks: async () => [], createNotionPage: createPageFn, searchFn });
 
   assert.equal(createPageFn.calls.length, 0, "a failed search must clear the earlier result, not leave it filable");
   assert.ok(io.written.some((line) => /don't have|no recent/i.test(line)));
@@ -929,19 +765,7 @@ test("F5 (Ruling R20) regression: a valid search followed by an EMPTY search cle
   };
   const io = makeScriptedIo(["search for the best hiking boots under $150", "search for an obscure query", "save that"]);
 
-  await runChatCli(
-    store,
-    io,
-    TEST_TIME_ZONE,
-    llmClient,
-    () => new Date(NOW),
-    async () => [],
-    undefined,
-    undefined,
-    createPageFn,
-    undefined,
-    searchFn,
-  );
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => new Date(NOW), readTasks: async () => [], createNotionPage: createPageFn, searchFn });
 
   assert.equal(
     createPageFn.calls.length,
@@ -979,19 +803,7 @@ test("'save that' after a search files it to Research Vault directly, with no co
   const searchFn = makeFakeSearch({ ok: true, value: { answer: "Salomon and Merrell test well.", citations: ["https://example.com/a"] } });
   const io = makeScriptedIo(["search for the best hiking boots under $150", "save that"]);
 
-  await runChatCli(
-    store,
-    io,
-    TEST_TIME_ZONE,
-    llmClient,
-    () => new Date(NOW),
-    async () => [],
-    undefined,
-    undefined,
-    createPageFn,
-    undefined,
-    searchFn,
-  );
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => new Date(NOW), readTasks: async () => [], createNotionPage: createPageFn, searchFn });
 
   assert.equal(createPageFn.calls.length, 1);
   assert.equal(createPageFn.calls[0]!.database, "ResearchVault");
@@ -1008,17 +820,7 @@ test("'save that' with no recent search result in the session does not fabricate
   const createPageFn = makeFakeCreatePage();
   const io = makeScriptedIo(["save that"]);
 
-  await runChatCli(
-    store,
-    io,
-    TEST_TIME_ZONE,
-    llmClient,
-    () => new Date(NOW),
-    async () => [],
-    undefined,
-    undefined,
-    createPageFn,
-  );
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => new Date(NOW), readTasks: async () => [], createNotionPage: createPageFn });
 
   assert.equal(createPageFn.calls.length, 0);
   assert.ok(io.written.some((line) => /don't have|no recent|nothing to save/i.test(line)));
@@ -1032,19 +834,7 @@ test("F6 regression: 'save that to my notion research vault' routes to the FR-29
   const searchFn = makeFakeSearch({ ok: true, value: { answer: "Salomon and Merrell test well.", citations: ["https://example.com/a"] } });
   const io = makeScriptedIo(["search for the best hiking boots under $150", "save that to my notion research vault"]);
 
-  await runChatCli(
-    store,
-    io,
-    TEST_TIME_ZONE,
-    llmClient,
-    () => new Date(NOW),
-    async () => [],
-    undefined,
-    undefined,
-    createPageFn,
-    undefined,
-    searchFn,
-  );
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => new Date(NOW), readTasks: async () => [], createNotionPage: createPageFn, searchFn });
 
   assert.equal(createPageFn.calls.length, 1, "must file the search result directly (FR-29), not open a create-item draft (FR-26)");
   assert.equal(createPageFn.calls[0]!.database, "ResearchVault");
@@ -1214,7 +1004,7 @@ test("runChatCli: typing a Time Budget command persists it and confirms back to 
   const llmClient = makeFakeLlmClient();
   const io = makeScriptedIo(["time budget 6h"]);
 
-  await runChatCli(store, io, TEST_TIME_ZONE, llmClient);
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient });
 
   const stored = getCurrentTimeBudget(store);
   assert.equal(stored?.data.totalMinutes, 360);
@@ -1230,7 +1020,7 @@ test("runChatCli: an invalid Time Budget amount is reported as an error, not sil
   const store = tempStore();
   const io = makeScriptedIo(["time budget 30 hours"]); // 1800 minutes > 24h cap
 
-  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient());
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient() });
 
   assert.equal(getCurrentTimeBudget(store), undefined);
   assert.ok(io.written.some((line) => /couldn't|invalid|cannot/i.test(line)));
@@ -1249,7 +1039,7 @@ test("runChatCli: routing unrelated input through the ordinary loop never calls 
   const before = getCurrentTimeBudget(store);
 
   const io = makeScriptedIo(["hello", "show me today's plan"]);
-  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient());
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient() });
 
   const after = getCurrentTimeBudget(store);
   assert.deepEqual(after?.data, before?.data);
@@ -1270,7 +1060,7 @@ test("runChatCli: input that isn't a Time Budget or Plan-view command routes thr
   const llmClient = makeFakeLlmClient("It's sunny where you are, probably.");
   const io = makeScriptedIo(["what's the weather"]);
 
-  await runChatCli(store, io, TEST_TIME_ZONE, llmClient);
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient });
 
   assert.ok(!io.written.some((line) => line.includes("free-text routing arrives in a later task")));
   assert.ok(io.written.includes("It's sunny where you are, probably."));
@@ -1287,7 +1077,7 @@ test("runChatCli: a general/factual question with no matching specific intent st
   const llmClient = makeFakeLlmClient("The capital of France is Paris.");
   const io = makeScriptedIo(["what's the capital of France"]);
 
-  await runChatCli(store, io, TEST_TIME_ZONE, llmClient);
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient });
 
   assert.ok(io.written.includes("The capital of France is Paris."));
   store.close();
@@ -1305,7 +1095,7 @@ test("runChatCli: passes core/tone.ts's resolveToneSystemPrompt(line) as the sys
   const llmClient = makeFakeLlmClient("hey yourself");
   const io = makeScriptedIo(["hey, what's up"]);
 
-  await runChatCli(store, io, TEST_TIME_ZONE, llmClient);
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient });
 
   // calls[0] is classifyChatIntent's own system prompt (Story 6.4);
   // calls[1] is the actual general-qa answer call this test is about.
@@ -1319,7 +1109,7 @@ test("runChatCli: passes core/tone.ts's resolveToneSystemPrompt(line) as the sys
   const llmClient = makeFakeLlmClient("TCP is connection-oriented; UDP is not.");
   const io = makeScriptedIo(["What's the difference between TCP and UDP?"]);
 
-  await runChatCli(store, io, TEST_TIME_ZONE, llmClient);
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient });
 
   assert.equal(llmClient.calls.length, 2);
   const sentSystemPrompt = llmClient.calls[1]!.system;
@@ -1341,7 +1131,7 @@ test("runChatCli: an ordinary casual message routes the general-qa answer to CLA
   const llmClient = makeFakeLlmClient("hey yourself");
   const io = makeScriptedIo(["hey, what's up"]);
 
-  await runChatCli(store, io, TEST_TIME_ZONE, llmClient);
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient });
 
   assert.equal(llmClient.calls.length, 2);
   assert.equal(llmClient.calls[1]!.model, CLAUDE_CHAT_MODEL_FAST);
@@ -1353,7 +1143,7 @@ test("runChatCli: a factual/analytical message escalates the general-qa answer t
   const llmClient = makeFakeLlmClient("TCP is connection-oriented; UDP is not.");
   const io = makeScriptedIo(["What's the difference between TCP and UDP?"]);
 
-  await runChatCli(store, io, TEST_TIME_ZONE, llmClient);
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient });
 
   assert.equal(llmClient.calls.length, 2);
   assert.equal(llmClient.calls[1]!.model, CLAUDE_CHAT_MODEL_CAPABLE);
@@ -1374,7 +1164,7 @@ test("runChatCli: a second general-qa turn's history includes the first turn's q
   const llmClient = makeFakeLlmClient("Two plus two is four.");
   const io = makeScriptedIo(["what's 2+2", "what did I just ask you"]);
 
-  await runChatCli(store, io, TEST_TIME_ZONE, llmClient);
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient });
 
   // calls: [classify #1, general-qa #1, classify #2, general-qa #2].
   assert.equal(llmClient.calls.length, 4);
@@ -1395,7 +1185,7 @@ test("runChatCli: a deterministic flow's own output (never touching Claude) stil
   const llmClient = makeFakeLlmClient("Yes, I set it.");
   const io = makeScriptedIo(["time budget 6 hours", "did you set my time budget"]);
 
-  await runChatCli(store, io, TEST_TIME_ZONE, llmClient);
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient });
 
   // "time budget 6 hours" is handled entirely by parseTimeBudgetCommand
   // (Task 6) — zero Claude calls — so calls[0]/[1] are the SECOND line's
@@ -1421,7 +1211,7 @@ test("runChatCli: catches a thrown error from the Claude call and surfaces it as
   };
   const io = makeScriptedIo(["what's the weather"]);
 
-  await runChatCli(store, io, TEST_TIME_ZONE, llmClient);
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient });
 
   assert.ok(io.written.some((line) => /simulated API failure/.test(line)));
   store.close();
@@ -1507,7 +1297,7 @@ test("runChatCli: Given a Plan already exists for today, When Spencer asks \"wha
 
   const llmClient = makeFakeLlmClient();
   const io = makeScriptedIo(["what's my plan"]);
-  await runChatCli(store, io, TEST_TIME_ZONE, llmClient, () => LATE_EVENING_UTC);
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => LATE_EVENING_UTC });
 
   const expected = renderPlan(plan);
   assert.ok(
@@ -1524,7 +1314,7 @@ test("runChatCli: on-demand Plan view also responds to other recognized phrasing
   putPlan(store, plan);
 
   const io = makeScriptedIo(["show plan"]);
-  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => LATE_EVENING_UTC);
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => LATE_EVENING_UTC });
 
   assert.ok(io.written.includes(renderPlan(plan)));
   store.close();
@@ -1534,7 +1324,7 @@ test("runChatCli: Given no Plan has been generated yet for today, When Spencer a
   const store = tempStore();
   const io = makeScriptedIo(["show plan"]);
 
-  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => LATE_EVENING_UTC);
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => LATE_EVENING_UTC });
 
   assert.ok(
     io.written.some((line) => /no plan/i.test(line)),
@@ -1562,7 +1352,7 @@ test("runChatCli: does NOT silently display a stale prior-day Plan when today's 
   putPlan(store, samplePlanForDate(utcDateOnly));
 
   const io = makeScriptedIo(["show plan"]);
-  await runChatCli(store, io, timeZone, makeFakeLlmClient(), () => earlyMorningUtc);
+  await runChatCli({ store, io, timeZone, llmClient: makeFakeLlmClient(), now: () => earlyMorningUtc });
 
   assert.ok(
     io.written.some((line) => /no plan/i.test(line)),
@@ -1639,14 +1429,7 @@ test("runChatCli: typing a recognized Mid-Day Re-Flow trigger calls into mid-day
   const io = makeScriptedIo(["reflow my day"]);
   const llmClient = makeFakeLlmClient();
 
-  await runChatCli(
-    store,
-    io,
-    TEST_TIME_ZONE,
-    llmClient,
-    () => REFLOW_NOW,
-    async () => tasks,
-  );
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => REFLOW_NOW, readTasks: async () => tasks });
 
   assert.equal(llmClient.calls.length, 0, "a recognized Mid-Day Re-Flow trigger must never fall through to the LLM catch-all");
   assert.ok(io.written.some((line) => /Re-flowed the rest of today/.test(line)), "expected the short reflow reasoning to be printed");
@@ -1665,9 +1448,29 @@ test("runChatCli: Mid-Day Re-Flow trigger says so plainly when no Plan exists ye
   const store = tempStore();
   const io = makeScriptedIo(["reflow"]);
 
-  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => LATE_EVENING_UTC, async () => []);
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => LATE_EVENING_UTC, readTasks: async () => [] });
 
   assert.ok(io.written.some((line) => /no plan/i.test(line)));
+  store.close();
+});
+
+test("ChatCliDeps (Epic 6 retro item 7): an omitted optional dependency still defaults to its original throws-only-if-invoked stub, surfaced as an honest error rather than a raw TypeError", async () => {
+  const store = tempStore();
+  const REFLOW_NOW = new Date("2026-08-22T18:00:00.000Z");
+  const today = localIsoDate(REFLOW_NOW, TEST_TIME_ZONE);
+  putTimeBudget(store, { date: today, totalMinutes: 480, workMinutes: 70, breakMinutes: 15 });
+  putPlan(store, reflowSamplePlan(today, REFLOW_NOW.toISOString()));
+  const io = makeScriptedIo(["reflow my day"]);
+
+  // `readTasks` is deliberately omitted from this ChatCliDeps object — the
+  // conversion from positional params to one object must still leave its
+  // default (a stub that throws only once actually invoked) in place.
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => REFLOW_NOW });
+
+  assert.ok(
+    io.written.some((line) => line.includes("no readTasks dependency configured")),
+    `expected the original default-stub message to surface, got: ${io.written.join(" | ")}`,
+  );
   store.close();
 });
 
@@ -1759,7 +1562,7 @@ test("runChatCli: a recognized Blocker report reschedules immediately and respon
   const io = makeScriptedIo(["meeting ran over"]);
   const llmClient = makeFakeLlmClient();
 
-  await runChatCli(store, io, TEST_TIME_ZONE, llmClient, () => BLOCKER_NOW, async () => tasks);
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => BLOCKER_NOW, readTasks: async () => tasks });
 
   assert.equal(llmClient.calls.length, 0, "a recognized Blocker report must never fall through to the LLM catch-all");
   assert.equal(io.written.length, 1, "a Blocker report response must be exactly one printed line");
@@ -1787,7 +1590,7 @@ test("runChatCli: Blocker report trigger says so plainly when no Plan exists yet
   const store = tempStore();
   const io = makeScriptedIo(["meeting ran over"]);
 
-  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => LATE_EVENING_UTC, async () => []);
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => LATE_EVENING_UTC, readTasks: async () => [] });
 
   assert.ok(io.written.some((line) => /no plan/i.test(line)));
   store.close();
@@ -1825,7 +1628,7 @@ test("runChatCli: 'why is X prioritized' shows a Task's Slip-Bump lineage — co
   const io = makeScriptedIo(["why is Draft the memo prioritized today"]);
   const llmClient = makeFakeLlmClient();
 
-  await runChatCli(store, io, TEST_TIME_ZONE, llmClient, () => new Date(NOW), async () => tasks);
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => new Date(NOW), readTasks: async () => tasks });
 
   assert.equal(llmClient.calls.length, 0, "a recognized lineage-view request must never fall through to the LLM catch-all");
   const response = io.written.join("\n");
@@ -1847,7 +1650,7 @@ test("runChatCli: 'why is X prioritized' reports a Task at the Slip-Bump cap dis
   const tasks: Task[] = [makeTask("t1", "Draft the memo")];
   const io = makeScriptedIo(["why is Draft the memo prioritized"]);
 
-  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => new Date(NOW), async () => tasks);
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => new Date(NOW), readTasks: async () => tasks });
 
   const response = io.written.join("\n");
   assert.match(response, /\bcap\b/i, "expected the response to note the Task is at its Slip-Bump cap");
@@ -1860,7 +1663,7 @@ test("runChatCli: 'why is X prioritized' for a Task with no slip history says pl
   const io = makeScriptedIo(["why is Draft the memo prioritized"]);
   const llmClient = makeFakeLlmClient();
 
-  await runChatCli(store, io, TEST_TIME_ZONE, llmClient, () => new Date(NOW), async () => tasks);
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => new Date(NOW), readTasks: async () => tasks });
 
   assert.equal(llmClient.calls.length, 0);
   const response = io.written.join("\n");
@@ -1874,7 +1677,7 @@ test("runChatCli: 'why is X prioritized' for an unknown Task name says it couldn
   const tasks: Task[] = [makeTask("t1", "Draft the memo")];
   const io = makeScriptedIo(["why is Some Other Task prioritized"]);
 
-  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => new Date(NOW), async () => tasks);
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => new Date(NOW), readTasks: async () => tasks });
 
   assert.ok(io.written.some((line) => /couldn'?t find/i.test(line)));
   store.close();
@@ -2061,7 +1864,7 @@ test("runChatCli surfaces the Night Ritual close-out prompt first and accepts pe
   const io = makeScriptedIo(["completed", "slipped"]);
   const llmClient = makeFakeLlmClient();
 
-  await runChatCli(store, io, TEST_TIME_ZONE, llmClient, () => NIGHT_NOW, async () => [], setTaskStatus, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, noOpRecordCompletion, noOpLookupTask);
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => NIGHT_NOW, readTasks: async () => [], setTaskStatus, recordCompletion: noOpRecordCompletion, lookupTask: noOpLookupTask });
 
   assert.ok(io.written.some((l) => l.includes("Draft the memo")), "expected the combined close-out prompt to be printed");
   assert.deepEqual(setTaskStatus.calls, [
@@ -2084,7 +1887,7 @@ test("runChatCli: a confirmed 'slipped' Task records a real Slip-Bump via the ni
   await runNightPromptRitual({ store, sendNotification: async () => {}, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE, getCompletedTaskIdsToday: () => new Set() });
 
   const io = makeScriptedIo(["slipped", "completed"]);
-  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => NIGHT_NOW, async () => [], makeFakeSetTaskStatus(), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, noOpRecordCompletion, noOpLookupTask);
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => NIGHT_NOW, readTasks: async () => [], setTaskStatus: makeFakeSetTaskStatus(), recordCompletion: noOpRecordCompletion, lookupTask: noOpLookupTask });
 
   const history = getSlipHistory(store, "t1");
   assert.ok(history, "expected a real SlipHistory row for the Task confirmed slipped");
@@ -2104,7 +1907,7 @@ test("runChatCli: a confirmed 'completed' Task with prior slip history gets it c
   await runNightPromptRitual({ store, sendNotification: async () => {}, now: () => NIGHT_NOW, timeZone: TEST_TIME_ZONE, getCompletedTaskIdsToday: () => new Set() });
 
   const io = makeScriptedIo(["completed", "completed"]);
-  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => NIGHT_NOW, async () => [], makeFakeSetTaskStatus(), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, noOpRecordCompletion, noOpLookupTask);
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => NIGHT_NOW, readTasks: async () => [], setTaskStatus: makeFakeSetTaskStatus(), recordCompletion: noOpRecordCompletion, lookupTask: noOpLookupTask });
 
   assert.equal(getSlipHistory(store, "t1"), undefined, "the Slip-Bump must be cleared, not carried indefinitely");
   store.close();
@@ -2118,7 +1921,7 @@ test("runChatCli: an unrecognized close-out answer re-prompts the SAME Task rath
 
   const setTaskStatus = makeFakeSetTaskStatus();
   const io = makeScriptedIo(["huh?", "completed", "slipped"]);
-  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => NIGHT_NOW, async () => [], setTaskStatus, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, noOpRecordCompletion, noOpLookupTask);
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => NIGHT_NOW, readTasks: async () => [], setTaskStatus, recordCompletion: noOpRecordCompletion, lookupTask: noOpLookupTask });
 
   assert.deepEqual(setTaskStatus.calls, [
     { taskId: "t1", status: "completed" },
@@ -2142,7 +1945,7 @@ test("runChatCli: a Notion write failure re-prompts the same Task rather than si
   };
 
   const io = makeScriptedIo(["completed", "completed", "slipped"]);
-  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => NIGHT_NOW, async () => [], flakySetTaskStatus, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, noOpRecordCompletion, noOpLookupTask);
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => NIGHT_NOW, readTasks: async () => [], setTaskStatus: flakySetTaskStatus, recordCompletion: noOpRecordCompletion, lookupTask: noOpLookupTask });
 
   assert.ok(io.written.some((l) => /notion|couldn'?t/i.test(l)), "expected the failure to be surfaced, not swallowed");
   assert.equal(getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID), undefined, "eventually resolved once the retry succeeds");
@@ -2167,7 +1970,7 @@ test("runChatCli: a PERMANENTLY-failing Notion write can be skipped, unblocking 
   };
 
   const io = makeScriptedIo(["completed", "skip", "slipped"]);
-  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => NIGHT_NOW, async () => [], perTaskFailingSetTaskStatus, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, noOpRecordCompletion, noOpLookupTask);
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => NIGHT_NOW, readTasks: async () => [], setTaskStatus: perTaskFailingSetTaskStatus, recordCompletion: noOpRecordCompletion, lookupTask: noOpLookupTask });
 
   assert.ok(io.written.some((l) => /skip/i.test(l)), "expected the skip to be acknowledged");
   assert.equal(
@@ -2213,7 +2016,7 @@ test("runChatCli: a night that was escalated and then answered with AT LEAST ONE
   // Spencer finally opens chat — but SKIPS one of the two named Tasks
   // (t1 is answered genuinely; t2 is skipped).
   const io = makeScriptedIo(["completed", "skip"]);
-  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => NIGHT_NOW, async () => [], makeFakeSetTaskStatus(), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, noOpRecordCompletion, noOpLookupTask);
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => NIGHT_NOW, readTasks: async () => [], setTaskStatus: makeFakeSetTaskStatus(), recordCompletion: noOpRecordCompletion, lookupTask: noOpLookupTask });
 
   assert.equal(
     getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID),
@@ -2243,7 +2046,7 @@ test("runChatCli: a night that was escalated and then answered with EVERY Task s
 
   // Both named Tasks are skipped — nothing genuinely confirmed at all.
   const io = makeScriptedIo(["skip", "skip"]);
-  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => NIGHT_NOW, async () => [], makeFakeSetTaskStatus(), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, noOpRecordCompletion, noOpLookupTask);
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => NIGHT_NOW, readTasks: async () => [], setTaskStatus: makeFakeSetTaskStatus(), recordCompletion: noOpRecordCompletion, lookupTask: noOpLookupTask });
 
   assert.equal(getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID), undefined, "the request still clears — skip unblocks the session");
   assert.ok(
@@ -2269,7 +2072,7 @@ test("runChatCli: a night that was escalated and then answered with EVERY Task g
 
   // Spencer answers EVERY named Task genuinely — no skip at all.
   const io = makeScriptedIo(["completed", "slipped"]);
-  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => NIGHT_NOW, async () => [], makeFakeSetTaskStatus(), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, noOpRecordCompletion, noOpLookupTask);
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => NIGHT_NOW, readTasks: async () => [], setTaskStatus: makeFakeSetTaskStatus(), recordCompletion: noOpRecordCompletion, lookupTask: noOpLookupTask });
 
   assert.equal(getOpenInteractionRequest(store, NIGHT_CLOSE_OUT_REQUEST_ID), undefined);
   assert.equal(
@@ -2291,7 +2094,7 @@ test("runChatCli: a close-out answered the NEXT MORNING records the Slip-Bump ag
   assert.notEqual(nextMorningLocalDate, planDate, "test setup sanity: the answer genuinely lands on a different local day");
 
   const io = makeScriptedIo(["slipped", "completed"]);
-  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => NEXT_MORNING, async () => [], makeFakeSetTaskStatus(), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, noOpRecordCompletion, noOpLookupTask);
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => NEXT_MORNING, readTasks: async () => [], setTaskStatus: makeFakeSetTaskStatus(), recordCompletion: noOpRecordCompletion, lookupTask: noOpLookupTask });
 
   const history = getSlipHistory(store, "t1");
   assert.ok(history);
@@ -2326,7 +2129,7 @@ test("runChatCli surfaces the Self-Check prompt and, given a complete answer (sc
   await openSelfCheckRequest(store);
 
   const io = makeScriptedIo(["8 things are going well"]);
-  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => SELF_CHECK_NOW, async () => []);
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => SELF_CHECK_NOW, readTasks: async () => [] });
 
   assert.ok(io.written.some((l) => /1-10|number/i.test(l)), "expected the Self-Check prompt itself to be printed");
   assert.equal(getOpenInteractionRequest(store, SELF_CHECK_REQUEST_ID), undefined, "the request is cleared once a complete answer is given");
@@ -2342,7 +2145,7 @@ test("UX-DR15: a score-only answer (no written reason) is NOT accepted as comple
 
   // "7" alone (a bare number, no reason) must not resolve the prompt.
   const io = makeScriptedIo(["7"]);
-  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => SELF_CHECK_NOW, async () => []);
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => SELF_CHECK_NOW, readTasks: async () => [] });
 
   assert.ok(
     getOpenInteractionRequest(store, SELF_CHECK_REQUEST_ID),
@@ -2357,7 +2160,7 @@ test("a score-only answer re-prompts the SAME question rather than moving on, an
   await openSelfCheckRequest(store);
 
   const io = makeScriptedIo(["7", "4 felt a bit off this week"]);
-  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => SELF_CHECK_NOW, async () => []);
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => SELF_CHECK_NOW, readTasks: async () => [] });
 
   assert.equal(getOpenInteractionRequest(store, SELF_CHECK_REQUEST_ID), undefined, "resolved once a genuinely complete answer follows");
   const state = getSelfCheckState(store);
@@ -2370,7 +2173,7 @@ test("runChatCli: a blank line to an open Self-Check prompt keeps waiting rather
   await openSelfCheckRequest(store);
 
   const io = makeScriptedIo(["", "9 all good"]);
-  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => SELF_CHECK_NOW, async () => []);
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => SELF_CHECK_NOW, readTasks: async () => [] });
 
   assert.equal(getOpenInteractionRequest(store, SELF_CHECK_REQUEST_ID), undefined);
   assert.equal(getSelfCheckState(store)?.data.lastScore, 9);
@@ -2381,7 +2184,7 @@ test("runChatCli: EOF mid-Self-Check-answer leaves the request open, unanswered,
   await openSelfCheckRequest(store);
 
   const io = makeScriptedIo([]); // immediate EOF
-  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => SELF_CHECK_NOW, async () => []);
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => SELF_CHECK_NOW, readTasks: async () => [] });
 
   assert.ok(getOpenInteractionRequest(store, SELF_CHECK_REQUEST_ID), "the request must survive an EOF mid-answer");
 });
@@ -2391,7 +2194,7 @@ test("a low Self-Check score genuinely shortens the next scheduled interval via 
   const today = await openSelfCheckRequest(store);
 
   const io = makeScriptedIo(["2 really struggling this week"]);
-  await runChatCli(store, io, TEST_TIME_ZONE, makeFakeLlmClient(), () => SELF_CHECK_NOW, async () => []);
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => SELF_CHECK_NOW, readTasks: async () => [] });
 
   const state = getSelfCheckState(store);
   assert.ok(state);
@@ -2627,7 +2430,7 @@ test("runChatCli surfaces an open Proposal before accepting any other input, and
 
   const llmClient = makeFakeLlmClient();
   const io = makeScriptedIo(["yes"]);
-  await runChatCli(store, io, TEST_TIME_ZONE, llmClient, () => new Date(NOW));
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => new Date(NOW) });
 
   assert.ok(io.written.some((l) => l.includes(proposal.reason)));
   assert.equal(getOpenInteractionRequest(store, PROPOSAL_REQUEST_ID), undefined);
@@ -2807,23 +2610,7 @@ async function runCalendarEditSession(
   const io = makeScriptedIo(lines);
   const propose = deps.propose ?? makeFakeProposeCalendarEdit();
   const apply = deps.apply ?? makeFakeApplyCalendarEdit();
-  await runChatCli(
-    store,
-    io,
-    TEST_TIME_ZONE,
-    makeFakeLlmClient(llmResponse),
-    () => new Date(NOW),
-    async () => [],
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    deps.readEvents ?? makeFakeReadCalendarEvents(deps.events ?? []),
-    makeFakeResolveCalendarEditRoute(deps.route ?? { kind: "external" }),
-    propose,
-    apply,
-  );
+  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(llmResponse), now: () => new Date(NOW), readTasks: async () => [], readCalendarEventsFn: deps.readEvents ?? makeFakeReadCalendarEvents(deps.events ?? []), resolveCalendarEditRouteFn: makeFakeResolveCalendarEditRoute(deps.route ?? { kind: "external" }), proposeCalendarEditFn: propose, applyCalendarEditFn: apply });
   store.close();
   return { io, propose, apply };
 }

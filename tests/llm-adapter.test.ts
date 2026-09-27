@@ -24,7 +24,8 @@ import {
   CLAUDE_CHAT_MODEL_FAST,
   type AnthropicMessagesClient,
 } from "../src/adapters/llm-adapter.ts";
-import type { ChatTurn, FieldValueSuggestion } from "../src/types/domain.ts";
+import { parsePlanningFieldValue } from "../src/core/planning-field-value.ts";
+import type { ChatTurn, FieldValueSuggestion, PlanningFieldNames, Task } from "../src/types/domain.ts";
 
 /** A single-turn `ChatTurn[]` history — the shape most `answerGeneralQuestion` tests need, now that it takes real conversation history instead of a bare string. */
 function oneTurn(content: string): ChatTurn[] {
@@ -72,6 +73,18 @@ function fakeClient(response: Anthropic.Message | (() => Anthropic.Message)): {
     },
   };
   return { calls, client };
+}
+
+/**
+ * The real production wrapper `shell/chat-cli.ts` injects into
+ * `suggestFieldValue` (Epic 6 retro item 7) — using the REAL
+ * `parsePlanningFieldValue` here, rather than a synthetic per-test fake,
+ * proves the actual FR-25 <-> FR-4 integration contract, not just
+ * `suggestFieldValue`'s own internal dispatch logic.
+ */
+function realParseValue(field: PlanningFieldNames, raw: string): NonNullable<Task[PlanningFieldNames]> | undefined {
+  const parsed = parsePlanningFieldValue(field, raw);
+  return parsed.ok ? (parsed.value as NonNullable<Task[PlanningFieldNames]>) : undefined;
 }
 
 // ============================================================================
@@ -184,7 +197,7 @@ test("loadLlmAdapterConfigFromEnv throws when CLAUDE_API_KEY is missing", () => 
 
 test("suggestFieldValue never calls the client when there are no recent messages to look at", async () => {
   const { calls, client } = fakeClient(textMessage("NONE"));
-  const result = await suggestFieldValue(client, "t1", "Call dentist", "area", []);
+  const result = await suggestFieldValue(client, "t1", "Call dentist", "area", [], realParseValue);
   assert.equal(result, undefined);
   assert.equal(calls.length, 0);
 });
@@ -197,6 +210,7 @@ test("suggestFieldValue returns a FieldValueSuggestion for a CONFIDENT response 
     "Call dentist",
     "estimatedDurationMinutes",
     ["that dentist call will take about half an hour"],
+    realParseValue,
   );
   assert.deepEqual(result, {
     taskId: "t1",
@@ -209,22 +223,34 @@ test("suggestFieldValue returns a FieldValueSuggestion for a CONFIDENT response 
 
 test("suggestFieldValue returns undefined for a plain NONE response", async () => {
   const { client } = fakeClient(textMessage("NONE"));
-  const result = await suggestFieldValue(client, "t1", "Call dentist", "area", ["unrelated chatter"]);
+  const result = await suggestFieldValue(client, "t1", "Call dentist", "area", ["unrelated chatter"], realParseValue);
   assert.equal(result, undefined);
 });
 
 test("suggestFieldValue never trusts a CONFIDENT value that doesn't parse for the field's real type", async () => {
   const { client } = fakeClient(textMessage("CONFIDENT: sometime soon | vague timing mention"));
-  const result = await suggestFieldValue(client, "t1", "Call dentist", "dueDate", ["I'll do it sometime soon"]);
+  const result = await suggestFieldValue(client, "t1", "Call dentist", "dueDate", ["I'll do it sometime soon"], realParseValue);
   assert.equal(result, undefined);
 });
 
 test("suggestFieldValue sends the joined recent messages and mentions the Task/field in its system prompt", async () => {
   const { calls, client } = fakeClient(textMessage("NONE"));
-  await suggestFieldValue(client, "t1", "Call dentist", "energy", ["msg one", "msg two"]);
+  await suggestFieldValue(client, "t1", "Call dentist", "energy", ["msg one", "msg two"], realParseValue);
   assert.equal(calls.length, 1);
   assert.match(calls[0]!.params.system as string, /Call dentist/);
   assert.equal(calls[0]!.params.messages[0]?.content, "msg one\nmsg two");
+});
+
+test("suggestFieldValue calls the injected parseValue with the trimmed claimed value, and trusts its result verbatim (Epic 6 retro item 7 — the injected-parser seam)", async () => {
+  const { client } = fakeClient(textMessage("CONFIDENT:   42   | a fake parser gets the final say"));
+  const parseValueCalls: Array<{ field: string; raw: string }> = [];
+  const fakeParseValue = (field: PlanningFieldNames, raw: string): NonNullable<Task[PlanningFieldNames]> | undefined => {
+    parseValueCalls.push({ field, raw });
+    return "a completely different value" as unknown as NonNullable<Task[PlanningFieldNames]>;
+  };
+  const result = await suggestFieldValue(client, "t1", "Call dentist", "area", ["some message"], fakeParseValue);
+  assert.deepEqual(parseValueCalls, [{ field: "area", raw: "42" }]);
+  assert.equal(result?.value, "a completely different value", "suggestFieldValue must trust whatever parseValue returns, not re-derive it");
 });
 
 // ============================================================================

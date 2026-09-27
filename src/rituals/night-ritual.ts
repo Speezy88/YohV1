@@ -49,7 +49,7 @@
  *     request's LOOP (ask each named Task, persist each answer, clear once
  *     every Task is answered) lives in `shell/chat-cli.ts` itself — this
  *     function is the single-Task apply step it calls once per answer,
- *     exactly the role `parseFieldAnswer` + the per-field
+ *     exactly the role `core/planning-field-value.ts`'s `parsePlanningFieldValue` + the per-field
  *     `mergeTaskFieldOverride` call plays inside
  *     `chat-cli.ts`'s `answerDataCompletenessRequest` for the
  *     Data-Completeness precedent.

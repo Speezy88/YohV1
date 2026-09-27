@@ -103,9 +103,10 @@ const ISO_DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
  * Whether `value` is both `YYYY-MM-DD`-shaped and a calendar date that
  * actually exists — rejects e.g. `"2026-02-30"`, which `Date.UTC` alone
  * would silently roll over into March rather than reject. Mirrors the same
- * check `shell/chat-cli.ts`'s `parseFieldAnswer`/`isRealCalendarDate`
- * already performs for a Task's Due Date (Task 5); duplicated here rather
- * than imported, since `core/*.ts` must not depend on `shell/*.ts` (AD-2).
+ * check `core/planning-field-value.ts`'s `parsePlanningFieldValue` already
+ * performs for a Task's Due Date; duplicated here rather than imported,
+ * since `core/*.ts` files don't depend on each other's internals per
+ * AD-2/AD-9's file-ownership discipline.
  */
 function isValidIsoDate(value: string): boolean {
   const match = ISO_DATE_RE.exec(value);

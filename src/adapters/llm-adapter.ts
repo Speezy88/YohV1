@@ -63,13 +63,11 @@ import { isValidIsoDateTime, normalizeIsoDateTime } from "./iso-datetime.ts";
 import type {
   ChatIntent,
   ChatTurn,
-  Energy,
   ExternalId,
   FieldValueSuggestion,
   NotionDatabaseTarget,
   PlanningFieldNames,
   Task,
-  TaskStatus,
 } from "../types/domain.ts";
 
 // ============================================================================
@@ -270,47 +268,21 @@ function buildSuggestFieldValueSystemPrompt(taskTitle: string, field: PlanningFi
   ].join("\n");
 }
 
-const SUGGEST_FIELD_VALUE_TASK_STATUSES: readonly TaskStatus[] = ["not-started", "in-progress", "completed", "slipped"];
-const SUGGEST_FIELD_VALUE_ENERGIES: readonly Energy[] = ["low", "medium", "high"];
-const SUGGEST_FIELD_VALUE_ISO_DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
-
 /**
- * Validates/coerces Claude's claimed raw value into `field`'s real type.
- * Deliberately independent of `shell/chat-cli.ts`'s own `parseFieldAnswer`
- * (AD-1 forbids this `adapters/` file importing from `shell/`) — and unlike
- * that function, this one never surfaces a message to Spencer: an
- * unparseable claim just means "no confident inference" (`undefined`),
- * silently falling back to the ordinary blind ask.
+ * The shape `suggestFieldValue` is injected with (Epic 6 retro item 7,
+ * F8/F9) — `core/planning-field-value.ts`'s `parsePlanningFieldValue`,
+ * validating/coercing Claude's claimed raw value into `field`'s real type.
+ * AD-1 forbids this `adapters/*.ts` file from importing `core/*.ts`
+ * directly, so `shell/chat-cli.ts` (which may import both) passes a thin
+ * wrapper over `parsePlanningFieldValue` that discards the rejection
+ * message: unlike FR-4's typed answer, an unparseable CONFIDENT claim never
+ * surfaces to Spencer — it just means "no confident inference"
+ * (`undefined`), falling back to the ordinary blind ask.
  */
-function parseSuggestedValue(field: PlanningFieldNames, raw: string): NonNullable<Task[PlanningFieldNames]> | undefined {
-  switch (field) {
-    case "estimatedDurationMinutes": {
-      const minutes = Number(raw);
-      return Number.isInteger(minutes) && minutes > 0 ? minutes : undefined;
-    }
-    case "area":
-      return raw.length > 0 ? raw : undefined;
-    case "dueDate": {
-      const match = SUGGEST_FIELD_VALUE_ISO_DATE_RE.exec(raw);
-      if (!match) return undefined;
-      const [, y, m, d] = match;
-      const year = Number(y);
-      const month = Number(m);
-      const day = Number(d);
-      const date = new Date(Date.UTC(year, month - 1, day));
-      const valid = date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
-      return valid ? raw : undefined;
-    }
-    case "status": {
-      const normalized = raw.toLowerCase().replace(/\s+/g, "-");
-      return SUGGEST_FIELD_VALUE_TASK_STATUSES.find((status) => status === normalized);
-    }
-    case "energy": {
-      const normalized = raw.toLowerCase();
-      return SUGGEST_FIELD_VALUE_ENERGIES.find((energy) => energy === normalized);
-    }
-  }
-}
+export type ParsePlanningFieldValueFn = (
+  field: PlanningFieldNames,
+  raw: string,
+) => NonNullable<Task[PlanningFieldNames]> | undefined;
 
 /**
  * Attempts to confidently infer `field`'s value for Task `taskId`
@@ -318,11 +290,11 @@ function parseSuggestedValue(field: PlanningFieldNames, raw: string): NonNullabl
  * oldest first). Returns `undefined` — never throws — for every "no
  * confident answer" case: no recent messages at all (a cheap short-circuit,
  * no API call made); a response that doesn't match the required
- * `CONFIDENT: <value> | <reason>` format; or a claimed value that doesn't
- * parse as valid for `field` (never trusted blindly — see
- * `parseSuggestedValue`). A genuine API/transport failure still propagates
- * as a thrown error (AD-8) — `chat-cli.ts` treats that identically to "no
- * confident inference" at its own call site.
+ * `CONFIDENT: <value> | <reason>` format; or a claimed value `parseValue`
+ * rejects as invalid for `field` (never trusted blindly). A genuine
+ * API/transport failure still propagates as a thrown error (AD-8) —
+ * `chat-cli.ts` treats that identically to "no confident inference" at its
+ * own call site.
  */
 export async function suggestFieldValue(
   client: AnthropicMessagesClient,
@@ -330,6 +302,7 @@ export async function suggestFieldValue(
   taskTitle: string,
   field: PlanningFieldNames,
   recentMessages: readonly string[],
+  parseValue: ParsePlanningFieldValueFn,
 ): Promise<FieldValueSuggestion | undefined> {
   if (recentMessages.length === 0) return undefined;
 
@@ -350,7 +323,7 @@ export async function suggestFieldValue(
   if (!match) return undefined;
 
   const [, rawValue, rawReason] = match;
-  const value = parseSuggestedValue(field, rawValue!.trim());
+  const value = parseValue(field, rawValue!.trim());
   if (value === undefined) return undefined;
 
   return { taskId, taskTitle, field, value, reason: rawReason!.trim() };

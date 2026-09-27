@@ -82,7 +82,7 @@
  *
  * Answering a Data-Completeness prompt (Task 5 fix): when Spencer answers a
  * missing field, the raw answer text is parsed into the correct type for
- * that field (`parseFieldAnswer`) — re-prompting, not silently storing
+ * that field (`parsePlanningFieldValue`, `core/planning-field-value.ts`) — re-prompting, not silently storing
  * garbage, on unparseable input, via the same "wait indefinitely" pattern
  * already used for a blank answer — then persisted as a `TaskFieldOverride`
  * in `memory-store.ts` (`mergeTaskFieldOverride`), and only then is the
@@ -213,6 +213,7 @@ import {
 import { search as runSearch, type SearchAdapterConfig } from "../adapters/search-adapter.ts";
 import { createTokenStore, loadGoogleOAuthConfigFromEnv, type TokenStore } from "../adapters/token-store.ts";
 import type { MissingFieldReport } from "../core/data-completeness-gate.ts";
+import { parsePlanningFieldValue } from "../core/planning-field-value.ts";
 import { computeSlipBumpLevel } from "../core/slip-bump.ts";
 import { shapeDeclaredTimeBudget } from "../core/time-budget.ts";
 import { classifyTone, resolveToneSystemPrompt } from "../core/tone.ts";
@@ -353,98 +354,21 @@ function withConversationHistory(io: ChatCliIo, history: ChatTurn[]): ChatCliIo 
 }
 
 /**
- * Result of parsing one raw answer line into the type a given planning
- * field actually needs. Discriminated on `ok` like `Result<T, YohError>`,
- * but deliberately its own (simpler) shape — this is `shell/`-local
- * input-parsing, not a `core/*.ts` function, so it isn't bound by AD-8's
- * `YohError` contract.
+ * The thin wrapper `suggestFieldValue` (`llm-adapter.ts`, FR-25) is injected
+ * with (Epic 6 retro item 7, F8/F9) — AD-1 forbids that `adapters/*.ts` file
+ * from importing `core/planning-field-value.ts` directly, so this file,
+ * which may import both, bridges them. Discards the Spencer-facing
+ * rejection message: FR-25 treats an unparseable claimed value identically
+ * to "no confident inference," never showing Spencer why (unlike FR-4's
+ * `parsePlanningFieldValue` call below, which re-prompts with that exact
+ * message).
  */
-type FieldAnswerParseResult<F extends PlanningFieldNames> =
-  | { readonly ok: true; readonly value: TaskFieldOverride[F] }
-  | { readonly ok: false; readonly message: string };
-
-const TASK_STATUSES: readonly Task["status"][] = ["not-started", "in-progress", "completed", "slipped"];
-const ENERGIES: readonly Task["energy"][] = ["low", "medium", "high"];
-const ISO_DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
-
-/**
- * Whether `year`/`month`/`day` (1-indexed month) is a real calendar date —
- * rejects e.g. "2026-02-30", which `Date.parse`/`Date.UTC` alone would
- * silently roll over into March rather than reject (mirrors
- * `calendar-adapter.ts`'s own care around not trusting an unverified
- * roll-over).
- */
-function isRealCalendarDate(year: number, month: number, day: number): boolean {
-  const date = new Date(Date.UTC(year, month - 1, day));
-  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
-}
-
-/**
- * Parses a raw answer line into the correctly-typed value for `field`,
- * per each field's real type in `types/domain.ts` (Estimated Duration: a
- * positive whole number of minutes; Area: any non-blank free text, since
- * it's Spencer's own free-form Notion taxonomy; Due Date: an ISO-8601
- * calendar date `YYYY-MM-DD`; Status/Energy: one of their fixed enum
- * values, matched case- and whitespace-insensitively for typing
- * convenience). Rejects (rather than guesses at) anything that doesn't
- * parse cleanly, so `answerDataCompletenessRequest` (below) can re-prompt
- * instead of silently storing garbage — reusing the same "wait
- * indefinitely" pattern already used for a blank answer.
- */
-export function parseFieldAnswer<F extends PlanningFieldNames>(field: F, raw: string): FieldAnswerParseResult<F> {
-  const trimmed = raw.trim();
-  switch (field) {
-    case "estimatedDurationMinutes": {
-      const minutes = Number(trimmed);
-      if (trimmed.length === 0 || !Number.isInteger(minutes) || minutes <= 0) {
-        return {
-          ok: false,
-          message: `I didn't understand "${raw}" as a whole number of minutes — try e.g. "30".`,
-        };
-      }
-      return { ok: true, value: minutes as TaskFieldOverride[F] };
-    }
-    case "area": {
-      if (trimmed.length === 0) {
-        return { ok: false, message: "Area can't be blank — what should I call it?" };
-      }
-      return { ok: true, value: trimmed as TaskFieldOverride[F] };
-    }
-    case "dueDate": {
-      const match = ISO_DATE_RE.exec(trimmed);
-      const parsesAsRealDate =
-        match !== null && isRealCalendarDate(Number(match[1]), Number(match[2]), Number(match[3]));
-      if (!parsesAsRealDate) {
-        return {
-          ok: false,
-          message: `I didn't understand "${raw}" as a date — use YYYY-MM-DD, e.g. "2026-08-25".`,
-        };
-      }
-      return { ok: true, value: trimmed as TaskFieldOverride[F] };
-    }
-    case "status": {
-      const normalized = trimmed.toLowerCase().replace(/\s+/g, "-");
-      const match = TASK_STATUSES.find((status) => status === normalized);
-      if (!match) {
-        return {
-          ok: false,
-          message: `I didn't understand "${raw}" as a Status — try one of: ${TASK_STATUSES.join(", ")}.`,
-        };
-      }
-      return { ok: true, value: match as TaskFieldOverride[F] };
-    }
-    case "energy": {
-      const normalized = trimmed.toLowerCase();
-      const match = ENERGIES.find((energy) => energy === normalized);
-      if (!match) {
-        return {
-          ok: false,
-          message: `I didn't understand "${raw}" as an Energy level — try one of: ${ENERGIES.join(", ")}.`,
-        };
-      }
-      return { ok: true, value: match as TaskFieldOverride[F] };
-    }
-  }
+function suggestedFieldValueParser(
+  field: PlanningFieldNames,
+  raw: string,
+): NonNullable<Task[PlanningFieldNames]> | undefined {
+  const parsed = parsePlanningFieldValue(field, raw);
+  return parsed.ok ? (parsed.value as NonNullable<Task[PlanningFieldNames]>) : undefined;
 }
 
 /** The shape `runChatCli`/`surfaceOpenInteractionRequests` thread through to `answerDataCompletenessRequest` — `notion-adapter.ts`'s `updateTaskField` (FR-24), pre-bound to its client/config, the same binding-convention `SetTaskStatusFn` (below) already establishes for `setTaskStatus`. */
@@ -458,7 +382,7 @@ type UpdateTaskFieldFn = (
  * Answers the single combined `"data-completeness"` interaction request:
  * shows its (already-built) combined prompt line, then asks one follow-up
  * question per missing field per Task named in its `detail.incomplete`
- * payload, in order. Each answer is parsed via `parseFieldAnswer` and, once
+ * payload, in order. Each answer is parsed via `parsePlanningFieldValue` and, once
  * valid, written to Notion FIRST (FR-24's `updateTaskField`, injected) and
  * only THEN persisted locally as a `TaskFieldOverride`
  * (`mergeTaskFieldOverride`) — mirroring `applyNightCloseOutConfirmation`'s
@@ -501,7 +425,14 @@ async function answerDataCompletenessRequest(
       if (llmClient) {
         let suggestion: FieldValueSuggestion | undefined;
         try {
-          suggestion = await suggestFieldValue(llmClient, report.taskId, report.taskTitle, field, recentMessages);
+          suggestion = await suggestFieldValue(
+            llmClient,
+            report.taskId,
+            report.taskTitle,
+            field,
+            recentMessages,
+            suggestedFieldValueParser,
+          );
         } catch {
           suggestion = undefined; // A Claude/API failure must never block the fallback blind ask.
         }
@@ -534,7 +465,7 @@ async function answerDataCompletenessRequest(
         if (answer === null) return false; // stdin closed mid-answer.
         if (answer.trim().length === 0) continue; // wait indefinitely (UX-DR20): re-ask, don't skip.
 
-        const parsed = parseFieldAnswer(field, answer);
+        const parsed = parsePlanningFieldValue(field, answer);
         if (!parsed.ok) {
           io.writeLine(parsed.message);
           continue; // re-ask the SAME question — an unparseable answer is not an answer.
@@ -2000,6 +1931,35 @@ async function handleCalendarEditCommand(
 }
 
 /**
+ * `runChatCli`'s dependencies (Epic 6 retro item 7, F9 — replaces what used
+ * to be 17 positional parameters, 7 of them added across Epic 6 alone).
+ * Only `store`/`io`/`timeZone`/`llmClient` are required; every other field
+ * is optional and defaults to the same throws-only-if-actually-invoked stub
+ * it always has (see each default's own doc note below) — Tasks 2-5 extend
+ * this interface with new optional fields as they move more of this file's
+ * handlers into `app/`.
+ */
+export interface ChatCliDeps {
+  readonly store: MemoryStore;
+  readonly io: ChatCliIo;
+  readonly timeZone: string;
+  readonly llmClient: AnthropicMessagesClient;
+  readonly now?: () => Date;
+  readonly readTasks?: () => Promise<readonly Task[]>;
+  readonly setTaskStatus?: SetTaskStatusFn;
+  readonly updateTaskField?: UpdateTaskFieldFn;
+  readonly createNotionPage?: CreateNotionPageFn;
+  readonly validateNotionPageDraft?: ValidateNotionPageDraftFn;
+  readonly searchFn?: SearchFn;
+  readonly readCalendarEventsFn?: () => Promise<readonly CalendarEvent[]>;
+  readonly resolveCalendarEditRouteFn?: ResolveCalendarEditRouteFn;
+  readonly proposeCalendarEditFn?: ProposeCalendarEditFn;
+  readonly applyCalendarEditFn?: ApplyCalendarEditFn;
+  readonly recordCompletion?: RecordCompletionFn;
+  readonly lookupTask?: LookupTaskFn;
+}
+
+/**
  * The REPL loop (Task 5, extended by Task 6, Task 11, Task 13, Task 14): on
  * start, and before processing every subsequent line of input, surfaces any
  * open interaction request(s) first (AD-5). Then checks whether the line is
@@ -2045,49 +2005,49 @@ async function handleCalendarEditCommand(
  * same optional-with-a-throws-only-if-invoked-default convention as
  * `readTasks` above.
  */
-export async function runChatCli(
-  store: MemoryStore,
-  io: ChatCliIo,
-  timeZone: string,
-  llmClient: AnthropicMessagesClient,
-  now: () => Date = () => new Date(),
-  readTasks: () => Promise<readonly Task[]> = () => {
+export async function runChatCli({
+  store,
+  io,
+  timeZone,
+  llmClient,
+  now = () => new Date(),
+  readTasks = () => {
     throw new Error("chat-cli: no readTasks dependency configured — cannot re-flow the day");
   },
-  setTaskStatus: SetTaskStatusFn = async () => {
+  setTaskStatus = async () => {
     throw new Error("chat-cli: no setTaskStatus dependency configured — cannot record Night Ritual close-out");
   },
-  updateTaskField: UpdateTaskFieldFn = async () => {
+  updateTaskField = async () => {
     throw new Error("chat-cli: no updateTaskField dependency configured — cannot record a Data-Completeness answer in Notion");
   },
-  createNotionPage: CreateNotionPageFn = async () => {
+  createNotionPage = async () => {
     throw new Error("chat-cli: no createNotionPage dependency configured — cannot create a Notion item");
   },
-  validateNotionPageDraft: ValidateNotionPageDraftFn = async () => {
+  validateNotionPageDraft = async () => {
     throw new Error("chat-cli: no validateNotionPageDraft dependency configured — cannot validate a Notion item draft");
   },
-  searchFn: SearchFn = async () => {
+  searchFn = async () => {
     throw new Error("chat-cli: no searchFn dependency configured — cannot run a web search");
   },
-  readCalendarEventsFn: () => Promise<readonly CalendarEvent[]> = async () => {
+  readCalendarEventsFn = async () => {
     throw new Error("chat-cli: no readCalendarEventsFn dependency configured — cannot look up today's Calendar events");
   },
-  resolveCalendarEditRouteFn: ResolveCalendarEditRouteFn = async () => {
+  resolveCalendarEditRouteFn = async () => {
     throw new Error("chat-cli: no resolveCalendarEditRouteFn dependency configured — cannot route a Calendar edit");
   },
-  proposeCalendarEditFn: ProposeCalendarEditFn = async () => {
+  proposeCalendarEditFn = async () => {
     throw new Error("chat-cli: no proposeCalendarEditFn dependency configured — cannot propose a Calendar edit");
   },
-  applyCalendarEditFn: ApplyCalendarEditFn = async () => {
+  applyCalendarEditFn = async () => {
     throw new Error("chat-cli: no applyCalendarEditFn dependency configured — cannot apply a Calendar edit");
   },
-  recordCompletion: RecordCompletionFn = () => {
+  recordCompletion = () => {
     throw new Error("chat-cli: no recordCompletion dependency configured — cannot record a Night Ritual close-out completion");
   },
-  lookupTask: LookupTaskFn = async () => {
+  lookupTask = async () => {
     throw new Error("chat-cli: no lookupTask dependency configured — cannot snapshot a close-out completion's Task fields");
   },
-): Promise<void> {
+}: ChatCliDeps): Promise<void> {
   // The running session transcript (2026-09-22 revision) — see
   // `withConversationHistory`'s own doc comment. Wrapping `io` here, once,
   // means every flow below (Data-Completeness answers, Night Ritual
@@ -2543,12 +2503,12 @@ export async function main(env: Readonly<Record<string, string | undefined>> = p
     calendarProposeEdit(getCalendarBroadClient(), calendarId, eventId, change);
   const applyCalendarEditFn: ApplyCalendarEditFn = (proposal) => calendarApplyEdit(getCalendarBroadClient(), proposal);
   try {
-    await runChatCli(
+    await runChatCli({
       store,
       io,
       timeZone,
       llmClient,
-      () => new Date(),
+      now: () => new Date(),
       readTasks,
       setTaskStatus,
       updateTaskField,
@@ -2561,7 +2521,7 @@ export async function main(env: Readonly<Record<string, string | undefined>> = p
       applyCalendarEditFn,
       recordCompletion,
       lookupTask,
-    );
+    });
   } finally {
     connection.close();
   }

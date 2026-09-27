@@ -173,7 +173,7 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 // rather than imported, since core/*.ts files don't depend on each other's
 // internals per AD-2/AD-9's file-ownership discipline -- this is the same
 // duplication time-budget.ts's own docstring already calls out relative to
-// shell/chat-cli.ts's parseFieldAnswer).
+// core/planning-field-value.ts's parsePlanningFieldValue).
 // ============================================================================
 
 const ISO_DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;

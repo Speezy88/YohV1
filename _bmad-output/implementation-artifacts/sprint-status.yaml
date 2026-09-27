@@ -188,7 +188,7 @@ action_items:
       a deps object; extract shared planning-field value parser for FR-4/FR-25 (F8,
       F9)"
     owner: "Dev (Amelia)"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-6-retro-2026-09-24.md"
   - id: "epic-6-retro-item-8-process-per-story-review-pass-before-don"
     epic: 6
