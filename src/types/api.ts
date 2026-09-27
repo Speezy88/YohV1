@@ -16,7 +16,7 @@
  * the `/api/*` surface. `web/` may `import type` from here (AD-17) and from
  * nothing else in `src/` except other `types/` files.
  */
-import type { Proposal, Result, YohError } from "./domain.ts";
+import type { ChatTurn, Proposal, Result, YohError } from "./domain.ts";
 
 // ============================================================================
 // Serialized Result envelope
@@ -268,6 +268,47 @@ export interface ConfirmProposalResponse {
   readonly applied: boolean;
   readonly receipts: readonly string[];
 }
+
+// ============================================================================
+// Chat turn routing (Story 8.3, AD-16) — new shapes only.
+// ============================================================================
+
+/**
+ * `app/chat-turn.ts`'s `chatTurn`'s input: the current message plus the
+ * caller-held running transcript. For `shell/chat-cli.ts` this `history`
+ * already ends with `{role: "user", content: message}` (its own
+ * `withConversationHistory` wrapper records that turn the moment the line is
+ * read, before `chatTurn` is ever called) — `chatTurn` doesn't re-append it.
+ * `message` is used only for deterministic-command recognition and Tone/model
+ * routing, never appended a second time.
+ */
+export interface ChatTurnRequest {
+  readonly message: string;
+  readonly history: readonly ChatTurn[];
+}
+
+/** `chatTurn`'s value: one reply, ready for any surface to render. */
+export interface ChatTurnResponse {
+  /** Yoh's full reply text — markdown allowed, never ANSI. May be `""`. */
+  readonly reply: string;
+  readonly receipts: readonly string[];
+  /** A follow-up Structured Question (e.g. a new proposal to confirm) — unused before Task 5/8. */
+  readonly question?: OpenItemQuestion;
+}
+
+/**
+ * One event a streaming `chatTurn` caller (a future server, Task 6) may
+ * receive over `deps.emit`. `chatTurn` itself only ever emits `"status"` and
+ * `"delta"` — never `"done"`/`"error"` (Controller ruling): the caller that
+ * owns the stream's single terminal event builds it from `chatTurn`'s
+ * returned `Result` after the last delta, not from an event `chatTurn` itself
+ * constructs.
+ */
+export type ChatStreamEvent =
+  | { readonly type: "status"; readonly text: string }
+  | { readonly type: "delta"; readonly text: string }
+  | { readonly type: "done"; readonly response: ChatTurnResponse }
+  | { readonly type: "error"; readonly error: YohError };
 
 // ============================================================================
 // Server route type (Ruling R2, AD-17)

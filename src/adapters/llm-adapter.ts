@@ -79,9 +79,20 @@ import type {
 // environment.
 // ============================================================================
 
+/**
+ * Widened (Story 8.3) to mirror the real SDK's own overloaded
+ * `messages.create` exactly (`node_modules/@anthropic-ai/sdk`'s
+ * `resources/messages/messages.d.ts`): a non-streaming call returns
+ * `Message`, a `{stream: true}` call returns an `AsyncIterable` of raw
+ * stream events. `new Anthropic(...)` still satisfies this structurally, so
+ * `createAnthropicMessagesClient` needs no change.
+ */
 export interface AnthropicMessagesClient {
   readonly messages: {
-    readonly create: (params: Anthropic.MessageCreateParamsNonStreaming) => Promise<Anthropic.Message>;
+    readonly create: {
+      (params: Anthropic.MessageCreateParamsNonStreaming): Promise<Anthropic.Message>;
+      (params: Anthropic.MessageCreateParamsStreaming): Promise<AsyncIterable<Anthropic.RawMessageStreamEvent>>;
+    };
   };
 }
 
@@ -229,6 +240,46 @@ export async function answerGeneralQuestion(
     throw new Error("llm-adapter: Claude returned no text content for a general Q&A response");
   }
   return text;
+}
+
+/**
+ * Streaming twin of `answerGeneralQuestion` (Story 8.3): same inputs, same
+ * "never a silent empty reply" contract (AD-8) — throws if the stream ends
+ * having yielded no text at all, or if `messages` is empty. Yields raw text
+ * chunks (`content_block_delta` events whose `delta.type === "text_delta"`)
+ * as they arrive; a caller with no live stream sink should keep using
+ * `answerGeneralQuestion` instead (this file exposes both — `chat-cli.ts`
+ * never calls this one; see `app/general-question.ts`, which uses it only
+ * when its caller supplied a stream sink).
+ */
+export async function* streamGeneralQuestion(
+  client: AnthropicMessagesClient,
+  messages: readonly ChatTurn[],
+  systemPrompt: string = DEFAULT_GENERAL_QA_SYSTEM_PROMPT,
+  model: Anthropic.Model = CLAUDE_CHAT_MODEL_FAST,
+): AsyncGenerator<string, void, void> {
+  if (messages.length === 0) {
+    throw new Error("llm-adapter: streamGeneralQuestion called with no conversation history at all");
+  }
+
+  const stream = await client.messages.create({
+    model,
+    max_tokens: CLAUDE_CHAT_MAX_TOKENS,
+    system: systemPrompt,
+    messages: messages.map((turn) => ({ role: turn.role, content: turn.content })),
+    stream: true,
+  });
+
+  let sawText = false;
+  for await (const event of stream) {
+    if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
+      sawText = true;
+      yield event.delta.text;
+    }
+  }
+  if (!sawText) {
+    throw new Error("llm-adapter: Claude returned no text content for a streamed general Q&A response");
+  }
 }
 
 // ============================================================================

@@ -14,16 +14,13 @@ import { readFileSync } from "node:fs";
 import {
   createMemoryStore,
   getOpenInteractionRequest,
-  getSlipHistory,
   getUncheckedDay,
   putOpenInteractionRequest,
   getTaskFieldOverride,
   mergeTaskFieldOverride,
   getCurrentTimeBudget,
-  getPlan,
   putPlan,
   putTimeBudget,
-  recordSlip,
   getSelfCheckState,
   putSelfCheckState,
 } from "../src/adapters/memory-store.ts";
@@ -35,19 +32,13 @@ import { initNotificationStoreSchema } from "../src/adapters/notification-store.
 import {
   surfaceOpenInteractionRequests,
   runChatCli,
-  parseTimeBudgetCommand,
-  declareTimeBudget,
-  isMidDayReflowCommand,
-  isPlanViewCommand,
-  isBlockerReportCommand,
-  parseWhyPrioritizedCommand,
   parseCreateItemCommand,
   isSaveSearchResultCommand,
   isCalendarEditCommand,
   type ChatCliIo,
 } from "../src/shell/chat-cli.ts";
 import type { AnswerOpenItemDeps } from "../src/app/answer-open-item.ts";
-import { localIsoDate, renderPlan } from "../src/rituals/ritual-shared.ts";
+import { localIsoDate } from "../src/rituals/ritual-shared.ts";
 // The Data-Completeness merge/gate/sync trio is its own capability and lives
 // in its own file (Task 10 review fix); `chat-cli.ts` imports it rather than
 // owning or re-exporting it. Import paths only — the behavior these tests
@@ -155,33 +146,40 @@ function makeFakeLlmClient(
   responseText: string = "I don't have a specific answer for that.",
 ): AnthropicMessagesClient & { readonly calls: Anthropic.MessageCreateParamsNonStreaming[] } {
   const calls: Anthropic.MessageCreateParamsNonStreaming[] = [];
-  return {
-    calls,
-    messages: {
-      create: async (params) => {
-        calls.push(params);
-        return {
-          id: "msg_test",
-          container: null,
-          content: [{ type: "text", text: responseText, citations: null }],
-          model: params.model,
-          role: "assistant",
-          stop_details: null,
-          stop_reason: "end_turn",
-          stop_sequence: null,
-          type: "message",
-          usage: {
-            input_tokens: 10,
-            output_tokens: 5,
-            cache_creation_input_tokens: null,
-            cache_read_input_tokens: null,
-            server_tool_use: null,
-            service_tier: null,
-          } as Anthropic.Usage,
-        };
-      },
-    },
-  };
+
+  // Overloaded to match `AnthropicMessagesClient.messages.create`'s widened
+  // (Story 8.3) shape exactly. `chat-cli.ts` never supplies `chatTurn` an
+  // `emit`, so `app/general-question.ts` always takes the non-streaming
+  // path — this fake is never actually asked to stream, but must still
+  // satisfy the streaming overload structurally.
+  function create(params: Anthropic.MessageCreateParamsNonStreaming): Promise<Anthropic.Message>;
+  function create(params: Anthropic.MessageCreateParamsStreaming): Promise<AsyncIterable<Anthropic.RawMessageStreamEvent>>;
+  async function create(
+    params: Anthropic.MessageCreateParamsNonStreaming | Anthropic.MessageCreateParamsStreaming,
+  ): Promise<Anthropic.Message | AsyncIterable<Anthropic.RawMessageStreamEvent>> {
+    calls.push(params as Anthropic.MessageCreateParamsNonStreaming);
+    return {
+      id: "msg_test",
+      container: null,
+      content: [{ type: "text", text: responseText, citations: null }],
+      model: params.model,
+      role: "assistant",
+      stop_details: null,
+      stop_reason: "end_turn",
+      stop_sequence: null,
+      type: "message",
+      usage: {
+        input_tokens: 10,
+        output_tokens: 5,
+        cache_creation_input_tokens: null,
+        cache_read_input_tokens: null,
+        server_tool_use: null,
+        service_tier: null,
+      } as Anthropic.Usage,
+    };
+  }
+
+  return { calls, messages: { create } };
 }
 
 /**
@@ -770,101 +768,17 @@ test("F6 regression: 'save that to my notion research vault' routes to the FR-29
 // `tests/answer-data-completeness.test.ts`.
 
 // ============================================================================
-// parseTimeBudgetCommand — simple pattern matching for Spencer's declare/
-// change command (Task 6 / Story 1.6). Scaffolding — Task 13 replaces this
-// with real LLM routing without changing observable behavior.
-// ============================================================================
-
-test("parseTimeBudgetCommand recognizes '<N>h' shorthand", () => {
-  const result = parseTimeBudgetCommand("time budget 6h");
-  assert.deepEqual(result, { totalMinutes: 360 });
-});
-
-test("parseTimeBudgetCommand recognizes 'set time budget to <N> hours'", () => {
-  const result = parseTimeBudgetCommand("set time budget to 6 hours");
-  assert.deepEqual(result, { totalMinutes: 360 });
-});
-
-test("parseTimeBudgetCommand recognizes minutes ('<N>m', '<N> minutes')", () => {
-  assert.deepEqual(parseTimeBudgetCommand("time budget 90m"), { totalMinutes: 90 });
-  assert.deepEqual(parseTimeBudgetCommand("change time budget to 90 minutes"), { totalMinutes: 90 });
-});
-
-test("parseTimeBudgetCommand treats a bare number with no unit as hours (documented default)", () => {
-  const result = parseTimeBudgetCommand("time budget 5");
-  assert.deepEqual(result, { totalMinutes: 300 });
-});
-
-test("parseTimeBudgetCommand is case-insensitive and tolerates extra whitespace", () => {
-  const result = parseTimeBudgetCommand("  SET Time   Budget TO 2 HOURS  ");
-  assert.deepEqual(result, { totalMinutes: 120 });
-});
-
-test("parseTimeBudgetCommand accepts a fractional hour amount", () => {
-  const result = parseTimeBudgetCommand("time budget 1.5h");
-  assert.deepEqual(result, { totalMinutes: 90 });
-});
-
-test("parseTimeBudgetCommand rejects a fractional amount that doesn't land on a whole minute", () => {
-  assert.equal(parseTimeBudgetCommand("time budget 0.5m"), undefined);
-});
-
-test("parseTimeBudgetCommand returns undefined for unrelated free text (falls through to the placeholder)", () => {
-  assert.equal(parseTimeBudgetCommand("show me today's plan"), undefined);
-  assert.equal(parseTimeBudgetCommand("hello"), undefined);
-  assert.equal(parseTimeBudgetCommand(""), undefined);
-});
-
-test("parseTimeBudgetCommand returns undefined for a zero or negative amount", () => {
-  assert.equal(parseTimeBudgetCommand("time budget 0h"), undefined);
-  assert.equal(parseTimeBudgetCommand("time budget -3h"), undefined);
-});
-
-// ============================================================================
-// declareTimeBudget — the thin wiring function (core shape/validate -> persist)
-// ============================================================================
-
-test("declareTimeBudget persists a valid declaration as today's Time Budget", () => {
-  const store = tempStore();
-  const result = declareTimeBudget(store, 360, "2026-08-22");
-
-  assert.equal(result.ok, true);
-  if (!result.ok) return;
-  assert.equal(result.value.data.totalMinutes, 360);
-  assert.equal(result.value.data.date, "2026-08-22");
-
-  const stored = getCurrentTimeBudget(store);
-  assert.equal(stored?.data.totalMinutes, 360);
-  store.close();
-});
-
-test("declareTimeBudget returns a validation error and persists nothing for an out-of-range amount", () => {
-  const store = tempStore();
-  const result = declareTimeBudget(store, 1500, "2026-08-22"); // > 24h
-
-  assert.equal(result.ok, false);
-  if (result.ok) return;
-  assert.equal(result.error.kind, "validation");
-  assert.equal(getCurrentTimeBudget(store), undefined);
-  store.close();
-});
-
-test("declareTimeBudget called again for a later date replaces the prior value (still the one singleton row)", () => {
-  const store = tempStore();
-  declareTimeBudget(store, 360, "2026-08-21");
-  declareTimeBudget(store, 240, "2026-08-25");
-
-  const stored = getCurrentTimeBudget(store);
-  assert.equal(stored?.data.totalMinutes, 240);
-  assert.equal(stored?.data.date, "2026-08-25");
-  store.close();
-});
-
-// ============================================================================
 // runChatCli — the declare/change command path end-to-end
+//
+// Story 8.3: `parseTimeBudgetCommand`'s own unit tests moved to
+// `tests/chat-commands.test.ts`; `declareTimeBudget`'s own unit tests moved
+// to `tests/app-time-budget.test.ts`. These `runChatCli` integration tests
+// stay here — they exercise the full dispatch (now via `app/chat-turn.ts`'s
+// `chatTurn`, reached only after the still-inline
+// classifyChatIntent/search-trigger check), not `declareTimeBudget` alone.
 // ============================================================================
 
-test("runChatCli: typing a Time Budget command persists it and confirms back to Spencer, never calling the LLM client (Task 13: observable behavior unchanged, no API call spent on a command already recognized for free)", async () => {
+test("runChatCli: typing a Time Budget command persists it and confirms back to Spencer, costing exactly one LLM call (Story 8.3: `chatTurn`'s five recognizers are reached only after `chat-cli.ts`'s own `classifyChatIntent` call — an accepted, temporary dispatch-reorder cost until Task 5 restores the original zero-call priority; see `app/chat-turn.ts`'s own doc comment)", async () => {
   const store = tempStore();
   const llmClient = makeFakeLlmClient();
   const io = makeScriptedIo(["time budget 6h"]);
@@ -877,7 +791,7 @@ test("runChatCli: typing a Time Budget command persists it and confirms back to 
     io.written.some((line) => /360|6h|6 hours?/i.test(line)),
     "expected a confirmation line mentioning the new Time Budget",
   );
-  assert.equal(llmClient.calls.length, 0, "a recognized Time Budget command must never call the LLM client");
+  assert.equal(llmClient.calls.length, 1, "expected exactly one Claude call: chat-cli.ts's own classifyChatIntent — chatTurn itself never calls it");
   store.close();
 });
 
@@ -899,8 +813,8 @@ test("runChatCli: routing unrelated input through the ordinary loop never calls 
   // any clock, so this cannot distinguish "declared yesterday" from
   // "declared a moment ago." What it actually proves: lines that don't
   // match `parseTimeBudgetCommand` fall through to the free-text/general-qa
-  // catch-all (Task 13) without ever calling `putTimeBudget` again.
-  declareTimeBudget(store, 360, "2026-08-21");
+  // catch-all without ever calling `putTimeBudget` again.
+  putTimeBudget(store, { date: "2026-08-21", totalMinutes: 360, workMinutes: 70, breakMinutes: 15 });
   const before = getCurrentTimeBudget(store);
 
   const io = makeScriptedIo(["hello", "show me today's plan"]);
@@ -1052,11 +966,13 @@ test("runChatCli: a deterministic flow's own output (never touching Claude) stil
 
   await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient });
 
-  // "time budget 6 hours" is handled entirely by parseTimeBudgetCommand
-  // (Task 6) — zero Claude calls — so calls[0]/[1] are the SECOND line's
-  // classify + general-qa calls.
-  assert.equal(llmClient.calls.length, 2);
-  const historySent = llmClient.calls[1]!.messages as Array<{ role: string; content: string }>;
+  // "time budget 6 hours" costs one classify call (Story 8.3's accepted
+  // dispatch-reorder cost — see app/chat-turn.ts's own doc comment) but
+  // still zero further Claude calls (declareTimeBudget itself never calls
+  // Claude): calls[0] is that first classify, calls[1]/[2] are the SECOND
+  // line's classify + general-qa calls.
+  assert.equal(llmClient.calls.length, 3);
+  const historySent = llmClient.calls[2]!.messages as Array<{ role: string; content: string }>;
   assert.equal(historySent[0]!.role, "user");
   assert.equal(historySent[0]!.content, "time budget 6 hours");
   assert.equal(historySent[1]!.role, "assistant");
@@ -1082,183 +998,22 @@ test("runChatCli: catches a thrown error from the Claude call and surfaces it as
   store.close();
 });
 
-// ============================================================================
-// isPlanViewCommand / runChatCli — on-demand Plan view (Task 11 / Story 1.11)
-// ============================================================================
-
-test("isPlanViewCommand recognizes a few plan-view phrasings, case-insensitively", () => {
-  for (const line of [
-    "plan",
-    "Plan",
-    "what's my plan",
-    "what is my plan",
-    "show plan",
-    "show my plan",
-    "show me today's plan",
-    "SHOW MY PLAN",
-  ]) {
-    assert.equal(isPlanViewCommand(line), true, `expected "${line}" to be recognized as a Plan-view request`);
-  }
-});
-
-test("isPlanViewCommand returns false for unrelated input, including other recognized commands", () => {
-  for (const line of ["hello", "time budget 6h", "what's the weather", ""]) {
-    assert.equal(isPlanViewCommand(line), false, `expected "${line}" NOT to be recognized as a Plan-view request`);
-  }
-});
-
-/**
- * A fixed instant (Task 11 review fix) picked so that the UTC calendar date
- * and Spencer's LOCAL calendar date in `TEST_TIME_ZONE`
- * (`America/New_York`, UTC-4 in August under DST) genuinely disagree: as UTC
- * time this is 2026-08-23 (02:00), but it is still 2026-08-22 (22:00 EDT) in
- * New York. Using a fixed `now` — rather than the real wall clock — means
- * the tests below exercise the local-vs-UTC mismatch deterministically,
- * regardless of what day the suite happens to run on. They would have
- * FAILED against the pre-fix `currentIsoDate()`, which computed
- * `new Date().toISOString().slice(0, 10)` (the UTC date) unconditionally,
- * ignoring both `timeZone` and any injected clock.
- */
-const LATE_EVENING_UTC = new Date("2026-08-23T02:00:00.000Z");
-/** The LOCAL date `LATE_EVENING_UTC` falls on in `TEST_TIME_ZONE` — "2026-08-22", one day BEHIND its UTC date ("2026-08-23"). */
-const LOCAL_TODAY_FOR_LATE_EVENING = localIsoDate(LATE_EVENING_UTC, TEST_TIME_ZONE);
-
-function samplePlanForDate(date: IsoDate): Plan {
-  return {
-    id: `plan-${date}`,
-    date,
-    blocks: [
-      {
-        id: "work-1",
-        kind: "work",
-        start: `${date}T13:00:00.000Z`,
-        end: `${date}T14:00:00.000Z`,
-        label: "Draft the memo",
-        taskId: "t1",
-      },
-      {
-        id: "break-1",
-        kind: "break",
-        start: `${date}T14:00:00.000Z`,
-        end: `${date}T14:15:00.000Z`,
-        label: "Break",
-      },
-    ],
-    reasoning: '"Draft the memo" leads today\'s Plan — due soonest.',
-    version: 1,
-    createdAt: `${date}T00:00:00.000Z`,
-    updatedAt: `${date}T00:00:00.000Z`,
-  };
-}
-
-test("runChatCli: Given a Plan already exists for today, When Spencer asks \"what's my plan\", Then it displays the same ordered Plan and reasoning line via renderPlan (UX-DR18) — keyed by Spencer's LOCAL day, not the UTC one", async () => {
-  const store = tempStore();
-  // Stored under the LOCAL date — what `runMorningRitual` actually keys a
-  // Plan by — which is one day BEHIND the UTC date at `LATE_EVENING_UTC`.
-  // This is exactly the "false negative" regime the Task 11 review flagged:
-  // a UTC-based lookup would compute "2026-08-23" here and find nothing.
-  const plan = samplePlanForDate(LOCAL_TODAY_FOR_LATE_EVENING);
-  putPlan(store, plan);
-
-  const llmClient = makeFakeLlmClient();
-  const io = makeScriptedIo(["what's my plan"]);
-  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => LATE_EVENING_UTC });
-
-  const expected = renderPlan(plan);
-  assert.ok(
-    io.written.includes(expected),
-    `expected chat-cli to find and print today's LOCAL-dated Plan even though the UTC date has already rolled over; got: ${JSON.stringify(io.written)}`,
-  );
-  assert.equal(llmClient.calls.length, 0, "a recognized Plan-view command must never call the LLM client (Task 13)");
-  store.close();
-});
-
-test("runChatCli: on-demand Plan view also responds to other recognized phrasings ('show plan')", async () => {
-  const store = tempStore();
-  const plan = samplePlanForDate(LOCAL_TODAY_FOR_LATE_EVENING);
-  putPlan(store, plan);
-
-  const io = makeScriptedIo(["show plan"]);
-  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => LATE_EVENING_UTC });
-
-  assert.ok(io.written.includes(renderPlan(plan)));
-  store.close();
-});
-
-test("runChatCli: Given no Plan has been generated yet for today, When Spencer asks for the Plan, Then Yoh says so plainly rather than fabricating one or erroring silently", async () => {
-  const store = tempStore();
-  const io = makeScriptedIo(["show plan"]);
-
-  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => LATE_EVENING_UTC });
-
-  assert.ok(
-    io.written.some((line) => /no plan/i.test(line)),
-    "expected a plain statement that no Plan exists yet",
-  );
-  // Not fabricating a rendered block list (which would look like "HH:MM-HH:MM  ...").
-  assert.ok(!io.written.some((line) => /\d{2}:\d{2}-\d{2}:\d{2}/.test(line)));
-  store.close();
-});
-
-test("runChatCli: does NOT silently display a stale prior-day Plan when today's LOCAL Plan doesn't exist yet, even though a row happens to exist under the UTC date (Task 11 review fix — stale-plan false positive)", async () => {
-  const store = tempStore();
-  // A zone AHEAD of UTC, in the early local morning: UTC is still
-  // "yesterday" while the local calendar day has already rolled over — the
-  // exact regime the Task 11 review flagged as a false positive, where an
-  // old UTC-based lookup would find and silently display YESTERDAY's Plan.
-  const timeZone = "Asia/Tokyo";
-  const earlyMorningUtc = new Date("2026-08-22T16:00:00.000Z"); // 2026-08-23 01:00 JST
-  const utcDateOnly = "2026-08-22"; // what the OLD UTC-based lookup would have used
-  const localToday = localIsoDate(earlyMorningUtc, timeZone); // "2026-08-23" — the correct key
-
-  assert.notEqual(utcDateOnly, localToday, "test setup sanity: the two dates must genuinely differ");
-  // Only yesterday's (UTC-dated) row exists — nothing has been generated yet
-  // for the real local "today".
-  putPlan(store, samplePlanForDate(utcDateOnly));
-
-  const io = makeScriptedIo(["show plan"]);
-  await runChatCli({ store, io, timeZone, llmClient: makeFakeLlmClient(), now: () => earlyMorningUtc });
-
-  assert.ok(
-    io.written.some((line) => /no plan/i.test(line)),
-    "expected chat-cli to say no Plan exists for today rather than silently showing yesterday's stale stored Plan",
-  );
-  assert.ok(
-    !io.written.some((line) => /\d{2}:\d{2}-\d{2}:\d{2}/.test(line)),
-    "must not have printed the stale prior-day Plan's rendered block list",
-  );
-  store.close();
-});
+// Story 8.3: `isPlanViewCommand`'s own unit tests moved to
+// `tests/chat-commands.test.ts`; `showPlanCommand`'s own `runChatCli`
+// integration tests moved (as `showPlan` unit tests, adapted to call it
+// directly) to `tests/app-plan-view.test.ts` — nothing about this
+// capability's own behavior is exercised at the `runChatCli` level any more.
 
 // ============================================================================
-// isMidDayReflowCommand / runChatCli — Mid-Day Re-Flow trigger (Task 15 / Story 2.3)
+// runChatCli — Mid-Day Re-Flow (Task 15 / Story 2.3)
+//
+// Story 8.3: `isMidDayReflowCommand`'s own unit tests moved to
+// `tests/chat-commands.test.ts`; `midDayReflowCommand`'s own `runChatCli`
+// integration tests moved (as `reflowDay` unit tests, adapted to call it
+// directly) to `tests/app-mid-day-reflow.test.ts`. `reflowSamplePlan` stays
+// here — the "ChatCliDeps... omitted optional dependency" test below (a
+// `chat-cli.ts`-owned concern, not `app/mid-day-reflow.ts`'s) still uses it.
 // ============================================================================
-
-test("isMidDayReflowCommand recognizes the documented trigger phrasings, case-insensitively", () => {
-  for (const line of [
-    "reflow",
-    "re-flow",
-    "REFLOW",
-    "refit",
-    "reflow my day",
-    "re-flow my plan",
-    "refit my day",
-    "refit plan",
-    "redo my plan",
-    "redo my day",
-    "redo plan",
-    "please reflow my day",
-    "reflow?",
-  ]) {
-    assert.equal(isMidDayReflowCommand(line), true, `expected "${line}" to be recognized as a Mid-Day Re-Flow trigger`);
-  }
-});
-
-test("isMidDayReflowCommand returns false for unrelated input, including other recognized commands and a bare 'redo'", () => {
-  for (const line of ["hello", "time budget 6h", "show plan", "what's my plan", "redo", ""]) {
-    assert.equal(isMidDayReflowCommand(line), false, `expected "${line}" NOT to be recognized as a Mid-Day Re-Flow trigger`);
-  }
-});
 
 function reflowSamplePlan(date: IsoDate, nowIso: string): Plan {
   const nowMs = Date.parse(nowIso);
@@ -1278,46 +1033,6 @@ function reflowSamplePlan(date: IsoDate, nowIso: string): Plan {
     updatedAt: past,
   };
 }
-
-test("runChatCli: typing a recognized Mid-Day Re-Flow trigger calls into mid-day-reflow.ts and prints only the short remainder, not the whole day", async () => {
-  const store = tempStore();
-  const REFLOW_NOW = new Date("2026-08-22T18:00:00.000Z");
-  const today = localIsoDate(REFLOW_NOW, TEST_TIME_ZONE);
-  putTimeBudget(store, { date: today, totalMinutes: 480, workMinutes: 70, breakMinutes: 15 });
-  const plan = reflowSamplePlan(today, REFLOW_NOW.toISOString());
-  putPlan(store, plan);
-
-  const tasks: Task[] = [
-    makeTask("t1", "Past Task", { dueDate: today }),
-    makeTask("t2", "Future Task", { dueDate: today }),
-  ];
-  const io = makeScriptedIo(["reflow my day"]);
-  const llmClient = makeFakeLlmClient();
-
-  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => REFLOW_NOW, readTasks: async () => tasks });
-
-  assert.equal(llmClient.calls.length, 0, "a recognized Mid-Day Re-Flow trigger must never fall through to the LLM catch-all");
-  assert.ok(io.written.some((line) => /Re-flowed the rest of today/.test(line)), "expected the short reflow reasoning to be printed");
-  assert.ok(!io.written.some((line) => /Today's Plan for/.test(line)), "must not re-print the whole-day header");
-  assert.ok(!io.written.some((line) => /Past Task/.test(line)), "must not re-list the already-elapsed block");
-
-  const updated = getPlan(store, today);
-  assert.ok(updated);
-  assert.equal(updated!.data.version, 2, "the stored Plan's version must be bumped by the re-flow");
-  const pastBlock = updated!.data.blocks.find((b) => b.id === "work-0");
-  assert.deepEqual(pastBlock, plan.blocks[0], "the past block must survive the round-trip through chat-cli.ts byte-identical");
-  store.close();
-});
-
-test("runChatCli: Mid-Day Re-Flow trigger says so plainly when no Plan exists yet for today", async () => {
-  const store = tempStore();
-  const io = makeScriptedIo(["reflow"]);
-
-  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => LATE_EVENING_UTC, readTasks: async () => [] });
-
-  assert.ok(io.written.some((line) => /no plan/i.test(line)));
-  store.close();
-});
 
 test("ChatCliDeps (Epic 6 retro item 7): an omitted optional dependency still defaults to its original throws-only-if-invoked stub, surfaced as an honest error rather than a raw TypeError", async () => {
   const store = tempStore();
@@ -1340,213 +1055,15 @@ test("ChatCliDeps (Epic 6 retro item 7): an omitted optional dependency still de
 });
 
 // ============================================================================
-// isBlockerReportCommand / runChatCli — Logistics-Only Blocker Handling
-// (Task 16 / Story 2.4, FR-10, UX-DR12)
+// runChatCli — Logistics-Only Blocker Handling (Task 16 / Story 2.4) and
+// why-prioritized (Task 17 / Story 2.5)
+//
+// Story 8.3: `isBlockerReportCommand`/`parseWhyPrioritizedCommand`'s own unit
+// tests moved to `tests/chat-commands.test.ts`; `blockerReportCommand`'s and
+// `whyPrioritizedCommand`'s own `runChatCli` integration tests moved (as
+// `reportBlocker`/`explainPriority` unit tests, adapted to call them directly)
+// to `tests/app-blocker-report.test.ts`/`tests/app-why-prioritized.test.ts`.
 // ============================================================================
-
-test("isBlockerReportCommand recognizes documented starting keyword/phrase heuristics, case-insensitively", () => {
-  for (const line of [
-    "meeting ran over",
-    "the meeting ran over",
-    "the call ran over",
-    "running late",
-    "I'm running late",
-    "I ran late",
-    "something came up",
-    "stuck in traffic",
-    "I'm stuck in traffic",
-    "call went long",
-    "the call went long",
-    "the meeting ran long",
-    "got held up",
-    "held up",
-    "got stuck",
-    "got interrupted",
-    "MEETING RAN OVER",
-  ]) {
-    assert.equal(isBlockerReportCommand(line), true, `expected "${line}" to be recognized as a Blocker report`);
-  }
-});
-
-test(
-  "isBlockerReportCommand returns false for unrelated input, including other recognized commands and (post-review fix) plausible unrelated " +
-    "sentences that merely CONTAIN a formerly-bare-word trigger",
-  () => {
-    for (const line of [
-      "hello",
-      "time budget 6h",
-      "show plan",
-      "reflow my day",
-      "what's the weather",
-      "",
-      // Post-review Important fix: `\btraffic\b` and `\bdelayed\b` used to be
-      // bare single-word triggers, matching ANYWHERE inside free text with
-      // no co-occurring signal. Both plausibly appear in an ordinary
-      // question or an unrelated statement, and — because AD-3 makes the
-      // Blocker path unconditional with no confirmation gate — a false
-      // match here would silently mutate and persist a change to Spencer's
-      // Plan instead of answering what he actually asked/said.
-      "what's traffic like on I-95 right now",
-      "how's traffic looking this morning",
-      "my package got delayed",
-      "the flight was delayed by two hours",
-      // Post-review fix: the old `\b(meeting|call)\s+(ran|went)\b` catch-all
-      // required no continuation after "ran"/"went", so it falsely matched
-      // ordinary good-news statements too.
-      "the meeting went great",
-      "the call went really well",
-    ]) {
-      assert.equal(isBlockerReportCommand(line), false, `expected "${line}" NOT to be recognized as a Blocker report`);
-    }
-  },
-);
-
-function blockerSamplePlan(date: IsoDate, nowIso: string): Plan {
-  const nowMs = Date.parse(nowIso);
-  const start = new Date(nowMs - 30 * 60_000).toISOString();
-  const end = new Date(nowMs - 5 * 60_000).toISOString(); // scheduled end already passed by the time of the report
-  return {
-    id: `plan-${date}`,
-    date,
-    blocks: [{ id: "work-0", kind: "work", start, end, label: "Blocked Task", taskId: "t1" }],
-    reasoning: '"Blocked Task" leads today\'s Plan — due soonest.',
-    version: 1,
-    createdAt: start,
-    updatedAt: start,
-  };
-}
-
-test("runChatCli: a recognized Blocker report reschedules immediately and responds with a single confirmation line, no discussion (UX-DR12, AD-3)", async () => {
-  const store = tempStore();
-  const BLOCKER_NOW = new Date("2026-08-22T18:30:00.000Z");
-  const today = localIsoDate(BLOCKER_NOW, TEST_TIME_ZONE);
-  putTimeBudget(store, { date: today, totalMinutes: 480, workMinutes: 70, breakMinutes: 15 });
-  putPlan(store, blockerSamplePlan(today, BLOCKER_NOW.toISOString()));
-
-  const tasks: Task[] = [makeTask("t1", "Blocked Task", { dueDate: today })];
-  const io = makeScriptedIo(["meeting ran over"]);
-  const llmClient = makeFakeLlmClient();
-
-  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => BLOCKER_NOW, readTasks: async () => tasks });
-
-  assert.equal(llmClient.calls.length, 0, "a recognized Blocker report must never fall through to the LLM catch-all");
-  assert.equal(io.written.length, 1, "a Blocker report response must be exactly one printed line");
-  const response = io.written[0]!;
-  assert.equal(response.includes("\n"), false, "the confirmation must be a single line, not multi-line");
-  assert.doesNotMatch(response, /Today's Plan for/, "must not print a full plan view");
-  assert.doesNotMatch(
-    response,
-    /should|recommend|suggest|next time|try to|advice/i,
-    "must contain no suggestions/commentary about resolving the underlying obstacle",
-  );
-
-  const updated = getPlan(store, today);
-  assert.ok(updated);
-  assert.equal(updated!.data.version, 2, "the Plan must be rescheduled immediately — no confirmation gate (AD-3)");
-  assert.equal(
-    store.listRecordsByKind("interaction-request").length,
-    0,
-    "no Proposal/interaction request may be opened for a Blocker report (AD-3 carve-out)",
-  );
-  store.close();
-});
-
-test("runChatCli: Blocker report trigger says so plainly when no Plan exists yet for today", async () => {
-  const store = tempStore();
-  const io = makeScriptedIo(["meeting ran over"]);
-
-  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => LATE_EVENING_UTC, readTasks: async () => [] });
-
-  assert.ok(io.written.some((line) => /no plan/i.test(line)));
-  store.close();
-});
-
-// ============================================================================
-// parseWhyPrioritizedCommand / runChatCli — Slip-Bump lineage view
-// (Task 17 / Story 2.5, UX-DR19)
-// ============================================================================
-
-test("parseWhyPrioritizedCommand recognizes 'why is X prioritized [today]' phrasings, case-insensitively, and extracts the Task name", () => {
-  assert.equal(parseWhyPrioritizedCommand("why is Draft the memo prioritized"), "Draft the memo");
-  assert.equal(parseWhyPrioritizedCommand("why is Draft the memo prioritized today"), "Draft the memo");
-  assert.equal(parseWhyPrioritizedCommand("Why Is Draft The Memo Prioritized Today?"), "Draft The Memo");
-  assert.equal(parseWhyPrioritizedCommand("  why is Draft the memo prioritized today  "), "Draft the memo");
-});
-
-test("parseWhyPrioritizedCommand returns undefined for unrelated input, including other recognized commands", () => {
-  for (const line of ["hello", "time budget 6h", "show plan", "reflow", "meeting ran over", "why is the sky blue", ""]) {
-    assert.equal(
-      parseWhyPrioritizedCommand(line),
-      undefined,
-      `expected "${line}" NOT to be recognized as a why-prioritized request`,
-    );
-  }
-});
-
-test("runChatCli: 'why is X prioritized' shows a Task's Slip-Bump lineage — consecutive-slip count and current bump level (UX-DR19)", async () => {
-  const store = tempStore();
-  // Two consecutive slips recorded for this Task before the question is asked.
-  recordSlip(store, "t1", "2026-08-20");
-  recordSlip(store, "t1", "2026-08-21");
-
-  const tasks: Task[] = [makeTask("t1", "Draft the memo")];
-  const io = makeScriptedIo(["why is Draft the memo prioritized today"]);
-  const llmClient = makeFakeLlmClient();
-
-  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => new Date(NOW), readTasks: async () => tasks });
-
-  assert.equal(llmClient.calls.length, 0, "a recognized lineage-view request must never fall through to the LLM catch-all");
-  const response = io.written.join("\n");
-  assert.match(response, /Draft the memo/);
-  assert.match(response, /2/, "expected the consecutive-slip count (2) to be shown");
-  assert.match(response, /2026-08-21/, "expected the last-slip date to be shown");
-  // Slip-Bump curve { cap: 3, step: 1 }: 2 consecutive slips -> bump level 2, not yet at the cap.
-  assert.doesNotMatch(response, /\bcap\b/i);
-  store.close();
-});
-
-test("runChatCli: 'why is X prioritized' reports a Task at the Slip-Bump cap distinctly", async () => {
-  const store = tempStore();
-  recordSlip(store, "t1", "2026-08-19");
-  recordSlip(store, "t1", "2026-08-20");
-  recordSlip(store, "t1", "2026-08-21");
-  recordSlip(store, "t1", "2026-08-22"); // 4th consecutive slip -- still pinned at the cap of 3.
-
-  const tasks: Task[] = [makeTask("t1", "Draft the memo")];
-  const io = makeScriptedIo(["why is Draft the memo prioritized"]);
-
-  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => new Date(NOW), readTasks: async () => tasks });
-
-  const response = io.written.join("\n");
-  assert.match(response, /\bcap\b/i, "expected the response to note the Task is at its Slip-Bump cap");
-  store.close();
-});
-
-test("runChatCli: 'why is X prioritized' for a Task with no slip history says plainly that no Slip-Bump applies", async () => {
-  const store = tempStore();
-  const tasks: Task[] = [makeTask("t1", "Draft the memo")];
-  const io = makeScriptedIo(["why is Draft the memo prioritized"]);
-  const llmClient = makeFakeLlmClient();
-
-  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient, now: () => new Date(NOW), readTasks: async () => tasks });
-
-  assert.equal(llmClient.calls.length, 0);
-  const response = io.written.join("\n");
-  assert.match(response, /Draft the memo/);
-  assert.match(response, /hasn'?t slipped|no slip-bump|never slipped/i);
-  store.close();
-});
-
-test("runChatCli: 'why is X prioritized' for an unknown Task name says it couldn't find that Task", async () => {
-  const store = tempStore();
-  const tasks: Task[] = [makeTask("t1", "Draft the memo")];
-  const io = makeScriptedIo(["why is Some Other Task prioritized"]);
-
-  await runChatCli({ store, io, timeZone: TEST_TIME_ZONE, llmClient: makeFakeLlmClient(), now: () => new Date(NOW), readTasks: async () => tasks });
-
-  assert.ok(io.written.some((line) => /couldn'?t find/i.test(line)));
-  store.close();
-});
 
 // ============================================================================
 // Night Ritual close-out prompt (Task 19 / Story 3.1) — surfacing and

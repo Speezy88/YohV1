@@ -16,52 +16,62 @@
  * showed. Later tasks (15, 16) still extend this file with Mid-Day Re-Flow
  * triggers and Blocker reports.
  *
- * Task 13 update: the free-text placeholder that used to sit after the Time
- * Budget/Plan-view checks is gone. `parseTimeBudgetCommand` and
- * `isPlanViewCommand` still run first, unchanged (cheap, deterministic, no
- * API call — see their own doc comments) — anything that falls through both
- * is, by construction, a genuine general/factual question, and now routes to
- * `adapters/llm-adapter.ts`'s `answerGeneralQuestion`, which calls Claude for
- * a real answer instead of a canned string. Real intent dispatch for
- * Mid-Day Re-Flow (Task 15) and Blocker reports (Task 16) is expected to add
- * its own check here, ahead of this catch-all, the same way the two checks
- * above already work — see `llm-adapter.ts`'s own module docstring for the
- * post-review reasoning on why this file doesn't pre-build that dispatch
- * shape now.
+ * Task 13 update — HISTORICAL (describes this file's shape at the time,
+ * before Epic 8; see the Story 8.3 update paragraph below for what's
+ * actually true today): the free-text placeholder that used to sit after
+ * the Time Budget/Plan-view checks was removed. At the time,
+ * `parseTimeBudgetCommand` and `isPlanViewCommand` ran first, directly in
+ * this file's main loop, unchanged (cheap, deterministic, no API call) —
+ * anything that fell through both was, by construction, a genuine
+ * general/factual question, and routed to `adapters/llm-adapter.ts`'s
+ * `answerGeneralQuestion`, which calls Claude for a real answer instead of a
+ * canned string. Real intent dispatch for Mid-Day Re-Flow (Task 15) and
+ * Blocker reports (Task 16) was expected to add its own check here, ahead of
+ * this catch-all, the same way the two checks above already worked — see
+ * `llm-adapter.ts`'s own module docstring for the post-review reasoning on
+ * why this file didn't pre-build that dispatch shape at the time.
  *
- * Task 15 update (Story 2.3, FR-9): a third deterministic check,
- * `isMidDayReflowCommand`, is added to that same sequence — checked BEFORE
- * the general-qa catch-all, same shape as the two above. It recognizes
+ * Task 15 update (Story 2.3, FR-9) — HISTORICAL (see the Story 8.3 update
+ * paragraph below): a third deterministic check, `isMidDayReflowCommand`,
+ * was added to that same sequence — checked BEFORE the general-qa
+ * catch-all, same shape as the two above, at the time. It recognized
  * Spencer telling Yoh to re-fit the rest of today (e.g. a Task ran long or
- * got skipped) and calls into `rituals/mid-day-reflow.ts`'s
- * `runMidDayReflow`, which does the actual re-fitting and persistence; this
- * file only recognizes the trigger and prints the result. This is also the
- * ONLY place in the whole codebase that calls `runMidDayReflow` — Mid-Day
- * Re-Flow never runs proactively (no ritual, cron, or timer path reaches
- * it); see `mid-day-reflow.ts`'s own doc comment and
- * `tests/mid-day-reflow.test.ts`'s structural check for how that's verified.
+ * got skipped) and called into `rituals/mid-day-reflow.ts`'s core re-flow
+ * function, which does the actual re-fitting and persistence; this file
+ * only recognized the trigger and printed the result. At the time this
+ * paragraph was written, this was also the ONLY place in the whole codebase
+ * that called it directly — Mid-Day Re-Flow never runs proactively (no
+ * ritual, cron, or timer path reaches it); see `mid-day-reflow.ts`'s own doc
+ * comment and `tests/mid-day-reflow.test.ts`'s structural check for how
+ * that's verified. (Story 8.3 moved the recognizer to
+ * `core/chat-commands.ts`, the handler and the real call site to
+ * `app/mid-day-reflow.ts`, and the dispatch itself into `app/chat-turn.ts`'s
+ * `chatTurn` — see this docstring's own Story 8.3 update paragraph.)
  *
- * Task 16 update (Story 2.4, FR-10): a FOURTH deterministic check,
- * `isBlockerReportCommand`, is added right after `isMidDayReflowCommand`
- * (still before the general-qa catch-all). It recognizes Spencer reporting
- * a purely logistical Blocker in plain language ("meeting ran over",
- * "running late", "stuck in traffic", ...) — genuinely more open-ended than
- * `isMidDayReflowCommand`'s fixed trigger phrasing, so this is a
+ * Task 16 update (Story 2.4, FR-10) — HISTORICAL (see the Story 8.3 update
+ * paragraph below): a FOURTH deterministic check, `isBlockerReportCommand`,
+ * was added right after `isMidDayReflowCommand` (still before the
+ * general-qa catch-all, at the time). It recognized Spencer reporting a
+ * purely logistical Blocker in plain language ("meeting ran over", "running
+ * late", "stuck in traffic", ...) — genuinely more open-ended than
+ * `isMidDayReflowCommand`'s fixed trigger phrasing, so this was a
  * documented STARTING keyword/phrase heuristic (same spirit as
  * `isMidDayReflowCommand`/`parseTimeBudgetCommand`'s own "not real NLU"
  * notes, and FR-2's even-split weights elsewhere in this codebase — a
- * reasonable v1, not a claim of completeness; richer detection is a natural
- * future improvement). Every recognized phrase is deliberately multi-word
- * (post-review tightening — see `isBlockerReportCommand`'s own doc comment)
- * because a false positive here is unusually costly: a match calls
- * `runMidDayReflow` again — the SAME function Mid-Day Re-Flow uses, with
- * `blockerReported: true` — which immediately PERSISTS a real reschedule of
- * Spencer's Plan, per AD-3, with no confirmation gate. The result renders
- * completely differently from Task 15's trigger, though: UX-DR12 requires a
- * single confirmation line with no discussion or suggestions, sharply
- * terser than Task 15's "one short block" (UX-DR11).
- * `rituals/mid-day-reflow.ts`'s `buildBlockerConfirmationLine` builds that
- * one line; this file never prints `outcome.rendered` for this path.
+ * reasonable v1, not a claim of completeness; richer detection remains a
+ * natural future improvement). Every recognized phrase is deliberately
+ * multi-word (post-review tightening — see `isBlockerReportCommand`'s own
+ * doc comment, now in `core/chat-commands.ts`) because a false positive
+ * here is unusually costly: a match calls the SAME re-flow function
+ * Mid-Day Re-Flow uses, with `blockerReported: true` — which immediately
+ * PERSISTS a real reschedule of Spencer's Plan, per AD-3, with no
+ * confirmation gate. The result renders completely differently from
+ * Task 15's trigger, though: UX-DR12 requires a single confirmation line
+ * with no discussion or suggestions, sharply terser than Task 15's "one
+ * short block" (UX-DR11). `rituals/mid-day-reflow.ts`'s
+ * `buildBlockerConfirmationLine` builds that one line; `app/blocker-
+ * report.ts` (Story 8.3's home for this handler) never prints the fuller
+ * rendering for this path.
  *
  * Task 14 update (Story 2.2, FR-18's default/contextual Tone): the catch-all
  * now classifies `line` via `core/tone.ts`'s `resolveToneSystemPrompt` and
@@ -95,17 +105,20 @@
  * override-merge step lives outside `data-completeness-gate.ts` per AD-2 —
  * the gate stays pure and must not read `memory-store.ts` itself.
  *
- * Task 17 update (Story 2.5, FR-11, UX-DR19): a FIFTH deterministic check,
- * `parseWhyPrioritizedCommand`, is added right after `isBlockerReportCommand`
- * (still before the general-qa catch-all). It recognizes Spencer asking "why
- * is X prioritized [today]" and answers with that Task's Slip-Bump lineage
- * (`whyPrioritizedCommand`) — its consecutive-slip count and current bump
- * level, read from `memory-store.ts`'s `getSlipHistory` and computed via
- * `core/slip-bump.ts`'s `computeSlipBumpLevel` (AD-6). This is a read-only
- * view: unlike the Mid-Day Re-Flow/Blocker triggers above, it never
- * persists anything. It deliberately does NOT add a "report a slip"
- * trigger — recording a slip is Night Ritual close-out's job (Task 19,
- * below); see `core/slip-bump.ts`'s own "Scope note" docstring section.
+ * Task 17 update (Story 2.5, FR-11, UX-DR19) — HISTORICAL (see the Story
+ * 8.3 update paragraph below): a FIFTH deterministic check,
+ * `parseWhyPrioritizedCommand`, was added right after
+ * `isBlockerReportCommand` (still before the general-qa catch-all, at the
+ * time). It recognized Spencer asking "why is X prioritized [today]" and
+ * answered with that Task's Slip-Bump lineage — its consecutive-slip count
+ * and current bump level, read from `memory-store.ts`'s `getSlipHistory`
+ * and computed via `core/slip-bump.ts`'s `computeSlipBumpLevel` (AD-6).
+ * This is a read-only view: unlike the Mid-Day Re-Flow/Blocker triggers
+ * above, it never persists anything. It deliberately does NOT add a
+ * "report a slip" trigger — recording a slip is Night Ritual close-out's
+ * job (Task 19, below); see `core/slip-bump.ts`'s own "Scope note" docstring
+ * section. (Story 8.3 moved the recognizer to `core/chat-commands.ts` and
+ * the handler, as `explainPriority`, to `app/why-prioritized.ts`.)
  *
  * Task 19 update (Story 3.1, FR-12–FR-14, AD-12): `surfaceOpenInteractionRequests`
  * gets a SIXTH typed branch, `answerNightCloseOutRequest`, for
@@ -168,23 +181,61 @@
  * `answerOpenItem`'s `"proposal"` dispatch. `surfaceOpenInteractionRequests`
  * no longer special-cases `"proposal"` at all — every request kind now
  * flows through the same `surfaceOpenItems`/`answerOpenItem` transport.
+ *
+ * Story 8.3 update (AD-16): the five deterministic recognizers this
+ * docstring's earlier updates describe — `parseTimeBudgetCommand`,
+ * `isPlanViewCommand`, `isMidDayReflowCommand`, `isBlockerReportCommand`,
+ * `parseWhyPrioritizedCommand` — moved to `core/chat-commands.ts`; their
+ * five handlers (`declareTimeBudget`/`showPlanCommand`/`midDayReflowCommand`/
+ * `blockerReportCommand`/`whyPrioritizedCommand`) moved to their own
+ * `app/*.ts` files (`app/time-budget.ts`, `app/plan-view.ts`,
+ * `app/mid-day-reflow.ts`, `app/blocker-report.ts`,
+ * `app/why-prioritized.ts`), each returning a plain-text-or-markdown
+ * `ChatTurnResponse` instead of writing to `io` directly. The general-qa
+ * catch-all (Task 13/14's Tone/model routing) moved the same way, to
+ * `app/general-question.ts`. All six are now dispatched by one call into
+ * `app/chat-turn.ts`'s `chatTurn`, which this file calls from exactly the
+ * position the old trailing general-qa block used to occupy — *after* the
+ * `classifyChatIntent`/search-trigger check and the create-item/calendar-
+ * edit/save-that checks above it, which all stay inline in this file
+ * unchanged (Controller ruling; Story 8.4 folds them into `chatTurn` too —
+ * NOT this docstring's own historical "Task 5" above, which is a different,
+ * pre-Epic-8 numbering scheme; Epic 8 work is always cited here by Story
+ * number to avoid exactly that collision).
+ * `chatTurn` never calls `classifyChatIntent` itself, and this file renders
+ * whatever it returns — a reply, receipts, or an error message — through
+ * its own terminal styling (`renderMarkdownForTerminal`, `shouldUseColor()`),
+ * since `ChatTurnResponse.reply` is never ANSI (C2): the Plan-view and
+ * Mid-Day Re-Flow/Blocker views accordingly lose their prior terminal color
+ * here (accepted — this CLI itself retires in Story 8.9).
+ *
+ * The current dispatch truth (superseding every "still run first"/"before
+ * the general-qa catch-all" claim in this docstring's earlier, historical
+ * update paragraphs above): NONE of the five recognizers named above still
+ * run directly in this file's main loop, and none of them run "before"
+ * anything general-qa-related in the old sense — they're checked from
+ * INSIDE `chatTurn`, by `core/chat-commands.ts`, only once `chatTurn` itself
+ * is reached. This file's own main loop, top to bottom, is now: surface any
+ * open interaction request; the save-that/create-item/calendar-edit checks;
+ * `classifyChatIntent` (one real Claude call on every line that reaches it)
+ * and, on a `"search-trigger"` result, the search handler; otherwise one
+ * `chatTurn` call. That means a line `chatTurn` would recognize
+ * deterministically (e.g. "time budget 6h") still costs exactly ONE Claude
+ * call today — `classifyChatIntent`'s own — before `chatTurn` recognizes it
+ * for free; this is a real, if small and bounded, transitional cost
+ * (`app/chat-turn.ts`'s own doc comment and `tests/chat-cli.test.ts`'s
+ * updated Time-Budget integration test both name it explicitly). Story 8.4
+ * removes it by folding `classifyChatIntent`/search/create-item/
+ * calendar-edit into `chatTurn` too, restoring the original top-to-bottom
+ * priority (the five recognizers checked first again, ahead of classify,
+ * at zero API cost).
  */
 import { createInterface } from "node:readline";
 import { Client } from "@notionhq/client";
-import {
-  createMemoryStore,
-  getPlan,
-  getSlipHistory,
-  putTimeBudget,
-  type MemoryStore,
-  type StoredRecord,
-} from "../adapters/memory-store.ts";
+import { createMemoryStore, type MemoryStore } from "../adapters/memory-store.ts";
 import { openSqliteConnection } from "../adapters/sqlite.ts";
 import {
-  answerGeneralQuestion,
   classifyChatIntent,
-  CLAUDE_CHAT_MODEL_CAPABLE,
-  CLAUDE_CHAT_MODEL_FAST,
   createAnthropicMessagesClient,
   draftCalendarEditRequest,
   draftNotionPageFields,
@@ -220,24 +271,20 @@ import { search as runSearch, type SearchAdapterConfig } from "../adapters/searc
 import { createTokenStore, loadGoogleOAuthConfigFromEnv, type TokenStore } from "../adapters/token-store.ts";
 import { parsePlanningFieldValue } from "../core/planning-field-value.ts";
 import { parseProposalAnswer } from "../core/open-item-answers.ts";
-import { computeSlipBumpLevel } from "../core/slip-bump.ts";
-import { shapeDeclaredTimeBudget } from "../core/time-budget.ts";
-import { classifyTone, resolveToneSystemPrompt } from "../core/tone.ts";
-import { buildBlockerConfirmationLine, runMidDayReflow } from "../rituals/mid-day-reflow.ts";
 import {
   ACCENT,
   localIsoDate,
   MUTED,
   paint,
   renderMarkdownForTerminal,
-  renderPlan,
   shouldUseColor,
   WRAP_WIDTH,
 } from "../rituals/ritual-shared.ts";
-import { RECENT_MESSAGES_WINDOW, type ChatSession } from "../app/chat-session.ts";
+import type { ChatSession } from "../app/chat-session.ts";
 import { surfaceOpenItems } from "../app/surface-open-items.ts";
 import { answerOpenItem, type AnswerOpenItemDeps } from "../app/answer-open-item.ts";
 import { confirmProposal } from "../app/confirm-proposal.ts";
+import { chatTurn, MAX_CHAT_HISTORY_TURNS, type ChatTurnDeps } from "../app/chat-turn.ts";
 import type {
   CalendarEditChange,
   CalendarEvent,
@@ -253,7 +300,6 @@ import type {
   SearchAnswer,
   Task,
   TaskStatus,
-  TimeBudget,
   YohError,
 } from "../types/domain.ts";
 import type { OpenItem } from "../types/api.ts";
@@ -282,17 +328,12 @@ function stripAnsi(text: string): string {
 }
 
 /**
- * The largest number of `ChatTurn`s kept in a session's running history —
- * an even number so trimming (always removing complete `[user, assistant]`
- * pairs from the front, see `pushChatTurn`) can never leave the array
- * starting with an `assistant` turn, which the Messages API rejects. Chosen
- * to mirror `RECENT_MESSAGES_WINDOW`'s (20) spirit — a bounded window so a
- * long session's token cost doesn't grow without limit — roughly doubled
- * since turns alternate rather than being Spencer-only lines.
+ * Appends `turn` to `history` (mutating it in place) and trims from the
+ * front, two at a time, once over `MAX_CHAT_HISTORY_TURNS` (Story 8.3: moved
+ * to `app/chat-turn.ts` — this file imports it rather than keeping a second
+ * copy) — see that constant's own doc comment for why trimming happens in
+ * pairs.
  */
-const MAX_CHAT_HISTORY_TURNS = 40;
-
-/** Appends `turn` to `history` (mutating it in place) and trims from the front, two at a time, once over `MAX_CHAT_HISTORY_TURNS` — see that constant's own doc comment for why trimming happens in pairs. */
 function pushChatTurn(history: ChatTurn[], turn: ChatTurn): void {
   history.push(turn);
   while (history.length > MAX_CHAT_HISTORY_TURNS) {
@@ -501,53 +542,6 @@ async function answerAndPresentOneItem(io: ChatCliIo, answerDeps: AnswerOpenItem
   }
 }
 
-// ============================================================================
-// Time Budget declare/change command (Task 6 / Story 1.6, FR-5)
-// ============================================================================
-
-/**
- * Recognizes a Time Budget declare/change command typed at the `yoh>`
- * prompt. This is deliberately simple, clearly-documented pattern matching —
- * NOT real free-text NLU. Task 13 review note: this function stays exactly
- * as it is — `runChatCli` still checks it first, unchanged, before ever
- * consulting `llm-adapter.ts`'s real LLM-based routing, so declaring
- * "6 hours" persists a 360-minute budget for today exactly as it always has,
- * with no API call spent recognizing it.
- *
- * Recognized phrasing (case-insensitive, extra whitespace tolerated):
- *   - "time budget <N>[h|hr|hrs|hour|hours]"
- *   - "time budget <N>[m|min|mins|minute|minutes]"
- *   - either optionally prefixed with "set " or "change ", and with "to "
- *     before the number — e.g. "set time budget to 6 hours",
- *     "change time budget to 90 minutes"
- *
- * If `<N>` has no unit at all (e.g. "time budget 5"), it's read as HOURS —
- * documented default, since Spencer declaring a Time Budget in bare minutes
- * ("time budget 5" meaning 5 minutes) would be an implausibly short day,
- * while "5" meaning 5 hours is the natural reading.
- *
- * Returns `undefined` (not an error) for any line that doesn't match this
- * shape at all, so `runChatCli` can fall through to the free-text
- * placeholder rather than misreporting an unrelated line as an invalid Time
- * Budget command.
- */
-const TIME_BUDGET_COMMAND_RE =
-  /^(?:set\s+|change\s+)?time\s*budget(?:\s+to)?\s+(\d+(?:\.\d+)?)\s*(hours?|hrs?|h|minutes?|mins?|m)?\s*$/i;
-
-export function parseTimeBudgetCommand(line: string): { readonly totalMinutes: number } | undefined {
-  const match = TIME_BUDGET_COMMAND_RE.exec(line.trim());
-  if (!match) return undefined;
-
-  const amount = Number(match[1]);
-  if (!Number.isFinite(amount) || amount <= 0) return undefined;
-
-  const unit = (match[2] ?? "hours").toLowerCase();
-  const totalMinutes = unit.startsWith("m") ? amount : amount * 60;
-  if (!Number.isInteger(totalMinutes)) return undefined; // e.g. "0.5m" doesn't land on a whole minute.
-
-  return { totalMinutes };
-}
-
 /**
  * Today's calendar date, ISO-8601 (`YYYY-MM-DD`) — Spencer's own LOCAL
  * calendar day in `timeZone`, never the UTC one (Task 11 review fix: this
@@ -567,322 +561,17 @@ function currentIsoDate(timeZone: string, now: () => Date = () => new Date()): I
   return localIsoDate(now(), timeZone);
 }
 
-/**
- * The thin wiring function AD-1/AD-2 call for: runs the pure validate/shape
- * step (`core/time-budget.ts`'s `shapeDeclaredTimeBudget`) and, only on
- * success, persists the result as today's Time Budget in `memory-store.ts`
- * (`putTimeBudget`) — the actual I/O `time-budget.ts` itself is forbidden
- * from doing (AD-2). `today` is threaded in explicitly by the caller rather
- * than read internally here, purely so this function stays trivially
- * testable with a fixed date instead of the real system clock.
- */
-export function declareTimeBudget(
-  store: MemoryStore,
-  totalMinutes: number,
-  today: IsoDate,
-): Result<StoredRecord<TimeBudget>, YohError> {
-  const shaped = shapeDeclaredTimeBudget({ totalMinutes, date: today });
-  if (!shaped.ok) return shaped;
-  return { ok: true, value: putTimeBudget(store, shaped.value) };
-}
-
-/** Formats a minute count for the confirmation line, e.g. `360` -> `"360 minutes (6h)"`. */
-function formatMinutesForDisplay(totalMinutes: number): string {
-  const hours = totalMinutes / 60;
-  const hoursLabel = Number.isInteger(hours) ? `${hours}h` : `${hours.toFixed(2).replace(/0+$/, "").replace(/\.$/, "")}h`;
-  return `${totalMinutes} minutes (${hoursLabel})`;
-}
-
-// ============================================================================
-// On-demand Plan view command (Task 11 / Story 1.11)
-// ============================================================================
-
-/**
- * Recognizes an on-demand Plan-view request typed at the `yoh>` prompt — the
- * same kind of deliberately simple, clearly-documented pattern matching
- * `parseTimeBudgetCommand` uses above, NOT real free-text NLU. Task 13
- * review note: this function stays exactly as it is, same as
- * `parseTimeBudgetCommand` above — see that function's own updated doc
- * comment.
- *
- * Recognized phrasing (case-insensitive, extra whitespace tolerated), per
- * the Task 11 brief's own examples:
- *   - a bare "plan"
- *   - "what's my plan" / "what is my plan" / "...today's plan"
- *   - "show plan" / "show my plan" / "show me my plan" / "show me today's
- *     plan"
- *
- * Returns `false` (not an error) for any line that doesn't match this shape
- * at all, so `runChatCli` can fall through to the Time Budget command check
- * and then the free-text placeholder, exactly as it already does for an
- * unrecognized line.
- */
-const PLAN_VIEW_COMMAND_RE =
-  /^(?:what(?:'s|\s+is)\s+(?:my|today'?s)\s+plan|show(?:\s+me)?(?:\s+(?:my|today'?s))?\s+plan|plan)\??$/i;
-
-export function isPlanViewCommand(line: string): boolean {
-  return PLAN_VIEW_COMMAND_RE.test(line.trim());
-}
-
-/**
- * Answers an on-demand Plan-view request: looks up today's stored Plan
- * (`getPlan`) and, if one exists, prints it via `renderPlan` — the exact
- * same pure renderer `rituals/morning-ritual.ts` uses to build the Morning
- * Ritual's own notification, so what Spencer sees here can never drift from
- * what the real notification showed (this task's whole point per its brief).
- *
- * If no Plan has been generated yet today (the Morning Ritual hasn't run,
- * or it ran but produced `nothing-to-plan`/`nothing-fits`), this says so
- * plainly rather than fabricating one or failing silently — the brief's
- * second Given/When/Then.
- */
-function showPlanCommand(store: MemoryStore, io: ChatCliIo, today: IsoDate): void {
-  const stored = getPlan(store, today);
-  if (!stored) {
-    io.writeLine("No Plan has been generated for today yet.");
-    return;
-  }
-  io.writeLine(renderPlan(stored.data));
-}
-
-// ============================================================================
-// Mid-Day Re-Flow trigger command (Task 15 / Story 2.3, FR-9)
-// ============================================================================
-
-/**
- * Recognizes a Mid-Day Re-Flow trigger typed at the `yoh>` prompt — the same
- * kind of deliberately simple, clearly-documented pattern matching
- * `parseTimeBudgetCommand`/`isPlanViewCommand` use above, NOT real free-text
- * NLU. This is Task 15's own call on exact phrasing (per its brief): the
- * task description's own examples — "re-flow", "refit my day", "redo my
- * plan" — plus their natural minor variants.
- *
- * Recognized phrasing (case-insensitive, extra whitespace tolerated,
- * optional leading "please"):
- *   - a bare "reflow" / "re-flow" / "refit"
- *   - "reflow my day" / "re-flow my plan" / "refit my day" / "refit plan"
- *   - "redo my plan" / "redo my day" / "redo plan" / "redo day"
- *     (bare "redo" alone is NOT recognized — an ordinary English word too
- *     ambiguous to claim without an explicit "day"/"plan" object, unlike
- *     "reflow"/"refit", which are unambiguously Yoh-specific)
- *
- * Returns `false` (not an error) for any line that doesn't match this shape
- * at all, so `runChatCli` can fall through to the general-qa catch-all
- * exactly as it already does for an unrecognized line.
- */
-const MID_DAY_REFLOW_COMMAND_RE =
-  /^(?:please\s+)?(?:(?:re-?flow|refit)(?:\s+(?:my\s+)?(?:day|plan))?|redo\s+(?:my\s+)?(?:day|plan))\??$/i;
-
-export function isMidDayReflowCommand(line: string): boolean {
-  return MID_DAY_REFLOW_COMMAND_RE.test(line.trim());
-}
-
-/**
- * Answers a Mid-Day Re-Flow trigger: calls `rituals/mid-day-reflow.ts`'s
- * `runMidDayReflow` (the only call site of that function anywhere — see
- * this file's own module doc comment) and prints its result. Per UX-DR11,
- * a successful re-flow prints ONLY `outcome.rendered` — the short,
- * remainder-only block that function already built — never the whole
- * day's Plan again.
- */
-async function midDayReflowCommand(
-  store: MemoryStore,
-  io: ChatCliIo,
-  timeZone: string,
-  readTasks: () => Promise<readonly Task[]>,
-  now: () => Date,
-): Promise<void> {
-  const result = await runMidDayReflow({ store, readTasks, now, timeZone });
-
-  if (!result.ok) {
-    io.writeLine(`I couldn't re-flow the rest of today: ${result.error.message}`);
-    return;
-  }
-
-  switch (result.value.status) {
-    case "no-plan-today":
-      io.writeLine("There's no Plan for today yet to re-flow.");
-      return;
-    case "nothing-to-reflow":
-      io.writeLine("Nothing left to re-flow — everything remaining is already accounted for.");
-      return;
-    case "reflowed":
-      io.writeLine(result.value.rendered);
-      return;
-  }
-}
-
-// ============================================================================
-// Logistics-Only Blocker Handling (Task 16 / Story 2.4, FR-10, UX-DR12)
-// ============================================================================
-
-/**
- * Recognizes Spencer reporting a purely logistical Blocker in plain
- * language — e.g. "meeting ran over", "running late", "something came up",
- * "stuck in traffic", "call went long". Unlike `isMidDayReflowCommand`'s
- * fixed trigger phrasing, a Blocker report is genuinely open-ended free text
- * (FR-10's own example names neither a Task nor a duration), so this is a
- * documented STARTING keyword/phrase heuristic — not real NLU — covering
- * the common shapes a logistics Blocker report tends to take. It is
- * deliberately conservative rather than exhaustive: richer (LLM-based, or a
- * broader phrase library) Blocker detection is a natural future
- * improvement, not required for this task.
- *
- * Post-review tightening (Important finding): a false positive here is NOT
- * like a false positive on `parseTimeBudgetCommand`/`isPlanViewCommand` —
- * per AD-3 this path reschedules and PERSISTS a real change to Spencer's
- * Plan immediately, with no confirmation gate, including zero-crediting
- * whatever Task the current block belongs to. So every pattern below is
- * required to be a multi-word phrase with enough co-occurring signal that
- * it's implausible as an accidental substring match inside an unrelated
- * sentence — no bare single common word is allowed on its own. The first
- * version of this list included `\btraffic\b` and `\bdelayed\b` as bare
- * single-word triggers, which matched things like "what's traffic like on
- * I-95 right now" or "my package got delayed" and would have silently
- * mutated Spencer's Plan in response to an ordinary question or an
- * unrelated statement — exactly the risk AD-3's "no confirmation gate"
- * carve-out makes unusually costly to get wrong. Both are replaced below
- * with (or, for "delayed", simply not represented by) a stronger multi-word
- * phrase. `\bheld\s+up\b` and `\bran\s+over\b`/`\bwent\s+long\b`/etc. are
- * kept as-is per review guidance — already reasonably specific two-word
- * phrases unlikely to appear by accident — though "held up" in particular
- * still has a residual, accepted false-positive surface (e.g. a news
- * headline about a robbery) consistent with this being a documented STARTING
- * heuristic, not exhaustive NLU. The previous catch-all
- * `\b(meeting|call)\s+(ran|went)\b` is dropped entirely: it required no
- * continuation after "ran"/"went", so it falsely matched benign statements
- * like "the meeting went great" — it added no coverage the more specific
- * `ran over`/`ran long`/`went long` patterns below don't already provide
- * (they're subject-agnostic, so "the call ran over" is still caught by
- * `ran over` alone).
- *
- * Because these phrases can still plausibly appear inside an unrelated
- * sentence even after tightening, this check is run only AFTER
- * `parseTimeBudgetCommand`/`isPlanViewCommand`/`isMidDayReflowCommand` have
- * all already failed to match.
- */
-const BLOCKER_REPORT_PATTERNS: readonly RegExp[] = [
-  /\bran\s+over\b/i,
-  /\bran\s+long\b/i,
-  /\bwent\s+long\b/i,
-  /\bran\s+late\b/i,
-  /\brunning\s+late\b/i,
-  /\bsomething\s+came\s+up\b/i,
-  /\bstuck\s+in\s+traffic\b/i,
-  /\bheld\s+up\b/i,
-  /\bgot\s+(interrupted|blocked|stuck)\b/i,
-];
-
-export function isBlockerReportCommand(line: string): boolean {
-  const trimmed = line.trim();
-  if (trimmed.length === 0) return false;
-  return BLOCKER_REPORT_PATTERNS.some((re) => re.test(trimmed));
-}
-
-/**
- * Answers a Blocker report: calls `rituals/mid-day-reflow.ts`'s
- * `runMidDayReflow` with `blockerReported: true` (per AD-3, immediately and
- * automatically — no confirmation gate) and prints ONLY a single
- * confirmation line, per UX-DR12 — never `outcome.rendered` (that's Task
- * 15's fuller, multi-line UX-DR11 rendering, reused only by
- * `midDayReflowCommand` above). No suggestions for resolving the underlying
- * obstacle, no commentary or judgment.
- */
-async function blockerReportCommand(
-  store: MemoryStore,
-  io: ChatCliIo,
-  timeZone: string,
-  readTasks: () => Promise<readonly Task[]>,
-  now: () => Date,
-): Promise<void> {
-  const result = await runMidDayReflow({ store, readTasks, now, timeZone, blockerReported: true });
-
-  if (!result.ok) {
-    io.writeLine(`I couldn't reschedule around that: ${result.error.message}`);
-    return;
-  }
-
-  switch (result.value.status) {
-    case "no-plan-today":
-      io.writeLine("There's no Plan for today yet to reschedule.");
-      return;
-    case "nothing-to-reflow":
-      io.writeLine("Nothing needed rescheduling.");
-      return;
-    case "reflowed":
-      io.writeLine(buildBlockerConfirmationLine(result.value));
-      return;
-  }
-}
-
-// ============================================================================
-// Slip-Bump lineage view (Task 17 / Story 2.5, UX-DR19)
-// ============================================================================
-
-/**
- * Recognizes Spencer asking "why is X prioritized [today]" typed at the
- * `yoh>` prompt — the same kind of deliberately simple, clearly-documented
- * pattern matching `parseTimeBudgetCommand`/`isPlanViewCommand`/
- * `isMidDayReflowCommand` use above, NOT real free-text NLU. Recognized
- * phrasing (case-insensitive, extra whitespace tolerated, optional trailing
- * "today" and/or "?"), per the brief's own example:
- *
- *   - "why is <Task name> prioritized"
- *   - "why is <Task name> prioritized today"
- *
- * Returns the captured Task name (verbatim, original casing preserved for
- * echoing back in an error message) on a match, or `undefined` for any line
- * that doesn't match this shape at all — so `runChatCli` can fall through to
- * the general-qa catch-all exactly as it already does for an unrecognized
- * line. The captured name is matched against real Task titles
- * case-insensitively by `whyPrioritizedCommand` below, so the exact casing
- * Spencer types doesn't need to match Notion's stored title.
- */
-const WHY_PRIORITIZED_COMMAND_RE = /^why\s+is\s+(.+?)\s+prioritized(?:\s+today)?\??$/i;
-
-export function parseWhyPrioritizedCommand(line: string): string | undefined {
-  const match = WHY_PRIORITIZED_COMMAND_RE.exec(line.trim());
-  return match?.[1];
-}
-
-/**
- * Answers a Slip-Bump lineage-view request (UX-DR19): finds the named Task
- * (case-insensitive exact match on title — a documented starting heuristic,
- * same spirit as `isBlockerReportCommand`'s own "not real NLU" note; a
- * fuzzier/substring match is a natural future improvement, not required
- * here) among `tasks`, then shows its current Slip-Bump lineage — its
- * consecutive-slip count, most recent slip date, and the resulting bump
- * level/cap status from `core/slip-bump.ts`'s `computeSlipBumpLevel`
- * (AD-6).
- *
- * A Task with no stored `SlipHistory` (never slipped, or its history was
- * cleared on completion — `memory-store.ts`'s `clearSlip`, this story's own
- * AC) is reported as having no Slip-Bump applied, rather than a bump level
- * of a bare `0` with no explanation. A name that matches no Task in `tasks`
- * says so plainly rather than silently doing nothing.
- */
-function whyPrioritizedCommand(store: MemoryStore, io: ChatCliIo, tasks: readonly Task[], taskName: string): void {
-  const normalized = taskName.trim().toLowerCase();
-  const task = tasks.find((t) => t.title.trim().toLowerCase() === normalized);
-  if (!task) {
-    io.writeLine(`I couldn't find a Task named "${taskName}".`);
-    return;
-  }
-
-  const history = getSlipHistory(store, task.id);
-  if (!history || history.data.consecutiveSlipCount <= 0) {
-    io.writeLine(`"${task.title}" hasn't slipped recently — no Slip-Bump applied.`);
-    return;
-  }
-
-  const { consecutiveSlipCount, lastSlipDate } = history.data;
-  const level = computeSlipBumpLevel(consecutiveSlipCount);
-  const dayWord = consecutiveSlipCount === 1 ? "day" : "days";
-  const capNote = level.atCap ? " — at its Slip-Bump cap" : "";
-  io.writeLine(
-    `"${task.title}" has slipped ${consecutiveSlipCount} consecutive ${dayWord} (last slipped ${lastSlipDate}) — current Slip-Bump level ${level.value}${capNote}.`,
-  );
-}
+// Story 8.3: `parseTimeBudgetCommand`/`declareTimeBudget`/
+// `formatMinutesForDisplay`, `isPlanViewCommand`/`showPlanCommand`,
+// `isMidDayReflowCommand`/`midDayReflowCommand`,
+// `isBlockerReportCommand`/`blockerReportCommand`, and
+// `parseWhyPrioritizedCommand`/`whyPrioritizedCommand` all moved OUT of this
+// file entirely — the five recognizers to `core/chat-commands.ts`, the five
+// handlers to their own one-function-per-file `app/*.ts` modules
+// (`app/time-budget.ts`, `app/plan-view.ts`, `app/mid-day-reflow.ts`,
+// `app/blocker-report.ts`, `app/why-prioritized.ts`), all now dispatched by
+// `app/chat-turn.ts`'s `chatTurn` — see `runChatCli`'s own updated doc
+// comment below for where that single call now sits in this file's loop.
 
 // ============================================================================
 // Create-item command (Story 6.3 / FR-26)
@@ -1352,11 +1041,13 @@ export interface ChatCliDeps {
  * purely so tests can pin a specific instant instead of the real system
  * clock; it defaults to the real clock for the real entrypoint.
  *
- * `readTasks` (Task 15) is what `midDayReflowCommand` hands to
- * `rituals/mid-day-reflow.ts`'s `runMidDayReflow` — the same
- * `adapters/notion-adapter.ts` seam `ritual-cli.ts`'s Morning Ritual wiring
- * already uses. Task 17's `whyPrioritizedCommand` reuses this exact same
- * seam to resolve the named Task by title before looking up its Slip-Bump
+ * `readTasks` (Task 15) is what `app/chat-turn.ts`'s dispatch hands, via
+ * `chatTurnDeps`, into `rituals/mid-day-reflow.ts`'s core re-flow function
+ * (Story 8.3: through `app/mid-day-reflow.ts`'s `runReflow`, the one call
+ * site) — the same `adapters/notion-adapter.ts` seam `ritual-cli.ts`'s
+ * Morning Ritual wiring already uses. `app/why-prioritized.ts`'s
+ * `explainPriority` reuses this exact same seam to resolve the named Task
+ * by title before looking up its Slip-Bump
  * lineage. It's OPTIONAL (unlike `store`/`io`/`timeZone`/`llmClient`)
  * so every pre-Task-15 test call site above keeps compiling unchanged; its
  * default throws only if a test that never exercises the Mid-Day Re-Flow
@@ -1437,6 +1128,15 @@ export async function runChatCli({
   // the search-trigger branch below.
   const session: ChatSession = { recentMessages: [], lastSearchAnswer: undefined };
 
+  // Story 8.3 (C3): the one `ChatTurnDeps` this function's `chatTurn` call
+  // site (below) threads through — built once, since (unlike
+  // `buildAnswerDeps` below) nothing in it needs to be recomputed per line;
+  // each `app/*.ts` capability recomputes its own "today" from `now`/
+  // `timeZone` internally. `emit` is omitted — the CLI has no live stream
+  // sink, so `chatTurn` (via `app/general-question.ts`) keeps using the
+  // existing non-streaming `answerGeneralQuestion` call, unchanged.
+  const chatTurnDeps: ChatTurnDeps = { store, timeZone, now, readTasks, llmClient, session };
+
   // Built fresh at each `surfaceOpenInteractionRequests` call site (below)
   // so `today` always reflects the current instant — mirrors this
   // function's own pre-Story-8.1 convention of recomputing
@@ -1473,10 +1173,12 @@ export async function runChatCli({
     const line = await io.readLine(prompt);
     if (line === null) return;
 
-    if (line.trim().length > 0) {
-      session.recentMessages.push(line.trim());
-      if (session.recentMessages.length > RECENT_MESSAGES_WINDOW) session.recentMessages.shift();
-    }
+    // Story 8.3: recording Spencer's own recent lines into
+    // `session.recentMessages` (FR-25) moved to `app/chat-turn.ts`'s
+    // `chatTurn` itself, which now owns every line that reaches it — see
+    // that function's own doc comment for the accepted, bounded gap this
+    // creates until Task 5 folds the search/create-item/calendar-edit/
+    // save-that checks below into `chatTurn` too.
 
     // Re-check before processing anything else — a ritual running
     // concurrently (AD-10) may have opened a new interaction request since
@@ -1485,39 +1187,6 @@ export async function runChatCli({
 
     if (line.trim().length === 0) continue;
     turnComplete = true;
-
-    const timeBudgetCommand = parseTimeBudgetCommand(line);
-    if (timeBudgetCommand) {
-      const result = declareTimeBudget(store, timeBudgetCommand.totalMinutes, currentIsoDate(timeZone, now));
-      if (result.ok) {
-        io.writeLine(`Got it — today's Time Budget is set to ${formatMinutesForDisplay(result.value.data.totalMinutes)}.`);
-      } else {
-        io.writeLine(`I couldn't set that Time Budget: ${result.error.message}`);
-      }
-      continue;
-    }
-
-    if (isPlanViewCommand(line)) {
-      showPlanCommand(store, io, currentIsoDate(timeZone, now));
-      continue;
-    }
-
-    if (isMidDayReflowCommand(line)) {
-      await midDayReflowCommand(store, io, timeZone, readTasks, now);
-      continue;
-    }
-
-    if (isBlockerReportCommand(line)) {
-      await blockerReportCommand(store, io, timeZone, readTasks, now);
-      continue;
-    }
-
-    const whyPrioritizedTaskName = parseWhyPrioritizedCommand(line);
-    if (whyPrioritizedTaskName !== undefined) {
-      const tasks = await readTasks();
-      whyPrioritizedCommand(store, io, tasks, whyPrioritizedTaskName);
-      continue;
-    }
 
     // Checked BEFORE parseCreateItemCommand (F6, Epic 6 retro): its own
     // looser Notion-mention trigger also matches "save"/"file" verbs, so a
@@ -1589,29 +1258,27 @@ export async function runChatCli({
       continue;
     }
 
-    try {
-      // `chatHistory`'s last turn is already `{role: "user", content: line}`
-      // — pushed by the wrapped `io.readLine` call at the top of this loop
-      // iteration (see `withConversationHistory`'s doc comment) — so passing
-      // `chatHistory` itself IS "the current question plus everything said
-      // or done before it," with no separate `line` argument needed.
-      //
-      // Model routing (2026-09-22 revision): reuses `core/tone.ts`'s own
-      // `classifyTone(line)` — already the source of truth for which
-      // register's system prompt to send — as the signal for which model to
-      // send it to. A `"concise-educational"` line (a genuine factual/
-      // analytical question, per `classifyTone`'s own heuristic) escalates
-      // to `CLAUDE_CHAT_MODEL_CAPABLE` (Sonnet); ordinary `"casual-peer"`
-      // chat stays on `CLAUDE_CHAT_MODEL_FAST` (Haiku), `answerGeneralQuestion`'s
-      // own default. See `llm-adapter.ts`'s "Model routing" doc comment
-      // (above `CLAUDE_CHAT_MODEL_FAST`) for why this decision lives here,
-      // in `chat-cli.ts`, rather than in that file — AD-1 forbids
-      // `adapters/*.ts` importing `core/tone.ts`.
-      const chatModel = classifyTone(line) === "concise-educational" ? CLAUDE_CHAT_MODEL_CAPABLE : CLAUDE_CHAT_MODEL_FAST;
-      const response = await answerGeneralQuestion(llmClient, chatHistory, resolveToneSystemPrompt(line), chatModel);
-      io.writeLine(renderMarkdownForTerminal(response, shouldUseColor()));
-    } catch (err) {
-      io.writeLine(`I hit a problem trying to answer that: ${err instanceof Error ? err.message : String(err)}`);
+    // Story 8.3: every one of this task's five deterministic commands (Time
+    // Budget, Plan-view, Mid-Day Re-Flow, Blocker report, why-prioritized)
+    // and the general-qa catch-all are now dispatched by one call into
+    // `app/chat-turn.ts`'s `chatTurn` — this is the position the trailing
+    // general-qa block used to occupy (the classify/search-trigger block
+    // above stays exactly where it was; a search-shaped line never reaches
+    // `chatTurn` at all — Controller ruling). `chatHistory`'s last turn is
+    // already `{role: "user", content: line}` (pushed by the wrapped
+    // `io.readLine` call at the top of this loop iteration — see
+    // `withConversationHistory`'s doc comment), so it IS "the current
+    // question plus everything said or done before it" — `chatTurn` itself
+    // trims it to `MAX_CHAT_HISTORY_TURNS` (a no-op here, since
+    // `pushChatTurn` already keeps it within that bound). `chatTurn` never
+    // throws (AD-8) — every failure comes back as a `Result` failure, whose
+    // message is already the full user-facing string each capability built.
+    const chatTurnResult = await chatTurn(chatTurnDeps, { message: line, history: chatHistory });
+    if (!chatTurnResult.ok) {
+      io.writeLine(chatTurnResult.error.message);
+    } else {
+      io.writeLine(renderMarkdownForTerminal(chatTurnResult.value.reply, shouldUseColor()));
+      for (const receipt of chatTurnResult.value.receipts) io.writeLine(receipt);
     }
   }
 }

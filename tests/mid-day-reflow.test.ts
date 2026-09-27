@@ -604,7 +604,7 @@ test("runMidDayReflow: Blocker handling applies immediately and automatically â€
 // Behavior 4: no proactive trigger path exists
 // ============================================================================
 
-test("mid-day-reflow.ts's runMidDayReflow is called from exactly one place in src/: shell/chat-cli.ts", () => {
+test("mid-day-reflow.ts's runMidDayReflow is called from exactly one place in src/: app/mid-day-reflow.ts", () => {
   const srcDir = join(import.meta.dirname, "..", "src");
   const callers: string[] = [];
 
@@ -616,7 +616,11 @@ test("mid-day-reflow.ts's runMidDayReflow is called from exactly one place in sr
         walk(full);
         continue;
       }
-      if (!full.endsWith(".ts") || full.endsWith("mid-day-reflow.ts")) continue;
+      // Story 8.3: only the RITUAL file itself (`rituals/mid-day-reflow.ts`)
+      // is excluded now â€” narrowed from "any path ending in
+      // mid-day-reflow.ts", which would have wrongly also excluded this
+      // story's new `app/mid-day-reflow.ts`, the one legitimate caller.
+      if (!full.endsWith(".ts") || full === join(srcDir, "rituals", "mid-day-reflow.ts")) continue;
       const contents = readFileSync(full, "utf8");
       if (contents.includes("runMidDayReflow")) callers.push(full);
     }
@@ -624,7 +628,11 @@ test("mid-day-reflow.ts's runMidDayReflow is called from exactly one place in sr
   walk(srcDir);
 
   const relative = callers.map((f) => f.slice(srcDir.length + 1));
-  assert.deepEqual(relative, ["shell/chat-cli.ts"], "runMidDayReflow must only ever be reached via shell/chat-cli.ts's own trigger, never a ritual/cron/timer path");
+  assert.deepEqual(
+    relative,
+    ["app/mid-day-reflow.ts"],
+    "runMidDayReflow must only ever be reached via app/mid-day-reflow.ts's runReflow wrapper, never a ritual/cron/timer path or a second direct caller",
+  );
 });
 
 test("mid-day-reflow.ts is never imported by shell/ritual-cli.ts (the cron entry point)", () => {

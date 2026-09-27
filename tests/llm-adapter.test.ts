@@ -19,6 +19,7 @@ import {
   draftCalendarEditRequest,
   draftNotionPageFields,
   loadLlmAdapterConfigFromEnv,
+  streamGeneralQuestion,
   suggestFieldValue,
   CLAUDE_CHAT_MODEL_CAPABLE,
   CLAUDE_CHAT_MODEL_FAST,
@@ -64,14 +65,20 @@ function fakeClient(response: Anthropic.Message | (() => Anthropic.Message)): {
   readonly client: AnthropicMessagesClient;
 } {
   const calls: RecordedCall[] = [];
-  const client: AnthropicMessagesClient = {
-    messages: {
-      create: async (params) => {
-        calls.push({ params });
-        return typeof response === "function" ? response() : response;
-      },
-    },
-  };
+
+  // Overloaded to match `AnthropicMessagesClient.messages.create`'s widened
+  // (Story 8.3) shape exactly — this fake never actually streams, but must
+  // still satisfy the streaming overload structurally.
+  function create(params: Anthropic.MessageCreateParamsNonStreaming): Promise<Anthropic.Message>;
+  function create(params: Anthropic.MessageCreateParamsStreaming): Promise<AsyncIterable<Anthropic.RawMessageStreamEvent>>;
+  async function create(
+    params: Anthropic.MessageCreateParamsNonStreaming | Anthropic.MessageCreateParamsStreaming,
+  ): Promise<Anthropic.Message | AsyncIterable<Anthropic.RawMessageStreamEvent>> {
+    calls.push({ params: params as Anthropic.MessageCreateParamsNonStreaming });
+    return typeof response === "function" ? response() : response;
+  }
+
+  const client: AnthropicMessagesClient = { messages: { create } };
   return { calls, client };
 }
 
@@ -176,6 +183,80 @@ test("answerGeneralQuestion still returns a real response for a general/factual 
   const response = await answerGeneralQuestion(client, oneTurn("at what temperature does water boil"));
 
   assert.ok(response.length > 0);
+});
+
+// ============================================================================
+// streamGeneralQuestion — the streaming twin (Story 8.3)
+// ============================================================================
+
+/** A fake streaming-capable client: `stream: true` yields `chunks` as `content_block_delta` events; otherwise it behaves like `fakeClient` above. */
+function fakeStreamingClient(chunks: readonly string[]): {
+  readonly calls: Array<{ readonly stream?: boolean }>;
+  readonly client: AnthropicMessagesClient;
+} {
+  const calls: Array<{ readonly stream?: boolean }> = [];
+  const client = {
+    messages: {
+      create: async (params: Anthropic.MessageCreateParamsNonStreaming | Anthropic.MessageCreateParamsStreaming) => {
+        calls.push(params);
+        if ("stream" in params && params.stream) {
+          async function* events(): AsyncGenerator<Anthropic.RawMessageStreamEvent> {
+            for (const text of chunks) {
+              yield {
+                type: "content_block_delta",
+                index: 0,
+                delta: { type: "text_delta", text },
+              } as Anthropic.RawMessageStreamEvent;
+            }
+          }
+          return events();
+        }
+        return textMessage(chunks.join(""));
+      },
+    },
+  } as unknown as AnthropicMessagesClient;
+  return { calls, client };
+}
+
+test("streamGeneralQuestion yields each text_delta chunk in order and requests stream: true", async () => {
+  const { calls, client } = fakeStreamingClient(["Hel", "lo the", "re."]);
+  const received: string[] = [];
+
+  for await (const chunk of streamGeneralQuestion(client, oneTurn("hi"))) {
+    received.push(chunk);
+  }
+
+  assert.deepEqual(received, ["Hel", "lo the", "re."]);
+  assert.equal(calls[0]?.stream, true);
+});
+
+test("streamGeneralQuestion throws if the stream produces no text at all", async () => {
+  const { client } = fakeStreamingClient([]);
+
+  await assert.rejects(async () => {
+    for await (const _chunk of streamGeneralQuestion(client, oneTurn("hi"))) {
+      // drain
+    }
+  }, /no text content/);
+});
+
+test("streamGeneralQuestion throws for an empty history, same as answerGeneralQuestion", async () => {
+  const { client } = fakeStreamingClient(["x"]);
+
+  await assert.rejects(async () => {
+    for await (const _chunk of streamGeneralQuestion(client, [])) {
+      // drain
+    }
+  }, /no conversation history/);
+});
+
+test("the non-streaming answerGeneralQuestion path is untouched by the streaming addition", async () => {
+  const { calls, client } = fakeStreamingClient(["Two plus two is four."]);
+
+  const reply = await answerGeneralQuestion(client, oneTurn("2+2?"));
+
+  assert.equal(reply, "Two plus two is four.");
+  assert.equal(calls[0]?.stream, undefined);
 });
 
 // ============================================================================
