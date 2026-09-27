@@ -298,7 +298,13 @@ export default function TasksPage(): React.JSX.Element {
   let rowIndex = 0;
 
   return (
-    <div ref={rootRef} className="flex h-full flex-col gap-[22px] p-8 pb-24">
+    // Polish-2 (Spencer's live-app report: "I do not want to be able to
+    // scroll pages while my cursor is in the tasks section"): the generic
+    // wheel-nav opt-out (`lib/wheelNav.ts`) — a wheel gesture anywhere in
+    // this subtree only ever scrolls Tasks' own content, even at an edge
+    // that would otherwise trigger a page change. Sidebar clicks and the
+    // ↑/↓ buttons/keys are unaffected.
+    <div ref={rootRef} data-wheel-nav="off" className="flex h-full flex-col gap-[22px] p-8 pb-24">
       <header className="flex items-center justify-between gap-4">
         <h1 className="m-0 font-body text-display font-bold tracking-tight text-ink-primary">Tasks</h1>
         <div className="flex items-center gap-3">

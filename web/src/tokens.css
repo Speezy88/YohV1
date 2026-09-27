@@ -88,6 +88,12 @@
   --text-label: 11.5px;
   --text-numerals: 13.6px;
   --text-caption: 10.6px;
+  /* Polish-2 (Spencer's live-app report: "the daily google calendar
+     visualization also is hard to see"): the Calendar Day View's hour-of-day
+     labels need to be at least 12px — --text-caption (10.6px) and
+     --text-label (11.5px) both fall just short. Used only by
+     `CalendarDayView.tsx`'s hour gutter. */
+  --text-caption-lg: 12.5px;
   --text-body: 17.5px;
   --text-small: 15px;
 

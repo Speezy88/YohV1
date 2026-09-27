@@ -88,6 +88,20 @@
  * "(fixed)" suffix is also now the shorter "· fixed" (matching the
  * "Title · 10:30" separator convention already used elsewhere in this
  * file) so it reliably fits alongside the title before truncating.
+ *
+ * Polish-2 (2026-09-27, Spencer's live-app report — "the daily google
+ * calendar visualization also is hard to see" — real bugs, not a redesign):
+ * `Home.tsx` now gives this component the calendar panel's ENTIRE column
+ * height (no more fixed 380px card), so 1. `HOUR_HEIGHT_PX` grows 56->72px
+ * and every text size/min-height here grows with it (hour labels >=12px,
+ * event titles >=13px semibold); 2. a fixed `BLOCK_GAP_PX` is trimmed off
+ * every block at/above the readable-height floor so back-to-back blocks
+ * read as separate boxes, not one seamless slab (`applyBlockGap`); 3. break
+ * blocks get their own quiet (outline, no fill/shadow/bold) treatment, with
+ * a label only once the box is tall enough to hold it
+ * (`BREAK_LABEL_MIN_HEIGHT_PX`); 4. the mount-time auto-scroll now targets
+ * "now" (or the first event, if it starts earlier) sitting about a third
+ * of the way down the panel, rather than a fixed lead above the top edge.
  */
 import { useLayoutEffect, useRef } from "react";
 import type { HomeCalendarBlock } from "../../../src/types/api.ts";
@@ -98,11 +112,16 @@ import { layoutOverlappingIntervals } from "../lib/calendarLayout.ts";
 const DAY_START_HOUR = 6;
 const DAY_END_HOUR = 23;
 const WINDOW_MINUTES = (DAY_END_HOUR - DAY_START_HOUR) * 60;
-/** Per-hour row height, in px — the approved mockup's own Google-style grid. */
-const HOUR_HEIGHT_PX = 56;
+/**
+ * Per-hour row height, in px. Polish-2 (Spencer's live-app report: "the
+ * daily google calendar visualization also is hard to see" — back-to-back
+ * short Plan blocks collapsed into unreadable stacked slivers at the old
+ * 56px/hour): bumped to 72px/hour, this task's own readability floor, now
+ * that the panel takes the calendar's full column height instead of a
+ * fixed 380px card (`Home.tsx`) — there's room for it.
+ */
+const HOUR_HEIGHT_PX = 72;
 const CONTENT_HEIGHT_PX = (DAY_END_HOUR - DAY_START_HOUR) * HOUR_HEIGHT_PX;
-/** How far above "now" the view opens, so the current moment isn't pinned to the very top edge. */
-const SCROLL_LEAD_PX = HOUR_HEIGHT_PX;
 /** The hour-label gutter's width, in px — the approved mockup's own ~52px right-aligned label column. */
 const HOUR_LABEL_WIDTH_PX = 52;
 /** Where blocks/the now-line start — clear of the label gutter, plus a small gap (mockup: labels end ~62px, blocks start ~70px). */
@@ -111,6 +130,24 @@ const CONTENT_LEFT_PX = HOUR_LABEL_WIDTH_PX + 12;
 const CONTENT_RIGHT_PX = 8;
 /** Gap between side-by-side columns of overlapping blocks, in px. */
 const COLUMN_GAP_PX = 3;
+/**
+ * Polish-2 (Spencer's live-app report, the other half of the "hard to see"
+ * bug): a small fixed visual gap trimmed off a block's rendered bottom edge
+ * so two vertically back-to-back blocks (one ending exactly when the next
+ * starts) read as two separate boxes, not one seamless slab. Only trimmed
+ * off a block that's already comfortably at/above `MIN_BLOCK_HEIGHT_PX`
+ * (see `applyBlockGap`) — a block still being bumped UP toward that floor
+ * (capped by how close its neighbor is) keeps every px it can get instead.
+ */
+const BLOCK_GAP_PX = 2;
+/**
+ * A break block's label is dropped entirely below this rendered height —
+ * "a label only if tall enough" (this task's own brief) — rather than
+ * clipping/truncating text into an unreadable sliver. The block itself
+ * still renders (so its low-emphasis fill/outline stays visible as a time
+ * marker), just without text that wouldn't fit legibly anyway.
+ */
+const BREAK_LABEL_MIN_HEIGHT_PX = 18;
 /** Polish-1: a block shorter than this shows just its (truncated) title — no time, no room for anything else. */
 const TITLE_ONLY_MINUTES = 20;
 /** Polish-1: a block shorter than this (but at/above `TITLE_ONLY_MINUTES`) shows a single-line "Title · 10:30" label instead of the full multi-line treatment. */
@@ -122,8 +159,22 @@ const VERY_SHORT_MINUTES = 45;
  * `HOUR_HEIGHT_PX` = 56px/hour rendered at just ~9px tall. 22px comfortably
  * fits one `text-small` line plus the compact block's own minimal vertical
  * padding (`py-0.5`, see the single-line className below).
+ * Polish-2: bumped from 22px to 28px alongside the hour-height/font-size
+ * increase, so a bumped-up block comfortably fits the now-`font-semibold`,
+ * >=13px event title.
  */
-const MIN_BLOCK_HEIGHT_PX = 22;
+const MIN_BLOCK_HEIGHT_PX = 28;
+
+/**
+ * Polish-2: trims `BLOCK_GAP_PX` off a block's rendered height, but only
+ * once it's already at/above `MIN_BLOCK_HEIGHT_PX` — a block still relying
+ * on `capBlockHeight`'s bump-up-toward-the-floor logic (a genuinely tiny
+ * block squeezed by a close neighbor) keeps its full computed height
+ * instead of losing even more room to the gap.
+ */
+function applyBlockGap(height: number): number {
+  return height > MIN_BLOCK_HEIGHT_PX ? height - BLOCK_GAP_PX : height;
+}
 
 /** Pixels from the top of the full-day content, clamped — an event or the now-line outside 6am-11pm visually pins to an edge rather than disappearing or scrolling off into nothing. */
 function offsetPx(minutesFromStart: number): number {
@@ -234,12 +285,17 @@ export function CalendarDayView({ blocks, timeZone, now = () => new Date() }: Ca
   // Every block's own natural (un-bumped) top, for `capBlockHeight`'s "don't grow past where the next block starts" guard.
   const naturalTops = blocks.map((b) => ({ id: b.id, top: isoOffsetPx(b.start, timeZone) }));
 
-  // Opens already scrolled to the current time — a layout effect (before
-  // paint) so there is no visible jump from "top of day" to "now".
+  // Opens already scrolled so the current time — or the first event, if it
+  // starts EARLIER than now (this task's own brief) — sits about a third of
+  // the way down the panel, not pinned to the very top. A layout effect
+  // (before paint) so there is no visible jump from "top of day" to this
+  // position.
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    el.scrollTop = Math.max(0, nowTopPx - SCROLL_LEAD_PX);
+    const firstBlockTopPx = blocks.length > 0 ? Math.min(...blocks.map((b) => isoOffsetPx(b.start, timeZone))) : undefined;
+    const anchorPx = firstBlockTopPx === undefined ? nowTopPx : Math.min(nowTopPx, firstBlockTopPx);
+    el.scrollTop = Math.max(0, anchorPx - el.clientHeight / 3);
     // Mount-only: this is where the view OPENS, not something that should
     // fight Spencer's own later scrolling as time passes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -260,7 +316,11 @@ export function CalendarDayView({ blocks, timeZone, now = () => new Date() }: Ca
             <div className="flex items-start">
               <span
                 style={{ width: HOUR_LABEL_WIDTH_PX, marginTop: -8 }}
-                className="shrink-0 pr-2 text-right font-body text-caption font-bold uppercase tracking-wide text-ink-secondary"
+                // Polish-2 (real bug: "hard to see"): `text-caption` (10.6px)
+                // was below the 12px readability floor this task sets for
+                // hour labels; `text-caption-lg` (tokens.css) is the new
+                // >=12px token, ink-secondary unchanged.
+                className="shrink-0 pr-2 text-right font-body text-caption-lg font-bold uppercase tracking-wide text-ink-secondary"
               >
                 {hourLabel(h)}
               </span>
@@ -271,6 +331,10 @@ export function CalendarDayView({ blocks, timeZone, now = () => new Date() }: Ca
         {blocks.map((b) => {
           const readOnly = b.past || b.completed;
           const isFixed = b.kind === "fixed";
+          // Polish-2 (this task's brief): break blocks are visually quiet —
+          // a low-emphasis outline, no fill/shadow/bold — so they never
+          // compete with Work/fixed events for attention.
+          const isBreak = b.kind === "break";
           const label = displayLabel(b.label);
           // Fix round 2 (review finding 2): "· fixed" (short, always fits
           // one truncated line with the label) instead of " (fixed)" (long
@@ -279,32 +343,49 @@ export function CalendarDayView({ blocks, timeZone, now = () => new Date() }: Ca
           const baseLabel = isFixed ? `${label} · fixed` : label;
           const top = isoOffsetPx(b.start, timeZone);
           const bottom = isoOffsetPx(b.end, timeZone);
-          const height = capBlockHeight(top, bottom, naturalTops, b.id);
+          // A break never gets bumped up toward `MIN_BLOCK_HEIGHT_PX` the
+          // way a Work/fixed block does — "a label only if tall enough"
+          // (this task's own brief) is decided against its REAL duration,
+          // not an artificially grown box; it just renders at its true
+          // size (still gap-trimmed like every other block).
+          const height = applyBlockGap(isBreak ? Math.max(bottom - top, 0) : capBlockHeight(top, bottom, naturalTops, b.id));
           const placement = columns.get(b.id) ?? { column: 0, columnCount: 1 };
           const { left, width } = columnStyle(placement.column, placement.columnCount);
           const durationMinutes = (new Date(b.end).getTime() - new Date(b.start).getTime()) / 60_000;
           const content = blockLabelContent(baseLabel, durationMinutes, b.start, timeZone, isFixed);
+          // Polish-2: a break's label only shows once the (post-gap)
+          // rendered box is tall enough to hold it legibly — the box itself
+          // still renders either way, as a quiet time marker.
+          const showLabel = !isBreak || height >= BREAK_LABEL_MIN_HEIGHT_PX;
           // Fix round (review finding 2): a compact single-line block gets
           // minimal vertical padding plus flex-centering (so its one line of
           // text stays vertically centered regardless of exactly how much
           // `capBlockHeight` could grant it) instead of the normal block's
           // fixed top-anchored padding.
           const layoutClasses = content.singleLine ? "flex items-center py-0.5" : "py-1.5";
+          // Event titles are semibold, >=13px (--text-small, 15px), on a
+          // solid/opaque fill (this task's brief) — except a break block,
+          // deliberately quiet (an outline, no fill, not bold) so it never
+          // competes with Work/fixed events.
+          const kindClasses = isFixed
+            ? "border border-rim-structural bg-[repeating-linear-gradient(45deg,var(--color-event-fixed-stripe-a),var(--color-event-fixed-stripe-a)_6px,var(--color-event-fixed-stripe-b)_6px,var(--color-event-fixed-stripe-b)_12px)] text-event-fixed-ink font-semibold"
+            : isBreak
+              ? "border border-dashed border-rim-structural/60 bg-transparent text-ink-secondary"
+              : "bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end text-on-accent-solid shadow-extruded-sm font-semibold";
           return (
             <div
               key={b.id}
               data-testid="calendar-block"
               data-kind={b.kind}
               aria-disabled={readOnly}
+              aria-label={showLabel ? undefined : content.text}
               className={
-                (isFixed
-                  ? "border border-rim-structural bg-[repeating-linear-gradient(45deg,var(--color-event-fixed-stripe-a),var(--color-event-fixed-stripe-a)_6px,var(--color-event-fixed-stripe-b)_6px,var(--color-event-fixed-stripe-b)_12px)] text-event-fixed-ink"
-                  : "bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end text-on-accent-solid shadow-extruded-sm") +
-                ` absolute right-2 overflow-hidden rounded-sm px-3 ${layoutClasses} font-body text-small ${readOnly ? "opacity-60" : ""} ${b.completed ? "line-through" : ""} ${content.singleLine ? "truncate whitespace-nowrap" : ""}`
+                `${kindClasses} absolute right-2 overflow-hidden rounded-sm px-3 ${layoutClasses} font-body text-small ` +
+                `${readOnly ? "opacity-60" : ""} ${b.completed ? "line-through" : ""} ${content.singleLine ? "truncate whitespace-nowrap" : ""}`
               }
               style={{ top, height, left, ...(width !== undefined ? { width } : {}) }}
             >
-              {content.text}
+              {showLabel ? content.text : null}
             </div>
           );
         })}

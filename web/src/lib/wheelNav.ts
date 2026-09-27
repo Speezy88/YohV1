@@ -46,6 +46,13 @@ export function isAtVerticalScrollEdge(target: Element, root: Element, direction
  * not yet at its edge, is left alone (no `preventDefault`, so normal
  * scrolling still happens); one continuous gesture past the edge still
  * fires only once, via the same idle-timeout debounce `swipe.ts` used.
+ *
+ * Polish-2 (Spencer's live-app report: "I do not want to be able to scroll
+ * pages while my cursor is in the tasks section"): a generic opt-out. Any
+ * ancestor of the wheel target marked `data-wheel-nav="off"` (the Tasks
+ * page root, see `pages/Tasks.tsx`) makes this hook ignore the event
+ * entirely — no `preventDefault`, no `onNavigate` — even at a scroll edge.
+ * Other pages are unaffected and keep the existing edge-aware behavior.
  */
 export function useWheelPageNavigation(rootRef: React.RefObject<HTMLElement | null>, onNavigate: (direction: 1 | -1) => void): void {
   const gesture = useRef<{ fired: boolean; idleTimer: ReturnType<typeof setTimeout> | undefined }>({ fired: false, idleTimer: undefined });
@@ -58,8 +65,10 @@ export function useWheelPageNavigation(rootRef: React.RefObject<HTMLElement | nu
 
     const onWheel = (e: WheelEvent): void => {
       if (Math.abs(e.deltaY) <= Math.abs(e.deltaX) || e.deltaY === 0 || e.ctrlKey) return; // horizontal-dominant, zero-delta, or pinch-zoom
+      if (!(e.target instanceof Element)) return;
+      if (e.target.closest('[data-wheel-nav="off"]')) return; // an opted-out subtree (e.g. the Tasks page) owns every wheel gesture inside it
       const direction: 1 | -1 = e.deltaY > 0 ? 1 : -1;
-      if (!(e.target instanceof Element) || !isAtVerticalScrollEdge(e.target, root, direction)) return;
+      if (!isAtVerticalScrollEdge(e.target, root, direction)) return;
 
       e.preventDefault();
       const g = gesture.current;

@@ -159,10 +159,22 @@ export function PageShell(): React.JSX.Element {
                   data-testid={`page-${page.id}`}
                   aria-hidden={hidden ? true : undefined}
                   inert={hidden ? true : undefined}
+                  // Polish-2 (real bug from a live 1440x760 screenshot): each
+                  // page's own slot is exactly one viewport tall, but its
+                  // ancestor's `overflow-hidden` only clips the WHOLE
+                  // translated column at the visible viewport's own edges —
+                  // it does nothing about one page's content overflowing
+                  // past the bottom of ITS OWN slot into the slot directly
+                  // below (the next page in the stack), which is what was
+                  // visible on screen. `overflow-hidden` here clips every
+                  // page to its own box, so a page can never paint into a
+                  // neighboring page's slot no matter how tall its content
+                  // gets — a page that needs to show more scrolls
+                  // internally instead (Home's calendar panel, Tasks' list).
                   className={
                     reducedMotion
-                      ? `absolute inset-0 h-full ease-out ${isActive ? "opacity-100" : "pointer-events-none opacity-0"}`
-                      : `h-full shrink-0 ${isActive ? "" : "pointer-events-none"}`
+                      ? `absolute inset-0 h-full overflow-hidden ease-out ${isActive ? "opacity-100" : "pointer-events-none opacity-0"}`
+                      : `h-full shrink-0 overflow-hidden ${isActive ? "" : "pointer-events-none"}`
                   }
                   style={{
                     transitionProperty: reducedMotion ? "opacity" : undefined,

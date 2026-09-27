@@ -9,6 +9,19 @@
  * because Spencer looked at October — so no server round trip is needed;
  * the highlight only ever appears on the month/year that actually contains
  * `today`.
+ *
+ * Polish-2 (Spencer's live-app report: "I want the right section... to
+ * primarily have the daily view in the entire section and have the option
+ * to switch to monthly view"): this no longer renders as its own separate
+ * card above the Calendar Day View — `Home.tsx` now hosts ONE calendar
+ * panel with a Day/Month toggle, and this component is that panel's Month
+ * content, sized to fill whatever space the panel gives it (`h-full`, no
+ * own card chrome/shadow) rather than a small fixed-size widget. `onSelectDay`
+ * (optional, for backward compat with any other caller/test) fires on any
+ * day-cell click — since only today's data exists client-side, Day view
+ * always shows today regardless of which day was clicked (this task's own
+ * brief: "do not fake other days' events"), so a click just means "switch
+ * back to Day."
  */
 import { useState } from "react";
 
@@ -31,6 +44,8 @@ const MONTH_NAMES = [
 export interface MiniMonthProps {
   /** ISO-8601 `YYYY-MM-DD`, the server's "today" (AD-17). */
   readonly today: string;
+  /** Polish-2: called on any day-cell click — the Month view's own signal to switch back to Day (see this file's doc comment). */
+  readonly onSelectDay?: () => void;
 }
 
 /** Every calendar day-of-month cell for `(year, month)` (`month` 0-based), padded with `undefined` so the grid always starts on the correct weekday column. */
@@ -42,7 +57,7 @@ function buildMonthGrid(year: number, month: number): readonly (number | undefin
   return cells;
 }
 
-export function MiniMonth({ today }: MiniMonthProps): React.JSX.Element {
+export function MiniMonth({ today, onSelectDay }: MiniMonthProps): React.JSX.Element {
   const [todayYear, todayMonth, todayDay] = today.split("-").map(Number) as [number, number, number];
   const [viewed, setViewed] = useState({ year: todayYear, month: todayMonth - 1 });
 
@@ -53,9 +68,9 @@ export function MiniMonth({ today }: MiniMonthProps): React.JSX.Element {
   const goToNextMonth = (): void => setViewed((v) => (v.month === 11 ? { year: v.year + 1, month: 0 } : { year: v.year, month: v.month + 1 }));
 
   return (
-    <section aria-label={`${MONTH_NAMES[viewed.month]} ${viewed.year}`} className="flex flex-col gap-2.5 rounded-2xl bg-surface-raised px-6 py-5 shadow-extruded-lg">
+    <section aria-label={`${MONTH_NAMES[viewed.month]} ${viewed.year}`} className="flex h-full min-h-0 flex-col gap-4">
       <div className="flex items-center justify-between">
-        <span className="font-body text-title font-bold text-ink-primary">
+        <span className="font-body text-heading font-bold text-ink-primary">
           {MONTH_NAMES[viewed.month]} {viewed.year}
         </span>
         <div className="flex gap-2">
@@ -63,9 +78,9 @@ export function MiniMonth({ today }: MiniMonthProps): React.JSX.Element {
             type="button"
             aria-label="Previous month"
             onClick={goToPreviousMonth}
-            className="flex size-[34px] items-center justify-center rounded-md border-[length:var(--rim-width)] border-rim-interactive text-ink-primary shadow-extruded-sm"
+            className="flex size-[38px] items-center justify-center rounded-md border-[length:var(--rim-width)] border-rim-interactive text-ink-primary shadow-extruded-sm"
           >
-            <svg aria-hidden="true" viewBox="0 0 24 24" width={14} height={14} fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round">
+            <svg aria-hidden="true" viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round">
               <path d="M15 5l-7 7 7 7" />
             </svg>
           </button>
@@ -73,17 +88,20 @@ export function MiniMonth({ today }: MiniMonthProps): React.JSX.Element {
             type="button"
             aria-label="Next month"
             onClick={goToNextMonth}
-            className="flex size-[34px] items-center justify-center rounded-md border-[length:var(--rim-width)] border-rim-interactive text-ink-primary shadow-extruded-sm"
+            className="flex size-[38px] items-center justify-center rounded-md border-[length:var(--rim-width)] border-rim-interactive text-ink-primary shadow-extruded-sm"
           >
-            <svg aria-hidden="true" viewBox="0 0 24 24" width={14} height={14} fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round">
+            <svg aria-hidden="true" viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round">
               <path d="M9 5l7 7-7 7" />
             </svg>
           </button>
         </div>
       </div>
-      <div className="grid grid-cols-7 gap-0.5 text-center font-body text-small">
+      {/* Polish-2: "larger, filling the panel" (this task's own brief) — a
+          fluid grid (min-h-0 flex-1) instead of a small fixed-size widget,
+          each row sharing the panel's remaining height evenly. */}
+      <div className="grid min-h-0 flex-1 grid-cols-7 grid-rows-[auto_repeat(6,minmax(0,1fr))] gap-1 text-center font-body">
         {WEEKDAY_LABELS.map((label, i) => (
-          <span key={i} className="py-1 font-bold text-ink-secondary">
+          <span key={i} className="py-1 text-small font-bold text-ink-secondary">
             {label}
           </span>
         ))}
@@ -91,18 +109,21 @@ export function MiniMonth({ today }: MiniMonthProps): React.JSX.Element {
           day === undefined ? (
             <span key={i} />
           ) : (
-            <span key={i} className="flex items-center justify-center py-1.5">
+            <button
+              key={i}
+              type="button"
+              onClick={() => onSelectDay?.()}
+              aria-label={isViewingCurrentMonth && day === todayDay ? `Today, ${MONTH_NAMES[viewed.month]} ${day}` : `${MONTH_NAMES[viewed.month]} ${day}`}
+              className="flex items-center justify-center"
+            >
               {isViewingCurrentMonth && day === todayDay ? (
-                <span
-                  aria-label={`Today, ${MONTH_NAMES[viewed.month]} ${day}`}
-                  className="flex size-[30px] items-center justify-center rounded-full bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end font-bold text-on-accent-solid"
-                >
+                <span className="flex size-[38px] items-center justify-center rounded-full bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end text-title font-bold text-on-accent-solid">
                   {day}
                 </span>
               ) : (
-                day
+                <span className="text-body text-ink-primary">{day}</span>
               )}
-            </span>
+            </button>
           ),
         )}
       </div>

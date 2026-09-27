@@ -102,6 +102,14 @@ describe("TasksPage", () => {
     vi.restoreAllMocks();
   });
 
+  // Polish-2 (Spencer's live-app report: "I do not want to be able to
+  // scroll pages while my cursor is in the tasks section"): the page root
+  // carries the generic wheel-nav opt-out marker `lib/wheelNav.ts` reads.
+  it("the page root opts out of wheel page-navigation (data-wheel-nav=\"off\")", async () => {
+    await renderLoaded();
+    expect(screen.getByRole("heading", { name: "Tasks", level: 1 }).closest('[data-wheel-nav="off"]')).not.toBeNull();
+  });
+
   it("renders the server's groups with counts, overdue dates in danger ink, and Add badges for missing fields", async () => {
     await renderLoaded();
     expect(screen.getByRole("heading", { name: "Overdue · 1" })).toHaveClass("text-ink-danger");

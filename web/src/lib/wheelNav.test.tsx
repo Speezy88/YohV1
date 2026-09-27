@@ -1,5 +1,7 @@
-import { describe, it, expect } from "vitest";
-import { isAtVerticalScrollEdge } from "./wheelNav.ts";
+import { describe, it, expect, vi } from "vitest";
+import { useRef } from "react";
+import { render } from "@testing-library/react";
+import { isAtVerticalScrollEdge, useWheelPageNavigation } from "./wheelNav.ts";
 
 function scrollable(overrides: { scrollHeight: number; clientHeight: number; scrollTop: number }): HTMLDivElement {
   const el = document.createElement("div");
@@ -71,5 +73,49 @@ describe("isAtVerticalScrollEdge", () => {
     notActuallyScrollable.appendChild(child);
     root.appendChild(notActuallyScrollable);
     expect(isAtVerticalScrollEdge(child, root, 1)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------
+// Polish-2 ("I do not want to be able to scroll pages while my cursor is
+// in the tasks section"): `data-wheel-nav="off"` makes useWheelPageNavigation
+// ignore a wheel gesture entirely — no navigate, no preventDefault — even
+// when the gesture is at a scroll edge (which would otherwise navigate).
+// ---------------------------------------------------------------------
+
+function Harness({ onNavigate }: { readonly onNavigate: (direction: 1 | -1) => void }): React.JSX.Element {
+  const rootRef = useRef<HTMLDivElement>(null);
+  useWheelPageNavigation(rootRef, onNavigate);
+  return (
+    <div ref={rootRef} data-testid="root">
+      <div data-wheel-nav="off" data-testid="opted-out">
+        <span data-testid="inside-opt-out" />
+      </div>
+      <span data-testid="outside-opt-out" />
+    </div>
+  );
+}
+
+function fireWheel(target: Element, deltaY: number): boolean {
+  const event = new WheelEvent("wheel", { deltaY, deltaX: 0, bubbles: true, cancelable: true });
+  target.dispatchEvent(event);
+  return event.defaultPrevented;
+}
+
+describe("useWheelPageNavigation — data-wheel-nav=\"off\" opt-out", () => {
+  it("a wheel gesture inside a data-wheel-nav=\"off\" subtree, at the scroll edge, calls neither navigate nor preventDefault", () => {
+    const onNavigate = vi.fn();
+    const { getByTestId } = render(<Harness onNavigate={onNavigate} />);
+    const prevented = fireWheel(getByTestId("inside-opt-out"), 100); // no scrollable ancestor => trivially "at the edge"
+    expect(onNavigate).not.toHaveBeenCalled();
+    expect(prevented).toBe(false);
+  });
+
+  it("outside the opt-out subtree, existing edge-aware navigation behavior is unchanged", () => {
+    const onNavigate = vi.fn();
+    const { getByTestId } = render(<Harness onNavigate={onNavigate} />);
+    const prevented = fireWheel(getByTestId("outside-opt-out"), 100);
+    expect(onNavigate).toHaveBeenCalledWith(1);
+    expect(prevented).toBe(true);
   });
 });

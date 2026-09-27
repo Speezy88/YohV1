@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { MiniMonth } from "./MiniMonth.tsx";
 
@@ -33,5 +33,27 @@ describe("MiniMonth", () => {
     render(<MiniMonth today="2026-12-15" />);
     fireEvent.click(screen.getByRole("button", { name: "Next month" }));
     expect(screen.getByText("January 2027")).toBeInTheDocument();
+  });
+
+  // Polish-2: this task's brief — "Clicking a day in Month switches back to
+  // Day"; only today's data exists client-side, so any day click just
+  // means "go back to Day," never a fake other-day view.
+  it("clicking today's day cell calls onSelectDay", () => {
+    const onSelectDay = vi.fn();
+    render(<MiniMonth today="2026-09-27" onSelectDay={onSelectDay} />);
+    fireEvent.click(screen.getByLabelText("Today, September 27"));
+    expect(onSelectDay).toHaveBeenCalledTimes(1);
+  });
+
+  it("clicking a non-today day cell ALSO calls onSelectDay — a click never fakes another day's data", () => {
+    const onSelectDay = vi.fn();
+    render(<MiniMonth today="2026-09-27" onSelectDay={onSelectDay} />);
+    fireEvent.click(screen.getByLabelText("September 15"));
+    expect(onSelectDay).toHaveBeenCalledTimes(1);
+  });
+
+  it("with no onSelectDay given, a day click doesn't throw", () => {
+    render(<MiniMonth today="2026-09-27" />);
+    expect(() => fireEvent.click(screen.getByLabelText("September 15"))).not.toThrow();
   });
 });

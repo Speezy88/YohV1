@@ -55,6 +55,76 @@ describe("CalendarDayView", () => {
   });
 
   // ---------------------------------------------------------------------
+  // Polish-2 (Spencer's live-app report: "the daily google calendar
+  // visualization also is hard to see") — hour height/label size, event
+  // title weight/contrast, the vertical gap between back-to-back blocks,
+  // and the quiet break-block treatment.
+  // ---------------------------------------------------------------------
+
+  it("hour rows are at least 72px tall (this task's own readability floor)", () => {
+    render(<CalendarDayView blocks={[]} timeZone={UTC} now={NOON_UTC} />);
+    // "6AM"'s label span -> the row's flex wrapper -> the positioned (top-styled) hour row div.
+    const sixAm = screen.getByText("6AM").parentElement!.parentElement as HTMLElement;
+    const sevenAm = screen.getByText("7AM").parentElement!.parentElement as HTMLElement;
+    const rowHeight = topPx(sevenAm) - topPx(sixAm);
+    expect(rowHeight).toBeGreaterThanOrEqual(72);
+  });
+
+  it("hour labels render at least 12px (text-caption-lg), in ink-secondary", () => {
+    render(<CalendarDayView blocks={[]} timeZone={UTC} now={NOON_UTC} />);
+    const label = screen.getByText("6AM");
+    expect(label).toHaveClass("text-caption-lg");
+    expect(label).toHaveClass("text-ink-secondary");
+  });
+
+  it("a Work event's title is semibold on its solid (non-translucent) accent fill", () => {
+    render(<CalendarDayView blocks={[block({ id: "b1", kind: "work" })]} timeZone={UTC} now={NOON_UTC} />);
+    const el = screen.getByTestId("calendar-block");
+    expect(el).toHaveClass("font-semibold");
+    expect(el).toHaveClass("text-small"); // 15px, >= the 13px floor
+    expect(el.className).not.toMatch(/\/\d\d\)|opacity-[0-5]\d\b/); // no translucency modifier on the fill itself
+  });
+
+  it("a fixed anchor's title is also semibold", () => {
+    render(<CalendarDayView blocks={[block({ id: "e1", kind: "fixed" })]} timeZone={UTC} now={NOON_UTC} />);
+    expect(screen.getByTestId("calendar-block")).toHaveClass("font-semibold");
+  });
+
+  it("two back-to-back (touching) blocks, both above the min-height floor, render with a visible gap between them — not seamlessly flush", () => {
+    render(
+      <CalendarDayView
+        timeZone={UTC}
+        now={NOON_UTC}
+        blocks={[
+          block({ id: "a", kind: "work", label: "First", start: "2026-09-25T13:00:00.000Z", end: "2026-09-25T13:30:00.000Z" }),
+          block({ id: "b", kind: "work", label: "Second", start: "2026-09-25T13:30:00.000Z", end: "2026-09-25T14:00:00.000Z" }),
+        ]}
+      />,
+    );
+    const [first, second] = screen.getAllByTestId("calendar-block") as HTMLElement[];
+    const firstBottom = topPx(first!) + Number.parseFloat(first!.style.height);
+    const secondTop = topPx(second!);
+    expect(secondTop - firstBottom).toBeGreaterThanOrEqual(2);
+  });
+
+  it("a break block renders a quiet outline, no fill/shadow/bold, distinct from Work/fixed", () => {
+    render(<CalendarDayView blocks={[block({ id: "brk", kind: "break", label: "Break", start: "2026-09-25T13:00:00.000Z", end: "2026-09-25T14:00:00.000Z" })]} timeZone={UTC} now={NOON_UTC} />);
+    const el = screen.getByTestId("calendar-block");
+    expect(el).toHaveClass("border-dashed");
+    expect(el).not.toHaveClass("bg-gradient-to-br");
+    expect(el).not.toHaveClass("font-semibold");
+    expect(el.className).not.toMatch(/shadow-/);
+    expect(el.textContent).toBe("Break");
+  });
+
+  it("a break block too short to hold a label renders no visible text (the box itself still renders, as a quiet time marker)", () => {
+    render(<CalendarDayView blocks={[block({ id: "brk", kind: "break", label: "Break", start: "2026-09-25T13:00:00.000Z", end: "2026-09-25T13:05:00.000Z" })]} timeZone={UTC} now={NOON_UTC} />);
+    const el = screen.getByTestId("calendar-block");
+    expect(el.textContent).toBe("");
+    expect(el).toHaveAttribute("aria-label", "Break"); // still announced to screen readers
+  });
+
+  // ---------------------------------------------------------------------
   // Fix round (2026-09-27 review) — the real bug: positions must be in the
   // HOST timezone (HomeViewResponse.timeZone), never the browser's own or
   // a hard-coded UTC read of the ISO string's own UTC hour.
@@ -63,13 +133,13 @@ describe("CalendarDayView", () => {
   it("a 22:00Z event renders at the 3pm row in America/Los_Angeles (the real bug), not the 10pm row UTC would put it at", () => {
     const laBlock = block({ id: "la1", kind: "work", start: "2026-09-25T22:00:00.000Z", end: "2026-09-25T23:00:00.000Z" });
     const { unmount } = render(<CalendarDayView blocks={[laBlock]} timeZone={LOS_ANGELES} now={NOON_UTC} />);
-    // 3pm - 6am (DAY_START_HOUR) = 9h = 540min, of a 1020min (6am-11pm) window, over 952px of content: 504px.
-    expect(topPx(screen.getByTestId("calendar-block"))).toBeCloseTo(504, 0);
+    // 3pm - 6am (DAY_START_HOUR) = 9h = 540min, of a 1020min (6am-11pm) window, over 1224px of content (72px/hour, Polish-2): 648px.
+    expect(topPx(screen.getByTestId("calendar-block"))).toBeCloseTo(648, 0);
     unmount();
 
     // The SAME instant, read in UTC (22:00), would land at the 10pm row instead — proving the fix actually changed something.
     render(<CalendarDayView blocks={[laBlock]} timeZone={UTC} now={NOON_UTC} />);
-    expect(topPx(screen.getByTestId("calendar-block"))).toBeCloseTo(896, 0);
+    expect(topPx(screen.getByTestId("calendar-block"))).toBeCloseTo(1152, 0);
   });
 
   it("the now-line is positioned in the host timezone too, not the browser's/UTC's", () => {
@@ -77,8 +147,8 @@ describe("CalendarDayView", () => {
     const nowLA = () => new Date("2026-09-25T22:30:00.000Z");
     render(<CalendarDayView blocks={[]} timeZone={LOS_ANGELES} now={nowLA} />);
     const nowLine = screen.getByTestId("calendar-now-line");
-    // 3:30pm - 6am = 9.5h = 570min -> 570/1020*952 = 532px.
-    expect(topPx(nowLine)).toBeCloseTo(532, 0);
+    // 3:30pm - 6am = 9.5h = 570min -> 570/1020*1224 = 684px (72px/hour, Polish-2).
+    expect(topPx(nowLine)).toBeCloseTo(684, 0);
   });
 
   it("a Yoh-owned work block renders filled with the accent gradient, no ' (fixed)' suffix", () => {

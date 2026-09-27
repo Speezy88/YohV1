@@ -15,7 +15,7 @@
  * Budget widget and the date/greeting header this task introduces.
  */
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import HomePage from "./Home.tsx";
 import * as homeViewModule from "../lib/homeView.ts";
 import { __resetReadinessForTests, useAppReady } from "../lib/readiness.ts";
@@ -38,6 +38,7 @@ describe("HomePage", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     __resetReadinessForTests();
+    window.localStorage.clear(); // the Day/Month choice persists per-browser (lib/calendarView.ts) — don't leak between tests
   });
 
   it("shows skeleton rows and a calendar skeleton while loading, never a static spinner", () => {
@@ -156,9 +157,62 @@ describe("HomePage", () => {
     expect(screen.getByText("Time Budget 6 h · 4 h planned · 1 h done")).toBeInTheDocument();
   });
 
-  it("renders the mini month", () => {
+  // ---------------------------------------------------------------------
+  // Polish-2 (Spencer's live-app report — "the google calendar
+  // visualization overlaps with the search tasks and tasks filtering
+  // section... I want the right section... to primarily have the daily
+  // view... and have the option to switch to monthly view"): ONE calendar
+  // panel with a Day/Month toggle, Day by default, persisted per browser.
+  // ---------------------------------------------------------------------
+
+  it("shows the Calendar Day View by default, not the mini month", () => {
     mockState(loaded({ today: "2026-09-27" }));
     render(<HomePage />);
+    expect(screen.getByTestId("calendar-day-view")).toBeInTheDocument();
+    expect(screen.queryByText("September 2026")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Day" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("switches to the mini month when Month is clicked, and back to Day when Day is clicked", () => {
+    mockState(loaded({ today: "2026-09-27" }));
+    render(<HomePage />);
+    fireEvent.click(screen.getByRole("button", { name: "Month" }));
     expect(screen.getByText("September 2026")).toBeInTheDocument();
+    expect(screen.queryByTestId("calendar-day-view")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Day" }));
+    expect(screen.getByTestId("calendar-day-view")).toBeInTheDocument();
+    expect(screen.queryByText("September 2026")).not.toBeInTheDocument();
+  });
+
+  it("clicking a day in Month view switches back to Day", () => {
+    mockState(loaded({ today: "2026-09-27" }));
+    render(<HomePage />);
+    fireEvent.click(screen.getByRole("button", { name: "Month" }));
+    fireEvent.click(screen.getByLabelText("Today, September 27"));
+    expect(screen.getByTestId("calendar-day-view")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Day" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("remembers the Month choice across a remount (persisted per browser)", () => {
+    mockState(loaded({ today: "2026-09-27" }));
+    const { unmount } = render(<HomePage />);
+    fireEvent.click(screen.getByRole("button", { name: "Month" }));
+    unmount();
+
+    render(<HomePage />);
+    expect(screen.getByText("September 2026")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Month" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("falls back to Day when localStorage.getItem throws", () => {
+    const original = window.localStorage.getItem;
+    window.localStorage.getItem = () => {
+      throw new Error("blocked");
+    };
+    mockState(loaded({ today: "2026-09-27" }));
+    render(<HomePage />);
+    expect(screen.getByTestId("calendar-day-view")).toBeInTheDocument();
+    window.localStorage.getItem = original;
   });
 });
