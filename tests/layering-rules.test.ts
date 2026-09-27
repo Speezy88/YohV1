@@ -150,6 +150,7 @@ function disallowedShellEdges(fileName: string, contents: string): string[] {
 
 test("detector: importsFromApp flags static, re-export, and dynamic imports of app/", () => {
   assert.deepEqual(importsFromApp(`import { checkOff } from "../app/check-off.ts";`), ["../app/check-off.ts"]);
+  assert.deepEqual(importsFromApp(`import { confirmProposal } from "../app/confirm-proposal.ts";`), ["../app/confirm-proposal.ts"]); // Story 8.2 — named explicitly per the SDD plan's Task 3 implementer note; the rule itself is already generic over any app/-matching path.
   assert.deepEqual(importsFromApp(`import type { X } from '../../src/app/x.ts'`), ["../../src/app/x.ts"]);
   assert.deepEqual(importsFromApp(`export { y } from "../app/y.ts";`), ["../app/y.ts"]);
   assert.deepEqual(importsFromApp(`const m = await import("../app/z.ts");`), ["../app/z.ts"]);

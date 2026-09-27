@@ -16,6 +16,7 @@ import {
   buildDataCompletenessQuestion,
   buildGenericQuestion,
   buildNightCloseOutQuestion,
+  buildProposalQuestion,
   buildSelfCheckQuestion,
   nextDataCompletenessQuestion,
   nextNightCloseOutTask,
@@ -25,7 +26,7 @@ import {
 import type { MissingFieldReport } from "../core/data-completeness-gate.ts";
 import type { NightCloseOutRequestDetail } from "../rituals/night-ritual.ts";
 import type { ChatSession } from "./chat-session.ts";
-import type { FieldValueSuggestion, InteractionRequest, PlanningFieldNames, Result, Task, TaskFieldOverride, YohError } from "../types/domain.ts";
+import type { FieldValueSuggestion, InteractionRequest, PlanningFieldNames, Proposal, Result, Task, TaskFieldOverride, YohError } from "../types/domain.ts";
 import type { OpenItem, OpenItemQuestion, OpenItemsResponse } from "../types/api.ts";
 
 export interface SurfaceOpenItemsDeps {
@@ -86,6 +87,17 @@ async function buildForRecord(deps: SurfaceOpenItemsDeps, record: StoredRecord<I
     }
     case "self-check":
       return buildSelfCheckQuestion(record.id);
+    case "proposal": {
+      // Story 8.2 (Important fix): a stored Proposal request previously fell
+      // through to the generic fallback (blank text, no options, no
+      // `proposal` attached) — C4 requires its full confirm-question shape
+      // instead. The server-stored proposal is authoritative; if it's ever
+      // missing (a malformed/legacy record), fall back generically rather
+      // than fabricate one — this function is read-only and can't clear the
+      // request itself (that's `answerProposalOpenItem`'s job).
+      const detail = record.data.detail as { readonly proposal?: Proposal<unknown> } | undefined;
+      return detail?.proposal ? buildProposalQuestion(record.id, record.data.promptText, detail.proposal) : buildGenericQuestion(record.id);
+    }
     default:
       return buildGenericQuestion(record.id);
   }

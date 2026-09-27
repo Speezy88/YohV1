@@ -86,6 +86,51 @@ test("surfaceOpenItems builds the fixed question for night-close-out and self-ch
   store.close();
 });
 
+test("surfaceOpenItems builds the FULL confirm-question shape for an open 'proposal' request (Important fix, C4)", async () => {
+  const store = tempStore();
+  const proposal = {
+    id: "time-budget-change-1",
+    kind: "time-budget-change" as const,
+    entityId: "current",
+    entityVersion: "1",
+    suggested: { totalMinutes: 480 },
+    reason: "Tasks have been deferred for 3 consecutive days.",
+    createdAt: "2026-08-24T09:00:00.000Z",
+  };
+  const promptText = 'Tasks have been deferred for 3 consecutive days. Reply "yes" to apply this change, or "no" to dismiss it.';
+  putOpenInteractionRequest(store, "time-budget-proposal", {
+    requestKind: "proposal",
+    promptText,
+    detail: { proposal, cursor: { questionId: "confirm" } },
+    createdAt: "2026-08-24T09:00:00.000Z",
+  });
+  const result = await surfaceOpenItems({ store, session: makeSession() }, {});
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  const question = result.value.items[0]!.question;
+  assert.deepEqual(question, {
+    requestId: "time-budget-proposal",
+    questionId: "confirm",
+    text: promptText,
+    options: [
+      { label: "Yes", value: "yes" },
+      { label: "No", value: "no" },
+    ],
+    allowsFreeText: true,
+    proposal,
+  });
+  store.close();
+});
+
+test("surfaceOpenItems falls back to the generic question for a 'proposal' request with no stored proposal (malformed/legacy record)", async () => {
+  const store = tempStore();
+  putOpenInteractionRequest(store, "orphan-proposal", { requestKind: "proposal", promptText: "x", detail: {}, createdAt: "x" });
+  const result = await surfaceOpenItems({ store, session: makeSession() }, {});
+  assert.equal(result.ok, true);
+  if (result.ok) assert.equal(result.value.items[0]!.question.questionId, "generic");
+  store.close();
+});
+
 test("buildOpenItemQuestion returns 'done' when the request no longer exists", async () => {
   const store = tempStore();
   const result = await buildOpenItemQuestion({ store, session: makeSession() }, { requestId: "nope" });

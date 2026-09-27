@@ -13,8 +13,9 @@ import { parseProposalAnswer } from "../core/open-item-answers.ts";
 import { buildDataCompletenessQuestion, declinedSuggestionKey, nextDataCompletenessQuestion, type DataCompletenessCursor } from "../core/open-item-questions.ts";
 import type { MissingFieldReport } from "../core/data-completeness-gate.ts";
 import { DATA_COMPLETENESS_REQUEST_ID } from "../rituals/data-completeness.ts";
+import { confirmProposal } from "./confirm-proposal.ts";
 import { buildOpenItemQuestion, type SurfaceOpenItemsDeps } from "./surface-open-items.ts";
-import type { ExternalId, FieldValueSuggestion, PlanningFieldNames, Result, Task, TaskFieldOverride, YohError } from "../types/domain.ts";
+import type { ExternalId, PlanningFieldNames, Result, Task, TaskFieldOverride, YohError } from "../types/domain.ts";
 import type { AnswerOpenItemRequest, AnswerOpenItemResponse } from "../types/api.ts";
 
 export interface AnswerDataCompletenessDeps extends SurfaceOpenItemsDeps {
@@ -77,14 +78,16 @@ export async function answerDataCompleteness(deps: AnswerDataCompletenessDeps, i
   if (input.questionId.endsWith(":suggest")) {
     const accepted = parseProposalAnswer(input.answer) === true && input.proposal?.kind === "field-value";
     if (accepted) {
-      const suggestion = input.proposal!.suggested as FieldValueSuggestion;
-      const revalidated = parsePlanningFieldValue(pending.field, String(suggestion.value));
-      if (revalidated.ok) {
-        const written = await deps.updateTaskField(pending.taskId, pending.field, revalidated.value as NonNullable<Task[PlanningFieldNames]>);
-        if (written.ok) {
-          mergeTaskFieldOverride(deps.store, pending.taskId, { [pending.field]: revalidated.value } as TaskFieldOverride);
-          return withNext(deps, record.id, undefined, [`${pending.taskTitle} — ${label}: set to "${revalidated.value}".`]);
-        }
+      // Story 8.2: the write itself now goes through `confirmProposal` — the
+      // ONE confirm path every Proposal kind resolves through, whichever
+      // surface confirmed it (FR-48). `confirmProposal` re-validates the
+      // suggested value through `parsePlanningFieldValue` itself (defense in
+      // depth against a tampered echoed Proposal) and, on success, writes via
+      // `updateTaskField` + merges the `TaskFieldOverride` — this file no
+      // longer does either directly.
+      const confirmed = await confirmProposal(deps, { proposal: input.proposal!, accept: true });
+      if (confirmed.ok && confirmed.value.applied) {
+        return withNext(deps, record.id, undefined, confirmed.value.receipts);
       }
     }
     // Anything other than a confirmed, re-validated "yes" declines — never

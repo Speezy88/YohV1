@@ -14,6 +14,7 @@ import type {
   AnswerOpenItemRequest,
   AnswerOpenItemResponse,
   CheckOffRequest,
+  ConfirmProposalResponse,
   OpenItem,
   OpenItemQuestion,
   OpenItemsResponse,
@@ -173,4 +174,14 @@ test("Story 8.1 open-item shapes: OpenItemQuestion/OpenItem/OpenItemsResponse, A
   assert.equal(answerResponse.next, "done");
   assert.equal(answerWithNext.next === "done" ? undefined : answerWithNext.next.questionId, "t1:area");
   assert.ok(widenedItem && answerRequest.requestId && badNext);
+});
+
+test("ConfirmProposalResponse carries exactly applied/receipts", () => {
+  const applied: ConfirmProposalResponse = { applied: true, receipts: ["Done — I've updated your Time Budget."] };
+  const declined: ConfirmProposalResponse = { applied: false, receipts: [] };
+  assert.deepEqual(Object.keys(applied).sort(), ["applied", "receipts"]);
+  assert.deepEqual(Object.keys(declined).sort(), ["applied", "receipts"]);
+  // @ts-expect-error — applied is a required boolean, never absent.
+  const missingApplied: ConfirmProposalResponse = { receipts: [] };
+  assert.ok(missingApplied);
 });

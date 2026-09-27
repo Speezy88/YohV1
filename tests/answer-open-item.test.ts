@@ -4,7 +4,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createMemoryStore, putOpenInteractionRequest } from "../src/adapters/memory-store.ts";
+import { createMemoryStore, getCurrentTimeBudget, getOpenInteractionRequest, putOpenInteractionRequest, putTimeBudget } from "../src/adapters/memory-store.ts";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
 import { answerOpenItem } from "../src/app/answer-open-item.ts";
@@ -64,5 +64,114 @@ test("answerOpenItem returns conflict for a requestId that doesn't exist", async
   const store = tempStore();
   const result = await answerOpenItem(fullDeps(store), { requestId: "nope", questionId: "generic", answer: "yes" });
   assert.equal(result.ok, false);
+  store.close();
+});
+
+// ============================================================================
+// "proposal" requestKind (Story 8.2) — dispatches through confirmProposal
+// ============================================================================
+
+function openTimeBudgetProposal(store: ReturnType<typeof tempStore>): void {
+  putTimeBudget(store, { date: "2026-08-24", totalMinutes: 360, workMinutes: 70, breakMinutes: 15 });
+  putOpenInteractionRequest(store, "time-budget-proposal", {
+    requestKind: "proposal",
+    promptText: 'Raise your Time Budget to 480 minutes? Reply "yes" to apply, or "no" to dismiss.',
+    detail: {
+      proposal: {
+        id: "time-budget-change-1",
+        kind: "time-budget-change",
+        entityId: "current",
+        entityVersion: "1",
+        suggested: { totalMinutes: 480 },
+        reason: "Tasks have been deferred for 3 consecutive days.",
+        createdAt: "2026-08-24T09:00:00.000Z",
+      },
+      cursor: { questionId: "confirm" },
+    },
+    createdAt: "2026-08-24T09:00:00.000Z",
+  });
+}
+
+test("answerOpenItem: 'yes' to an open Proposal applies it, clears the request, and returns next:'done'", async () => {
+  const store = tempStore();
+  openTimeBudgetProposal(store);
+  const result = await answerOpenItem(fullDeps(store), { requestId: "time-budget-proposal", questionId: "confirm", answer: "yes" });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.value.next, "done");
+  assert.deepEqual(result.value.receipts, ["Done — I've updated your Time Budget."]);
+  assert.equal(getCurrentTimeBudget(store)?.data.totalMinutes, 480);
+  assert.equal(getOpenInteractionRequest(store, "time-budget-proposal"), undefined);
+  store.close();
+});
+
+test("answerOpenItem: 'no' to an open Proposal declines it, clears the request, and returns next:'done' with no receipts", async () => {
+  const store = tempStore();
+  openTimeBudgetProposal(store);
+  const result = await answerOpenItem(fullDeps(store), { requestId: "time-budget-proposal", questionId: "confirm", answer: "no" });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.value.next, "done");
+  assert.deepEqual(result.value.receipts, []);
+  assert.equal(getCurrentTimeBudget(store)?.data.totalMinutes, 360);
+  store.close();
+});
+
+test("answerOpenItem: an unrecognized answer to an open Proposal re-prompts with the SAME question, rather than guessing", async () => {
+  const store = tempStore();
+  openTimeBudgetProposal(store);
+  const result = await answerOpenItem(fullDeps(store), { requestId: "time-budget-proposal", questionId: "confirm", answer: "maybe later" });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.notEqual(result.value.next, "done");
+  // Important fix (C4): the re-prompt is the FULL confirm-question shape —
+  // same questionId, same text (the request's own promptText), yes/no
+  // options, allowsFreeText, and the proposal re-attached — never the
+  // blank-text generic fallback.
+  assert.deepEqual(result.value.next, {
+    requestId: "time-budget-proposal",
+    questionId: "confirm",
+    text: 'Raise your Time Budget to 480 minutes? Reply "yes" to apply, or "no" to dismiss.',
+    options: [
+      { label: "Yes", value: "yes" },
+      { label: "No", value: "no" },
+    ],
+    allowsFreeText: true,
+    proposal: {
+      id: "time-budget-change-1",
+      kind: "time-budget-change",
+      entityId: "current",
+      entityVersion: "1",
+      suggested: { totalMinutes: 480 },
+      reason: "Tasks have been deferred for 3 consecutive days.",
+      createdAt: "2026-08-24T09:00:00.000Z",
+    },
+  });
+  assert.ok(getOpenInteractionRequest(store, "time-budget-proposal"), "the request is NOT cleared on an unrecognized answer");
+  store.close();
+});
+
+test("answerOpenItem: an answer naming a questionId OTHER than 'confirm' against an open Proposal is a conflict — nothing is written (controller fix)", async () => {
+  const store = tempStore();
+  openTimeBudgetProposal(store);
+  const result = await answerOpenItem(fullDeps(store), { requestId: "time-budget-proposal", questionId: "generic", answer: "yes" });
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.equal(result.error.kind, "conflict");
+  assert.equal(getCurrentTimeBudget(store)?.data.totalMinutes, 360, "nothing was applied");
+  assert.ok(getOpenInteractionRequest(store, "time-budget-proposal"), "the request is NOT cleared on a mismatched questionId");
+  store.close();
+});
+
+test("answerOpenItem: a stale Time Budget proposal is reported plainly and the request is cleared", async () => {
+  const store = tempStore();
+  openTimeBudgetProposal(store);
+  putTimeBudget(store, { date: "2026-08-24", totalMinutes: 200, workMinutes: 70, breakMinutes: 15 }); // moved on since the proposal was generated
+  const result = await answerOpenItem(fullDeps(store), { requestId: "time-budget-proposal", questionId: "confirm", answer: "yes" });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.value.next, "done");
+  assert.equal(getCurrentTimeBudget(store)?.data.totalMinutes, 200);
+  assert.equal(getOpenInteractionRequest(store, "time-budget-proposal"), undefined);
   store.close();
 });

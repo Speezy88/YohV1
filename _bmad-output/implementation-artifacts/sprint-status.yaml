@@ -101,7 +101,7 @@ development_status:
 
   epic-8: in-progress
   8-1-open-interaction-requests-as-resumable-turns: done
-  8-2-one-confirmation-path-for-every-proposal: backlog
+  8-2-one-confirmation-path-for-every-proposal: done
   8-3-chat-turn-routing-for-planning-commands: backlog
   8-4-chat-turn-routing-for-notion-calendar-and-search-commands: backlog
   8-5-chat-page-with-streaming-replies: backlog

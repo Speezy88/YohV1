@@ -123,28 +123,10 @@
  * `ritual-cli.ts`'s `createMorningRitualDeps` `bumpLevels` bridge from the
  * other side — see that function's own doc comment.
  *
- * Task 23 update (Story 4.2, AD-3, Propose-Don't-Impose): the generic
- * confirm/apply pathway lives here — `apply(proposal)`, per AD-3's own
- * wording, is called from NOWHERE else in the codebase. `surfaceOpenInteractionRequests`
- * gets a SEVENTH branch, matching any open request whose
- * `requestKind === "proposal"` (deliberately not a fixed id, unlike the
- * `"data-completeness"`/`"night-close-out"` branches — see `apply`'s own doc
- * comment): `answerProposalRequest` shows the Proposal's reason, waits for
- * an explicit yes/no (never silence — UX-DR16), and on "yes" calls the
- * generic `apply` with a `ProposalEntityAccessor` for that Proposal's `kind`.
- * `apply` itself stays generic over `Proposal<T>` — nothing about it is
- * hardcoded to Time Budget — but the only accessor this file currently
- * builds (`timeBudgetEntityAccessor`) is for the one real Proposal kind this
- * codebase generates, `"time-budget-change"` (`core/time-budget.ts`'s
- * `buildTimeBudgetChangeProposal`, wired up by `rituals/morning-ritual.ts`'s
- * daily deferral-streak tracking). A "learned behavioral pattern" Proposal
- * was deliberately NOT invented as a second worked example for this task —
- * no other story in this plan ever actually generates one, and Story 1.7's
- * AC4 ("no UI or interaction path exists" for manually setting a Task's
- * priority) means a plausible-sounding priority-override Proposal would
- * directly contradict an already-established invariant. `apply` staying
- * generic (rather than hardcoded to `Partial<TimeBudget>`) is what lets a
- * future Proposal kind add its own accessor without touching `apply` itself.
+ * Task 23 update (Story 4.2, AD-3, Propose-Don't-Impose): originally added
+ * the generic confirm/apply pathway (`apply(proposal)`) and
+ * `answerProposalRequest` here. Story 8.2 moved both — see that story's own
+ * update paragraph below.
  *
  * Task 10 update: the merge/gate/sync trio moved to
  * `rituals/data-completeness.ts` — the `rituals/*.ts` home the note above
@@ -171,18 +153,26 @@
  * `app/surface-open-items.ts`'s `surfaceOpenItems`, prints the current
  * question, reads one line, and calls `app/answer-open-item.ts`'s
  * `answerOpenItem` — looping until `next === "done"` — for every request
- * kind EXCEPT `"proposal"`, which still resolves through this file's own
- * `answerProposalRequest` below (Task 3/Story 8.2's move, not this one).
+ * kind. At this point that still excluded `"proposal"`, which stayed on
+ * this file's own `answerProposalRequest` a little longer (Story 8.2 below).
+ *
+ * Story 8.2 update (AD-3/AD-16): `apply`, `ProposalEntityAccessor`,
+ * `timeBudgetEntityAccessor`, and `answerProposalRequest` moved OUT of this
+ * file entirely, into `app/confirm-proposal.ts` (the first three kept
+ * module-private there, per AD-16's `app/` export-shape rule;
+ * `answerProposalRequest` superseded outright by `app/answer-open-item.ts`'s
+ * `"proposal"` case). `confirmProposal` — that file's one public export —
+ * is now the single confirm path for every Proposal kind (`time-budget-
+ * change`, `field-value`, `notion-page-draft`, `calendar-edit`), called from
+ * `handleCreateItemCommand`/`handleCalendarEditCommand` below and from
+ * `answerOpenItem`'s `"proposal"` dispatch. `surfaceOpenInteractionRequests`
+ * no longer special-cases `"proposal"` at all — every request kind now
+ * flows through the same `surfaceOpenItems`/`answerOpenItem` transport.
  */
 import { createInterface } from "node:readline";
 import { Client } from "@notionhq/client";
 import {
-  clearInteractionRequest,
-  clearTimeBudgetDeferralStreak,
-  ConflictError,
   createMemoryStore,
-  getCurrentTimeBudget,
-  getOpenInteractionRequest,
   getPlan,
   getSlipHistory,
   putTimeBudget,
@@ -247,13 +237,13 @@ import {
 import { RECENT_MESSAGES_WINDOW, type ChatSession } from "../app/chat-session.ts";
 import { surfaceOpenItems } from "../app/surface-open-items.ts";
 import { answerOpenItem, type AnswerOpenItemDeps } from "../app/answer-open-item.ts";
+import { confirmProposal } from "../app/confirm-proposal.ts";
 import type {
   CalendarEditChange,
   CalendarEvent,
   ChatIntent,
   ChatTurn,
   ExternalId,
-  InteractionRequest,
   IsoDate,
   NotionDatabaseTarget,
   NotionPageDraft,
@@ -397,247 +387,16 @@ type LookupTaskFn = (taskId: ExternalId) => Promise<Task | undefined>;
 // `core/open-item-answers.ts`; `answerSelfCheckRequest` moved (as
 // `answerSelfCheck`) to `app/answer-self-check.ts`.
 
-// ============================================================================
-// Propose-Don't-Impose confirm/apply pathway (Task 23 / Story 4.2, AD-3)
-// ============================================================================
-
-/**
- * The minimal seam `apply` needs to re-read a Proposal's live entity and,
- * once Spencer has confirmed, write the suggested change — injected per
- * Proposal `kind` (this task's own worked example, `timeBudgetEntityAccessor`
- * below) rather than baked into `apply` itself. This is what keeps `apply`
- * itself generic over `Proposal<T>`, per this task's own scoping note (see
- * this file's module docstring's Task 23 paragraph): a future Proposal kind
- * supplies its own accessor without any change to `apply`.
- */
-export interface ProposalEntityAccessor<T> {
-  /** The live entity's CURRENT version, formatted the same way `Proposal.entityVersion` already is (a `string`) — `undefined` if the entity no longer exists at all. Always re-reads; never returns a cached/stale value. */
-  readonly currentVersion: () => string | undefined;
-  /** Applies `suggested` against the live entity. `apply` calls this ONLY after confirming `currentVersion()` still matches `proposal.entityVersion` — never speculatively. */
-  readonly applyChange: (suggested: T) => void;
-}
-
-/**
- * The generic Propose-Don't-Impose confirm/apply pathway AD-3 requires:
- * `chat-cli.ts` is the sole caller anywhere in the codebase (AD-3's own
- * wording — see this file's module docstring).
- *
- * - `answer: false` ("no"): applies nothing — returns
- *   `{ok: true, value: "declined"}`. `accessor` is never even consulted.
- * - `answer: true` ("yes"): re-reads the live entity's CURRENT version via
- *   `accessor.currentVersion()` and compares it against
- *   `proposal.entityVersion` — the snapshot captured when the Proposal was
- *   generated. A mismatch (including the entity having since been deleted
- *   entirely, which reads as `undefined`) rejects with
- *   `YohError.kind: "stale-proposal"` WITHOUT ever calling
- *   `accessor.applyChange` — a stale Proposal is never applied against
- *   state that has moved on. Only on a genuine match does it call
- *   `accessor.applyChange(proposal.suggested)` and report `"applied"`.
- *
- * Deliberately does NOT touch the `InteractionRequest` the Proposal was
- * surfaced as — clearing (or re-surfacing) that request is the caller's job
- * (`answerProposalRequest`, below), mirroring
- * `answerDataCompletenessRequest`/`answerNightCloseOutRequest`'s own "apply
- * the answer, then separately clear the request" shape elsewhere in this
- * file. This keeps `apply` reusable for a future proposal kind whose
- * request-clearing story might differ.
- *
- * **`accessor.applyChange` is never allowed to escape as an unhandled
- * throw (review fix, Important #2).** It ultimately calls a real
- * `memory-store.ts` write (e.g. `putTimeBudget`), which can throw a real
- * `ConflictError` under AD-10 — a genuine concurrent write racing
- * `ritual-cli.ts`, the exact scenario `rituals/morning-ritual.ts`'s OWN
- * side of this same race already wraps in try/catch. This function's own
- * `Result<..., YohError>` signature promises no throw either, so the call
- * is wrapped: a `ConflictError` is reported via its own already-`YohError`-shaped
- * `.yohError` (`kind: "conflict"`) verbatim; any other thrown value is
- * wrapped as `kind: "unreachable"` — the same kind
- * `rituals/morning-ritual.ts` already uses for "some adapter-level I/O
- * failed" (its `readTasks`/`readCalendarEvents`/`sendNotification` catch
- * sites), which this is structurally the shell-layer equivalent of.
- */
-export async function apply<T>(
-  proposal: Proposal<T>,
-  answer: boolean,
-  accessor: ProposalEntityAccessor<T>,
-): Promise<Result<"applied" | "declined", YohError>> {
-  if (!answer) {
-    return { ok: true, value: "declined" };
-  }
-
-  const liveVersion = accessor.currentVersion();
-  if (liveVersion !== proposal.entityVersion) {
-    return {
-      ok: false,
-      error: {
-        kind: "stale-proposal",
-        message: `chat-cli: proposal "${proposal.id}" is stale — the live entity's version (${
-          liveVersion ?? "none, it no longer exists"
-        }) no longer matches the version this proposal was generated against (${proposal.entityVersion})`,
-        detail: {
-          proposalId: proposal.id,
-          entityId: proposal.entityId,
-          expectedVersion: proposal.entityVersion,
-          actualVersion: liveVersion,
-        },
-      },
-    };
-  }
-
-  try {
-    accessor.applyChange(proposal.suggested);
-  } catch (err) {
-    if (err instanceof ConflictError) {
-      return { ok: false, error: err.yohError };
-    }
-    return {
-      ok: false,
-      error: {
-        kind: "unreachable",
-        message: `chat-cli: applying proposal "${proposal.id}" failed — ${err instanceof Error ? err.message : String(err)}`,
-        detail: err,
-      },
-    };
-  }
-
-  return { ok: true, value: "applied" };
-}
-
-/**
- * `apply`'s accessor for the one real Proposal kind this codebase currently
- * generates (`"time-budget-change"`, `core/time-budget.ts`'s
- * `buildTimeBudgetChangeProposal`, wired up by `rituals/morning-ritual.ts`).
- * Re-reads the live singleton Time Budget row fresh on every call (never
- * caches it), and applies a suggested change by merging `suggested` (a
- * `Partial<TimeBudget>`) onto the live row's own data before persisting via
- * `putTimeBudget` — the same "put" primitive `declareTimeBudget` already
- * uses for Spencer's own explicit declarations, so an applied Proposal reads
- * back identically to Spencer having typed the change himself.
- */
-function timeBudgetEntityAccessor(store: MemoryStore): ProposalEntityAccessor<Partial<TimeBudget>> {
-  return {
-    currentVersion: () => {
-      const current = getCurrentTimeBudget(store);
-      return current ? String(current.version) : undefined;
-    },
-    applyChange: (suggested) => {
-      const current = getCurrentTimeBudget(store);
-      if (!current) {
-        throw new Error("chat-cli: cannot apply a Time Budget proposal — no current Time Budget exists to change");
-      }
-      putTimeBudget(store, { ...current.data, ...suggested });
-    },
-  };
-}
-
-// Story 8.1 (Controller Ruling 2): `parseProposalAnswer` moved to
-// `core/open-item-answers.ts` (imported at the top of this file) — used by
-// `answerProposalRequest` below exactly as before.
-
-/**
- * Answers a single open `requestKind: "proposal"` interaction request
- * (AD-3): shows its `promptText` (already built by whatever wiring created
- * it — e.g. `rituals/morning-ritual.ts`'s `buildTimeBudgetProposalPromptText`
- * for a Time-Budget-change Proposal), then waits for an explicit yes/no
- * answer. A blank line re-prompts indefinitely (UX-DR20); an unrecognized
- * answer re-prompts too (UX-DR16 — silence AND an unclear answer are both
- * never treated as consent) — only a genuinely recognized "yes" or "no"
- * ever resolves this loop.
- *
- * On "yes": calls `apply` with the accessor for this Proposal's `kind`.
- *  - `"applied"`: clears the request and confirms the change plainly.
- *  - `stale-proposal` (or any other `apply` failure, e.g. a genuine
- *    `ConflictError`): ALSO clears the request (this task's own documented
- *    choice for "no change is applied, and the interaction request is
- *    cleared or re-surfaced with fresh data as appropriate" — re-surfacing
- *    a Proposal whose entityVersion snapshot can now never match again
- *    would loop forever rather than genuinely re-check anything; clearing
- *    it and telling Spencer plainly is the honest outcome here, and a fresh
- *    Proposal can be generated another day if the underlying deferral
- *    pattern is still happening) — Spencer is told plainly that the entity
- *    changed since the suggestion was made, rather than the information
- *    being silently discarded.
- *
- * On "no": clears the request without applying anything.
- *
- * **The deferral streak is reset once Spencer has genuinely ANSWERED —
- * applied OR declined (review fix, Important #1).** Without this, "no" is
- * never remembered: the streak (`memory-store.ts`'s
- * `TimeBudgetDeferralStreak`) keeps growing on the very next deferral day
- * regardless of the answer, so a fresh Proposal with the same substance
- * reappears every subsequent day the pattern continues — exactly the
- * "confirmation turns into daily nagging" UX-DR16 exists to prevent. And on
- * "yes" it's worse: the budget is raised but the streak still stands, so a
- * day-4 deferral would propose ANOTHER increase stacked on top of the one
- * Spencer just accepted. `clearTimeBudgetDeferralStreak` — the same
- * "cleared entirely, not floored/decremented" shape
- * `core/time-budget.ts`'s own `nextTimeBudgetDeferralStreak` already uses
- * for a zero-deferral day — is called only when `apply` actually resolved
- * (`result.ok`, covering both `"applied"` and `"declined"`), NOT on a
- * `stale-proposal`/`ConflictError` rejection: Spencer never got to
- * genuinely decide in that case, so the streak (and whatever real pattern
- * it reflects) is left exactly as-is for the next run to re-evaluate.
- *
- * Currently the only Proposal `kind` this codebase generates is
- * `"time-budget-change"` — see this file's module docstring for why a
- * second worked example (e.g. a learned-behavioral-pattern Proposal) was
- * deliberately not invented for this task. An unrecognized `kind` (a
- * malformed record, or a future kind this file doesn't yet know how to
- * apply) is dismissed with a plain apology rather than looping forever or
- * crashing the session.
- *
- * Returns `false` (without clearing the request) if `io.readLine` reports
- * EOF partway through — the request stays open, unanswered, for the next
- * session (UX-DR20).
- */
-async function answerProposalRequest(
-  store: MemoryStore,
-  io: ChatCliIo,
-  record: StoredRecord<InteractionRequest>,
-): Promise<boolean> {
-  io.writeLine(paint(record.data.promptText, ACCENT, shouldUseColor()));
-  io.writeLine("");
-
-  const clearThisRequest = (): void => {
-    const current = getOpenInteractionRequest(store, record.id);
-    if (current) clearInteractionRequest(store, record.id, current.version);
-  };
-
-  const detail = record.data.detail as { readonly proposal?: Proposal<unknown> } | undefined;
-  const proposal = detail?.proposal;
-
-  if (!proposal || proposal.kind !== "time-budget-change") {
-    io.writeLine("I don't recognize this proposal any more — dismissing it.");
-    clearThisRequest();
-    return true;
-  }
-
-  for (;;) {
-    const answer = await io.readLine("  Apply this? (yes/no): ");
-    if (answer === null) return false; // stdin closed mid-answer — leave the request open, unanswered.
-    if (answer.trim().length === 0) continue; // UX-DR16: silence is never consent — keep waiting.
-
-    const parsed = parseProposalAnswer(answer);
-    if (parsed === undefined) {
-      io.writeLine('Please answer "yes" or "no".');
-      continue;
-    }
-
-    const result = await apply(proposal as Proposal<Partial<TimeBudget>>, parsed, timeBudgetEntityAccessor(store));
-
-    if (result.ok) {
-      // Review fix, Important #1: reset the streak now that Spencer has
-      // genuinely answered — see this function's own doc comment above.
-      clearTimeBudgetDeferralStreak(store);
-      clearThisRequest();
-      io.writeLine(result.value === "applied" ? "Done — I've updated your Time Budget." : "Okay — I won't make that change.");
-    } else {
-      clearThisRequest();
-      io.writeLine(`I can't apply that any more — ${result.error.message}`);
-    }
-    return true;
-  }
-}
+// Story 8.2: `ProposalEntityAccessor`, `apply`, `timeBudgetEntityAccessor`,
+// and `answerProposalRequest` moved OUT of this file entirely, into
+// `app/confirm-proposal.ts` (the first two/`timeBudgetEntityAccessor` kept
+// module-private there — AD-16's `app/` export shape rule — and
+// `answerProposalRequest` superseded outright by `app/answer-open-item.ts`'s
+// `"proposal"` case). `confirmProposal` (that file's public export) is now
+// the single confirm path for every Proposal kind, called from
+// `handleCreateItemCommand`/`handleCalendarEditCommand` below and from
+// `answerOpenItem`'s `"proposal"` dispatch — `apply(proposal)` is no longer
+// called from anywhere in this file.
 
 /**
  * Story 8.1 rewrite: `chat-cli.ts` is transport only over `app/surface-
@@ -651,18 +410,16 @@ async function answerProposalRequest(
  * and a blank answer re-prompts rather than clearing the request or giving
  * up.
  *
- * The `"proposal"` request kind is the one exception, still resolved by
- * this file's own `answerProposalRequest` (Task 3's move) — every other
- * kind (`"data-completeness"`, `"night-close-out"`, `"self-check"`, and any
- * future/unrecognized kind) answers one question per turn through
- * `answerOpenItem`, printing each returned question, reading one line, and
- * calling `answerOpenItem` again until `next === "done"`.
+ * Story 8.2: every request kind — including `"proposal"` — now flows
+ * through this same `surfaceOpenItems`/`answerOpenItem` transport; this file
+ * no longer special-cases `"proposal"` with its own `answerProposalRequest`
+ * (moved to `app/confirm-proposal.ts`/`app/answer-open-item.ts`).
  *
  * `answerDeps` defaults to a set of stubs that throw only if actually
  * invoked (mirrors every other optional dependency in this file) — safe for
- * any caller that only ever exercises the `"proposal"` branch, or surfaces
- * nothing at all. `runChatCli` always supplies a real one, built fresh at
- * each call site so `today`/`session` stay current.
+ * a caller that surfaces nothing at all. `runChatCli` always supplies a
+ * real one, built fresh at each call site so `today`/`session` stay
+ * current.
  *
  * Returns once no interaction request remains open, or once `io.readLine`
  * reports EOF (stdin closed) — whichever comes first.
@@ -697,17 +454,6 @@ export async function surfaceOpenInteractionRequests(
     const surfaced = await surfaceOpenItems(answerDeps, {});
     if (!surfaced.ok || surfaced.value.items.length === 0) return;
     const item = surfaced.value.items[0]!;
-
-    if (item.requestKind === "proposal") {
-      // Checked by `requestKind` alone, deliberately not by a fixed id —
-      // see `apply`'s own doc comment on staying generic over `Proposal<T>`
-      // for a future Proposal kind with its own request id.
-      const record = getOpenInteractionRequest(store, item.requestId);
-      if (!record) continue; // cleared/changed concurrently — re-surface fresh.
-      const resolved = await answerProposalRequest(store, io, record);
-      if (!resolved) return; // EOF mid-answer.
-      continue;
-    }
 
     const resolved = await answerAndPresentOneItem(io, answerDeps, item);
     if (!resolved) return; // EOF mid-answer.
@@ -1238,6 +984,7 @@ type ValidateNotionPageDraftFn = (
  * so it's built, shown, and resolved entirely within this one call.
  */
 async function handleCreateItemCommand(
+  store: MemoryStore,
   io: ChatCliIo,
   llmClient: AnthropicMessagesClient,
   database: NotionDatabaseTarget,
@@ -1290,9 +1037,12 @@ async function handleCreateItemCommand(
     return;
   }
 
-  const created = await createPageFn(proposal.suggested.database, proposal.suggested.properties);
-  if (!created.ok) {
-    io.writeLine(`I couldn't create that: ${created.error.message}`);
+  // Story 8.2: the write itself now goes through `confirmProposal` — the
+  // ONE confirm path every Proposal kind resolves through (FR-48) —
+  // instead of calling `createPageFn` directly.
+  const confirmed = await confirmProposal({ store, createPage: createPageFn }, { proposal, accept: true });
+  if (!confirmed.ok) {
+    io.writeLine(`I couldn't create that: ${confirmed.error.message}`);
     return;
   }
 
@@ -1450,6 +1200,7 @@ function describeCalendarEdit(change: CalendarEditChange, eventTitle: string, ti
  * can fall through to ordinary chat; `true` once it has handled the line.
  */
 async function handleCalendarEditCommand(
+  store: MemoryStore,
   io: ChatCliIo,
   llmClient: AnthropicMessagesClient,
   line: string,
@@ -1530,7 +1281,11 @@ async function handleCalendarEditCommand(
     break;
   }
 
-  const applied = await applyEdit(proposal);
+  // Story 8.2: the write itself now goes through `confirmProposal` — the
+  // ONE confirm path every Proposal kind resolves through (FR-48) —
+  // instead of calling `applyEdit` directly. `applyCalendarEdit` still
+  // takes the `Proposal` itself, unwrapped, exactly as before.
+  const applied = await confirmProposal({ store, applyCalendarEdit: applyEdit }, { proposal, accept: true });
   if (!applied.ok) {
     io.writeLine(`I couldn't apply that: ${applied.error.message}`);
     return true;
@@ -1777,6 +1532,7 @@ export async function runChatCli({
     const createItemCommand = parseCreateItemCommand(line);
     if (createItemCommand) {
       await handleCreateItemCommand(
+        store,
         io,
         llmClient,
         createItemCommand.database,
@@ -1791,6 +1547,7 @@ export async function runChatCli({
       let handled = true;
       try {
         handled = await handleCalendarEditCommand(
+          store,
           io,
           llmClient,
           line,

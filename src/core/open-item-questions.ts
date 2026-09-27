@@ -168,3 +168,44 @@ export function buildSelfCheckQuestion(requestId: string): OpenItemQuestion {
 export function buildGenericQuestion(requestId: string): OpenItemQuestion {
   return { requestId, questionId: "generic", text: "", options: [], allowsFreeText: true };
 }
+
+// ---- proposal confirm question (Story 8.2, AD-3, C4) -----------------------
+
+/**
+ * The fixed `questionId` an open `requestKind: "proposal"` item's single
+ * confirm question always uses — a Proposal has exactly one question, and
+ * its own re-prompt IS that same question, never a different one. Shared by
+ * `buildProposalQuestion` (below), `app/open-proposal.ts` (which persists a
+ * proposal under this same cursor), and `app/answer-open-item.ts` (which
+ * checks an incoming answer's `questionId` against this literal before
+ * dispatching to `confirmProposal` — the same "answer must name the current
+ * pending question, or it's a conflict" rule every other request kind
+ * enforces, C4).
+ */
+export const PROPOSAL_QUESTION_ID = "confirm";
+
+/**
+ * Builds an open `"proposal"` item's one confirm question — text is the
+ * request's own stored `promptText` (already the complete "here's what I
+ * want to do, and why" line `chat-cli.ts` used to show verbatim, whichever
+ * wiring built it: `rituals/morning-ritual.ts`'s
+ * `buildTimeBudgetProposalPromptText` for a Time-Budget-change Proposal, or
+ * `app/open-proposal.ts`'s own `proposal.reason` for anything opened through
+ * that path). `proposal` is attached so a caller (a re-ask, or a fresh
+ * surface) always has it at hand without a second store read — mirrors
+ * FR-25's own suggest-question carrying its `Proposal<FieldValueSuggestion>`
+ * the same way.
+ */
+export function buildProposalQuestion(requestId: string, promptText: string, proposal: Proposal<unknown>): OpenItemQuestion {
+  return {
+    requestId,
+    questionId: PROPOSAL_QUESTION_ID,
+    text: promptText,
+    options: [
+      { label: "Yes", value: "yes" },
+      { label: "No", value: "no" },
+    ],
+    allowsFreeText: true,
+    proposal,
+  };
+}

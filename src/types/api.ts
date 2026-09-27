@@ -252,6 +252,24 @@ export interface AnswerOpenItemResponse {
 }
 
 // ============================================================================
+// Proposal confirmation (Story 8.2, AD-3, AD-16) — new shape only.
+// ============================================================================
+
+/**
+ * `app/confirm-proposal.ts`'s `confirmProposal`'s value: the single result
+ * shape for every Proposal kind (`time-budget-change`, `field-value`,
+ * `notion-page-draft`, `calendar-edit`). `applied: false` covers both an
+ * explicit decline and "nothing to apply" — there is no distinct third
+ * state, since either way nothing was written, and the caller (a typed
+ * "yes"/"no", a future Chat confirm control, a future Structured Question
+ * option) is the same regardless of surface (FR-48).
+ */
+export interface ConfirmProposalResponse {
+  readonly applied: boolean;
+  readonly receipts: readonly string[];
+}
+
+// ============================================================================
 // Server route type (Ruling R2, AD-17)
 // ============================================================================
 

@@ -8,13 +8,15 @@ import {
   buildDataCompletenessQuestion,
   buildGenericQuestion,
   buildNightCloseOutQuestion,
+  buildProposalQuestion,
   buildSelfCheckQuestion,
   nextDataCompletenessQuestion,
   nextNightCloseOutTask,
+  PROPOSAL_QUESTION_ID,
 } from "../src/core/open-item-questions.ts";
 import type { MissingFieldReport } from "../src/core/data-completeness-gate.ts";
 import type { NightCloseOutTaskDetail } from "../src/rituals/night-ritual.ts";
-import type { TaskFieldOverride } from "../src/types/domain.ts";
+import type { Proposal, TaskFieldOverride } from "../src/types/domain.ts";
 
 const REPORTS: readonly MissingFieldReport[] = [
   { taskId: "t1", taskTitle: "Call dentist", missingFields: ["area", "dueDate"] },
@@ -95,4 +97,30 @@ test("buildNightCloseOutQuestion builds the fixed completed/slipped/skip options
 test("buildSelfCheckQuestion/buildGenericQuestion build their fixed shapes", () => {
   assert.equal(buildSelfCheckQuestion("self-check").questionId, "score");
   assert.equal(buildGenericQuestion("x").questionId, "generic");
+});
+
+test("buildProposalQuestion (Story 8.2, C4) builds the fixed confirm shape: 'confirm' questionId, the given promptText as text, yes/no options, allowsFreeText, and the proposal attached", () => {
+  const proposal: Proposal<unknown> = {
+    id: "time-budget-change-1",
+    kind: "time-budget-change",
+    entityId: "current",
+    entityVersion: "1",
+    suggested: { totalMinutes: 480 },
+    reason: "Tasks have been deferred for 3 consecutive days.",
+    createdAt: "2026-08-24T09:00:00.000Z",
+  };
+  const promptText = 'Tasks have been deferred for 3 consecutive days. Reply "yes" to apply this change, or "no" to dismiss it.';
+  const q = buildProposalQuestion("time-budget-proposal", promptText, proposal);
+  assert.equal(PROPOSAL_QUESTION_ID, "confirm");
+  assert.deepEqual(q, {
+    requestId: "time-budget-proposal",
+    questionId: "confirm",
+    text: promptText,
+    options: [
+      { label: "Yes", value: "yes" },
+      { label: "No", value: "no" },
+    ],
+    allowsFreeText: true,
+    proposal,
+  });
 });

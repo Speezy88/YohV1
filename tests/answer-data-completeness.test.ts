@@ -104,7 +104,34 @@ test("a confirmed 'yes' on the suggest question re-validates and writes the sugg
   };
   const result = await answerDataCompleteness({ store, session: session(), updateTaskField }, { requestId: "data-completeness", questionId: "t1:estimatedDurationMinutes:suggest", answer: "yes", proposal });
   assert.equal(result.ok, true);
+  if (result.ok) {
+    // Important fix: an accepted FR-25 suggestion must read identically to
+    // a typed FR-24 answer to the same field — same human-readable label,
+    // quoted value, trailing period.
+    assert.deepEqual(result.value.receipts, ['Call dentist — Estimated Duration: set to "30".']);
+  }
   assert.deepEqual(updateTaskField.calls, [{ taskId: "t1", field: "estimatedDurationMinutes", value: 30 }]);
+  store.close();
+});
+
+test("a tampered echoed proposal (out-of-range value) is refused by confirmProposal's re-validation — updateTaskField is never called (Review Focus #1)", async () => {
+  const store = tempStore();
+  openReq(store, [{ taskId: "t1", taskTitle: "Call dentist", missingFields: ["estimatedDurationMinutes"] }]);
+  const updateTaskField = makeUpdateTaskField();
+  const tamperedProposal = {
+    id: "field-value-t1-estimatedDurationMinutes",
+    kind: "field-value" as const,
+    entityId: "t1",
+    entityVersion: "display-time",
+    suggested: { taskId: "t1", taskTitle: "Call dentist", field: "estimatedDurationMinutes" as const, value: -5, reason: "x" },
+    reason: "x",
+    createdAt: "2026-08-24T09:00:00.000Z",
+  };
+
+  const result = await answerDataCompleteness({ store, session: session(), updateTaskField }, { requestId: "data-completeness", questionId: "t1:estimatedDurationMinutes:suggest", answer: "yes", proposal: tamperedProposal });
+  assert.equal(result.ok, true);
+  assert.equal(updateTaskField.calls.length, 0);
+  assert.equal(getTaskFieldOverride(store, "t1"), undefined);
   store.close();
 });
 
