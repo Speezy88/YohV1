@@ -1005,6 +1005,8 @@ export interface QuickAddNormalizeRawFields {
   readonly energy?: string;
   readonly area?: string;
   readonly status?: string;
+  /** Task 7 (Priority field). */
+  readonly priority?: string;
 }
 
 /** The live option names `normalizeQuickAddLine` shows Claude, so it never invents an Area/Status Spencer's workspace doesn't actually have. */
@@ -1012,6 +1014,8 @@ export interface QuickAddLiveOptions {
   readonly area?: readonly string[];
   readonly energy: readonly string[];
   readonly status: readonly string[];
+  /** Task 7: the live Priority select option names (e.g. "🔴 High") — absent/empty means Priority isn't shown to Claude at all. */
+  readonly priority?: readonly string[];
 }
 
 const NORMALIZE_QUICK_ADD_MAX_TOKENS = 256;
@@ -1020,13 +1024,14 @@ const NORMALIZE_QUICK_ADD_MAX_TOKENS = 256;
 function buildNormalizeQuickAddStableSystemPrompt(): string {
   return [
     "You are helping Yoh, Spencer's personal planning assistant, read the real fields out of a quick-add line for a new Task — Spencer typed the WHOLE line as one piece of free text, and some of it is data (a due date, a duration, an energy level, an area, a status), not title.",
-    'Respond with STRICT JSON only, on one line, with exactly these optional keys: {"title": "...", "dueDate": "YYYY-MM-DD", "estimatedDurationMinutes": "60", "energy": "low|medium|high", "area": "...", "status": "not-started|in-progress"}.',
+    'Respond with STRICT JSON only, on one line, with exactly these optional keys: {"title": "...", "dueDate": "YYYY-MM-DD", "estimatedDurationMinutes": "60", "energy": "low|medium|high", "area": "...", "status": "not-started|in-progress", "priority": "..."}.',
     '"title" is the words that are genuinely the task\'s name once every field below is read out of the line — drop a leading imperative like "add". Always include "title", even if you find no other field at all.',
     "Resolve any relative date/day phrase (\"wednesday\", \"tomorrow\", \"next week friday\") into a real \"YYYY-MM-DD\" date using today's date and timezone, given right after this instruction block. Never invent a date Spencer didn't say or clearly imply.",
     '"estimatedDurationMinutes" is a whole number of minutes, as a string (e.g. "90" for "1.5h" or "an hour and a half").',
     '"energy" is exactly one of: low, medium, high (map "deep"/"deep work" to high, "light"/"light work" to low).',
     '"area" MUST be exactly one of the live Area options listed below, verbatim — never a value that isn\'t in that list, and never invented free text.',
     '"status" is exactly one of: not-started, in-progress — NEVER "completed" or "done": quick-add must never mark a new Task complete, so if the line says "done"/"completed", omit "status" entirely rather than answering it.',
+    '"priority" MUST be exactly one of the live Priority options listed below, verbatim (its emoji is optional in the line itself, e.g. "high priority"/"p1" both mean the "High" option) — never invented free text.',
     "Omit any key you can't confidently read from the line — never guess. If nothing at all is confidently readable, respond with just the title.",
   ].join("\n");
 }
@@ -1034,6 +1039,7 @@ function buildNormalizeQuickAddStableSystemPrompt(): string {
 function buildNormalizeQuickAddDynamicContext(today: string, timeZone: string, options: QuickAddLiveOptions): string {
   const lines = [`Today's date is ${today}, Spencer's timezone is ${timeZone}.`, `Live Status options: ${options.status.join(", ")}.`];
   if (options.area && options.area.length > 0) lines.push(`Live Area options (area must be one of these, verbatim): ${options.area.join(", ")}.`);
+  if (options.priority && options.priority.length > 0) lines.push(`Live Priority options (priority must be one of these, verbatim): ${options.priority.join(", ")}.`);
   return lines.join("\n");
 }
 
@@ -1090,6 +1096,7 @@ export async function normalizeQuickAddLine(
   const energy = str("energy");
   const area = str("area");
   const status = str("status");
+  const priority = str("priority");
 
   return {
     title,
@@ -1098,5 +1105,6 @@ export async function normalizeQuickAddLine(
     ...(energy !== undefined ? { energy } : {}),
     ...(area !== undefined ? { area } : {}),
     ...(status !== undefined ? { status } : {}),
+    ...(priority !== undefined ? { priority } : {}),
   };
 }

@@ -18,24 +18,25 @@
  */
 import { useEffect, useRef, useState } from "react";
 import type { TaskListItem } from "../../../src/types/api.ts";
-import type { PlanningFieldNames, TaskFieldOptions } from "../../../src/types/domain.ts";
-import { DURATION_PRESETS, MISSING_BADGE, formatDue, formatDuration, optionLabel } from "../lib/tasks.ts";
+import type { EditableTaskField, TaskFieldOptions } from "../../../src/types/domain.ts";
+import { DURATION_PRESETS, MISSING_BADGE, PRIORITY_MISSING_BADGE, formatDue, formatDuration, optionLabel } from "../lib/tasks.ts";
 import { Checkbox } from "./Checkbox.tsx";
 
-export const TASK_ROW_GRID = "grid grid-cols-[44px_minmax(0,1fr)_130px_100px_120px_100px_130px] items-center gap-x-3";
+export const TASK_ROW_GRID = "grid grid-cols-[44px_minmax(0,1fr)_130px_100px_120px_100px_130px_130px] items-center gap-x-3";
 
-/** The five editable cells, in column order (column 0 is the checkbox). */
-export const TASK_CELLS: readonly PlanningFieldNames[] = ["dueDate", "estimatedDurationMinutes", "area", "energy", "status"];
+/** The six editable cells, in column order (column 0 is the checkbox) — Task 7 binding ruling: widened past `PlanningFieldNames` by one, "priority". */
+export const TASK_CELLS: readonly EditableTaskField[] = ["dueDate", "estimatedDurationMinutes", "area", "energy", "status", "priority"];
 
-/** What a row can edit in place: a planning field, or the title. */
-export type TaskEditField = PlanningFieldNames | "title";
+/** What a row can edit in place: a planning field, Priority, or the title. */
+export type TaskEditField = EditableTaskField | "title";
 
-const FIELD_NAMES: Record<PlanningFieldNames, string> = {
+const FIELD_NAMES: Record<EditableTaskField, string> = {
   dueDate: "Due",
   estimatedDurationMinutes: "Duration",
   area: "Area",
   energy: "Energy",
   status: "Status",
+  priority: "Priority",
 };
 
 const FOCUS_RING = "focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid";
@@ -63,7 +64,7 @@ export interface TaskRowProps {
   onCancel(): void;
 }
 
-function displayValue(item: TaskListItem, field: PlanningFieldNames, today: string, options: TaskFieldOptions): string | undefined {
+function displayValue(item: TaskListItem, field: EditableTaskField, today: string, options: TaskFieldOptions): string | undefined {
   switch (field) {
     case "dueDate":
       return item.dueDate === undefined ? undefined : formatDue(item.dueDate, today);
@@ -79,6 +80,9 @@ function displayValue(item: TaskListItem, field: PlanningFieldNames, today: stri
       if (item.status === undefined) return undefined;
       return options.status.find((o) => o.value === item.status)?.label ?? optionLabel(item.status.replace("-", " "));
     }
+    case "priority":
+      // The live option name already, emoji + word (e.g. "🔴 High") — shown verbatim, like Area.
+      return item.priority;
   }
 }
 
@@ -136,7 +140,9 @@ function CellEditor({ field, initial, label, options, onCommit, onCancel }: Edit
         ? options.status.map((o) => ({ value: o.value, label: o.label }))
         : field === "area" && options.area !== undefined
           ? options.area.map((a) => ({ value: a, label: a }))
-          : undefined;
+          : field === "priority"
+            ? (options.priority ?? []).map((p) => ({ value: p, label: p }))
+            : undefined;
 
   if (selectOptions !== undefined) {
     return (
@@ -301,7 +307,11 @@ export function TaskRow({
             </span>
           );
         }
-        const missing = shown === undefined && item.missing.includes(field);
+        // Priority is never part of `item.missing` (Task 7 binding ruling:
+        // not a Data-Completeness Gate field) — its empty pill is keyed
+        // only on "no value shown", exactly like every other empty cell
+        // otherwise looks, just without the gate's involvement.
+        const missing = field === "priority" ? shown === undefined : shown === undefined && item.missing.includes(field);
         const busy = saving.has(field);
         return (
           <span key={field} data-col={i + 1} className="min-w-0">
@@ -316,7 +326,7 @@ export function TaskRow({
             >
               {missing ? (
                 <span className="inline-flex h-[26px] items-center whitespace-nowrap rounded-full border-[length:var(--rim-width)] border-accent-solid px-2.5 text-label font-bold text-ink-accent">
-                  {MISSING_BADGE[field]}
+                  {field === "priority" ? PRIORITY_MISSING_BADGE : MISSING_BADGE[field]}
                 </span>
               ) : (
                 <span className={`truncate ${field === "dueDate" && item.overdue ? "font-bold text-ink-danger" : "text-ink-secondary"}`}>{shown ?? "—"}</span>

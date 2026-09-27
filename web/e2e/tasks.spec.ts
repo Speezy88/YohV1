@@ -14,6 +14,7 @@ interface FakeTaskRow {
   readonly title: string;
   readonly dueDate?: string;
   readonly minutes?: number;
+  readonly priority?: string;
 }
 
 async function tasksRows(page: Page): Promise<readonly FakeTaskRow[]> {
@@ -89,6 +90,22 @@ test("an inline Duration edit writes straight through and survives a reload", as
   await page.reload();
   await page.getByRole("button", { name: "Tasks", exact: true }).click();
   await expect(row(page, "Calc problem set 4")).toContainText("45 min");
+});
+
+test("an inline Priority edit writes straight through and survives a reload", async ({ page }) => {
+  await openTasks(page);
+  const calc = row(page, "Calc problem set 4");
+  await expect(calc).toContainText("Add priority");
+  await calc.getByRole("button", { name: /^Priority for Calc problem set 4/ }).click();
+  const select = page.getByRole("combobox", { name: "Priority for Calc problem set 4" });
+  await expect(select).toBeFocused();
+  await select.selectOption("🟡 Medium");
+  await expect(calc).toContainText("🟡 Medium");
+  await expect.poll(async () => (await tasksRows(page)).find((r) => r.id === "tp-today")?.priority).toBe("🟡 Medium");
+
+  await page.reload();
+  await page.getByRole("button", { name: "Tasks", exact: true }).click();
+  await expect(row(page, "Calc problem set 4")).toContainText("🟡 Medium");
 });
 
 test("↓ from quick-add moves into the rows, and ↓/↑ there move rows — never pages", async ({ page }) => {

@@ -136,7 +136,7 @@ import type {
   TimeBudgetRequest,
   UpdateTaskFieldRequest,
 } from "../types/api.ts";
-import type { CalendarEvent, ChatTurn, ExternalId, IsoDate, PlanningFieldNames, Result, Task, TaskFieldOptions, YohError, YohErrorKind } from "../types/domain.ts";
+import type { CalendarEvent, ChatTurn, EditableTaskField, ExternalId, IsoDate, Result, Task, TaskFieldOptions, YohError, YohErrorKind } from "../types/domain.ts";
 
 // ============================================================================
 // GET /api/events — outbox tail → SSE hints (AD-18)
@@ -550,8 +550,9 @@ const RESEARCH_NOT_CONFIGURED: ApiFailure = {
   error: { kind: "unreachable", message: "I'm not set up to do that yet — my Notion connection isn't configured." },
 };
 
-const TASKS_GROUP_BY: ReadonlySet<string> = new Set<TasksGroupBy>(["due", "area", "status"]);
-const PLANNING_FIELD_NAMES: ReadonlySet<string> = new Set<PlanningFieldNames>(["estimatedDurationMinutes", "area", "dueDate", "status", "energy"]);
+const TASKS_GROUP_BY: ReadonlySet<string> = new Set<TasksGroupBy>(["due", "area", "status", "priority"]);
+/** Task 7 binding ruling: widened past `PlanningFieldNames` to `EditableTaskField` — the ONLY route this affects is the inline-edit field write. */
+const EDITABLE_TASK_FIELD_NAMES: ReadonlySet<string> = new Set<EditableTaskField>(["estimatedDurationMinutes", "area", "dueDate", "status", "energy", "priority"]);
 
 /** HTTP status for a serialized `Result` — the body is always the envelope; the status just makes logs and devtools honest. */
 const ERROR_STATUS: Readonly<Record<YohErrorKind, ContentfulStatusCode>> = {
@@ -866,14 +867,19 @@ export function createApp(deps: ServerDeps) {
       .post(
         "/api/tasks/parse",
         validator("json", (value, c) => {
-          const body = value as { text?: unknown; areaOptions?: unknown } | null;
+          const body = value as { text?: unknown; areaOptions?: unknown; priorityOptions?: unknown } | null;
           const areaOptions = body?.areaOptions;
-          const validOptions = areaOptions === undefined || (Array.isArray(areaOptions) && areaOptions.every((o) => typeof o === "string"));
-          if (typeof body?.text !== "string" || !validOptions) {
+          const priorityOptions = body?.priorityOptions;
+          const isStringArray = (v: unknown): v is string[] => v === undefined || (Array.isArray(v) && v.every((o) => typeof o === "string"));
+          if (typeof body?.text !== "string" || !isStringArray(areaOptions) || !isStringArray(priorityOptions)) {
             const invalid: ApiFailure = { ok: false, error: { kind: "validation", message: "tasks/parse: missing text" } };
             return c.json(invalid, httpStatus(invalid));
           }
-          return { text: body.text, ...(areaOptions !== undefined ? { areaOptions: areaOptions as string[] } : {}) } satisfies QuickAddPreviewRequest;
+          return {
+            text: body.text,
+            ...(areaOptions !== undefined ? { areaOptions } : {}),
+            ...(priorityOptions !== undefined ? { priorityOptions } : {}),
+          } satisfies QuickAddPreviewRequest;
         }),
         async (c) => {
           if (!tasksDeps) return c.json(TASKS_NOT_CONFIGURED, httpStatus(TASKS_NOT_CONFIGURED));
@@ -885,11 +891,11 @@ export function createApp(deps: ServerDeps) {
         "/api/tasks/:id/field",
         validator("json", (value, c) => {
           const body = value as { field?: unknown; value?: unknown } | null;
-          if (typeof body?.field !== "string" || !PLANNING_FIELD_NAMES.has(body.field) || typeof body.value !== "string") {
+          if (typeof body?.field !== "string" || !EDITABLE_TASK_FIELD_NAMES.has(body.field) || typeof body.value !== "string") {
             const invalid: ApiFailure = { ok: false, error: { kind: "validation", message: "tasks/field: missing field/value" } };
             return c.json(invalid, httpStatus(invalid));
           }
-          return { field: body.field as PlanningFieldNames, value: body.value } satisfies UpdateTaskFieldRequest;
+          return { field: body.field as EditableTaskField, value: body.value } satisfies UpdateTaskFieldRequest;
         }),
         async (c) => {
           if (!tasksDeps) return c.json(TASKS_NOT_CONFIGURED, httpStatus(TASKS_NOT_CONFIGURED));

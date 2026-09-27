@@ -97,6 +97,7 @@ import type {
   UpdatePageParameters,
 } from "@notionhq/client";
 import type {
+  EditableTaskField,
   Energy,
   ExternalId,
   IsoDate,
@@ -182,6 +183,8 @@ export interface NotionTaskPropertyNames {
   readonly status: string;
   readonly energy: string;
   readonly project: string;
+  /** Task 7 (Priority field). */
+  readonly priority: string;
 }
 
 /** The default Task property names, matching the exact field names the Task 3 brief's acceptance criteria uses. */
@@ -193,6 +196,7 @@ export const DEFAULT_TASK_PROPERTY_NAMES: NotionTaskPropertyNames = {
   status: "Status",
   energy: "Energy",
   project: "Project",
+  priority: "Priority",
 };
 
 /**
@@ -499,6 +503,9 @@ export async function readTaskFieldOptions(
     area: liveOptionNames(names.area),
     energy: mapOptions(liveOptionNames(names.energy) ?? [], (label) => normalizeEnergy(label, energyOptionNames)),
     status: mapOptions(liveOptionNames(names.status) ?? [], (label) => normalizeStatus(label, statusOptionNames)),
+    // Task 7: Priority is a string field, like Area — the live option
+    // names verbatim, never mapped onto a fixed enum.
+    priority: liveOptionNames(names.priority) ?? [],
   };
 }
 
@@ -656,8 +663,8 @@ export async function updateTaskField(
   client: NotionWriteClient & NotionSchemaClient,
   config: NotionFieldWriteConfig,
   taskId: string,
-  field: PlanningFieldNames,
-  value: NonNullable<Task[PlanningFieldNames]>,
+  field: EditableTaskField,
+  value: NonNullable<Task[EditableTaskField]>,
 ): Promise<Result<void, YohError>> {
   const propertyNames = config.taskPropertyNames ?? DEFAULT_TASK_PROPERTY_NAMES;
 
@@ -677,7 +684,15 @@ export async function updateTaskField(
     return writeSelectLikeField(client, config.tasksDataSourceId, taskId, propertyNames.area, value as string);
   }
 
-  // field === "energy" — the only PlanningFieldNames value not yet handled.
+  // Task 7: Priority — like Area, the value is already the live option
+  // NAME (`core/planning-field-value.ts`'s `parsePriorityValue`/the update
+  // route validate this before it ever reaches here), resolved against the
+  // live select options the same guarded way every other select field is.
+  if (field === "priority") {
+    return writeSelectLikeField(client, config.tasksDataSourceId, taskId, propertyNames.priority, value as string);
+  }
+
+  // field === "energy" — the only EditableTaskField value not yet handled.
   const energyOptionNames = config.energyOptionNames ?? DEFAULT_ENERGY_OPTION_NAMES;
   const preferredOptionName = energyOptionNames[value as Energy] ?? capitalizeFirst(value as Energy);
   return writeSelectLikeField(client, config.tasksDataSourceId, taskId, propertyNames.energy, preferredOptionName);
@@ -851,8 +866,8 @@ export interface NotionTaskWriteBindings {
   readonly setTaskStatus: (taskId: string, status: TaskStatus) => Promise<Result<void, YohError>>;
   readonly updateTaskField: (
     taskId: string,
-    field: PlanningFieldNames,
-    value: NonNullable<Task[PlanningFieldNames]>,
+    field: EditableTaskField,
+    value: NonNullable<Task[EditableTaskField]>,
   ) => Promise<Result<void, YohError>>;
   /** Task 6B fix round: the Tasks page's inline rename (AD-12 amended 2026-09-27). */
   readonly updateTaskTitle: (taskId: string, title: string) => Promise<Result<void, YohError>>;
@@ -917,6 +932,7 @@ function createPagePropertyNameMap(database: NotionDatabaseTarget, config: Notio
       dueDate: names.dueDate,
       status: names.status,
       energy: names.energy,
+      priority: names.priority,
     };
   }
   if (database === "Projects") {
@@ -1227,6 +1243,9 @@ function toTask(
   const status = normalizeStatus(getStatusName(page, names.status), statusOptionNames);
   const energy = normalizeEnergy(getSelectName(page, names.energy), energyOptionNames);
   const projectId = getFirstRelationId(page, names.project);
+  // Task 7: Priority is read like Area — the live select option name
+  // verbatim, never mapped onto a fixed enum.
+  const priority = getAreaValue(page, names.priority);
 
   return {
     id: page.id,
@@ -1239,6 +1258,7 @@ function toTask(
     ...(status !== undefined ? { status } : {}),
     ...(energy !== undefined ? { energy } : {}),
     ...(projectId !== undefined ? { projectId } : {}),
+    ...(priority !== undefined ? { priority } : {}),
   };
 }
 

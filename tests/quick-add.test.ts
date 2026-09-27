@@ -152,6 +152,56 @@ test("energy words: med is medium; case-insensitive", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Task 7 (Priority field): "high priority"/"priority high" anywhere in the
+// line, and "p1"/"p2"/"p3" anywhere, matched against the LIVE Priority
+// options (`ctx.priorityOptions`) — a bare "high"/"low" with no "priority"
+// qualifier keeps its current meaning (Energy); "high energy" stays Energy.
+// ---------------------------------------------------------------------------
+
+const PRIORITY_OPTIONS = ["🔴 High", "🟡 Medium", "🟢 Low"];
+const PRIORITY_CTX: QuickAddContext = { ...CTX, priorityOptions: PRIORITY_OPTIONS };
+
+test("'high priority'/'priority high' set Priority to the matching live option, anywhere in the line", () => {
+  assert.equal(parseQuickAdd("Lab report high priority", PRIORITY_CTX).fields.priority, "🔴 High");
+  assert.equal(parseQuickAdd("Lab report priority high due fri", PRIORITY_CTX).fields.priority, "🔴 High");
+  assert.equal(parseQuickAdd("Errand medium priority", PRIORITY_CTX).fields.priority, "🟡 Medium");
+  assert.equal(parseQuickAdd("Errand priority low", PRIORITY_CTX).fields.priority, "🟢 Low");
+});
+
+test("p1/p2/p3 set Priority to High/Medium/Low, anywhere in the line", () => {
+  assert.equal(parseQuickAdd("Lab report p1", PRIORITY_CTX).fields.priority, "🔴 High");
+  assert.equal(parseQuickAdd("Lab report p2", PRIORITY_CTX).fields.priority, "🟡 Medium");
+  assert.equal(parseQuickAdd("Lab report p3", PRIORITY_CTX).fields.priority, "🟢 Low");
+});
+
+test("without ctx.priorityOptions, 'priority'/'p1' never set Priority (no live options to validate against)", () => {
+  assert.equal(parseQuickAdd("Lab report high priority", CTX).fields.priority, undefined);
+  assert.equal(parseQuickAdd("Lab report p1", CTX).fields.priority, undefined);
+});
+
+test("a bare 'high'/'low' with no 'priority' qualifier keeps its current meaning: Energy, not Priority", () => {
+  const bareHigh = parseQuickAdd("Essay high", PRIORITY_CTX);
+  assert.equal(bareHigh.fields.energy, "high");
+  assert.equal(bareHigh.fields.priority, undefined);
+  const bareLow = parseQuickAdd("Essay low", PRIORITY_CTX);
+  assert.equal(bareLow.fields.energy, "low");
+  assert.equal(bareLow.fields.priority, undefined);
+});
+
+test("'high energy' stays Energy even when Priority options are live", () => {
+  const parsed = parseQuickAdd("Essay high energy tonight", PRIORITY_CTX);
+  assert.equal(parsed.fields.energy, "high");
+  assert.equal(parsed.fields.priority, undefined);
+});
+
+test("Priority and Energy both read from the same line when both are unambiguously present", () => {
+  const parsed = parseQuickAdd("Lab report high priority deep work", PRIORITY_CTX);
+  assert.equal(parsed.fields.priority, "🔴 High");
+  assert.equal(parsed.fields.energy, "high");
+  assert.equal(parsed.title, "Lab report");
+});
+
+// ---------------------------------------------------------------------------
 // Polish 4 Task 1: fields read anywhere in the line, not just off the end.
 // Both are Spencer's own real inputs, pinned verbatim.
 // ---------------------------------------------------------------------------

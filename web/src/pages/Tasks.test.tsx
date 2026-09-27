@@ -48,7 +48,7 @@ const VIEW: TasksViewResponse = {
       key: "overdue",
       label: "Overdue",
       tone: "danger",
-      tasks: [{ id: "t-over", title: "Email Mr. Alvarez", dueDate: "2026-09-25", estimatedDurationMinutes: 15, area: "School", energy: "low", status: "not-started", missing: [], overdue: true }],
+      tasks: [{ id: "t-over", title: "Email Mr. Alvarez", dueDate: "2026-09-25", estimatedDurationMinutes: 15, area: "School", energy: "low", status: "not-started", priority: "🔴 High", missing: [], overdue: true }],
     },
     {
       key: "today",
@@ -75,6 +75,7 @@ const VIEW: TasksViewResponse = {
       { value: "in-progress", label: "In Progress" },
       { value: "completed", label: "Completed" },
     ],
+    priority: ["🔴 High", "🟡 Medium", "🟢 Low"],
   },
 };
 
@@ -131,6 +132,26 @@ describe("TasksPage", () => {
     expect(within(row("Calc problem set 4")).getByText("Nothing")).toBeInTheDocument();
   });
 
+  // Task 7 (Priority field): the column shows the option's emoji + word
+  // verbatim, and an empty value shows an "Add priority" pill, like every
+  // other empty field.
+  it("shows the Priority column: the live option's emoji + word verbatim, or an 'Add priority' pill when unset", async () => {
+    await renderLoaded();
+    expect(within(row("Email Mr. Alvarez")).getByText("🔴 High")).toBeInTheDocument();
+    expect(within(row("Calc problem set 4")).getByText("Add priority")).toBeInTheDocument();
+  });
+
+  it("Priority edits with a select fed from the live Notion options, and writes through the field route", async () => {
+    api.tasks[":id"].field.$post.mockResolvedValue(envelope({ ok: true, value: { receipt: "Priority set to 🟡 Medium." } }));
+    await renderLoaded();
+    fireEvent.click(within(row("Calc problem set 4")).getByRole("button", { name: /^Priority for Calc problem set 4/ }));
+    const select = screen.getByRole("combobox", { name: "Priority for Calc problem set 4" });
+    expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["Choose…", "🔴 High", "🟡 Medium", "🟢 Low"]);
+    fireEvent.change(select, { target: { value: "🟡 Medium" } });
+    expect(api.tasks[":id"].field.$post).toHaveBeenCalledWith({ param: { id: "t-calc" }, json: { field: "priority", value: "🟡 Medium" } });
+    expect(within(row("Calc problem set 4")).getByText("🟡 Medium")).toBeInTheDocument();
+  });
+
   // Real-use fixes plan, Task 2: the "Missing data" filter chip — armed
   // either from this page or from the Chat header's "N tasks missing data"
   // chip (`lib/missingData.ts`'s `openMissingData`, tested there).
@@ -178,7 +199,9 @@ describe("TasksPage", () => {
     const input = screen.getByRole("textbox", { name: "New task" });
     fireEvent.change(input, { target: { value: "Lab report due fri 90m high #bio" } });
     await waitFor(() => expect(screen.getAllByTestId("quick-add-chip").map((c) => c.textContent)).toEqual(["Due Fri, Oct 2", "90 min", "Deep energy", "Area: Bio"]));
-    expect(api.tasks.parse.$post).toHaveBeenCalledWith({ json: { text: "Lab report due fri 90m high #bio", areaOptions: ["School", "Math", "Bio"] } });
+    expect(api.tasks.parse.$post).toHaveBeenCalledWith({
+      json: { text: "Lab report due fri 90m high #bio", areaOptions: ["School", "Math", "Bio"], priorityOptions: ["🔴 High", "🟡 Medium", "🟢 Low"] },
+    });
 
     fireEvent.keyDown(input, { key: "Enter" });
     expect(api.tasks.$post).toHaveBeenCalledWith({ json: { text: "Lab report due fri 90m high #bio" } });
@@ -318,6 +341,13 @@ describe("TasksPage", () => {
     await waitFor(() => expect(api.tasks.$get).toHaveBeenLastCalledWith({ query: { groupBy: "area" } }));
     expect(screen.getByRole("button", { name: "Area" })).toHaveAttribute("aria-pressed", "true");
     expect(window.localStorage.getItem("yoh.tasks.groupBy")).toBe("area");
+  });
+
+  it("Task 7: Priority is offered as a grouping option, next to Due/Area/Status", async () => {
+    await renderLoaded();
+    fireEvent.click(screen.getByRole("button", { name: "Priority" }));
+    await waitFor(() => expect(api.tasks.$get).toHaveBeenLastCalledWith({ query: { groupBy: "priority" } }));
+    expect(screen.getByRole("button", { name: "Priority" })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("search is sent to the server after a short pause", async () => {

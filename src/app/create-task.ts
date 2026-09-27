@@ -85,6 +85,7 @@ export async function previewQuickAdd(deps: QuickAddPreviewDeps, input: QuickAdd
     timeZone: deps.timeZone,
     ...(resolveArea ? { resolveArea } : {}),
     ...(input.areaOptions ? { areaOptions: input.areaOptions } : {}),
+    ...(input.priorityOptions ? { priorityOptions: input.priorityOptions } : {}),
   });
   return { ok: true, value: { title: parsed.title, ...parsed.fields, unmatchedAreas: parsed.unmatchedAreas } };
 }
@@ -112,6 +113,7 @@ export async function createTask(deps: CreateTaskDeps, input: CreateTaskRequest)
     timeZone: deps.timeZone,
     ...(resolveArea ? { resolveArea } : {}),
     ...(options.area ? { areaOptions: options.area } : {}),
+    ...(options.priority && options.priority.length > 0 ? { priorityOptions: options.priority } : {}),
   });
 
   // Polish 4 Task 1: submit-only Haiku fallback — never while typing
@@ -160,6 +162,8 @@ export async function createTask(deps: CreateTaskDeps, input: CreateTaskRequest)
     // Never Completed (`core/quick-add.ts` and `quick-add-normalize.ts` both already refuse to produce it) — the live option name when the schema lists one, the known default otherwise.
     properties["status"] = options.status.find((o) => o.value === fields.status)?.label ?? DEFAULT_TASK_STATUS_OPTION_NAMES[fields.status];
   }
+  // Task 7: Priority is already the LIVE option name verbatim (`parsePriorityValue`) — no lookup needed, like Area.
+  if (fields.priority !== undefined) properties["priority"] = fields.priority;
 
   // AD-12, draft time: never attempt a write the live schema would reject.
   const drafted = await resolveNotionPageDraftProperties(client, config, "Tasks", properties);

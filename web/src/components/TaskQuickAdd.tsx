@@ -64,6 +64,7 @@ function chipsFor(preview: QuickAddPreviewResponse, today: string | undefined, o
     const live = options?.status.find((o) => o.value === preview.status)?.label;
     chips.push(`Status: ${live ?? STATUS_FALLBACK_LABEL[preview.status]}`);
   }
+  if (preview.priority) chips.push(preview.priority); // already the live option label, emoji + word (e.g. "🔴 High")
   return chips;
 }
 
@@ -84,12 +85,12 @@ export const TaskQuickAdd = forwardRef<HTMLInputElement, TaskQuickAddProps>(func
     }
     const seq = ++latest.current;
     const timer = setTimeout(() => {
-      void requestQuickAddPreview(trimmed, options?.area).then((outcome) => {
+      void requestQuickAddPreview(trimmed, options?.area, options?.priority).then((outcome) => {
         if (seq === latest.current && outcome.ok) setPreview({ text: trimmed, value: outcome.value });
       });
     }, PREVIEW_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [text, options?.area]);
+  }, [text, options?.area, options?.priority]);
 
   const current = preview !== undefined && preview.text === text.trim() ? preview.value : undefined;
   const chips = current ? chipsFor(current, today, options) : [];

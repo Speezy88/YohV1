@@ -27,6 +27,7 @@ const OPTIONS: TaskFieldOptions = {
     { value: "in-progress", label: "In Progress" },
     { value: "completed", label: "Completed" },
   ],
+  priority: ["🔴 High", "🟡 Medium", "🟢 Low"],
 };
 
 function baseDeps(normalize: NonNullable<NormalizeQuickAddDeps["normalize"]>): NormalizeQuickAddDeps {
@@ -116,6 +117,18 @@ test("an Area IS accepted verbatim when the workspace's Area property is free te
   const result = await normalizeQuickAdd(baseDeps(fakeNormalize({ title: "x", area: "Anything Spencer typed" })), { text: "x", options: freeTextOptions });
   assert.ok(result.ok);
   assert.equal(result.value.fields.area, "Anything Spencer typed");
+});
+
+test("Task 7: a Priority Claude claims exactly matching a live option is accepted verbatim", async () => {
+  const result = await normalizeQuickAdd(baseDeps(fakeNormalize({ title: "x", priority: "🔴 High" })), { text: "x", options: OPTIONS });
+  assert.ok(result.ok);
+  assert.equal(result.value.fields.priority, "🔴 High");
+});
+
+test("Task 7: a Priority Claude claims that isn't one of the live options is dropped, never guessed", async () => {
+  const result = await normalizeQuickAdd(baseDeps(fakeNormalize({ title: "x", priority: "Someday Maybe" })), { text: "x", options: OPTIONS });
+  assert.ok(result.ok);
+  assert.equal(result.value.fields.priority, undefined);
 });
 
 test("an invalid Energy/dueDate/duration value is dropped, never guessed", async () => {

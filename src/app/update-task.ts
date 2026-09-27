@@ -29,10 +29,10 @@ import type { SqliteConnection } from "../adapters/sqlite.ts";
 import type { NotionTaskWriteBindings } from "../adapters/notion-adapter.ts";
 import { appendOutboxInTx } from "../adapters/notification-store.ts";
 import { errorCopy, errorCopyForThrown } from "../core/error-copy.ts";
-import { PLANNING_FIELD_LABELS, parsePlanningFieldValue } from "../core/planning-field-value.ts";
+import { PLANNING_FIELD_LABELS, parsePlanningFieldValue, parsePriorityValue } from "../core/planning-field-value.ts";
 import { TASKS_TOPIC } from "./create-task.ts";
 import type { RenameTaskRequest, RenameTaskResponse, UpdateTaskFieldRequest, UpdateTaskFieldResponse } from "../types/api.ts";
-import type { Energy, PlanningFieldNames, Result, Task, TaskFieldOptions, TaskStatus, YohError } from "../types/domain.ts";
+import type { EditableTaskField, Energy, PlanningFieldNames, Result, Task, TaskFieldOptions, TaskStatus, YohError } from "../types/domain.ts";
 
 export interface UpdateTaskDeps {
   /** `bindNotionTaskWrites(...)`'s field write — the shell spreads the binder, never names the write itself. */
@@ -61,8 +61,11 @@ const FALLBACK_STATUS_WORDS: Record<TaskStatus, string> = {
   slipped: "Slipped",
 };
 
-function isPlanningField(field: unknown): field is PlanningFieldNames {
-  return typeof field === "string" && Object.hasOwn(PLANNING_FIELD_LABELS, field);
+/** Task 7 binding ruling: `PLANNING_FIELD_LABELS` widened by one entry, ONLY for this file's own two "unknown field"/"needs a value" messages and the success receipt — `core/planning-field-value.ts`'s own `PLANNING_FIELD_LABELS` stays `PlanningFieldNames`-only (the gate/missing-data-count field set never grows). */
+const EDITABLE_FIELD_LABELS: Record<EditableTaskField, string> = { ...PLANNING_FIELD_LABELS, priority: "Priority" };
+
+function isEditableField(field: unknown): field is EditableTaskField {
+  return typeof field === "string" && Object.hasOwn(EDITABLE_FIELD_LABELS, field);
 }
 
 function capitalize(text: string): string {
@@ -83,7 +86,7 @@ async function liveOptions(deps: UpdateTaskDeps): Promise<TaskFieldOptions | und
   }
 }
 
-async function describe(deps: UpdateTaskDeps, field: PlanningFieldNames, value: NonNullable<Task[PlanningFieldNames]>): Promise<string> {
+async function describe(deps: UpdateTaskDeps, field: EditableTaskField, value: NonNullable<Task[EditableTaskField]>): Promise<string> {
   switch (field) {
     case "dueDate":
       return humanDate(value as string);
@@ -99,6 +102,9 @@ async function describe(deps: UpdateTaskDeps, field: PlanningFieldNames, value: 
       const label = (await liveOptions(deps))?.status.find((o) => o.value === (value as TaskStatus))?.label;
       return label ?? FALLBACK_STATUS_WORDS[value as TaskStatus];
     }
+    case "priority":
+      // The value IS the live option name already (`parsePriorityValue`), same as Area.
+      return String(value);
   }
 }
 
@@ -112,12 +118,23 @@ function invalid(message: string): { ok: false; error: YohError } {
 
 export async function updateTask(deps: UpdateTaskDeps, input: UpdateTaskInput): Promise<Result<UpdateTaskFieldResponse, YohError>> {
   if (typeof input.taskId !== "string" || input.taskId.trim() === "") return invalid("That Task couldn't be found.");
-  if (!isPlanningField(input.field)) return invalid("That field can't be edited here.");
-  if (typeof input.value !== "string") return invalid(`${PLANNING_FIELD_LABELS[input.field]} needs a value.`);
+  if (!isEditableField(input.field)) return invalid("That field can't be edited here.");
+  if (typeof input.value !== "string") return invalid(`${EDITABLE_FIELD_LABELS[input.field]} needs a value.`);
 
-  const parsed = parsePlanningFieldValue(input.field, input.value);
-  if (!parsed.ok) return invalid(parsed.message);
-  const value = parsed.value as NonNullable<Task[PlanningFieldNames]>;
+  let value: NonNullable<Task[EditableTaskField]>;
+  if (input.field === "priority") {
+    // Task 7 binding ruling: Priority is a string equal to the live option
+    // name (like Area), validated against the LIVE options — never a
+    // `PlanningFieldNames` case.
+    const options = await liveOptions(deps);
+    const parsed = parsePriorityValue(input.value, options?.priority ?? []);
+    if (!parsed.ok) return invalid(parsed.message);
+    value = parsed.value;
+  } else {
+    const parsed = parsePlanningFieldValue(input.field, input.value);
+    if (!parsed.ok) return invalid(parsed.message);
+    value = parsed.value as NonNullable<Task[PlanningFieldNames]>;
+  }
 
   // AD-20: completing a Task is always a check-off (Undo window + Completion Log), never a bare Status write.
   if (input.field === "status" && value === "completed") {
@@ -136,7 +153,7 @@ export async function updateTask(deps: UpdateTaskDeps, input: UpdateTaskInput): 
   }
 
   hint(deps, input.taskId);
-  return { ok: true, value: { receipt: `${PLANNING_FIELD_LABELS[input.field]} set to ${await describe(deps, input.field, value)}.` } };
+  return { ok: true, value: { receipt: `${EDITABLE_FIELD_LABELS[input.field]} set to ${await describe(deps, input.field, value)}.` } };
 }
 
 export async function renameTask(deps: UpdateTaskDeps, input: RenameTaskInput): Promise<Result<RenameTaskResponse, YohError>> {

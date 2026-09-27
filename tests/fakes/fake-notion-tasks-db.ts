@@ -24,12 +24,15 @@ export interface FakeTaskSeed {
   readonly energy?: string;
   /** The live Status option NAME (e.g. "Nothing"), not Yoh's enum value. */
   readonly status?: string;
+  /** Task 7: the live Priority option NAME verbatim (e.g. "🔴 High"). */
+  readonly priority?: string;
 }
 
 export interface FakeTasksDbOptions {
   readonly areaOptions?: readonly string[];
   readonly energyOptions?: readonly string[];
   readonly statusOptions?: readonly string[];
+  readonly priorityOptions?: readonly string[];
   readonly seed?: readonly FakeTaskSeed[];
 }
 
@@ -57,6 +60,7 @@ function toPage(row: FakeTaskSeed): Record<string, unknown> {
     "Due Date": { id: "due", type: "date", date: row.dueDate ? { start: row.dueDate, end: null, time_zone: null } : null },
     Status: { id: "status", type: "status", status: row.status ? { id: `s-${row.status}`, name: row.status, color: "default" } : null },
     Energy: { id: "energy", type: "select", select: row.energy ? { id: `e-${row.energy}`, name: row.energy, color: "default" } : null },
+    Priority: { id: "priority", type: "select", select: row.priority ? { id: `p-${row.priority}`, name: row.priority, color: "default" } : null },
     Project: { id: "proj", type: "relation", relation: [] },
   };
   return {
@@ -83,6 +87,7 @@ function applyProperty(row: FakeTaskSeed, name: string, value: Record<string, un
   if (name === "Due Date") next["dueDate"] = (value["date"] as { start: string }).start;
   if (name === "Area") next["area"] = (value["select"] as { name: string }).name;
   if (name === "Energy") next["energy"] = (value["select"] as { name: string }).name;
+  if (name === "Priority") next["priority"] = (value["select"] as { name: string }).name;
   if (name === "Status") next["status"] = (value["status"] as { name: string }).name;
   return next as unknown as FakeTaskSeed;
 }
@@ -91,6 +96,7 @@ export function createFakeNotionTasksDb(opts: FakeTasksDbOptions = {}): FakeTask
   const areaOptions = opts.areaOptions ?? ["School", "Bio", "Math", "Errands", "Personal"];
   const energyOptions = opts.energyOptions ?? ["Deep", "medium", "low"];
   const statusOptions = opts.statusOptions ?? ["Nothing", "In Progress", "Completed"];
+  const priorityOptions = opts.priorityOptions ?? ["🔴 High", "🟡 Medium", "🟢 Low"];
   let rows: FakeTaskSeed[] = [...(opts.seed ?? [])];
   const updates: FakeTasksDb["updates"] = [];
   let failingWrites = false;
@@ -121,6 +127,7 @@ export function createFakeNotionTasksDb(opts: FakeTasksDbOptions = {}): FakeTask
       "Due Date": { id: "due", name: "Due Date", description: null, type: "date", date: {} },
       Status: { id: "status", name: "Status", description: null, type: "status", status: { options: options(statusOptions), groups: [] } },
       Energy: { id: "energy", name: "Energy", description: null, type: "select", select: { options: options(energyOptions) } },
+      Priority: { id: "priority", name: "Priority", description: null, type: "select", select: { options: options(priorityOptions) } },
     },
   };
 

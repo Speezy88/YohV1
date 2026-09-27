@@ -21,7 +21,7 @@ test("writes only the title property, trimmed", async () => {
 
 test("uses the configured title property name (Spencer's real 'Task Name')", async () => {
   const db = createFakeNotionTasksDb({ seed: [{ id: "t1", title: "x" }] });
-  const names = { title: "Task Name", estimatedDuration: "Estimated Duration", area: "Area", dueDate: "Due Date", status: "Status", energy: "Energy", project: "Project" };
+  const names = { title: "Task Name", estimatedDuration: "Estimated Duration", area: "Area", dueDate: "Due Date", status: "Status", energy: "Energy", project: "Project", priority: "Priority" };
   await updateTaskTitle(db.client, { ...CONFIG, taskPropertyNames: names }, "t1", "Renamed");
   assert.deepEqual(Object.keys(db.updates[0]!.properties), ["Task Name"]);
 });

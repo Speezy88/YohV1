@@ -123,6 +123,17 @@ export type TaskStatus = "not-started" | "in-progress" | "completed" | "slipped"
 export type PlanningFieldNames = "estimatedDurationMinutes" | "area" | "dueDate" | "status" | "energy";
 
 /**
+ * Task 7 (Priority field), binding ruling: what the Tasks page's inline
+ * editor may write, widened past `PlanningFieldNames` to include
+ * `"priority"` — deliberately NOT added to `PlanningFieldNames` itself
+ * (Priority is never part of the Data-Completeness Gate, `taskMissingFields`,
+ * `TaskFieldOverride`, or the missing-data count). Only the edit path
+ * (`updateTaskField`, `updateTask`'s field check, the update route's
+ * request type, `TaskRow`'s cell list/editor) is widened to this type.
+ */
+export type EditableTaskField = PlanningFieldNames | "priority";
+
+/**
  * Task — the raw shape read from Notion (`notion-adapter.ts`). The five
  * planning fields FR-4 requires (Estimated Duration, Area, Due Date,
  * Status, Energy) are optional here because a real Notion Task row may be
@@ -140,6 +151,13 @@ export interface Task {
   readonly dueDate?: IsoDate;
   readonly status?: TaskStatus;
   readonly energy?: Energy;
+  /**
+   * Task 7 (Priority field): Spencer's live Notion select value verbatim
+   * (e.g. "🔴 High") — a string, like `area`, not one of Yoh's fixed
+   * enums (binding ruling: not a `PlanningFieldNames` case). Never read by
+   * planning/derived-priority logic.
+   */
+  readonly priority?: string;
   /**
    * The id of the `Project` this Task is grouped under in Notion (its
    * "Project" relation property), if any. Added by Task 3
@@ -185,6 +203,8 @@ export interface TaskFieldOptions {
   readonly area: readonly string[] | undefined;
   readonly energy: readonly TaskFieldOption<Energy>[];
   readonly status: readonly TaskFieldOption<TaskStatus>[];
+  /** Task 7: the live Priority select option names verbatim (e.g. "🔴 High") — optional so every existing `TaskFieldOptions` literal stays valid; absent/omitted means "not read". */
+  readonly priority?: readonly string[];
 }
 
 export interface Project {

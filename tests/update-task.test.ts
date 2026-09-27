@@ -122,6 +122,28 @@ test("an unknown field name is a validation error (the wire is not trusted)", as
   assert.equal(result.error.kind, "validation");
 });
 
+// ============================================================================
+// Task 7 (Priority field): `updateTask` accepts "priority" past
+// `PlanningFieldNames` (binding ruling — `EditableTaskField`), validated by
+// `parsePriorityValue` against the LIVE Priority options, written through
+// the same `updateTaskField` (`writeSelectLikeField`).
+// ============================================================================
+
+test("Priority writes through updateTaskField, matched against the live options (emoji optional)", async () => {
+  const { db, deps } = setup();
+  const result = await updateTask(deps, { taskId: "t1", field: "priority", value: "high" });
+  assert.ok(result.ok, JSON.stringify(result));
+  assert.equal(result.value.receipt, "Priority set to 🔴 High.");
+  assert.equal(db.rows()[0]!.priority, "🔴 High");
+});
+
+test("Priority rejects a value with no matching live option; nothing is written", async () => {
+  const { db, deps } = setup();
+  const result = await updateTask(deps, { taskId: "t1", field: "priority", value: "urgent-ish" });
+  assert.equal(result.ok, false);
+  assert.equal(db.updates.length, 0);
+});
+
 test("success appends one 'tasks' hint; a Notion outage returns a plain error and appends none", async () => {
   const { db, deps, connection } = setup();
   const start = getMaxOutboxSeq(connection);

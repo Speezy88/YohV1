@@ -111,6 +111,7 @@ export async function normalizeQuickAdd(deps: NormalizeQuickAddDeps, input: Norm
     energy: input.options.energy.map((o) => o.label),
     status: input.options.status.map((o) => o.label),
     ...(input.options.area ? { area: input.options.area } : {}),
+    ...(input.options.priority && input.options.priority.length > 0 ? { priority: input.options.priority } : {}),
   };
   const llmClient = deps.llmClient;
 
@@ -150,6 +151,13 @@ export async function normalizeQuickAdd(deps: NormalizeQuickAddDeps, input: Norm
       const matched = matchLiveOption(raw.area, liveOptions.area);
       if (matched !== undefined) fields.area = matched;
     }
+  }
+  if (raw.priority !== undefined && liveOptions.priority !== undefined) {
+    // Task 7 binding ruling: Priority is a string equal to the live option
+    // name, validated the SAME exact/case-insensitive way Area is above —
+    // never a `PlanningFieldNames`/parsePlanningFieldValue case.
+    const matched = matchLiveOption(raw.priority, liveOptions.priority);
+    if (matched !== undefined) fields.priority = matched;
   }
 
   return { ok: true, value: { title: validatedHaikuTitle(raw.title), fields } };

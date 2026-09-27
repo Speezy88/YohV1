@@ -229,7 +229,7 @@ const chat = {
 const shiftDays = (days: number): string => new Date(Date.parse(`${today}T00:00:00.000Z`) + days * 86_400_000).toISOString().slice(0, 10);
 const tasksDb = createFakeNotionTasksDb({
   seed: [
-    { id: "tp-overdue", title: "Email Mr. Alvarez about the lab", dueDate: shiftDays(-2), minutes: 15, area: "School", energy: "low", status: "Nothing" },
+    { id: "tp-overdue", title: "Email Mr. Alvarez about the lab", dueDate: shiftDays(-2), minutes: 15, area: "School", energy: "low", status: "Nothing", priority: "🔴 High" },
     { id: "tp-today", title: "Calc problem set 4", dueDate: today, minutes: 60, area: "Math", energy: "medium", status: "Nothing" },
     { id: "tp-done", title: "Return library books", dueDate: today, minutes: 20, area: "Errands", energy: "low", status: "Completed" },
     { id: "tp-week", title: "AP Bio ch. 7 reading", dueDate: shiftDays(2), minutes: 90, area: "Bio", status: "Nothing" },

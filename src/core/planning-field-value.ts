@@ -171,3 +171,39 @@ export function parsePlanningFieldValue<F extends PlanningFieldNames>(
     }
   }
 }
+
+/**
+ * Task 7 (Priority field): the word part of a Notion select option label —
+ * everything after any leading emoji/punctuation ("🔴 High" -> "High"),
+ * lowercased and trimmed. Used both to build the match key for a live
+ * option and to normalize `raw` the same way, so the emoji is optional on
+ * either side and matching is case-insensitive.
+ */
+function priorityWordPart(label: string): string {
+  return label.replace(/^[^\p{L}\p{N}]+/u, "").trim().toLowerCase();
+}
+
+/**
+ * Parses `raw` into one of Priority's LIVE Notion select options (binding
+ * ruling: Priority is not a `PlanningFieldNames` case — its value is a
+ * string equal to the live option name, like Area, validated against
+ * `options` rather than a fixed enum). Matches on the option's word part
+ * only: the emoji is optional on `raw` and irrelevant on the option side,
+ * and comparison is case-insensitive. Returns the REAL live option string
+ * (with its emoji) on a match, never `raw` itself.
+ */
+export function parsePriorityValue(raw: string, options: readonly string[]): { readonly ok: true; readonly value: string } | { readonly ok: false; readonly message: string } {
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    return { ok: false, message: "Priority can't be blank." };
+  }
+  const needle = priorityWordPart(trimmed);
+  const match = options.find((option) => priorityWordPart(option) === needle);
+  if (!match) {
+    return {
+      ok: false,
+      message: `I didn't understand "${raw}" as a Priority — try one of: ${options.join(", ")}.`,
+    };
+  }
+  return { ok: true, value: match };
+}

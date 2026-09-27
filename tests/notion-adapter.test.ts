@@ -63,6 +63,7 @@ function makeTaskPage(overrides: {
   status?: string | null;
   energy?: string | null;
   projectId?: string | null;
+  priority?: string | null;
 }): PageObjectResponse {
   const createdTime = overrides.createdTime ?? "2026-08-01T09:00:00.000Z";
   const lastEditedTime = overrides.lastEditedTime ?? createdTime;
@@ -140,6 +141,14 @@ function makeTaskPage(overrides: {
           overrides.energy == null
             ? null
             : { id: "energy-opt", name: overrides.energy, color: "green", description: null },
+      },
+      Priority: {
+        id: "priority",
+        type: "select",
+        select:
+          overrides.priority == null
+            ? null
+            : { id: "priority-opt", name: overrides.priority, color: "red" },
       },
       Project: {
         id: "project",
@@ -247,6 +256,7 @@ test("readNotionTasks returns every current Task with its 5 planning fields plus
           status: "In Progress",
           energy: "High",
           projectId: "project-1",
+          priority: "🔴 High",
         }),
       ],
     ],
@@ -266,6 +276,7 @@ test("readNotionTasks returns every current Task with its 5 planning fields plus
   assert.equal(task.status, "in-progress");
   assert.equal(task.energy, "high");
   assert.equal(task.projectId, "project-1");
+  assert.equal(task.priority, "🔴 High");
   assert.equal(task.createdAt, "2026-08-01T09:00:00.000Z");
 
   assert.equal(result.projects.length, 1);
@@ -288,6 +299,7 @@ test("readNotionTasks leaves a planning field undefined when Notion has it unset
     assert.equal(task.status, undefined);
     assert.equal(task.energy, undefined);
     assert.equal(task.projectId, undefined);
+    assert.equal(task.priority, undefined);
     assert.ok(!("estimatedDurationMinutes" in task) || task.estimatedDurationMinutes === undefined);
   })();
 });
@@ -732,6 +744,30 @@ test("updateTaskField resolves Energy through the configured real-option-name ma
   assert.equal(result.ok, true);
   const prop = (client.updateCalls[0]!.properties as Record<string, { select?: { name?: string } }>)["Energy"];
   assert.equal(prop?.select?.name, "Deep");
+});
+
+// ============================================================================
+// Task 7 (Priority field): updateTaskField accepts one more field, "priority",
+// through the SAME `writeSelectLikeField` guard Area/Energy already use —
+// no new write function (AD-12's closed write surface stays exactly as
+// wide as before, just one more enumerated case).
+// ============================================================================
+
+test("updateTaskField writes Priority through the live select guard, exactly like Area/Energy", async () => {
+  const client = new FakeNotionFieldWriteClient(makeSelectSchema("Priority", ["🔴 High", "🟡 Medium", "🟢 Low"]));
+  const result = await updateTaskField(client, FIELD_WRITE_CONFIG, "task-1", "priority", "🔴 High");
+
+  assert.equal(result.ok, true);
+  const prop = (client.updateCalls[0]!.properties as Record<string, { select?: { name?: string } }>)["Priority"];
+  assert.equal(prop?.select?.name, "🔴 High");
+});
+
+test("updateTaskField fails (not a throw) rather than writing an unresolvable Priority value", async () => {
+  const client = new FakeNotionFieldWriteClient(makeSelectSchema("Priority", ["🔴 High", "🟡 Medium", "🟢 Low"]));
+  const result = await updateTaskField(client, FIELD_WRITE_CONFIG, "task-1", "priority", "Nonexistent");
+
+  assert.equal(result.ok, false);
+  assert.equal(client.updateCalls.length, 0);
 });
 
 test("updateTaskField returns a Result failure (not a throw) when the Notion SDK write call fails", async () => {

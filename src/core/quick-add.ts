@@ -67,10 +67,10 @@
  */
 import type { Energy, IsoDate, TaskStatus } from "../types/domain.ts";
 import { isDateWord } from "./relative-date.ts";
-import { parsePlanningFieldValue } from "./planning-field-value.ts";
+import { parsePlanningFieldValue, parsePriorityValue } from "./planning-field-value.ts";
 import { resolveRelativeDate, type RelativeDateContext } from "./relative-date.ts";
 
-export type QuickAddField = "dueDate" | "estimatedDurationMinutes" | "energy" | "area" | "status";
+export type QuickAddField = "dueDate" | "estimatedDurationMinutes" | "energy" | "area" | "status" | "priority";
 
 export interface QuickAddFields {
   readonly dueDate?: IsoDate;
@@ -78,6 +78,8 @@ export interface QuickAddFields {
   readonly energy?: Energy;
   readonly area?: string;
   readonly status?: TaskStatus;
+  /** Task 7: the live Priority option matched, verbatim (e.g. "🔴 High") — only ever set when `ctx.priorityOptions` is given. */
+  readonly priority?: string;
 }
 
 /** One piece of the line that was read as a field — `raw` is the exact text it came from. */
@@ -100,6 +102,8 @@ export interface QuickAddContext extends RelativeDateContext {
   readonly resolveArea?: (raw: string) => string | undefined;
   /** The live Area option NAMES, for the `for <area>`/`to <area>` rule only (exact-word match, never a prefix/typo match). Absent: that rule never fires. */
   readonly areaOptions?: readonly string[];
+  /** Task 7: the live Priority option NAMES (e.g. ["🔴 High", "🟡 Medium", "🟢 Low"]), for "priority high"/"high priority"/"p1"/"p2"/"p3". Absent: Priority is never read (matches Area's `areaOptions` gate). */
+  readonly priorityOptions?: readonly string[];
 }
 
 const HASHTAG_RE = /^#([\p{L}\p{N}][\p{L}\p{N}_\-/&.]*)$/u;
@@ -225,7 +229,7 @@ export function parseQuickAdd(text: string, ctx: QuickAddContext): QuickAddParse
   const norm = words.map((w) => stripEdgePunct(w).toLowerCase());
   const used = new Array<boolean>(words.length).fill(false);
   const isHashtag = words.map((w) => HASHTAG_RE.test(w));
-  const fields: { dueDate?: IsoDate; estimatedDurationMinutes?: number; energy?: Energy; area?: string; status?: TaskStatus } = {};
+  const fields: { dueDate?: IsoDate; estimatedDurationMinutes?: number; energy?: Energy; area?: string; status?: TaskStatus; priority?: string } = {};
   const unmatchedAreas: string[] = [];
   const hashtagTokens: QuickAddToken[] = [];
 
@@ -332,6 +336,31 @@ export function parseQuickAdd(text: string, ctx: QuickAddContext): QuickAddParse
     return undefined;
   }
 
+  /** "p1"/"p2"/"p3" -> the concept word "high"/"medium"/"low", resolved against the live Priority options. */
+  const PRIORITY_CODE_WORDS: Readonly<Record<string, string>> = { p1: "high", p2: "medium", p3: "low" };
+
+  function tryPriorityPhrase(i: number): Match | undefined {
+    if (fields.priority !== undefined || !ctx.priorityOptions || ctx.priorityOptions.length === 0) return undefined;
+    if (i < 1 || used[i - 1] || isHashtag[i - 1]) return undefined;
+    if (norm[i] === "priority") {
+      const parsed = parsePriorityValue(norm[i - 1]!, ctx.priorityOptions);
+      if (parsed.ok) return { start: i - 1, end: i, field: "priority", value: parsed.value };
+    }
+    if (norm[i - 1] === "priority") {
+      const parsed = parsePriorityValue(norm[i]!, ctx.priorityOptions);
+      if (parsed.ok) return { start: i - 1, end: i, field: "priority", value: parsed.value };
+    }
+    return undefined;
+  }
+
+  function tryPriorityCode(i: number): Match | undefined {
+    if (fields.priority !== undefined || !ctx.priorityOptions || ctx.priorityOptions.length === 0) return undefined;
+    const code = PRIORITY_CODE_WORDS[norm[i]!];
+    if (code === undefined) return undefined;
+    const parsed = parsePriorityValue(code, ctx.priorityOptions);
+    return parsed.ok ? { start: i, end: i, field: "priority", value: parsed.value } : undefined;
+  }
+
   function tryAreaForTo(i: number): Match | undefined {
     if (fields.area !== undefined || !ctx.areaOptions || ctx.areaOptions.length === 0) return undefined;
     if (i < 1 || used[i - 1] || isHashtag[i - 1]) return undefined;
@@ -352,7 +381,7 @@ export function parseQuickAdd(text: string, ctx: QuickAddContext): QuickAddParse
     return window === undefined ? undefined : { start: window.start, end: i, field: "dueDate", value: window.resolved };
   }
 
-  const ANYWHERE_RULES = [tryDuration2, tryDuration1, tryEnergyPhrase, tryDeepLightWork, tryDueAnywhere, tryStatusPhrase, tryAreaForTo];
+  const ANYWHERE_RULES = [tryDuration2, tryDuration1, tryEnergyPhrase, tryDeepLightWork, tryDueAnywhere, tryStatusPhrase, tryAreaForTo, tryPriorityPhrase, tryPriorityCode];
 
   let frontier = words.length - 1;
   let i = words.length - 1;
@@ -380,6 +409,7 @@ export function parseQuickAdd(text: string, ctx: QuickAddContext): QuickAddParse
       else if (match.field === "energy") fields.energy = match.value as Energy;
       else if (match.field === "status") fields.status = match.value as TaskStatus;
       else if (match.field === "area") fields.area = match.value as string;
+      else if (match.field === "priority") fields.priority = match.value as string;
       matches.push(match);
       if (i === frontier) frontier = match.start - 1;
       i = match.start - 1;

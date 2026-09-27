@@ -63,6 +63,7 @@ function toListItem(task: Task, today: IsoDate): TaskListItem {
     ...(task.area !== undefined ? { area: task.area } : {}),
     ...(task.energy !== undefined ? { energy: task.energy } : {}),
     ...(task.status !== undefined ? { status: task.status } : {}),
+    ...(task.priority !== undefined ? { priority: task.priority } : {}),
     missing: taskMissingFields(task),
     overdue: !completed && task.dueDate !== undefined && task.dueDate < today,
   };
@@ -113,6 +114,8 @@ function group(items: readonly TaskListItem[], groupBy: TasksGroupBy, today: Iso
     let spec: GroupSpec;
     if (groupBy === "due") spec = dueGroup(item, today);
     else if (groupBy === "area") spec = item.area === undefined ? { key: "area:", label: "No area", tone: "neutral" } : { key: `area:${item.area}`, label: item.area, tone: "neutral" };
+    else if (groupBy === "priority")
+      spec = item.priority === undefined ? { key: "priority:", label: "No priority", tone: "neutral" } : { key: `priority:${item.priority}`, label: item.priority, tone: "neutral" };
     else spec = item.status === undefined ? { key: "status:", label: "No status", tone: "neutral" } : { key: `status:${item.status}`, label: labels[item.status], tone: "neutral" };
     const bucket = buckets.get(spec.key) ?? { spec, tasks: [] };
     bucket.tasks.push(item);
@@ -122,6 +125,15 @@ function group(items: readonly TaskListItem[], groupBy: TasksGroupBy, today: Iso
   const rank = (key: string): number => {
     if (groupBy === "due") return DUE_ORDER.indexOf(key);
     if (groupBy === "status") return key === "status:" ? STATUS_ORDER.length : STATUS_ORDER.indexOf(key.slice("status:".length) as TaskStatus);
+    if (groupBy === "priority") {
+      // Ordered High -> Medium -> Low -> No priority (binding ruling): by
+      // the live option's own index (Spencer's real Priority select
+      // already lists them in that order) — not a hardcoded enum.
+      if (key === "priority:") return options.priority?.length ?? 0;
+      const label = key.slice("priority:".length);
+      const idx = options.priority?.indexOf(label) ?? -1;
+      return idx === -1 ? (options.priority?.length ?? 0) : idx;
+    }
     return key === "area:" ? 1 : 0;
   };
 
@@ -132,10 +144,12 @@ function group(items: readonly TaskListItem[], groupBy: TasksGroupBy, today: Iso
 
 function fallbackOptions(tasks: readonly Task[]): TaskFieldOptions {
   const areas = [...new Set(tasks.flatMap((t) => (t.area === undefined ? [] : [t.area])))].sort((a, b) => a.localeCompare(b));
+  const priorities = [...new Set(tasks.flatMap((t) => (t.priority === undefined ? [] : [t.priority])))];
   return {
     area: areas,
     energy: FALLBACK_ENERGY,
     status: STATUS_ORDER.map((value) => ({ value, label: DEFAULT_STATUS_LABELS[value] })),
+    priority: priorities,
   };
 }
 

@@ -25,6 +25,7 @@ test("readTaskFieldOptions lists the live Area options and maps live Energy/Stat
     { value: "in-progress", label: "In Progress" },
     { value: "completed", label: "Completed" },
   ]);
+  assert.deepEqual(options.priority, ["🔴 High", "🟡 Medium", "🟢 Low"]);
 });
 
 test("readTaskFieldOptions leaves out a live option that maps onto no known enum value", async () => {

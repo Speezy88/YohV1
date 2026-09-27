@@ -16,7 +16,7 @@
  * the `/api/*` surface. `web/` may `import type` from here (AD-17) and from
  * nothing else in `src/` except other `types/` files.
  */
-import type { ChatTurn, Energy, IsoDate, PlanningFieldNames, Proposal, Result, TaskFieldOptions, TaskStatus, YohError } from "./domain.ts";
+import type { ChatTurn, EditableTaskField, Energy, IsoDate, PlanningFieldNames, Proposal, Result, TaskFieldOptions, TaskStatus, YohError } from "./domain.ts";
 
 // ============================================================================
 // Serialized Result envelope
@@ -366,8 +366,8 @@ export type ChatStreamEvent =
 // Tasks page (Task 6B, FR-43) — new shapes only.
 // ============================================================================
 
-/** How the Tasks list is grouped: by Due bucket (default), Area, or Status. */
-export type TasksGroupBy = "due" | "area" | "status";
+/** How the Tasks list is grouped: by Due bucket (default), Area, Status, or Priority (Task 7). */
+export type TasksGroupBy = "due" | "area" | "status" | "priority";
 
 /** `GET /api/tasks`'s query: `groupBy` defaults to `"due"`; `query` filters by title or Area (case-insensitive). */
 export interface TasksListRequest {
@@ -384,6 +384,8 @@ export interface TaskListItem {
   readonly area?: string;
   readonly energy?: Energy;
   readonly status?: TaskStatus;
+  /** Task 7: the live Priority select value verbatim (e.g. "🔴 High") — never part of `missing` (Priority is not a Data-Completeness Gate field). */
+  readonly priority?: string;
   readonly missing: readonly PlanningFieldNames[];
   /** Due before today (host TZ) and not completed — server-computed, so the client never reads its own clock. */
   readonly overdue: boolean;
@@ -430,6 +432,8 @@ export interface CreateTaskResponse {
 export interface QuickAddPreviewRequest {
   readonly text: string;
   readonly areaOptions?: readonly string[];
+  /** Task 7: the live Priority options the page already holds, so "p1"/"high priority" preview without a Notion call. */
+  readonly priorityOptions?: readonly string[];
 }
 
 /** `POST /api/tasks/parse`'s value: what the quick-add line would create, shown as chips before Enter. */
@@ -441,13 +445,15 @@ export interface QuickAddPreviewResponse {
   readonly area?: string;
   /** Polish 4 Task 1: only ever `"not-started"`/`"in-progress"` — the deterministic parser never reads "done"/"completed" off a quick-add line (quick-add must never set Completed). */
   readonly status?: TaskStatus;
+  /** Task 7: the live Priority option matched, verbatim (e.g. "🔴 High"). */
+  readonly priority?: string;
   /** `#tag` bodies that matched no live Area option — they stay in the title. */
   readonly unmatchedAreas: readonly string[];
 }
 
 /** `POST /api/tasks/:id/field`'s body. `value` is raw text, parsed by `core/planning-field-value.ts` server-side. */
 export interface UpdateTaskFieldRequest {
-  readonly field: PlanningFieldNames;
+  readonly field: EditableTaskField;
   readonly value: string;
 }
 

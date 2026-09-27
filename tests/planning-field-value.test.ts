@@ -11,7 +11,9 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parsePlanningFieldValue } from "../src/core/planning-field-value.ts";
+import { parsePlanningFieldValue, parsePriorityValue } from "../src/core/planning-field-value.ts";
+
+const PRIORITY_OPTIONS = ["🔴 High", "🟡 Medium", "🟢 Low"];
 
 test("parsePlanningFieldValue(estimatedDurationMinutes) accepts a positive whole number of minutes", () => {
   const result = parsePlanningFieldValue("estimatedDurationMinutes", "30");
@@ -97,6 +99,32 @@ test("parsePlanningFieldValue accepts the same valid value whether raw carries s
       assert.equal(trimmed.value, value);
     }
   }
+});
+
+// ============================================================================
+// parsePriorityValue (Task 7, Priority field) — matches on the word part of
+// a live Notion select option, emoji optional, case-insensitive. Not a
+// PlanningFieldNames case (binding ruling): the live options are passed in
+// by the caller, never a fixed enum.
+// ============================================================================
+
+test("parsePriorityValue matches the word part of a live option, case-insensitively, with or without its emoji", () => {
+  for (const raw of ["High", "high", "HIGH", "🔴 High", "🔴 high"]) {
+    const result = parsePriorityValue(raw, PRIORITY_OPTIONS);
+    assert.equal(result.ok, true, `expected "${raw}" to match`);
+    if (result.ok) assert.equal(result.value, "🔴 High");
+  }
+  const medium = parsePriorityValue("medium", PRIORITY_OPTIONS);
+  assert.equal(medium.ok, true);
+  if (medium.ok) assert.equal(medium.value, "🟡 Medium");
+  const low = parsePriorityValue("low", PRIORITY_OPTIONS);
+  assert.equal(low.ok, true);
+  if (low.ok) assert.equal(low.value, "🟢 Low");
+});
+
+test("parsePriorityValue rejects blank input and a value with no matching live option", () => {
+  assert.equal(parsePriorityValue("   ", PRIORITY_OPTIONS).ok, false);
+  assert.equal(parsePriorityValue("urgent-ish", PRIORITY_OPTIONS).ok, false);
 });
 
 test("parsePlanningFieldValue rejects the same invalid value whether raw carries surrounding whitespace or is already trimmed", () => {

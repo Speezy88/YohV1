@@ -60,6 +60,7 @@ const GROUP_OPTIONS: ReadonlyArray<{ readonly value: TasksGroupBy; readonly labe
   { value: "due", label: "Due" },
   { value: "area", label: "Area" },
   { value: "status", label: "Status" },
+  { value: "priority", label: "Priority" },
 ];
 
 const FIELD_LABEL: Record<TaskEditField, string> = {
@@ -69,6 +70,7 @@ const FIELD_LABEL: Record<TaskEditField, string> = {
   area: "the Area",
   energy: "the Energy",
   status: "the Status",
+  priority: "the Priority",
 };
 
 const TONE_CLASS: Record<TaskGroup["tone"], string> = {

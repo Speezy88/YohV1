@@ -49,6 +49,18 @@ test("one typed line creates the Task directly, with every parsed field written 
   assert.equal(result.value.receipt, 'Added "Lab report" to Tasks.');
 });
 
+test("Task 7: 'high priority'/'p1' in the quick-add line writes Priority through the live select guard", async () => {
+  const { db, deps } = setup();
+  const result = await createTask(deps, { text: "Lab report high priority" });
+  assert.ok(result.ok, JSON.stringify(result));
+  assert.equal(result.value.task.priority, "🔴 High");
+  assert.deepEqual(db.rows(), [{ id: "created-1", title: "Lab report", priority: "🔴 High" }]);
+
+  const p2 = await createTask(deps, { text: "Errand p2" });
+  assert.ok(p2.ok, JSON.stringify(p2));
+  assert.equal(p2.value.task.priority, "🟡 Medium");
+});
+
 test("a title alone is enough — no other field is required", async () => {
   const { db, deps } = setup();
   const result = await createTask(deps, { text: "Call the dentist" });
@@ -165,7 +177,7 @@ test("Haiku fallback fills a field the deterministic parse missed (valid case)",
   const { db, deps } = setup();
   const result = await createTask(
     { ...deps, llmClient: DUMMY_LLM_CLIENT, normalize: fakeNormalize(() => ({ title: "Draft budget", energy: "high" })) },
-    { text: "Draft budget high priority" },
+    { text: "Draft budget priority" },
   );
   assert.ok(result.ok, JSON.stringify(result));
   assert.equal(result.value.task.title, "Draft budget");
@@ -177,7 +189,7 @@ test("Haiku fallback: an Area that isn't actually a live option is dropped, neve
   const { db, deps } = setup(); // default fixture areas: School, Bio, Math, Errands, Personal
   const result = await createTask(
     { ...deps, llmClient: DUMMY_LLM_CLIENT, normalize: fakeNormalize(() => ({ title: "Draft budget", area: "Nonexistent Area" })) },
-    { text: "Draft budget high priority" },
+    { text: "Draft budget priority" },
   );
   assert.ok(result.ok, JSON.stringify(result));
   assert.equal(result.value.task.area, undefined);
@@ -204,13 +216,13 @@ test("Haiku fallback: a timeout falls back to the deterministic parse alone — 
       quickAddNormalizeTimeoutMs: 15,
       normalize: fakeNormalize(() => new Promise((resolve) => setTimeout(() => resolve({ title: "Draft budget", energy: "high" }), 500))),
     },
-    { text: "Draft budget high priority" },
+    { text: "Draft budget priority" },
   );
   assert.ok(result.ok, JSON.stringify(result));
   // The deterministic parse alone couldn't read anything out of this line — the whole line is the title, no fields.
-  assert.equal(result.value.task.title, "Draft budget high priority");
+  assert.equal(result.value.task.title, "Draft budget priority");
   assert.equal(result.value.task.energy, undefined);
-  assert.deepEqual(db.rows(), [{ id: "created-1", title: "Draft budget high priority" }]);
+  assert.deepEqual(db.rows(), [{ id: "created-1", title: "Draft budget priority" }]);
 });
 
 test("Haiku fallback: an LLM error falls back to the deterministic parse alone — the Task is still created", async () => {
@@ -223,19 +235,19 @@ test("Haiku fallback: an LLM error falls back to the deterministic parse alone �
         throw new Error("simulated API failure");
       }),
     },
-    { text: "Draft budget high priority" },
+    { text: "Draft budget priority" },
   );
   assert.ok(result.ok, JSON.stringify(result));
-  assert.equal(result.value.task.title, "Draft budget high priority");
-  assert.deepEqual(db.rows(), [{ id: "created-1", title: "Draft budget high priority" }]);
+  assert.equal(result.value.task.title, "Draft budget priority");
+  assert.deepEqual(db.rows(), [{ id: "created-1", title: "Draft budget priority" }]);
 });
 
 test("no llmClient configured: the Haiku fallback is skipped entirely, deterministic parse alone still creates the Task", async () => {
   const { db, deps } = setup();
-  const result = await createTask(deps, { text: "Draft budget high priority" });
+  const result = await createTask(deps, { text: "Draft budget priority" });
   assert.ok(result.ok, JSON.stringify(result));
-  assert.equal(result.value.task.title, "Draft budget high priority");
-  assert.deepEqual(db.rows(), [{ id: "created-1", title: "Draft budget high priority" }]);
+  assert.equal(result.value.task.title, "Draft budget priority");
+  assert.deepEqual(db.rows(), [{ id: "created-1", title: "Draft budget priority" }]);
 });
 
 test("a deterministic field wins over a conflicting Haiku claim", async () => {
@@ -263,21 +275,21 @@ test("an empty Haiku title falls back to the deterministic title, but its valid 
   const { db, deps } = setup();
   const result = await createTask(
     { ...deps, llmClient: DUMMY_LLM_CLIENT, normalize: fakeNormalize(() => ({ title: "   ", energy: "high" })) },
-    { text: "Draft budget high priority" },
+    { text: "Draft budget priority" },
   );
   assert.ok(result.ok, JSON.stringify(result));
-  assert.equal(result.value.task.title, "Draft budget high priority");
+  assert.equal(result.value.task.title, "Draft budget priority");
   assert.equal(result.value.task.energy, "high");
-  assert.deepEqual(db.rows(), [{ id: "created-1", title: "Draft budget high priority", energy: "Deep" }]);
+  assert.deepEqual(db.rows(), [{ id: "created-1", title: "Draft budget priority", energy: "Deep" }]);
 });
 
 test("an over-long Haiku title falls back to the deterministic title", async () => {
   const { db, deps } = setup();
   const result = await createTask(
     { ...deps, llmClient: DUMMY_LLM_CLIENT, normalize: fakeNormalize(() => ({ title: "x".repeat(201), energy: "high" })) },
-    { text: "Draft budget high priority" },
+    { text: "Draft budget priority" },
   );
   assert.ok(result.ok, JSON.stringify(result));
-  assert.equal(result.value.task.title, "Draft budget high priority");
-  assert.deepEqual(db.rows(), [{ id: "created-1", title: "Draft budget high priority", energy: "Deep" }]);
+  assert.equal(result.value.task.title, "Draft budget priority");
+  assert.deepEqual(db.rows(), [{ id: "created-1", title: "Draft budget priority", energy: "Deep" }]);
 });

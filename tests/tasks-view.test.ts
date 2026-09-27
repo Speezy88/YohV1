@@ -131,6 +131,67 @@ test("groupBy status: labelled with the live Notion option names, in working ord
   );
 });
 
+test("groupBy priority: ordered High -> Medium -> Low -> 'No priority', by the LIVE option's own order (Task 7), not a hardcoded enum", async () => {
+  const result = await listTasks(
+    deps({
+      readTasks: async () => [
+        task("low", { priority: "🟢 Low" }),
+        task("none"),
+        task("high", { priority: "🔴 High" }),
+        task("medium", { priority: "🟡 Medium" }),
+      ],
+      readFieldOptions: async () => ({ ...OPTIONS, priority: ["🔴 High", "🟡 Medium", "🟢 Low"] }),
+    }),
+    { groupBy: "priority" },
+  );
+  assert.ok(result.ok);
+  assert.deepEqual(
+    result.value.groups.map((g) => [g.label, g.tasks.map((t) => t.id)]),
+    [
+      ["🔴 High", ["high"]],
+      ["🟡 Medium", ["medium"]],
+      ["🟢 Low", ["low"]],
+      ["No priority", ["none"]],
+    ],
+  );
+});
+
+test("groupBy priority: the ordering follows the LIVE option list's index even when it disagrees with High/Medium/Low or alphabetical order", async () => {
+  const result = await listTasks(
+    deps({
+      readTasks: async () => [
+        task("low", { priority: "🟢 Low" }),
+        task("high", { priority: "🔴 High" }),
+        task("medium", { priority: "🟡 Medium" }),
+      ],
+      // Reversed live order — Low first, High last. If the code were
+      // hardcoding High->Medium->Low (or sorting alphabetically) this
+      // assertion would fail.
+      readFieldOptions: async () => ({ ...OPTIONS, priority: ["🟢 Low", "🟡 Medium", "🔴 High"] }),
+    }),
+    { groupBy: "priority" },
+  );
+  assert.ok(result.ok);
+  assert.deepEqual(
+    result.value.groups.map((g) => g.label),
+    ["🟢 Low", "🟡 Medium", "🔴 High"],
+  );
+});
+
+test("Priority is never a missing planning field: a Task with no Priority still carries an empty `missing` list, and countTasksMissingData ignores it entirely", async () => {
+  const result = await listTasks(deps({ readTasks: async () => [task("bare", { ...COMPLETE, dueDate: "2026-09-27" })] }), {});
+  assert.ok(result.ok);
+  const item = result.value.groups[0]?.tasks[0];
+  assert.ok(item);
+  assert.equal(item.priority, undefined);
+  assert.deepEqual(item.missing, []); // every OTHER planning field is present; priority is simply not part of this list at all
+  assert.ok(!(item.missing as readonly string[]).includes("priority"));
+
+  const count = await countTasksMissingData({ readTasks: async () => [task("bare", { ...COMPLETE, dueDate: "2026-09-27" })] }, {});
+  assert.ok(count.ok);
+  assert.equal(count.value.count, 0);
+});
+
 test("query filters by title or Area, case-insensitively; total still counts everything", async () => {
   const byTitle = await listTasks(deps(), { query: "  COLLEGE " });
   assert.ok(byTitle.ok);

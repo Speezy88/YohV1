@@ -29,7 +29,7 @@ import type {
   TasksViewResponse,
   UpdateTaskFieldResponse,
 } from "../../../src/types/api.ts";
-import type { PlanningFieldNames } from "../../../src/types/domain.ts";
+import type { EditableTaskField, PlanningFieldNames } from "../../../src/types/domain.ts";
 
 export type Outcome<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly message: string };
 
@@ -51,11 +51,19 @@ export function requestCreateTask(text: string): Promise<Outcome<CreateTaskRespo
   return settle(() => apiClient.api.tasks.$post({ json: { text } }));
 }
 
-export function requestQuickAddPreview(text: string, areaOptions: readonly string[] | undefined): Promise<Outcome<QuickAddPreviewResponse>> {
-  return settle(() => apiClient.api.tasks.parse.$post({ json: { text, ...(areaOptions ? { areaOptions: [...areaOptions] } : {}) } }));
+export function requestQuickAddPreview(
+  text: string,
+  areaOptions: readonly string[] | undefined,
+  priorityOptions?: readonly string[],
+): Promise<Outcome<QuickAddPreviewResponse>> {
+  return settle(() =>
+    apiClient.api.tasks.parse.$post({
+      json: { text, ...(areaOptions ? { areaOptions: [...areaOptions] } : {}), ...(priorityOptions && priorityOptions.length > 0 ? { priorityOptions: [...priorityOptions] } : {}) },
+    }),
+  );
 }
 
-export function requestUpdateTaskField(taskId: string, field: PlanningFieldNames, value: string): Promise<Outcome<UpdateTaskFieldResponse>> {
+export function requestUpdateTaskField(taskId: string, field: EditableTaskField, value: string): Promise<Outcome<UpdateTaskFieldResponse>> {
   return settle(() => apiClient.api.tasks[":id"].field.$post({ param: { id: taskId }, json: { field, value } }));
 }
 
@@ -149,6 +157,9 @@ export const MISSING_BADGE: Record<PlanningFieldNames, string> = {
   energy: "Add energy",
   status: "Add status",
 };
+
+/** Task 7: the Priority cell's empty pill — not part of `MISSING_BADGE` (Priority is never a `PlanningFieldNames`/gate field). */
+export const PRIORITY_MISSING_BADGE = "Add priority";
 
 /** Duration presets offered by the inline Duration editor. */
 export const DURATION_PRESETS: readonly number[] = [15, 30, 45, 60, 90, 120];
