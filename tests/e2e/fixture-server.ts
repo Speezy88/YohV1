@@ -7,7 +7,8 @@
  * `startCheckOffCommitSweep` — wired to in-memory fakes: a fake Notion
  * client (`tests/fakes/fake-notion-status-client.ts`, so no real Notion
  * workspace is ever touched), a fixed Task list, no Calendar events, and a
- * throwaway SQLite file seeded with today's Plan. Production code has no
+ * throwaway SQLite file seeded with today's Plan, and (Story 8.5) a scripted
+ * chat turn through `ServerDeps.chat.runChatTurn`. Production code has no
  * test switch; everything test-shaped lives here.
  *
  * It lives under `tests/`, not `web/e2e/`, because it imports server code
@@ -31,7 +32,7 @@ import { initPlanStateStoreSchema } from "../../src/adapters/plan-state-store.ts
 import { initCompletionLogSchema, listCompletedTaskIdsOnDate } from "../../src/adapters/completion-log.ts";
 import { createMemoryStore, putPlan } from "../../src/adapters/memory-store.ts";
 import { localIsoDate } from "../../src/rituals/ritual-shared.ts";
-import { startCheckOffCommitSweep, startServer, type ServerDeps } from "../../src/shell/server.ts";
+import { startCheckOffCommitSweep, startServer, type ChatTurnFn, type ServerDeps } from "../../src/shell/server.ts";
 import type { Plan, Task } from "../../src/types/domain.ts";
 import { createFakeNotionStatusClient } from "../fakes/fake-notion-status-client.ts";
 
@@ -98,6 +99,27 @@ const checkOff: NonNullable<ServerDeps["checkOff"]> = {
   lookupTask: async (taskId) => tasks().find((t) => t.id === taskId),
 };
 
+/** `web/e2e/chat.spec.ts` asserts on this exact text. */
+export const FIXTURE_CHAT_REPLY = "Hello, Spencer. This is a fixture reply, streamed in three chunks.";
+const FIXTURE_CHAT_CHUNKS = ["Hello, Spencer. ", "This is a fixture reply, ", "streamed in three chunks."];
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Story 8.5 (controller ruling (c)): a scripted chat turn through the
+// `runChatTurn` seam — never a fake Anthropic client, so the smoke doesn't
+// drift with llm-adapter.ts's streaming shape. The pause before the first
+// delta keeps the Thinking Indicator on screen long enough to observe.
+const runChatTurn: ChatTurnFn = async (deps) => {
+  deps.emit?.({ type: "status", text: "Thinking…" });
+  await sleep(600);
+  for (const chunk of FIXTURE_CHAT_CHUNKS) {
+    deps.emit?.({ type: "delta", text: chunk });
+    await sleep(100);
+  }
+  return { ok: true, value: { reply: FIXTURE_CHAT_REPLY, receipts: [] } };
+};
+// The seam replaces chatTurn wholesale, so none of its real deps are read.
+const chat = { runChatTurn } as unknown as NonNullable<ServerDeps["chat"]>;
+
 function fixtureState(url: URL): Response {
   const taskId = url.searchParams.get("taskId") ?? "";
   const body = {
@@ -118,7 +140,7 @@ const handle = startServer(
         return url.pathname === "/__fixture/state" ? fixtureState(url) : options.fetch(request);
       },
     }),
-  { homeView, checkOff },
+  { homeView, checkOff, chat },
 );
 const sweep = startCheckOffCommitSweep({ connection, ...checkOff, now: () => new Date() }, { log: quiet });
 

@@ -35,6 +35,12 @@
  * startup (records left overdue by a previous process), then one per
  * `CHECK_OFF_COMMIT_TICK_MS`. This file only constructs the Notion client
  * the sweep is given; the Status write itself is made inside `app/`.
+ *
+ * Story 8.5 adds `POST /api/chat` (AD-18, contract C5): one `chatTurn`
+ * call per request, its `status`/`delta` events streamed on that request's
+ * own SSE response and closed by exactly one `done`/`error` event
+ * (`runChatStream`). The process holds ONE `ChatSession`, built in
+ * `startServer` and shared by every chat route (contract C3).
  */
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
@@ -54,10 +60,28 @@ import {
 import { HEARTBEAT_INTERVAL_MS, initPlanStateStoreSchema, writeHeartbeat } from "../adapters/plan-state-store.ts";
 import { createMemoryStore, type MemoryStore } from "../adapters/memory-store.ts";
 import { initCompletionLogSchema } from "../adapters/completion-log.ts";
-import { createTokenStore, loadGoogleOAuthConfigFromEnv } from "../adapters/token-store.ts";
-import { createCalendarReadClient, readCalendarEvents } from "../adapters/calendar-adapter.ts";
-import { loadTaskPropertyNamesFromEnv, readNotionTasks, type NotionTaskPropertyNames } from "../adapters/notion-adapter.ts";
+import { createTokenStore, loadGoogleOAuthConfigFromEnv, type TokenStore } from "../adapters/token-store.ts";
+import {
+  createCalendarBroadClient,
+  createCalendarReadClient,
+  proposeCalendarEdit as calendarProposeEdit,
+  proposeNewCalendarEvent,
+  readCalendarEvents,
+  resolveCalendarEditRoute as calendarResolveRoute,
+  type CalendarBroadClient,
+} from "../adapters/calendar-adapter.ts";
+import {
+  loadTaskPropertyNamesFromEnv,
+  readNotionTasks,
+  type NotionCreatePageBindingFn,
+  type NotionTaskPropertyNames,
+} from "../adapters/notion-adapter.ts";
+import { createAnthropicMessagesClient, loadLlmAdapterConfigFromEnv, type AnthropicMessagesClient } from "../adapters/llm-adapter.ts";
+import { search as runSearch } from "../adapters/search-adapter.ts";
 import { listNotifications, markNotificationRead } from "../app/notifications.ts";
+import { chatTurn, type ChatTurnDeps } from "../app/chat-turn.ts";
+import type { ChatSession } from "../app/chat-session.ts";
+import type { SearchFn } from "../app/web-search.ts";
 import { getHomeView, type HomeViewDeps } from "../app/home-view.ts";
 import {
   CHECK_OFF_COMMIT_TICK_MS,
@@ -68,8 +92,16 @@ import {
   undoCheckOff,
   type CheckOffDeps,
 } from "../app/check-off.ts";
-import type { ApiResult, CheckOffRequest, EventHint, HealthResponse } from "../types/api.ts";
-import type { YohErrorKind } from "../types/domain.ts";
+import type {
+  ApiResult,
+  ChatStreamEvent,
+  ChatTurnRequest,
+  ChatTurnResponse,
+  CheckOffRequest,
+  EventHint,
+  HealthResponse,
+} from "../types/api.ts";
+import type { CalendarEvent, ChatTurn, Result, Task, YohError, YohErrorKind } from "../types/domain.ts";
 
 // ============================================================================
 // GET /api/events — outbox tail → SSE hints (AD-18)
@@ -262,6 +294,98 @@ export function startCheckOffCommitSweep(deps: CheckOffDeps, options: CheckOffCo
 }
 
 // ============================================================================
+// POST /api/chat — a chat turn's reply on its own SSE response (Story 8.5,
+// AD-18, contract C5)
+// ============================================================================
+
+/**
+ * The slice of Hono's `SSEStreamingApi` the chat relay needs, so tests can
+ * drive it with a plain fake. `aborted` is optional because Hono already
+ * swallows write errors once the client is gone; reading it just stops the
+ * relay from writing into a closed stream.
+ */
+export interface ChatSseStreamLike {
+  readonly aborted?: boolean;
+  writeSSE(message: { readonly event: string; readonly data: string }): Promise<void>;
+}
+
+/** `chatTurn`'s signature (contract C3), injectable as `ServerDeps.chat.runChatTurn` (controller ruling (c): the e2e fixture's seam). */
+export type ChatTurnFn = (deps: ChatTurnDeps, input: ChatTurnRequest) => Promise<Result<ChatTurnResponse, YohError>>;
+
+/** The one event a `POST /api/chat` stream carries when the server has no chat dependencies (controller ruling (b)): an SSE stream, not a JSON body, so the client's one parser handles every outcome. */
+const CHAT_NOT_CONFIGURED: ChatStreamEvent = {
+  type: "error",
+  error: { kind: "unreachable", message: "server: chat dependencies not configured" },
+};
+
+/** `event: <type>` + `data: <json>` (contract C5). A terminal `error` drops `detail`, the same rule `wire()` applies to JSON envelopes. */
+function sseMessage(event: ChatStreamEvent): { event: string; data: string } {
+  const wireEvent: ChatStreamEvent =
+    event.type === "error" ? { type: "error", error: { kind: event.error.kind, message: event.error.message } } : event;
+  return { event: event.type, data: JSON.stringify(wireEvent) };
+}
+
+/**
+ * Drives one `POST /api/chat` response. `chatTurn` pushes zero or more
+ * `status`/`delta` events through `emit` while it runs and never emits a
+ * terminal event itself (see `app/chat-turn.ts`), so this function alone
+ * writes exactly one `done` or `error`, built from the settled `Result`. A
+ * thrown error (a bug, not a `Result` failure) becomes that `error` event
+ * too, so the stream never hangs and Hono's `streamSSE` never sees the
+ * exception (it would otherwise write its own bare-string error event,
+ * which isn't a `ChatStreamEvent`).
+ *
+ * Writes are chained, not fired independently: `emit` is synchronous and
+ * `writeSSE` is async, so each write waits for the one before it and the
+ * terminal event waits for all of them. A rejected write (a vanished
+ * client) is swallowed; once `stream.aborted` is set, nothing more is
+ * written. `chatTurn` itself still runs to completion (it takes no abort
+ * signal), which keeps any write it already started intact.
+ */
+export async function runChatStream(
+  stream: ChatSseStreamLike,
+  deps: ChatTurnDeps,
+  input: ChatTurnRequest,
+  runChatTurn: ChatTurnFn = chatTurn,
+): Promise<void> {
+  let writes: Promise<void> = Promise.resolve();
+  const send = (event: ChatStreamEvent): Promise<void> => {
+    writes = writes.then(async () => {
+      if (stream.aborted) return;
+      try {
+        await stream.writeSSE(sseMessage(event));
+      } catch {
+        // The client is gone; there is no one left to tell.
+      }
+    });
+    return writes;
+  };
+
+  let terminal: ChatStreamEvent;
+  try {
+    const result = await runChatTurn({ ...deps, emit: (event) => void send(event) }, input);
+    terminal = result.ok ? { type: "done", response: result.value } : { type: "error", error: result.error };
+  } catch (err) {
+    terminal = { type: "error", error: { kind: "unreachable", message: err instanceof Error ? err.message : String(err) } };
+  }
+  await send(terminal);
+}
+
+/** Validates a `ChatTurnRequest.history` entry-by-entry (the server trims its length; `chatTurn` owns that). */
+function isChatHistory(value: unknown): value is readonly ChatTurn[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (turn: unknown) =>
+        typeof turn === "object" &&
+        turn !== null &&
+        ((turn as ChatTurn).role === "user" || (turn as ChatTurn).role === "assistant") &&
+        typeof (turn as ChatTurn).content === "string",
+    )
+  );
+}
+
+// ============================================================================
 // The app
 // ============================================================================
 
@@ -289,6 +413,21 @@ export interface ServerDeps {
    * absent, the routes report a clear `unreachable` error.
    */
   readonly checkOff?: Omit<CheckOffDeps, "connection" | "now" | "log"> & { readonly now?: () => Date };
+  /**
+   * Story 8.5: `POST /api/chat`'s dependencies — `chatTurn`'s deps minus
+   * `session` (one per process, `chatSession` below) and `emit` (one per
+   * request, `runChatStream`) (controller ruling (a)). Absent (no
+   * `CLAUDE_API_KEY`/`YOH_TIMEZONE`), the route streams one `error` event.
+   * `runChatTurn` is a test seam (default: the real `chatTurn`), the same
+   * DI convention as `eventStream.sleep`.
+   */
+  readonly chat?: Omit<ChatTurnDeps, "session" | "emit"> & { readonly runChatTurn?: ChatTurnFn };
+  /**
+   * Story 8.5, contract C3: the ONE `ChatSession` every chat route in this
+   * process shares (`startServer` builds it; Stories 8.6/8.7's routes reuse
+   * it). Absent, `createApp` makes one for its own lifetime.
+   */
+  readonly chatSession?: ChatSession;
 }
 
 /** A failure envelope typed without `ApiResult<never>`'s impossible `{ok: true}` arm, so the RPC client's response type stays exact. */
@@ -326,6 +465,7 @@ export function createApp(deps: ServerDeps) {
   const checkOffDeps: CheckOffDeps | undefined = deps.checkOff
     ? { ...deps.checkOff, connection: deps.connection, now: deps.checkOff.now ?? (() => new Date()), log }
     : undefined;
+  const chatSession: ChatSession = deps.chatSession ?? { recentMessages: [], lastSearchAnswer: undefined };
 
   return (
     new Hono()
@@ -439,6 +579,42 @@ export function createApp(deps: ServerDeps) {
         const result = wire(await releaseCheckOff(checkOffDeps, { id: c.req.param("id") }));
         return c.json(result, httpStatus(result));
       })
+      // Story 8.5, AD-18/C5: one chat turn, its reply streamed on this
+      // request's own SSE response (separate from GET /api/events). Always
+      // ends in exactly one `done` or `error` event (`runChatStream`). A
+      // malformed body is a plain 400 envelope: there's no turn to stream.
+      .post(
+        "/api/chat",
+        validator("json", (value, c) => {
+          const body = value as { message?: unknown; history?: unknown } | null;
+          if (typeof body?.message !== "string" || body.message.trim() === "") {
+            const invalid: ApiFailure = { ok: false, error: { kind: "validation", message: "chat: missing message" } };
+            return c.json(invalid, httpStatus(invalid));
+          }
+          const history = body.history ?? [];
+          if (!isChatHistory(history)) {
+            const invalid: ApiFailure = { ok: false, error: { kind: "validation", message: "chat: malformed history" } };
+            return c.json(invalid, httpStatus(invalid));
+          }
+          return { message: body.message, history } satisfies ChatTurnRequest;
+        }),
+        (c) => {
+          const input = c.req.valid("json");
+          if (!deps.chat) {
+            return streamSSE(c, async (stream) => {
+              await stream.writeSSE(sseMessage(CHAT_NOT_CONFIGURED));
+            });
+          }
+          const { runChatTurn, ...chatDeps } = deps.chat;
+          return streamSSE(
+            c,
+            (stream) => runChatStream(stream, { ...chatDeps, session: chatSession }, input, runChatTurn),
+            async (err) => {
+              log({ level: "error", event: "server.chat-stream-failed", detail: { message: err.message } });
+            },
+          );
+        },
+      )
       // Story 7.5, AD-15/AD-17: the built web/ SPA, mounted after every
       // /api/* route so nothing here can ever shadow the API.
       .use("/*", serveStatic({ root: "./web/dist" }))
@@ -481,14 +657,18 @@ export function startServer(
   connection: SqliteConnection,
   env: Readonly<Record<string, string | undefined>> = process.env,
   serveFn: ServeFn = (options) => serve({ ...options }),
-  /** Story 7.8's `homeView` and Story 7.10's `checkOff`, threaded through the same way `connection` already is. */
-  features: Pick<ServerDeps, "homeView" | "checkOff"> = {},
+  /** Story 7.8's `homeView`, Story 7.10's `checkOff`, and Story 8.5's `chat`, threaded through the same way `connection` already is. */
+  features: Pick<ServerDeps, "homeView" | "checkOff" | "chat"> = {},
 ): ServerHandle {
   const port = parsePort(env["YOH_SERVER_PORT"]);
+  // Contract C3: one ChatSession per server process, shared by every chat route.
+  const chatSession: ChatSession = { recentMessages: [], lastSearchAnswer: undefined };
   const app = createApp({
     connection,
+    chatSession,
     ...(features.homeView ? { homeView: features.homeView } : {}),
     ...(features.checkOff ? { checkOff: features.checkOff } : {}),
+    ...(features.chat ? { chat: features.chat } : {}),
   });
   return serveFn({ fetch: app.fetch, hostname: LOOPBACK_HOST, port });
 }
@@ -596,6 +776,105 @@ function buildCheckOffDeps(notion: NotionFeatureConfig): ServerDeps["checkOff"] 
   };
 }
 
+/**
+ * Story 8.5: `POST /api/chat`'s real dependencies — the same wiring
+ * `shell/chat-cli.ts`'s `main()` builds for its own `chatTurn` call,
+ * mirrored here for the server process. Only `YOH_TIMEZONE` and
+ * `CLAUDE_API_KEY` are required up front (general chat, Time Budget, and
+ * Plan-view need nothing else); every Notion, search, and Calendar
+ * dependency is constructed lazily on first use and reports its own missing
+ * configuration then, so a server without Notion or Google still chats.
+ * Missing either required value returns `undefined` (logged once), and the
+ * route streams its not-configured `error` event.
+ */
+function buildChatDeps(
+  connection: SqliteConnection,
+  notion: NotionFeatureConfig | undefined,
+  env: Readonly<Record<string, string | undefined>>,
+): ServerDeps["chat"] {
+  const notConfigured = (message: string): undefined => {
+    writeStructuredLog({ level: "warn", event: "server.chat-not-configured", detail: { message: `${message} — POST /api/chat will report an error until set` } });
+    return undefined;
+  };
+  const timeZone = env["YOH_TIMEZONE"];
+  if (!timeZone) return notConfigured("missing required environment variable YOH_TIMEZONE");
+  let llmClient: AnthropicMessagesClient;
+  try {
+    llmClient = createAnthropicMessagesClient(loadLlmAdapterConfigFromEnv(env));
+  } catch (err) {
+    return notConfigured(err instanceof Error ? err.message : String(err));
+  }
+
+  const notionClientFromEnv = (notionToken: string): Client =>
+    new Client({ auth: notionToken, ...(env["NOTION_API_VERSION"] ? { notionVersion: env["NOTION_API_VERSION"] } : {}) });
+
+  const readTasks = async (): Promise<readonly Task[]> => {
+    if (!notion) {
+      throw new Error(
+        "server: missing required environment variable(s) NOTION_TOKEN / NOTION_TASKS_DATA_SOURCE_ID / NOTION_PROJECTS_DATA_SOURCE_ID — needed to read your Tasks",
+      );
+    }
+    return (await readTasksWith(notion)()).tasks;
+  };
+
+  const getNotionCreatePageBinding: NotionCreatePageBindingFn = () => {
+    const notionToken = env["NOTION_TOKEN"];
+    const tasksDataSourceId = env["NOTION_TASKS_DATA_SOURCE_ID"];
+    const projectsDataSourceId = env["NOTION_PROJECTS_DATA_SOURCE_ID"];
+    const researchVaultDataSourceId = env["NOTION_RESEARCH_VAULT_DATA_SOURCE_ID"];
+    if (!notionToken || !tasksDataSourceId || !projectsDataSourceId || !researchVaultDataSourceId) {
+      return {
+        ok: false,
+        error: { kind: "missing-field", message: "server: missing required Notion environment variable(s) — needed to create or file a Notion item" },
+      };
+    }
+    return {
+      ok: true,
+      value: {
+        client: notion?.notionClient ?? notionClientFromEnv(notionToken),
+        config: { tasksDataSourceId, projectsDataSourceId, researchVaultDataSourceId, taskPropertyNames: loadTaskPropertyNamesFromEnv(env) },
+      },
+    };
+  };
+
+  const perplexityApiKey = env["PERPLEXITY_API_KEY"];
+  const searchFn: SearchFn = async (query) => {
+    if (!perplexityApiKey) {
+      return { ok: false, error: { kind: "missing-field", message: "server: missing required environment variable PERPLEXITY_API_KEY — needed to search" } };
+    }
+    return runSearch({ apiKey: perplexityApiKey }, query);
+  };
+
+  // Google OAuth is constructed once, on the first Calendar request. The
+  // narrow read client lists today's events; the broad one routes and
+  // proposes an edit (AD-13).
+  let cachedTokenStore: TokenStore | undefined;
+  const getTokenStore = (): TokenStore => {
+    cachedTokenStore ??= createTokenStore(loadGoogleOAuthConfigFromEnv(env));
+    return cachedTokenStore;
+  };
+  const getCalendarBroadClient = (): CalendarBroadClient =>
+    createCalendarBroadClient(getTokenStore().getBroadOAuth2Client() as unknown as Parameters<typeof createCalendarBroadClient>[0]);
+  const readCalendarEventsFn = async (): Promise<readonly CalendarEvent[]> =>
+    readCalendarEvents(createCalendarReadClient(getTokenStore().getOAuth2Client() as unknown as Parameters<typeof createCalendarReadClient>[0]), {
+      timeZone,
+    });
+
+  return {
+    store: notion?.store ?? createMemoryStore(connection),
+    timeZone,
+    now: () => new Date(),
+    llmClient,
+    readTasks,
+    getNotionCreatePageBinding,
+    searchFn,
+    readCalendarEventsFn,
+    resolveCalendarEditRouteFn: (calendarId, eventId) => calendarResolveRoute(getCalendarBroadClient(), calendarId, eventId),
+    proposeCalendarEditFn: (calendarId, eventId, change) => calendarProposeEdit(getCalendarBroadClient(), calendarId, eventId, change),
+    proposeNewCalendarEventFn: proposeNewCalendarEvent,
+  };
+}
+
 if (import.meta.main) {
   // AD-10: one connection per process, to the same file the cron one-shots use.
   const connection = openSqliteConnection({ databasePath: process.env["MEMORY_DB_PATH"] || "./data/yoh-memory.db" });
@@ -609,7 +888,12 @@ if (import.meta.main) {
   const notion = loadNotionFeatureConfig(connection, process.env);
   const homeView = notion ? buildHomeViewDeps(notion, process.env) : undefined;
   const checkOff = notion ? buildCheckOffDeps(notion) : undefined;
-  const handle = startServer(connection, process.env, undefined, { ...(homeView ? { homeView } : {}), ...(checkOff ? { checkOff } : {}) });
+  const chat = buildChatDeps(connection, notion, process.env);
+  const handle = startServer(connection, process.env, undefined, {
+    ...(homeView ? { homeView } : {}),
+    ...(checkOff ? { checkOff } : {}),
+    ...(chat ? { chat } : {}),
+  });
   // Story 7.10, AD-20: the startup sweep commits anything left overdue by a
   // previous process, then the commit timer takes over.
   const checkOffSweep = checkOff ? startCheckOffCommitSweep({ ...checkOff, connection, now: () => new Date() }) : undefined;

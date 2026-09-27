@@ -31,7 +31,13 @@ function themeBlockText(source: string): string {
   return source.slice(themeStart, themeEnd);
 }
 
-const REQUIRED_DURATION_TOKENS = ["duration-page-transition", "duration-splash-fade", "duration-check-off-dissolve"] as const;
+const REQUIRED_DURATION_TOKENS = [
+  "duration-page-transition",
+  "duration-splash-fade",
+  "duration-check-off-dissolve",
+  "duration-thinking-shimmer",
+  "duration-thinking-dot-pulse",
+] as const;
 
 for (const name of REQUIRED_DURATION_TOKENS) {
   test(`tokens.css defines --${name} inside @theme`, () => {
@@ -44,6 +50,17 @@ for (const name of REQUIRED_DURATION_TOKENS) {
     assert.match(match![1]!.trim(), /^\d+(\.\d+)?(ms|s)$/, `--${name} should be a plain time value, got: ${match![1]}`);
   });
 }
+
+test("Story 8.5: the Thinking Indicator's shimmer and dot pulse read their duration tokens, never a literal", () => {
+  for (const [selector, token] of [
+    [".thinking-shimmer::after", "duration-thinking-shimmer"],
+    [".thinking-dot", "duration-thinking-dot-pulse"],
+  ] as const) {
+    const rule = new RegExp(`${selector.replace(/[.:]/g, (c) => `\\${c}`)}\\s*\\{([^}]*)\\}`).exec(css);
+    assert.ok(rule, `${selector} rule not found in tokens.css`);
+    assert.match(rule![1]!, new RegExp(`animation:[^;]*var\\(--${token}\\)`), `${selector} should animate over var(--${token})`);
+  }
+});
 
 test("PageShell.tsx does not hard-code the page-transition or splash-fade duration as a JS number/template literal", () => {
   const pageShellPath = join(import.meta.dirname, "..", "web", "src", "components", "PageShell.tsx");

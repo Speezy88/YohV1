@@ -91,6 +91,10 @@
   --shadow-extruded-sm: 3px 3px 7px var(--color-shadow-dark), -3px -3px 7px var(--color-shadow-light);
   --shadow-extruded-md: 4px 4px 10px var(--color-shadow-dark), -4px -4px 10px var(--color-shadow-light);
   --shadow-extruded-lg: 7px 7px 14px var(--color-shadow-dark), -7px -7px 14px var(--color-shadow-light);
+  /* Story 8.5, DESIGN.md `chat-input`/`chat-bubble` focus: a 2px
+     accent-solid ring plus the soft accent glow. Its colors are already
+     light-dark() tokens, so one declaration covers both themes. */
+  --shadow-focus-glow: 0 0 0 var(--focus-ring-width) var(--color-accent-solid), 0 0 16px var(--color-accent-glow);
 
   /* Glass — DESIGN.md "Elevation & Depth" Glass row: floating elements
      only (Chat Bubble, Chat Input, Undo Toast, In-App Notification,
@@ -138,6 +142,16 @@
      the same latitude as the page-transition token above. Under reduced
      motion the row is hidden instantly instead (PlanChecklist.tsx). */
   --duration-check-off-dissolve: 600ms;
+
+  /* Story 8.5, DESIGN.md `thinking-indicator` / "Thinking shimmer": the
+     gradient sweep across the status text loops every 2.8s. The dot-matrix
+     loader's pulse has no number in DESIGN.md, so it's tuned by eye (same
+     latitude as the check-off dissolve). The shimmer overlay's opacity is
+     the OQ17 knob: tests/token-contrast.test.ts recomputes the worst-case
+     text contrast under the sweep from it and requires 4.5:1. */
+  --duration-thinking-shimmer: 2800ms;
+  --duration-thinking-dot-pulse: 1200ms;
+  --thinking-shimmer-opacity: 0.55;
 }
 
 :root {
@@ -326,5 +340,61 @@ body {
   }
   100% {
     opacity: 0;
+  }
+}
+
+/* Story 8.5, DESIGN.md `thinking-indicator` (UX-DR37): three dots pulsing
+   in sequence. Applied only when `useReducedMotion` is false —
+   ThinkingIndicator.tsx renders the dots static under reduced motion (they
+   are the loader itself, so they stay visible). */
+.thinking-dot {
+  animation: thinking-dot-pulse var(--duration-thinking-dot-pulse) ease-in-out infinite;
+}
+.thinking-dot:nth-child(2) {
+  animation-delay: calc(var(--duration-thinking-dot-pulse) / 3);
+}
+.thinking-dot:nth-child(3) {
+  animation-delay: calc(var(--duration-thinking-dot-pulse) / 3 * 2);
+}
+@keyframes thinking-dot-pulse {
+  0%,
+  80%,
+  100% {
+    opacity: 0.35;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+
+/* Story 8.5, "Thinking shimmer" / EXPERIENCE.md OQ17: the status text stays
+   solid `ink-primary`; the accent gradient sweeps across it as a
+   translucent `mix-blend-mode: overlay` layer instead of filling the text
+   (a gradient text fill measured as low as 1.49:1, DESIGN.md's own caveat).
+   tests/token-contrast.test.ts proves the worst point of the sweep still
+   meets 4.5:1 in both themes. Applied only when `useReducedMotion` is false;
+   under reduced motion the text is static `ink-secondary` with no overlay
+   (ThinkingIndicator.tsx). */
+.thinking-shimmer {
+  position: relative;
+  display: inline-block;
+}
+.thinking-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, var(--color-accent-gradient-start), var(--color-accent-gradient-end), transparent);
+  background-size: 200% 100%;
+  mix-blend-mode: overlay;
+  opacity: var(--thinking-shimmer-opacity);
+  pointer-events: none;
+  animation: thinking-shimmer-sweep var(--duration-thinking-shimmer) linear infinite;
+}
+@keyframes thinking-shimmer-sweep {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
   }
 }

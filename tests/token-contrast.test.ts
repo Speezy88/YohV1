@@ -88,6 +88,93 @@ test("event-fixed-ink on event-fixed-stripe-a and -b each meet 4.5:1 in both the
   assertPairMeets("event-fixed-ink", "event-fixed-stripe-b", 4.5);
 });
 
+// ---------------------------------------------------------------------------
+// Story 8.5, OQ17: the Thinking Indicator's shimmer is a translucent
+// `mix-blend-mode: overlay` sweep of the accent gradient over ink-primary
+// status text. The overlay tints the glyphs AND the background under them,
+// so this recomputes the composite of both, at every point of the sweep
+// (start → end colors, any alpha up to the declared opacity, since the
+// gradient's transparent ends only lower it), and requires 4.5:1 throughout.
+// ---------------------------------------------------------------------------
+
+type Rgb = readonly [number, number, number];
+
+/** CSS `overlay` (W3C Compositing: HardLight with the layers swapped), per 0-255 channel. */
+function overlayChannel(backdrop: number, source: number): number {
+  const b = backdrop / 255;
+  const s = source / 255;
+  const mixed = b <= 0.5 ? 2 * b * s : 1 - 2 * (1 - b) * (1 - s);
+  return mixed * 255;
+}
+
+/** `source` blended over `backdrop` with `overlay`, then composited at `alpha`. */
+function overlayComposite(backdrop: Rgb, source: Rgb, alpha: number): Rgb {
+  return backdrop.map((b, i) => b * (1 - alpha) + overlayChannel(b, source[i]!) * alpha) as unknown as Rgb;
+}
+
+function contrastRatioRgb(a: Rgb, b: Rgb): number {
+  const la = relativeLuminance(a);
+  const lb = relativeLuminance(b);
+  const [lighter, darker] = la >= lb ? [la, lb] : [lb, la];
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+function shimmerOpacity(): number {
+  const match = /--thinking-shimmer-opacity:\s*([\d.]+)\s*;/.exec(css);
+  if (!match) throw new Error("token-contrast: --thinking-shimmer-opacity not found in tokens.css");
+  return Number(match[1]);
+}
+
+function worstShimmerContrast(textHex: string, surfaceHex: string, startHex: string, endHex: string, maxAlpha: number): number {
+  const text = toRgb(textHex);
+  const surface = toRgb(surfaceHex);
+  const start = toRgb(startHex);
+  const end = toRgb(endHex);
+  let worst = Number.POSITIVE_INFINITY;
+  for (let t = 0; t <= 20; t++) {
+    const source = start.map((c, i) => c + ((end[i]! - c) * t) / 20) as unknown as Rgb;
+    for (let a = 0; a <= 20; a++) {
+      const alpha = (maxAlpha * a) / 20;
+      worst = Math.min(worst, contrastRatioRgb(overlayComposite(text, source, alpha), overlayComposite(surface, source, alpha)));
+    }
+  }
+  return worst;
+}
+
+test("OQ17: the shimmer rule is a translucent overlay sweep of the accent gradient, never a text fill", () => {
+  const rule = /\.thinking-shimmer::after\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
+  assert.match(rule, /mix-blend-mode:\s*overlay/);
+  assert.match(rule, /opacity:\s*var\(--thinking-shimmer-opacity\)/);
+  assert.match(rule, /var\(--color-accent-gradient-start\)/);
+  assert.match(rule, /var\(--color-accent-gradient-end\)/);
+  assert.doesNotMatch(css, /\.thinking-shimmer[^{]*\{[^}]*(background-clip:\s*text|color:\s*transparent)/);
+  const opacity = shimmerOpacity();
+  assert.ok(opacity > 0 && opacity < 1, `--thinking-shimmer-opacity must be translucent, got ${opacity}`);
+});
+
+test("OQ17: ink-primary under the shimmer sweep stays at or above 4.5:1 on surface-base and surface-raised, in both themes", () => {
+  const ink = readToken("ink-primary");
+  const start = readToken("accent-gradient-start");
+  const end = readToken("accent-gradient-end");
+  const opacity = shimmerOpacity();
+  for (const surfaceName of ["surface-base", "surface-raised"]) {
+    const surface = readToken(surfaceName);
+    const light = worstShimmerContrast(ink.light, surface.light, start.light, end.light, opacity);
+    const dark = worstShimmerContrast(ink.dark, surface.dark, start.dark, end.dark, opacity);
+    assert.ok(light >= 4.5, `shimmer over ink-primary on ${surfaceName} (light): worst ${light.toFixed(2)} < 4.5`);
+    assert.ok(dark >= 4.5, `shimmer over ink-primary on ${surfaceName} (dark): worst ${dark.toFixed(2)} < 4.5`);
+  }
+});
+
+test("detector: the shimmer check catches a pair that passes unshimmered but not under the sweep (why the text is ink-primary, not ink-secondary)", () => {
+  const secondary = readToken("ink-secondary");
+  const surface = readToken("surface-base");
+  assert.ok(contrastRatio(secondary.light, surface.light) >= 4.5, "precondition: ink-secondary passes on its own");
+  const start = readToken("accent-gradient-start");
+  const end = readToken("accent-gradient-end");
+  assert.ok(worstShimmerContrast(secondary.light, surface.light, start.light, end.light, shimmerOpacity()) < 4.5);
+});
+
 // ink-primary/ink-secondary/rim-interactive "on glass" use DESIGN.md's own
 // pre-composited hex (glass-fill alpha-blended over surface-raised, already
 // computed in DESIGN.md's own table) rather than re-deriving alpha

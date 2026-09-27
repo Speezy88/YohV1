@@ -109,7 +109,13 @@ test("every elevation token is inside web/src/tokens.css's @theme block (so Tail
   }
   assert.ok(themeEnd > themeStart, "unterminated @theme block");
   const themeBlockText = css.slice(themeStart, themeEnd);
-  for (const name of [...REQUIRED_ELEVATION_TOKENS, "blur-glass", "glass-saturate"]) {
+  for (const name of [...REQUIRED_ELEVATION_TOKENS, "blur-glass", "glass-saturate", "shadow-focus-glow"]) {
     assert.ok(themeBlockText.includes(`--${name}:`), `--${name} must have its default declared inside @theme, found none`);
   }
+});
+
+test("Story 8.5: --shadow-focus-glow is DESIGN.md's chat-input/chat-bubble focus recipe (ring + glow), built only from tokens", () => {
+  const decls = declarationsOf(css, "shadow-focus-glow");
+  assert.equal(decls.length, 1, "--shadow-focus-glow should be declared once: its colors are already theme-aware tokens");
+  assert.equal(decls[0], "0 0 0 var(--focus-ring-width) var(--color-accent-solid), 0 0 16px var(--color-accent-glow)");
 });
