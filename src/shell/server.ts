@@ -113,7 +113,7 @@ import {
 } from "../app/check-off.ts";
 import { surfaceOpenItems } from "../app/surface-open-items.ts";
 import { answerOpenItem, type AnswerOpenItemDeps } from "../app/answer-open-item.ts";
-import { listTasks, type TasksViewDeps } from "../app/tasks-view.ts";
+import { countTasksMissingData, listTasks, type TasksViewDeps } from "../app/tasks-view.ts";
 import { createTask, previewQuickAdd, type CreateTaskDeps } from "../app/create-task.ts";
 import { renameTask, updateTask, type UpdateTaskDeps } from "../app/update-task.ts";
 import { listResearch, type ResearchListDeps } from "../app/research-list.ts";
@@ -796,6 +796,15 @@ export function createApp(deps: ServerDeps) {
           return c.json(result, httpStatus(result));
         },
       )
+      // Real-use fixes plan, Task 2: the Chat header's "N tasks missing
+      // data" chip — reuses `app/tasks-view.ts`'s own missing-data rule
+      // (`taskMissingFields`) rather than the client re-deriving it from a
+      // full `GET /api/tasks` read.
+      .get("/api/tasks/missing-count", async (c) => {
+        if (!tasksDeps) return c.json(TASKS_NOT_CONFIGURED, httpStatus(TASKS_NOT_CONFIGURED));
+        const result = wire(await countTasksMissingData(tasksDeps, {}));
+        return c.json(result, httpStatus(result));
+      })
       .post(
         "/api/tasks",
         validator("json", (value, c) => {

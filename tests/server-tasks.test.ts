@@ -85,6 +85,24 @@ test("GET /api/tasks with an unknown groupBy is a 400 validation envelope", asyn
   assert.equal(body.error?.kind, "validation");
 });
 
+// Real-use fixes plan, Task 2: the Chat header's "N tasks missing data"
+// chip's own count route — reuses `app/tasks-view.ts`'s missing-data rule
+// rather than the client re-deriving it from the full `GET /api/tasks` list.
+test("GET /api/tasks/missing-count counts open Tasks missing a planning field ('t2' has no due date, time, or energy; 't1' is complete)", async () => {
+  const { app } = setup();
+  const { status, body } = await get(app, "/api/tasks/missing-count");
+  assert.equal(status, 200);
+  assert.ok(body.ok, JSON.stringify(body));
+  assert.deepEqual(body.value, { count: 1 });
+});
+
+test("GET /api/tasks/missing-count without Notion configured reports 'not configured', same as GET /api/tasks", async () => {
+  const { app } = setup(false);
+  const { status, body } = await get(app, "/api/tasks/missing-count");
+  assert.equal(body.ok, false);
+  assert.ok(status >= 400);
+});
+
 test("POST /api/tasks creates the Task directly from one typed line and appends a tasks hint", async () => {
   const { app, db, connection } = setup();
   const before = getMaxOutboxSeq(connection);

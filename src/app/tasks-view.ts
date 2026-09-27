@@ -16,10 +16,10 @@
  */
 import type { LogEntry } from "../adapters/logger.ts";
 import { errorCopyForThrown } from "../core/error-copy.ts";
-import { PLANNING_FIELD_LABELS } from "../core/planning-field-value.ts";
+import { taskMissingFields } from "../core/planning-field-value.ts";
 import { localIsoDate } from "../rituals/ritual-shared.ts";
-import type { TaskGroup, TaskListItem, TasksGroupBy, TasksListRequest, TasksViewResponse } from "../types/api.ts";
-import type { IsoDate, PlanningFieldNames, Result, Task, TaskFieldOptions, TaskStatus, YohError } from "../types/domain.ts";
+import type { TaskGroup, TaskListItem, TasksGroupBy, TasksListRequest, TasksMissingCountResponse, TasksViewResponse } from "../types/api.ts";
+import type { IsoDate, Result, Task, TaskFieldOptions, TaskStatus, YohError } from "../types/domain.ts";
 
 export interface TasksViewDeps {
   /** A live Notion read of every Task (`readNotionTasks`, bound). May throw. */
@@ -33,8 +33,6 @@ export interface TasksViewDeps {
 
 /** "This week" = the six days after today. */
 const THIS_WEEK_DAYS = 6;
-
-const PLANNING_FIELDS = Object.keys(PLANNING_FIELD_LABELS) as PlanningFieldNames[];
 
 const STATUS_ORDER: readonly TaskStatus[] = ["not-started", "in-progress", "slipped", "completed"];
 const DEFAULT_STATUS_LABELS: Record<TaskStatus, string> = {
@@ -65,8 +63,7 @@ function toListItem(task: Task, today: IsoDate): TaskListItem {
     ...(task.area !== undefined ? { area: task.area } : {}),
     ...(task.energy !== undefined ? { energy: task.energy } : {}),
     ...(task.status !== undefined ? { status: task.status } : {}),
-    // A completed Task needs nothing more to be planned, so it carries no "Add …" badges.
-    missing: completed ? [] : PLANNING_FIELDS.filter((field) => task[field] === undefined),
+    missing: taskMissingFields(task),
     overdue: !completed && task.dueDate !== undefined && task.dueDate < today,
   };
 }
@@ -168,4 +165,28 @@ export async function listTasks(deps: TasksViewDeps, input: TasksListRequest): P
   const items = matching.map((t) => toListItem(t, today));
 
   return { ok: true, value: { today, groupBy, query, total: tasks.length, groups: group(items, groupBy, today, options), options } };
+}
+
+/**
+ * Real-use fixes plan, Task 2: the Chat header's quiet "N tasks missing
+ * data" chip. Deliberately a bare read + count over `taskMissingFields`
+ * (the SAME rule `listTasks`'s rows already badge), not a second endpoint
+ * that re-groups/re-filters — the chip needs nothing `listTasks` computes
+ * beyond that one rule, so this never reads `readFieldOptions` at all.
+ */
+export interface TasksMissingCountDeps {
+  /** A live Notion read of every Task (`readNotionTasks`, bound). May throw. */
+  readonly readTasks: () => Promise<readonly Task[]>;
+  readonly log?: (entry: LogEntry) => void;
+}
+
+export async function countTasksMissingData(deps: TasksMissingCountDeps, _input: Record<string, never>): Promise<Result<TasksMissingCountResponse, YohError>> {
+  let tasks: readonly Task[];
+  try {
+    tasks = await deps.readTasks();
+  } catch (err) {
+    deps.log?.({ level: "error", event: "tasks-view.missing-count-read-failed", detail: { message: err instanceof Error ? err.message : String(err) } });
+    return { ok: false, error: { kind: "unreachable", message: errorCopyForThrown(err, { service: "Notion" }) } };
+  }
+  return { ok: true, value: { count: tasks.filter((t) => taskMissingFields(t).length > 0).length } };
 }

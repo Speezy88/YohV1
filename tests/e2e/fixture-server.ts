@@ -30,7 +30,7 @@ import { openSqliteConnection } from "../../src/adapters/sqlite.ts";
 import { initNotificationStoreSchema } from "../../src/adapters/notification-store.ts";
 import { initPlanStateStoreSchema } from "../../src/adapters/plan-state-store.ts";
 import { initCompletionLogSchema, listCompletedTaskIdsOnDate } from "../../src/adapters/completion-log.ts";
-import { createMemoryStore, putOpenInteractionRequest, putPlan, putTimeBudget } from "../../src/adapters/memory-store.ts";
+import { createMemoryStore, putPlan } from "../../src/adapters/memory-store.ts";
 import {
   bindNotionTaskWrites,
   createPage as notionCreatePage,
@@ -43,7 +43,7 @@ import { draftItem, type CreateItemDeps } from "../../src/app/create-item.ts";
 import { localIsoDate } from "../../src/rituals/ritual-shared.ts";
 import { startCheckOffCommitSweep, startServer, type ChatTurnFn, type ServerDeps } from "../../src/shell/server.ts";
 import type { AnthropicMessagesClient } from "../../src/adapters/llm-adapter.ts";
-import type { Plan, Proposal, Task, TimeBudget } from "../../src/types/domain.ts";
+import type { Plan, Task } from "../../src/types/domain.ts";
 import { createFakeNotionStatusClient } from "../fakes/fake-notion-status-client.ts";
 import { createFakeNotionCreateClient } from "../fakes/fake-notion-create-client.ts";
 import { createFakeNotionTasksDb } from "../fakes/fake-notion-tasks-db.ts";
@@ -182,34 +182,6 @@ const runChatTurn: ChatTurnFn = async (deps, input) => {
   }
   return { ok: true, value: { reply: FIXTURE_CHAT_REPLY, receipts: [] } };
 };
-// Story 8.6 (Task 7): one fixture open item the smoke can see and answer —
-// seeded exactly as a ritual would (never through chatTurn), matching
-// Review Focus #1 ("including ones created while the CLI was in use"). A
-// `"proposal"` kind (`buildProposalQuestion`, `core/open-item-questions.ts`)
-// is the one request kind whose CURRENT question always carries real option
-// chips (Yes/No) — a data-completeness blind ask is free-text only, so it
-// wouldn't exercise "a chip pick answers it" at all. `confirmProposal`'s
-// `"time-budget-change"` branch needs only `store` (the generic apply()/
-// accessor pattern re-reads the live Time Budget itself), so this needs no
-// Notion/Calendar fixture wiring at all.
-export const FIXTURE_PROPOSAL_TEXT = "Move your Time Budget to 7 hours today?";
-const storedTimeBudget = putTimeBudget(store, { date: today, totalMinutes: 360, workMinutes: 252, breakMinutes: 54 });
-const timeBudgetProposal: Proposal<Partial<TimeBudget>> = {
-  id: "tb-e2e",
-  kind: "time-budget-change",
-  entityId: "time-budget",
-  entityVersion: String(storedTimeBudget.version),
-  suggested: { totalMinutes: 420 },
-  reason: FIXTURE_PROPOSAL_TEXT,
-  createdAt: startedAt.toISOString(),
-};
-putOpenInteractionRequest(store, "proposal:tb-e2e", {
-  requestKind: "proposal",
-  promptText: FIXTURE_PROPOSAL_TEXT,
-  createdAt: startedAt.toISOString(),
-  detail: { proposal: timeBudgetProposal },
-});
-
 // The seam replaces chatTurn wholesale for /api/chat, so most of its real
 // deps aren't read there — but `store` is real, and shared by
 // `/api/open-items`/`/api/open-items/answer` (Preflight ruling P2), so the

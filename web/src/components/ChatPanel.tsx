@@ -8,7 +8,7 @@
  * with only the sidebar still visible — the page behind is dimmed context,
  * not functional (`PageShell.tsx` marks it `inert`/`aria-hidden` while this
  * is open). Everything Epic 8 built keeps working unchanged, just moved:
- * streaming, the Thinking Indicator, open items + Structured Questions, the
+ * streaming, the Thinking Indicator, inline Structured Questions, the
  * Command Palette, receipts, the three-region no-overlap layout (Task 0),
  * and the draft/transcript surviving a panel close (`chatStore.ts` is
  * untouched — this component only mounts/unmounts around it).
@@ -19,15 +19,27 @@
  * never fires once the palette has already stopped the event). Opening
  * focuses the Chat Input; closing returns focus to wherever it was
  * (`chatPanel.ts`).
+ *
+ * Real-use fixes plan, Task 2 (Spencer: "get rid of the 'waiting on you'
+ * section in the chat"): the top-of-Chat `OpenItems` list is gone from this
+ * panel entirely — a proposal or question that arrives as part of THIS
+ * turn's own reply still renders inline in the stream (`ChatMessage.tsx`'s
+ * `message.question`), unchanged. The header's top-right now shows a quiet
+ * "N tasks missing data" chip instead (`lib/missingData.ts`), which closes
+ * this panel and opens the Tasks page filtered to those Tasks on click.
+ *
+ * `OpenItems.tsx`/`lib/openItems.ts` and their server route/store are
+ * deliberately NOT deleted, even though nothing imports them from here
+ * anymore — see this task's own report for why.
  */
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useChatStore } from "../lib/chatStore.ts";
-import { startOpenItemsStream, useOpenItems } from "../lib/openItems.ts";
 import { useChatPanel, closeChatPanel } from "../lib/chatPanel.ts";
+import { useMissingDataCount, missingDataChipLabel, openMissingData } from "../lib/missingData.ts";
+import { PageNavigationContext } from "../lib/navigationContext.tsx";
 import { useReducedMotion } from "../hooks/useReducedMotion.ts";
 import { ChatMessage } from "./ChatMessage.tsx";
 import { ChatInput } from "./ChatInput.tsx";
-import { OpenItems } from "./OpenItems.tsx";
 
 /** Once within this many px of the stream's bottom, it still counts as "at the bottom" — avoids auto-scroll flapping off/on from sub-pixel rounding while text streams in. */
 const AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 48;
@@ -35,22 +47,21 @@ const AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 48;
 export function ChatPanel(): React.JSX.Element | null {
   const { open } = useChatPanel();
   const { messages } = useChatStore();
-  const openItems = useOpenItems();
+  const nav = useContext(PageNavigationContext);
+  const missingDataCount = useMissingDataCount();
   const reducedMotion = useReducedMotion();
   const panelRef = useRef<HTMLDivElement>(null);
   const streamRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
-
-  useEffect(() => startOpenItemsStream(), []);
 
   useEffect(() => {
     if (!open) return;
     // Focus the Chat Input the instant the panel opens (capture flow: click
     // the pill/⌘K, type, Enter — this is what makes "type" possible without
     // a fourth action). Scoped to the Chat Input's own textarea specifically
-    // — a generic "first textarea or input" would instead grab a seeded
+    // — a generic "first textarea or input" would instead grab an inline
     // Structured Question's free-text field when one renders above it in
-    // the open-items region.
+    // the stream.
     panelRef.current?.querySelector<HTMLElement>('textarea[aria-label="Message Yoh"]')?.focus();
   }, [open]);
 
@@ -75,7 +86,7 @@ export function ChatPanel(): React.JSX.Element | null {
 
   if (!open) return null;
 
-  const hasOpenItems = openItems.status === "loaded" && openItems.items.length > 0;
+  const chipLabel = missingDataChipLabel(missingDataCount);
 
   return (
     <>
@@ -103,23 +114,32 @@ export function ChatPanel(): React.JSX.Element | null {
             <span aria-hidden="true" className="size-[34px] rounded-md bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end" />
             <span className="font-body text-title font-bold text-ink-primary">Yoh</span>
           </div>
-          <button
-            type="button"
-            aria-label="Close chat"
-            onClick={closeChatPanel}
-            className="flex size-[42px] items-center justify-center rounded-md border-[length:var(--rim-width)] border-rim-interactive text-ink-secondary shadow-extruded-sm hover:text-ink-primary"
-          >
-            <svg aria-hidden="true" viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round">
-              <path d="M6 6l12 12M18 6L6 18" />
-            </svg>
-          </button>
-        </div>
-
-        {hasOpenItems && (
-          <div data-testid="open-items-region" className="mx-auto w-full max-w-2xl shrink-0">
-            <OpenItems items={openItems.status === "loaded" ? openItems.items : []} />
+          <div className="flex items-center gap-3">
+            {chipLabel && (
+              // Real-use fixes plan, Task 2: the "N tasks missing data"
+              // chip. `openMissingData` is its ONE click handler — Epic 9
+              // re-points it at `/sandbox` in one line, nowhere else.
+              <button
+                type="button"
+                data-testid="missing-data-chip"
+                onClick={() => openMissingData(nav)}
+                className="rounded-full border-[length:var(--rim-width)] border-rim-interactive px-3 py-1.5 font-body text-small text-ink-secondary shadow-extruded-sm hover:text-ink-primary"
+              >
+                {chipLabel}
+              </button>
+            )}
+            <button
+              type="button"
+              aria-label="Close chat"
+              onClick={closeChatPanel}
+              className="flex size-[42px] items-center justify-center rounded-md border-[length:var(--rim-width)] border-rim-interactive text-ink-secondary shadow-extruded-sm hover:text-ink-primary"
+            >
+              <svg aria-hidden="true" viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round">
+                <path d="M6 6l12 12M18 6L6 18" />
+              </svg>
+            </button>
           </div>
-        )}
+        </div>
 
         <div className="relative min-h-0 flex-1">
           <div ref={streamRef} data-testid="chat-stream" onScroll={handleScroll} className="h-full min-h-0 flex-1 overflow-y-auto">

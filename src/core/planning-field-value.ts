@@ -52,6 +52,23 @@ export const PLANNING_FIELD_LABELS: Record<PlanningFieldNames, string> = {
   energy: "Energy",
 };
 
+const PLANNING_FIELDS = Object.keys(PLANNING_FIELD_LABELS) as PlanningFieldNames[];
+
+/**
+ * Real-use fixes plan, Task 2: the ONE rule for "this open Task is missing
+ * planning data" — a not-Completed Task with at least one undefined
+ * planning field. `app/tasks-view.ts`'s `listTasks` (the Tasks page's
+ * per-row "Add …" badges) and `countTasksMissingData` (the Chat header's
+ * "N tasks missing data" chip count) both call this, so the two can never
+ * drift — moved here, not kept in `app/tasks-view.ts` itself, since AD-16
+ * requires every `app/*.ts` export to be `(deps, input) =>
+ * Promise<Result<…>>`, and this is a plain, pure, synchronous helper.
+ */
+export function taskMissingFields(task: Task): readonly PlanningFieldNames[] {
+  // A completed Task needs nothing more to be planned, so it carries no "Add …" badges.
+  return task.status === "completed" ? [] : PLANNING_FIELDS.filter((field) => task[field] === undefined);
+}
+
 /**
  * Result of parsing one raw string into the type a given planning field
  * actually needs. Discriminated on `ok` like `Result<T, YohError>`, but

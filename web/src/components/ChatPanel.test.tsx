@@ -12,7 +12,7 @@ import { ChatPanel } from "./ChatPanel.tsx";
 import { __resetChatStoreForTests } from "../lib/chatStore.ts";
 import { __resetChatPanelForTests, openChatPanel } from "../lib/chatPanel.ts";
 import * as chatStreamModule from "../lib/chatStream.ts";
-import * as openItemsLib from "../lib/openItems.ts";
+import * as missingDataModule from "../lib/missingData.ts";
 import * as readiness from "../lib/readiness.ts";
 import * as reducedMotionModule from "../hooks/useReducedMotion.ts";
 import type { ChatStreamEvent } from "../../../src/types/api.ts";
@@ -39,8 +39,7 @@ describe("ChatPanel", () => {
     __resetChatStoreForTests();
     __resetChatPanelForTests();
     readiness.__resetReadinessForTests();
-    vi.spyOn(openItemsLib, "useOpenItems").mockReturnValue({ status: "loading" });
-    vi.spyOn(openItemsLib, "startOpenItemsStream").mockReturnValue(() => {});
+    vi.spyOn(missingDataModule, "useMissingDataCount").mockReturnValue({ status: "loading" });
   });
   afterEach(() => vi.restoreAllMocks());
 
@@ -92,30 +91,49 @@ describe("ChatPanel", () => {
     expect(inputRegion.className).not.toMatch(/\b(absolute|fixed)\b/);
   });
 
-  it("open items render in their own region, before the stream, and don't grow to share the stream's flex space", () => {
-    vi.spyOn(openItemsLib, "useOpenItems").mockReturnValue({
-      status: "loaded",
-      items: [
-        {
-          requestId: "data-completeness",
-          requestKind: "data-completeness",
-          promptText: "I need a bit more.",
-          question: { requestId: "data-completeness", questionId: "t1:area", text: "What area?", options: [], allowsFreeText: true },
-        },
-      ],
-    });
+  // Real-use fixes plan, Task 2 (Spencer: "get rid of the 'waiting on you'
+  // section in the chat"): the top-of-Chat OpenItems list is gone from this
+  // panel entirely, in every state — no heading, no cards, regardless of
+  // whether any open items exist server-side.
+  it("never shows a 'Waiting on you' section, in any state", () => {
     renderOpenPanel();
-    const region = screen.getByTestId("open-items-region");
-    const stream = screen.getByTestId("chat-stream");
-    expect(region.compareDocumentPosition(stream) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(region.className).not.toMatch(/\bflex-1\b/);
-    expect(region.className).toMatch(/\bshrink-0\b/);
+    expect(screen.queryByText(/waiting on you/i)).not.toBeInTheDocument();
+    expect(screen.queryByTestId("open-items-region")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("open-items")).not.toBeInTheDocument();
   });
 
-  it("renders nothing in the open-items region when there are none", () => {
-    vi.spyOn(openItemsLib, "useOpenItems").mockReturnValue({ status: "loaded", items: [] });
-    renderOpenPanel();
-    expect(screen.queryByTestId("open-items-region")).not.toBeInTheDocument();
+  describe("the 'N tasks missing data' chip", () => {
+    it("is hidden while the count is loading", () => {
+      vi.spyOn(missingDataModule, "useMissingDataCount").mockReturnValue({ status: "loading" });
+      renderOpenPanel();
+      expect(screen.queryByTestId("missing-data-chip")).not.toBeInTheDocument();
+    });
+
+    it("is hidden at a count of 0", () => {
+      vi.spyOn(missingDataModule, "useMissingDataCount").mockReturnValue({ status: "loaded", count: 0 });
+      renderOpenPanel();
+      expect(screen.queryByTestId("missing-data-chip")).not.toBeInTheDocument();
+    });
+
+    it("shows the singular label for a count of 1", () => {
+      vi.spyOn(missingDataModule, "useMissingDataCount").mockReturnValue({ status: "loaded", count: 1 });
+      renderOpenPanel();
+      expect(screen.getByTestId("missing-data-chip")).toHaveTextContent("1 task missing data");
+    });
+
+    it("shows the plural label for a count greater than 1", () => {
+      vi.spyOn(missingDataModule, "useMissingDataCount").mockReturnValue({ status: "loaded", count: 3 });
+      renderOpenPanel();
+      expect(screen.getByTestId("missing-data-chip")).toHaveTextContent("3 tasks missing data");
+    });
+
+    it("clicking it calls the one exported click handler, `openMissingData`", () => {
+      vi.spyOn(missingDataModule, "useMissingDataCount").mockReturnValue({ status: "loaded", count: 2 });
+      const openMissingData = vi.spyOn(missingDataModule, "openMissingData").mockImplementation(() => {});
+      renderOpenPanel();
+      fireEvent.click(screen.getByTestId("missing-data-chip"));
+      expect(openMissingData).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("on Enter, Spencer's turn and the Thinking Indicator render synchronously, before streamChat has done anything", () => {

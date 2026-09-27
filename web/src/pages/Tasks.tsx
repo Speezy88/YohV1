@@ -40,6 +40,7 @@ import { PAGES, isTextFieldFocused } from "../lib/pages.ts";
 import { loadGroupBy, requestCreateTask, requestRenameTask, requestUpdateTaskField, saveGroupBy, useTasksList } from "../lib/tasks.ts";
 import { remainingMs, requestCheckOff, requestUndo } from "../lib/checkOff.ts";
 import { addLocalFailureNotice } from "../lib/notifications.ts";
+import { setMissingDataFilterActive, useMissingDataFilterActive } from "../lib/missingDataFilter.ts";
 import { useReducedMotion } from "../hooks/useReducedMotion.ts";
 import { TASK_ROW_GRID, TaskRow, type TaskEditField } from "../components/TaskRow.tsx";
 import { TaskQuickAdd } from "../components/TaskQuickAdd.tsx";
@@ -119,6 +120,7 @@ export default function TasksPage(): React.JSX.Element {
   const [search, setSearch] = useState("");
   const [query, setQuery] = useState("");
   const { state, refetch } = useTasksList(groupBy, query);
+  const missingDataFilterActive = useMissingDataFilterActive();
 
   const [overrides, setOverrides] = useState<Overrides>(new Map());
   const [pending, setPending] = useState<readonly PendingCreate[]>([]);
@@ -300,10 +302,18 @@ export default function TasksPage(): React.JSX.Element {
 
   // The rows on screen, in order: anything just added first, then the server's groups.
   const justAdded = pending.filter((p) => !serverItems.has(p.item.id));
-  const groups: ReadonlyArray<{ readonly key: string; readonly label: string; readonly tone: TaskGroup["tone"]; readonly rows: ReadonlyArray<{ item: TaskListItem; creating: boolean }> }> = [
+  const allGroups: ReadonlyArray<{ readonly key: string; readonly label: string; readonly tone: TaskGroup["tone"]; readonly rows: ReadonlyArray<{ item: TaskListItem; creating: boolean }> }> = [
     ...(justAdded.length > 0 ? [{ key: "just-added", label: "Just added", tone: "accent" as const, rows: justAdded.map((p) => ({ item: p.item, creating: p.state === "saving" })) }] : []),
     ...(loaded?.groups ?? []).map((g) => ({ key: g.key, label: g.label, tone: g.tone, rows: g.tasks.map((t) => ({ item: t, creating: false })) })),
   ];
+  // Real-use fixes plan, Task 2: the "Missing data" filter chip — the SAME
+  // per-row `missing` rule the "Add …" badges already show, filtered
+  // client-side (the rows are already on screen; no extra server round
+  // trip). Armed either from here or from the Chat header's "N tasks
+  // missing data" chip (`lib/missingData.ts`'s `openMissingData`).
+  const groups = missingDataFilterActive
+    ? allGroups.map((g) => ({ ...g, rows: g.rows.filter(({ item }) => item.missing.length > 0) })).filter((g) => g.rows.length > 0)
+    : allGroups;
 
   let rowIndex = 0;
 
@@ -398,25 +408,50 @@ export default function TasksPage(): React.JSX.Element {
           onPageDown={() => nav?.next()}
         />
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <label className="flex h-[46px] w-[280px] items-center gap-2.5 rounded-full bg-surface-sunken px-4 shadow-inset">
-            <svg aria-hidden="true" viewBox="0 0 24 24" width={18} height={18} fill="none" stroke="currentColor" className="shrink-0 text-ink-secondary">
-              <path d="M11 17a6 6 0 1 0 0-12 6 6 0 0 0 0 12z M20 20l-4.5-4.5" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            <input
-              type="search"
-              aria-label="Search tasks"
-              placeholder="Search tasks"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") {
-                  e.preventDefault();
-                  setSearch("");
-                }
-              }}
-              className="min-w-0 flex-1 border-0 bg-transparent font-body text-small text-ink-primary outline-none placeholder:text-ink-secondary"
-            />
-          </label>
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex h-[46px] w-[280px] items-center gap-2.5 rounded-full bg-surface-sunken px-4 shadow-inset">
+              <svg aria-hidden="true" viewBox="0 0 24 24" width={18} height={18} fill="none" stroke="currentColor" className="shrink-0 text-ink-secondary">
+                <path d="M11 17a6 6 0 1 0 0-12 6 6 0 0 0 0 12z M20 20l-4.5-4.5" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              <input
+                type="search"
+                aria-label="Search tasks"
+                placeholder="Search tasks"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    setSearch("");
+                  }
+                }}
+                className="min-w-0 flex-1 border-0 bg-transparent font-body text-small text-ink-primary outline-none placeholder:text-ink-secondary"
+              />
+            </label>
+            {/* Real-use fixes plan, Task 2: the "Missing data" filter chip —
+                armed either here or from the Chat header's "N tasks missing
+                data" chip (`lib/missingData.ts`'s `openMissingData`). Its own
+                clear button is the ONE way to drop it (there's no separate
+                enabling control on this page). */}
+            {missingDataFilterActive && (
+              <span
+                data-testid="tasks-filter-missing-data"
+                className="flex h-[38px] items-center gap-2 rounded-full bg-surface-sunken pl-3 pr-1.5 font-body text-small text-ink-primary shadow-inset"
+              >
+                Missing data
+                <button
+                  type="button"
+                  aria-label="Clear Missing data filter"
+                  onClick={() => setMissingDataFilterActive(false)}
+                  className="flex size-[26px] items-center justify-center rounded-full text-ink-secondary hover:text-ink-primary"
+                >
+                  <svg aria-hidden="true" viewBox="0 0 24 24" width={14} height={14} fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round">
+                    <path d="M6 6l12 12M18 6L6 18" />
+                  </svg>
+                </button>
+              </span>
+            )}
+          </div>
           <div role="group" aria-label="Group by" className="flex gap-1 rounded-lg bg-surface-sunken p-1 shadow-inset">
             {GROUP_OPTIONS.map((option) => {
               const pressed = option.value === groupBy;

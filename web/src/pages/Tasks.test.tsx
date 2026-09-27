@@ -14,6 +14,7 @@ import { render, screen, fireEvent, waitFor, within, act } from "@testing-librar
 import TasksPage from "./Tasks.tsx";
 import { apiClient } from "../lib/apiClient.ts";
 import * as notifications from "../lib/notifications.ts";
+import { __resetMissingDataFilterForTests, setMissingDataFilterActive } from "../lib/missingDataFilter.ts";
 import type { TasksViewResponse } from "../../../src/types/api.ts";
 
 vi.mock("../lib/apiClient.ts", () => ({
@@ -91,6 +92,7 @@ describe("TasksPage", () => {
     vi.clearAllMocks();
     api.tasks.$get.mockResolvedValue(envelope({ ok: true, value: VIEW }));
     api.tasks.parse.$post.mockResolvedValue(envelope({ ok: true, value: { title: "", unmatchedAreas: [] } }));
+    __resetMissingDataFilterForTests();
     try {
       window.localStorage.clear();
     } catch {
@@ -100,6 +102,7 @@ describe("TasksPage", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+    __resetMissingDataFilterForTests();
   });
 
   // Polish-2 (Spencer's live-app report: "I do not want to be able to
@@ -122,6 +125,38 @@ describe("TasksPage", () => {
     expect(within(essay).getByText("Add energy")).toBeInTheDocument();
     expect(within(row("Calc problem set 4")).getByText("Medium")).toBeInTheDocument();
     expect(within(row("Calc problem set 4")).getByText("Nothing")).toBeInTheDocument();
+  });
+
+  // Real-use fixes plan, Task 2: the "Missing data" filter chip — armed
+  // either from this page or from the Chat header's "N tasks missing data"
+  // chip (`lib/missingData.ts`'s `openMissingData`, tested there).
+  describe("the 'Missing data' filter chip", () => {
+    it("is absent when the filter isn't armed", async () => {
+      await renderLoaded();
+      expect(screen.queryByTestId("tasks-filter-missing-data")).not.toBeInTheDocument();
+    });
+
+    it("shows a clearable chip and narrows the list to Tasks with missing fields, once armed", async () => {
+      act(() => setMissingDataFilterActive(true));
+      render(<TasksPage />);
+      await screen.findByText("College essay brainstorm");
+
+      expect(screen.getByTestId("tasks-filter-missing-data")).toHaveTextContent("Missing data");
+      expect(screen.queryByText("Calc problem set 4")).not.toBeInTheDocument();
+      expect(screen.queryByText("Email Mr. Alvarez")).not.toBeInTheDocument();
+    });
+
+    it("clicking the chip's clear button drops the filter and shows every Task again", async () => {
+      act(() => setMissingDataFilterActive(true));
+      render(<TasksPage />);
+      await screen.findByText("College essay brainstorm");
+
+      fireEvent.click(screen.getByRole("button", { name: "Clear Missing data filter" }));
+
+      expect(screen.queryByTestId("tasks-filter-missing-data")).not.toBeInTheDocument();
+      await screen.findByText("Calc problem set 4");
+      expect(screen.getByText("Email Mr. Alvarez")).toBeInTheDocument();
+    });
   });
 
   it("focuses the quick-add line on arrival", async () => {
