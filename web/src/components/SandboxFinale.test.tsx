@@ -19,6 +19,18 @@ describe("SandboxFinale", () => {
     expect(screen.queryByText(/Couldn't save/)).not.toBeInTheDocument();
   });
 
+  // C2 fix round 1: the resolved state must itself be announced — a screen
+  // reader heard "Saving your answers" on the pending bar but nothing when
+  // it resolved. The resolved text lives inside a role="status"
+  // aria-live="polite" region (every "done" case shares this one wrapper).
+  it("done: the resolved text lives in a role=status, aria-live=polite region, so its arrival is announced", () => {
+    render(<SandboxFinale status="done" savedCount={2} failedTitles={[]} />);
+    const region = screen.getByTestId("sandbox-finale-result");
+    expect(region).toHaveAttribute("role", "status");
+    expect(region).toHaveAttribute("aria-live", "polite");
+    expect(region).toHaveTextContent("Saved 2 Tasks");
+  });
+
   it("done, one or more failed: names each failed Task on its own line, and never claims completion", () => {
     render(<SandboxFinale status="done" savedCount={1} failedTitles={["Chem problem set", "History essay"]} />);
     expect(screen.getByText("Couldn't save Chem problem set.")).toBeInTheDocument();

@@ -16,6 +16,14 @@
  * renders only the failure lines — never "Saved 0 Tasks" — the same
  * `failed` branch below already covers it since it keys off
  * `failedTitles.length`, not `savedCount`.
+ *
+ * C2 fix round 1: the resolved ("done") state — success, per-Task failure,
+ * or `summaryFailed` — is now itself one `role="status" aria-live="polite"`
+ * region (`sandbox-finale-result`), matching the announcement idiom
+ * `SandboxCard.tsx`'s own settled state uses. Without it, a screen reader
+ * announced "Saving your answers" when the pending bar mounted but heard
+ * nothing when it resolved. The three resolved cases share this one
+ * wrapper (previously `summaryFailed` had its own near-duplicate div).
  */
 import { useReducedMotion } from "../hooks/useReducedMotion.ts";
 
@@ -45,18 +53,23 @@ export function SandboxFinale({ status, savedCount = 0, failedTitles = [], summa
     );
   }
 
-  if (summaryFailed) {
-    return (
-      <div data-testid="sandbox-finale-result" className="flex flex-col gap-0.5 py-1 font-body text-body text-ink-primary">
-        <p>Couldn't load the summary. Your saved cards above are in Notion.</p>
-      </div>
-    );
-  }
+  const failed = !summaryFailed && failedTitles.length > 0;
+  const lines = summaryFailed
+    ? ["Couldn't load the summary. Your saved cards above are in Notion."]
+    : failed
+      ? failedTitles.map((title) => `Couldn't save ${title}.`)
+      : [`Saved ${savedCount} Tasks`];
 
-  const failed = failedTitles.length > 0;
   return (
-    <div data-testid="sandbox-finale-result" className="flex flex-col gap-0.5 py-1 font-body text-body text-ink-primary">
-      {failed ? failedTitles.map((title) => <p key={title}>{`Couldn't save ${title}.`}</p>) : <p>{`Saved ${savedCount} Tasks`}</p>}
+    <div
+      data-testid="sandbox-finale-result"
+      role="status"
+      aria-live="polite"
+      className="flex flex-col gap-0.5 py-1 font-body text-body text-ink-primary"
+    >
+      {lines.map((line) => (
+        <p key={line}>{line}</p>
+      ))}
     </div>
   );
 }
