@@ -70,9 +70,14 @@ test("the list is grouped by Due, shows completed Tasks, and badges what's missi
   await openTasks(page);
   await expect(page.getByRole("heading", { name: "Overdue · 1" })).toBeVisible();
   await expect(page.getByRole("heading", { name: /^Today · / })).toBeVisible();
-  // Story 9.2's own dedicated fixture Task ("E2E Sandbox Task") also has no
-  // Due Date, alongside "College essay brainstorm" — two, not one.
-  await expect(page.getByRole("heading", { name: "No date · 2" })).toBeVisible();
+  // Story 9.2's own dedicated fixture Task ("E2E Sandbox Task") also starts
+  // with no Due Date, alongside "College essay brainstorm" — but every spec
+  // file shares ONE fixture server/DB for the whole serial run (`workers: 1`),
+  // and `sandbox.spec.ts` (which runs earlier, alphabetically) genuinely
+  // Saves "E2E Sandbox Task"'s Due Date through the real write path as part
+  // of its own smoke — so by the time this spec runs, only "College essay
+  // brainstorm" is left without one.
+  await expect(page.getByRole("heading", { name: "No date · 1" })).toBeVisible();
   await expect(row(page, "Return library books").getByRole("checkbox")).toHaveAttribute("aria-checked", "true");
   await expect(row(page, "College essay brainstorm")).toContainText("Add due date");
   await expect(row(page, "College essay brainstorm")).toContainText("Add time");

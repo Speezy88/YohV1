@@ -40,6 +40,8 @@ import {
   type NotionCreatePageConfig,
 } from "../../src/adapters/notion-adapter.ts";
 import { draftItem, type CreateItemDeps } from "../../src/app/create-item.ts";
+import { sandboxQueue, type SandboxQueueDeps } from "../../src/app/sandbox-queue.ts";
+import { firstCardView } from "../../src/core/sandbox-card-view.ts";
 import { localIsoDate } from "../../src/rituals/ritual-shared.ts";
 import { startCheckOffCommitSweep, startServer, type ChatTurnFn, type ServerDeps } from "../../src/shell/server.ts";
 import type { AnthropicMessagesClient } from "../../src/adapters/llm-adapter.ts";
@@ -196,6 +198,21 @@ const CAPTURE_TRIGGER = /report|assignment|errand|due (thursday|friday|monday)/i
 // downstream of it.
 const runChatTurn: ChatTurnFn = async (deps, input) => {
   deps.emit?.({ type: "status", text: "Thinking…" });
+  // Story 9.2: `/sandbox` is a deterministic slash command (`chat-turn.ts`'s
+  // own `dispatchSlashCommand` checks it before anything LLM-shaped) —
+  // this fake stands in for the WHOLE `chatTurn` seam, so it dispatches
+  // `/sandbox` itself, against the real `sandboxQueue`/`firstCardView`
+  // functions (never duplicated logic), using the same fake Notion Tasks
+  // data source `sandbox` (below) already reads/writes for the three
+  // `/api/sandbox/*` routes.
+  if (input.message.trim() === "/sandbox") {
+    const sandboxChatDeps: SandboxQueueDeps = { ...sandbox, now: () => new Date() };
+    const queue = await sandboxQueue(sandboxChatDeps, {});
+    if (!queue.ok) return queue;
+    const card = firstCardView(queue.value.items);
+    if (!card) return { ok: true, value: { reply: "Nothing's missing a Due Date or Duration.", receipts: [] } };
+    return { ok: true, value: { reply: "", receipts: [], sandboxCard: card } };
+  }
   if (CAPTURE_TRIGGER.test(input.message)) {
     return draftItem(captureDeps, { database: "Tasks", request: input.message });
   }

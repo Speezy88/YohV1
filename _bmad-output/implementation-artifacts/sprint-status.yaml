@@ -120,7 +120,7 @@ development_status:
 
   epic-9: in-progress
   9-1-two-tier-data-completeness-gate: done
-  9-2-sandbox-card-flow: backlog
+  9-2-sandbox-card-flow: done
   9-3-sandbox-finale-and-proof-of-action-notification: backlog
   9-4-needs-data-notification-and-indicator: backlog
   epic-9-retrospective: optional
