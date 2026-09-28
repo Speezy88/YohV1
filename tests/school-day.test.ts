@@ -7,7 +7,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { computeSchoolDay, SCHOOL_PROTECTED_WINDOWS } from "../src/core/school-day.ts";
+import { computeSchoolDay, mergeOverlappingAnchors, SCHOOL_PROTECTED_WINDOWS } from "../src/core/school-day.ts";
 import type { CalendarEvent } from "../src/types/domain.ts";
 
 function schoolEvent(id: string, title: string, start: string, end: string): CalendarEvent {
@@ -121,4 +121,98 @@ test("a malformed date is rejected with a validation error, not a thrown excepti
   const result = computeSchoolDay([], "2026-13-40" as never, "UTC");
   assert.ok(!result.ok);
   assert.equal(result.error.kind, "validation");
+});
+
+// ============================================================================
+// Polish-5 final fix (M1): an all-day EXTRA-calendar event still makes a day
+// a school day, but is never busy time — dropped from `anchors`. A PRIMARY
+// all-day event is untouched (kept in `anchors`, same as before).
+// ============================================================================
+
+test("M1: an all-day school-calendar event still makes it a school day, but is dropped from anchors — a PRIMARY all-day event stays", () => {
+  const events: CalendarEvent[] = [
+    { ...schoolEvent("s1", "Spirit Week", "2026-08-24T00:00:00.000Z", "2026-08-25T00:00:00.000Z"), allDay: true },
+    { ...primaryEvent("p1", "My all-day thing", "2026-08-24T00:00:00.000Z", "2026-08-25T00:00:00.000Z"), allDay: true },
+  ];
+  const result = computeSchoolDay(events, MONDAY, "UTC");
+  assert.ok(result.ok);
+  // It IS a school day (the all-day school event counts for detection) —
+  // both protected windows appear.
+  assert.equal(result.value.protectedWindows.length, 2);
+  // Only the primary all-day event survives into anchors; the all-day
+  // school event is dropped.
+  assert.deepEqual(
+    result.value.anchors.map((e) => e.id),
+    ["p1"],
+  );
+});
+
+// ============================================================================
+// Polish-5 final fix (M1): `mergeOverlappingAnchors` coalesces overlapping
+// real anchors and clips protected windows around them, so
+// `work-break-fit.ts`'s overlap-rejection is never tripped.
+// ============================================================================
+
+function anchor(id: string, title: string, start: string, end: string): CalendarEvent {
+  return { id, title, start, end };
+}
+
+test("mergeOverlappingAnchors: no overlaps at all — byte-identical (same objects) output", () => {
+  const anchors = [anchor("a1", "A", "2026-08-24T09:00:00.000Z", "2026-08-24T09:30:00.000Z")];
+  const windows = [anchor("w1", "Lunch", "2026-08-24T10:55:00.000Z", "2026-08-24T11:40:00.000Z")];
+  const result = mergeOverlappingAnchors(anchors, windows);
+  assert.equal(result.anchors[0], anchors[0]); // same object reference
+  assert.equal(result.protectedWindows[0], windows[0]); // same object reference
+});
+
+test("mergeOverlappingAnchors: two overlapping real events merge into one anchor spanning both, titles joined", () => {
+  const anchors = [
+    anchor("class", "AP Calculus", "2026-08-24T10:30:00.000Z", "2026-08-24T11:15:00.000Z"),
+    anchor("standup", "Standup", "2026-08-24T11:00:00.000Z", "2026-08-24T11:20:00.000Z"),
+  ];
+  const result = mergeOverlappingAnchors(anchors, []);
+  assert.equal(result.anchors.length, 1);
+  assert.equal(result.anchors[0]!.start, "2026-08-24T10:30:00.000Z");
+  assert.equal(result.anchors[0]!.end, "2026-08-24T11:20:00.000Z");
+  assert.equal(result.anchors[0]!.title, "AP Calculus / Standup");
+});
+
+test("mergeOverlappingAnchors: touching (not overlapping) events also merge", () => {
+  const anchors = [
+    anchor("a", "First", "2026-08-24T09:00:00.000Z", "2026-08-24T09:30:00.000Z"),
+    anchor("b", "Second", "2026-08-24T09:30:00.000Z", "2026-08-24T10:00:00.000Z"),
+  ];
+  const result = mergeOverlappingAnchors(anchors, []);
+  assert.equal(result.anchors.length, 1);
+  assert.equal(result.anchors[0]!.start, "2026-08-24T09:00:00.000Z");
+  assert.equal(result.anchors[0]!.end, "2026-08-24T10:00:00.000Z");
+});
+
+test("mergeOverlappingAnchors: a protected window fully covered by a real anchor is dropped entirely", () => {
+  const anchors = [anchor("class", "Long Class", "2026-08-24T10:00:00.000Z", "2026-08-24T12:00:00.000Z")];
+  const windows = [anchor("school-protected:lunch:2026-08-24", "Lunch", "2026-08-24T10:55:00.000Z", "2026-08-24T11:40:00.000Z")];
+  const result = mergeOverlappingAnchors(anchors, windows);
+  assert.equal(result.anchors.length, 1);
+  assert.deepEqual(result.protectedWindows, []);
+});
+
+test("mergeOverlappingAnchors: a protected window partially overlapped by a real anchor is clipped to the remaining part", () => {
+  const anchors = [anchor("class", "AP Calculus", "2026-08-24T10:30:00.000Z", "2026-08-24T11:15:00.000Z")];
+  const windows = [anchor("school-protected:lunch:2026-08-24", "Lunch", "2026-08-24T10:55:00.000Z", "2026-08-24T11:40:00.000Z")];
+  const result = mergeOverlappingAnchors(anchors, windows);
+  assert.equal(result.protectedWindows.length, 1);
+  assert.equal(result.protectedWindows[0]!.start, "2026-08-24T11:15:00.000Z");
+  assert.equal(result.protectedWindows[0]!.end, "2026-08-24T11:40:00.000Z");
+  assert.equal(result.protectedWindows[0]!.title, "Lunch");
+});
+
+test("mergeOverlappingAnchors: a real anchor in the MIDDLE of a protected window splits it into two remaining pieces", () => {
+  const anchors = [anchor("class", "Quick Class", "2026-08-24T11:05:00.000Z", "2026-08-24T11:15:00.000Z")];
+  const windows = [anchor("school-protected:lunch:2026-08-24", "Lunch", "2026-08-24T10:55:00.000Z", "2026-08-24T11:40:00.000Z")];
+  const result = mergeOverlappingAnchors(anchors, windows);
+  assert.equal(result.protectedWindows.length, 2);
+  assert.equal(result.protectedWindows[0]!.start, "2026-08-24T10:55:00.000Z");
+  assert.equal(result.protectedWindows[0]!.end, "2026-08-24T11:05:00.000Z");
+  assert.equal(result.protectedWindows[1]!.start, "2026-08-24T11:15:00.000Z");
+  assert.equal(result.protectedWindows[1]!.end, "2026-08-24T11:40:00.000Z");
 });

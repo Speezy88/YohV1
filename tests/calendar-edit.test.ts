@@ -33,6 +33,8 @@ function tempDeps(overrides: {
   llmResponse?: string;
   readEventsThrows?: boolean;
   connection?: SqliteConnection;
+  /** Final fix round (M3): the primary lookup (`resolveCalendarEditRouteFn`) throws — e.g. Google 404s a since-deleted event — to verify it is caught, not left to propagate. */
+  resolveRouteThrows?: boolean;
 } = {}): CalendarEditDeps & { readonly connection: SqliteConnection } {
   const connection = overrides.connection ?? openSqliteConnection({ databasePath: ":memory:" });
   initNotificationStoreSchema(connection.db); // Task 7 (Epic 8): interaction-request writes (via openProposal) now append an outbox row.
@@ -46,7 +48,10 @@ function tempDeps(overrides: {
       if (overrides.readEventsThrows) throw new Error("no Google credentials");
       return overrides.events ?? [];
     },
-    resolveCalendarEditRouteFn: async () => overrides.route ?? { kind: "external" },
+    resolveCalendarEditRouteFn: async () => {
+      if (overrides.resolveRouteThrows) throw new Error("Not Found");
+      return overrides.route ?? { kind: "external" };
+    },
     proposeCalendarEditFn: async (calendarId, eventId, change) => ({
       id: `calendar-edit-${eventId}-1`,
       kind: "calendar-edit",
@@ -299,4 +304,52 @@ test("Controller ruling: two consecutive 'create' calendar requests never confli
   if (first.ok) assert.ok(first.value.question);
   if (second.ok) assert.ok(second.value.question, "expected the SECOND create to ALSO open cleanly — no conflict (controller ruling)");
   connection.close();
+});
+
+// ============================================================================
+// Final fix round, M3: title matching only ever considers PRIMARY events
+// (no `calendarId`) — an extra (school) calendar's event can never become
+// an edit target, and Spencer gets an honest, plain reply instead of a
+// Google 404 leaking out as a generic error.
+// ============================================================================
+
+const CHEMISTRY: CalendarEvent = {
+  id: "school-evt-1",
+  title: "Chemistry",
+  start: "2026-09-18T20:00:00.000Z",
+  end: "2026-09-18T21:00:00.000Z",
+  calendarId: "spencerhatch@seattleacademy.org",
+};
+
+test("M3: the only title match is on an extra (school) calendar — a plain, honest reply, no adapter call, nothing thrown", async () => {
+  const deps = tempDeps({ events: [CHEMISTRY], llmResponse: "MOVE: Chemistry | 2026-09-18T22:00:00.000Z" });
+  const result = await proposeCalendarEdit(deps, { line: "move chemistry to 2pm", today: TODAY });
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.value.reply, '"Chemistry" is on your school calendar — I can only read it, not change it.');
+    assert.equal(result.value.question, undefined, "no Proposal was opened");
+  }
+  deps.connection.close();
+});
+
+test("M3: a primary event and a same-titled extra-calendar event — only the primary one is matched, no disambiguation prompt", async () => {
+  const deps = tempDeps({
+    events: [TEAM_SYNC, { ...TEAM_SYNC, id: "school-evt-2", calendarId: "spencerhatch@seattleacademy.org" }],
+    llmResponse: "MOVE: Team sync | 2026-09-18T18:00:00.000Z",
+  });
+  const result = await proposeCalendarEdit(deps, { line: "move team sync to 6pm", today: TODAY });
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.ok(result.value.question, "the primary match alone must resolve cleanly, not trigger the '2 events' disambiguation reply");
+    assert.doesNotMatch(result.value.reply, /2 events/);
+  }
+  deps.connection.close();
+});
+
+test("M3: a thrown error resolving the primary event's route (e.g. a stale 404) is reported as a reply, never a throw", async () => {
+  const deps = tempDeps({ events: [TEAM_SYNC], llmResponse: "MOVE: Team sync | 2026-09-18T18:00:00.000Z", resolveRouteThrows: true });
+  const result = await proposeCalendarEdit(deps, { line: "move team sync to 6pm", today: TODAY });
+  assert.equal(result.ok, true);
+  if (result.ok) assert.equal(result.value.reply, "I couldn't reach Google Calendar right now; nothing was changed.");
+  deps.connection.close();
 });

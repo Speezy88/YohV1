@@ -1173,12 +1173,18 @@ function localDayWindowUtcForDate(date: IsoDate, timeZone: string): { readonly s
 // Event -> domain-type mapping
 // ============================================================================
 
+/** True for Google's all-day event shape — a date-only `date` field and no `dateTime` on `start`. An all-day event's `end.date` is also date-only, never a `dateTime`. */
+function isAllDayEvent(event: calendar_v3.Schema$Event): boolean {
+  return Boolean(event.start?.date) && !event.start?.dateTime;
+}
+
 function toCalendarEvent(event: calendar_v3.Schema$Event): CalendarEvent {
   return {
     id: event.id ?? "",
     title: event.summary ?? "",
     start: toIsoDateTime(event.start),
     end: toIsoDateTime(event.end),
+    ...(isAllDayEvent(event) ? { allDay: true as const } : {}),
   };
 }
 

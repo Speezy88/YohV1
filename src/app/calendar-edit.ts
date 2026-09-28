@@ -202,8 +202,23 @@ export async function proposeCalendarEdit(deps: CalendarEditDeps, input: Calenda
     proposal = deps.proposeNewCalendarEventFn({ calendarId: "primary", title: draft.title, start: draft.start, end: draft.end });
   } else {
     const requestedTitle = draft.eventTitle.trim().toLowerCase();
-    const matches = events.filter((e) => e.id !== "" && e.title.trim().toLowerCase() === requestedTitle);
+    const titleMatches = events.filter((e) => e.id !== "" && e.title.trim().toLowerCase() === requestedTitle);
+    // Final fix round (M3): title-match only Spencer's PRIMARY calendar
+    // (`calendarId === undefined`) — an extra (e.g. school) calendar's event
+    // can never become an edit target, same as the adapter's own
+    // `assertPrimaryCalendar`. If the only matches are on an extra
+    // calendar, say so plainly instead of routing "primary" + that event's
+    // (extra-calendar) id into `resolveCalendarEditRouteFn`, which would
+    // 404 against Google.
+    const matches = titleMatches.filter((e) => e.calendarId === undefined);
     if (matches.length === 0) {
+      const extraMatch = titleMatches.find((e) => e.calendarId !== undefined);
+      if (extraMatch) {
+        return {
+          ok: true,
+          value: { reply: `"${extraMatch.title}" is on your school calendar — I can only read it, not change it.`, receipts: [] },
+        };
+      }
       return { ok: true, value: { reply: `I couldn't find an event called "${draft.eventTitle}" on today's calendar.`, receipts: [] } };
     }
     if (matches.length > 1) {
@@ -218,7 +233,12 @@ export async function proposeCalendarEdit(deps: CalendarEditDeps, input: Calenda
     const matchedEvent = matches[0]!;
     eventTitle = matchedEvent.title;
 
-    const route = await deps.resolveCalendarEditRouteFn("primary", matchedEvent.id);
+    let route: { readonly kind: "owned" } | { readonly kind: "external" };
+    try {
+      route = await deps.resolveCalendarEditRouteFn("primary", matchedEvent.id);
+    } catch (err) {
+      return { ok: true, value: { reply: errorCopyForThrown(err, { service: "Google Calendar" }), receipts: [] } };
+    }
     if (route.kind === "owned") {
       return { ok: true, value: { reply: "That's one of my own Plan blocks — ask me to re-flow the day to adjust it instead.", receipts: [] } };
     }

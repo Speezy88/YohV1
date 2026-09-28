@@ -114,7 +114,13 @@ export async function getHomeView(deps: HomeViewDeps, _input: Record<string, nev
     // next successful read.
     log({ level: "error", event: "home-view.read-calendar-failed", detail: describeError(err) });
   }
-  const fixedBlocks = calendarEvents.map((e) => toFixedBlock(e, nowMs));
+  // Polish-5 final fix (M1): an all-day EXTRA-calendar event (a school
+  // calendar's "Day 3"/"Spirit Week") is never real busy time — it must not
+  // render as a whole-day "fixed" block on Home. A PRIMARY all-day event
+  // keeps today's behavior (unchanged).
+  const fixedBlocks = calendarEvents
+    .filter((e) => !(e.calendarId !== undefined && e.allDay === true))
+    .map((e) => toFixedBlock(e, nowMs));
 
   const stored = getPlan(deps.store, today);
   if (!stored) {

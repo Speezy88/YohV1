@@ -207,7 +207,7 @@ import type { DataCompletenessGateResult } from "../core/data-completeness-gate.
 import { orderByDerivedPriority } from "../core/derived-priority.ts";
 import { generatePlanReasoning } from "../core/plan-reasoning.ts";
 import { isOpenTask } from "../core/planning-field-value.ts";
-import { computeSchoolDay } from "../core/school-day.ts";
+import { computeSchoolDay, mergeOverlappingAnchors } from "../core/school-day.ts";
 import { buildTimeBudgetChangeProposal, nextTimeBudgetDeferralStreak, resolveTodayTimeBudget } from "../core/time-budget.ts";
 import { fitWorkBreakBlocks, type FitWorkBreakBlocksOutput } from "../core/work-break-fit.ts";
 import { runDataCompletenessGate } from "./data-completeness.ts";
@@ -595,11 +595,6 @@ function overlapsMs(aStart: number, aEnd: number, bStart: number, bEnd: number):
   return aStart < bEnd && bStart < aEnd;
 }
 
-/** Total whole minutes across every `[start, end)` span (work-break-fit.ts's own PlanBlock/CalendarEvent shapes both qualify). */
-function sumMinutes(spans: readonly { readonly start: IsoDateTime; readonly end: IsoDateTime }[]): number {
-  return spans.reduce((total, span) => total + (Date.parse(span.end) - Date.parse(span.start)) / 60_000, 0);
-}
-
 /**
  * Pass 2's own `calendarEvents`: everything from `startTimeMs` onward is
  * BUSY except the two protected windows themselves — the only wall-clock
@@ -652,59 +647,31 @@ interface SchoolDayLastResortInput {
  * today or overdue, this gives ONLY those Tasks (never a non-deadline one —
  * they're never even in pass 2's own `tasks` input) a second
  * `fitWorkBreakBlocks` call whose only open wall-clock room is the two
- * protected windows (`buildProtectedWindowOnlyAnchors`). Chose calling
- * `fitWorkBreakBlocks` a second time, per the brief's own preference, over
- * editing `work-break-fit.ts` itself.
+ * protected windows (`buildProtectedWindowOnlyAnchors`).
  *
- * Pass 2's own budget is EXACTLY `protectedMinutesTotal` (the two protected
- * windows' own real minutes — 45 + 50 = 95 — never `remainingAfterPass1 +
- * protectedMinutesTotal`; review fix, Critical #1). Intended policy: a
- * rescue may use up to the protected windows' own minutes, ON TOP OF
- * Spencer's declared TimeBudget, deadline Tasks only — never a blended
- * pool that includes whatever pass 1 happened to leave over. Two reasons
- * `remainingAfterPass1` must NOT be added:
- *  (1) `buildProtectedWindowOnlyAnchors`'s pass-2 anchors mark everything
- *      busy except the two real windows, with ONE trailing filler anchor
- *      running from the end of community time to `+24h` so `placeMinutes`
- *      has somewhere to resolve to — `fitWorkBreakBlocks` skips any anchor
- *      "for free" with no bound on how far the cursor jumps, and its own
- *      deferral check (`computeRequiredBudgetMinutes` vs. `remainingBudgetMinutes`)
- *      is a pure minutes count with no idea only 95 of those minutes are
- *      physically reachable today. Inflating the budget by
- *      `remainingAfterPass1` let a rescue candidate whose required minutes
- *      fit the inflated total but exceeded the real 95-minute capacity get
- *      fully "rescued" with the overflow silently placed ~24h later, behind
- *      that filler anchor — `deferredTaskIds: []` (reported delivered)
- *      while part of the Task's own work landed tomorrow. Capping the
- *      budget to exactly `protectedMinutesTotal` guarantees any candidate
- *      that passes the deferral check also physically fits inside the two
- *      real windows (accepted logical minutes <= real open minutes), so the
- *      next-day-spillover case cannot happen at all.
- *  (2) `remainingAfterPass1` never legitimately helps here anyway: a Task
- *      that didn't fit pass 1's own `remainingBudgetMinutes` cannot newly
- *      fit on `remainingAfterPass1` alone (same number), since Calendar
- *      anchors never enter `computeRequiredBudgetMinutes` — the addend only
- *      ever manifested as extra slack beyond the 95-minute cap it
- *      shouldn't have had, which is also what let a rescue silently exceed
- *      Spencer's own declared TimeBudget by more than the two protected
- *      windows' own span (ruling 3: "the TimeBudget is never exceeded" —
- *      the only overage this last-resort pass may ever introduce is
- *      exactly the protected minutes it's named for). Since
- *      `fitWorkBreakBlocks` enforces its own budget as a hard cap
- *      regardless of where within its given anchors a Task's minutes land,
- *      this guarantees `usedMinutesPass2 <= protectedMinutesTotal`, so
- *      `usedMinutesPass1 + usedMinutesPass2 <= budget.totalMinutes +
- *      protectedMinutesTotal` — the TimeBudget is never exceeded by more
- *      than the two protected windows' own span, which is exactly what
- *      "may use protected-window time" means.
+ * Final fix round (M2): pass 2's budget is the protected minutes STILL
+ * AHEAD of `startTime` — `Σ max(0, windowEnd - max(windowStart, startTime))`
+ * over `protectedWindows` (already M1-clipped by the caller) — never the
+ * windows' full nominal span. A run whose `startTime` is already past both
+ * windows has zero reachable minutes and skips the rescue entirely, rather
+ * than handing `fitWorkBreakBlocks` a budget it would have to spill past
+ * `buildProtectedWindowOnlyAnchors`'s trailing (non-protected) filler anchor
+ * to satisfy. As a second, independent guard against that same spillover, a
+ * Task is only actually rescued if EVERY ONE of its own pass-2 "work"
+ * blocks lands fully inside a (pre-clip, real) protected window — never
+ * partially, and never in the filler anchor beyond it; a candidate that
+ * fails this keeps none of its pass-2 blocks and stays deferred, exactly as
+ * if pass 2 had never run for it. Together these mean a rescue can only
+ * ever place a Task's minutes inside protected-window time actually ahead
+ * of `startTime` today — never tomorrow, and never more than the protected
+ * windows' own span beyond Spencer's declared TimeBudget.
  *
- * A rescue candidate that still doesn't fit even with that bonus was
- * genuinely too large for the day (the TimeBudget really did run out, not
- * merely "lacked free time") and stays deferred, indistinguishable in the
- * end from a pass-1-only deferral. When a rescued Task's block DOES land
- * inside a protected window, that window's own `calendar-anchor` block
- * (from pass 1) is dropped entirely — never trimmed — so the Plan never
- * shows two overlapping blocks over the same span.
+ * A rescue candidate that still doesn't fit was genuinely too large for the
+ * day and stays deferred, indistinguishable from a pass-1-only deferral.
+ * When a rescued Task's block DOES land inside a protected window, that
+ * window's own `calendar-anchor` block (from pass 1) is dropped entirely —
+ * never trimmed — so the Plan never shows two overlapping blocks over the
+ * same span.
  */
 function applySchoolDayLastResort(input: SchoolDayLastResortInput): Result<FitWorkBreakBlocksOutput, YohError> {
   const { pass1, tasks, protectedWindows, budget, startTime, today } = input;
@@ -722,30 +689,55 @@ function applySchoolDayLastResort(input: SchoolDayLastResortInput): Result<FitWo
     return { ok: true, value: pass1 };
   }
 
-  const protectedMinutesTotal = sumMinutes(protectedWindows);
+  const startTimeMs = Date.parse(startTime);
 
-  // Review fix, Critical #1: EXACTLY `protectedMinutesTotal` — never
-  // `remainingAfterPass1 + protectedMinutesTotal`. See this function's own
-  // doc comment for the full reasoning (next-day spillover + exceeding
-  // Spencer's declared TimeBudget by more than the protected windows'
-  // own span).
-  const pass2Budget: TimeBudget = { ...budget, totalMinutes: protectedMinutesTotal };
-  const pass2Anchors = buildProtectedWindowOnlyAnchors(Date.parse(startTime), protectedWindows);
+  // M2 fix (a): the protected minutes still physically reachable from
+  // `startTime` onward today — never the windows' full 45+50, since a
+  // window (or part of one) already in the past contributes nothing.
+  const protectedSpans = protectedWindows.map((window) => ({ startMs: Date.parse(window.start), endMs: Date.parse(window.end) }));
+  const reachableMinutes = Math.floor(
+    protectedSpans.reduce((total, span) => total + Math.max(0, (span.endMs - Math.max(span.startMs, startTimeMs)) / 60_000), 0),
+  );
+  if (reachableMinutes <= 0) {
+    return { ok: true, value: pass1 };
+  }
+
+  const pass2Budget: TimeBudget = { ...budget, totalMinutes: reachableMinutes };
+  const pass2Anchors = buildProtectedWindowOnlyAnchors(startTimeMs, protectedWindows);
 
   const pass2 = fitWorkBreakBlocks({ tasks: rescueCandidates, budget: pass2Budget, calendarEvents: pass2Anchors, startTime });
   if (!pass2.ok) return pass2;
 
-  const rescuedBlocks: PlanBlock[] = pass2.value.blocks
-    .filter((block) => block.kind !== "calendar-anchor")
-    .map((block) => ({ ...block, id: `resc-${block.id}` }));
+  // M2 fix (b), independent of (a): a Task is rescued only if EVERY one of
+  // its own pass-2 work blocks lies fully inside a real protected window
+  // (never partially, never in the trailing filler anchor beyond it).
+  const isInsideAProtectedWindow = (block: PlanBlock): boolean =>
+    protectedSpans.some((span) => Date.parse(block.start) >= span.startMs && Date.parse(block.end) <= span.endMs);
 
-  if (rescuedBlocks.length === 0) {
+  const rescuedTaskIds = new Set<ExternalId>();
+  for (const task of rescueCandidates) {
+    const taskWorkBlocks = pass2.value.blocks.filter((block) => block.kind === "work" && block.taskId === task.id);
+    if (taskWorkBlocks.length > 0 && taskWorkBlocks.every(isInsideAProtectedWindow)) {
+      rescuedTaskIds.add(task.id);
+    }
+  }
+
+  if (rescuedTaskIds.size === 0) {
     // Nobody rescued — every candidate genuinely didn't fit even with the
     // protected-window bonus. Pass 1's own Plan stands unchanged.
     return { ok: true, value: pass1 };
   }
 
-  const protectedSpans = protectedWindows.map((window) => ({ startMs: Date.parse(window.start), endMs: Date.parse(window.end) }));
+  const rescuedBlocks: PlanBlock[] = pass2.value.blocks
+    .filter((block) => {
+      if (block.kind === "calendar-anchor") return false;
+      if (block.kind === "work") return block.taskId !== undefined && rescuedTaskIds.has(block.taskId);
+      // A "break" block belongs to no Task — keep it only if it too sits
+      // inside a real protected window, never the filler anchor beyond it.
+      return isInsideAProtectedWindow(block);
+    })
+    .map((block) => ({ ...block, id: `resc-${block.id}` }));
+
   const usedProtectedSpans = protectedSpans.filter((span) =>
     rescuedBlocks.some((block) => overlapsMs(Date.parse(block.start), Date.parse(block.end), span.startMs, span.endMs)),
   );
@@ -759,9 +751,6 @@ function applySchoolDayLastResort(input: SchoolDayLastResortInput): Result<FitWo
 
   const mergedBlocks = [...keptPass1Blocks, ...rescuedBlocks].sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
 
-  const rescuedTaskIds = new Set(
-    rescuedBlocks.flatMap((block) => (block.kind === "work" && block.taskId !== undefined ? [block.taskId] : [])),
-  );
   const mergedDeferredTaskIds = pass1.deferredTaskIds.filter((id) => !rescuedTaskIds.has(id));
 
   return { ok: true, value: { blocks: mergedBlocks, deferredTaskIds: mergedDeferredTaskIds } };
@@ -972,12 +961,21 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
     log({ level: "error", event: "morning-ritual.school-day-rejected", detail: schoolDay.error });
     return schoolDay;
   }
-  const { anchors: schoolAnchors, protectedWindows } = schoolDay.value;
+  // Polish-5 final fix (M1): `mergeOverlappingAnchors` coalesces any real
+  // anchors that overlap or touch, and clips each protected window to the
+  // part(s) no merged anchor covers — a no-op whenever nothing overlaps
+  // (school day or not), so `fitWorkBreakBlocks`'s own overlap-rejection is
+  // never tripped by a school calendar's (or Spencer's own) overlapping
+  // events.
+  const { anchors: coalescedAnchors, protectedWindows: coalescedProtectedWindows } = mergeOverlappingAnchors(
+    schoolDay.value.anchors,
+    schoolDay.value.protectedWindows,
+  );
 
   const pass1Fitted = fitWorkBreakBlocks({
     tasks: ordered.value,
     budget: resolvedBudget.budget,
-    calendarEvents: [...schoolAnchors, ...protectedWindows],
+    calendarEvents: [...coalescedAnchors, ...coalescedProtectedWindows],
     startTime: nowIso,
   });
   if (!pass1Fitted.ok) {
@@ -988,11 +986,14 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
   // Polish-5 Task 3, ruling 3 ("Last resort") — see
   // `applySchoolDayLastResort`'s own doc comment for the full mechanism.
   // A no-op (`fitted.value === pass1Fitted.value`, same reference) on a
-  // non-school day, or a school day with nothing to rescue.
+  // non-school day, or a school day with nothing to rescue. Fed the
+  // COALESCED (M1-clipped) protected windows, never the raw ones — a
+  // protected window a real event ate into has less rescuable room than
+  // its nominal 45/50 minutes.
   const fitted = applySchoolDayLastResort({
     pass1: pass1Fitted.value,
     tasks: ordered.value,
-    protectedWindows,
+    protectedWindows: coalescedProtectedWindows,
     budget: resolvedBudget.budget,
     startTime: nowIso,
     today,

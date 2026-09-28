@@ -496,6 +496,17 @@ export interface CalendarEvent {
    * Task 3 uses this to tell school events apart from Spencer's own.
    */
   readonly calendarId?: string;
+  /**
+   * `true` when this event came from Google's all-day `date` form (no
+   * `dateTime`) rather than a timed event — Task 3 fix round (polish-5
+   * M1). An all-day event still counts toward "is this a school day"
+   * (`core/school-day.ts`'s `isSchoolDay` check), but it is never real
+   * busy time: `computeSchoolDay` drops an all-day EXTRA-calendar event
+   * from `anchors`, and `app/home-view.ts` drops it from Home's "fixed"
+   * blocks. Absent (not `false`) for every timed event — the default,
+   * unchanged shape every event had before this field existed.
+   */
+  readonly allDay?: true;
 }
 
 // ============================================================================

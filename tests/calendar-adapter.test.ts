@@ -164,6 +164,17 @@ test("readCalendarEvents converts an all-day event's date-only start/end into Is
   assert.equal(events.length, 1);
   assert.equal(events[0]?.start, "2026-08-22T00:00:00.000Z");
   assert.equal(events[0]?.end, "2026-08-23T00:00:00.000Z");
+  // Final fix round (M1): tagged `allDay: true` so the planner (`core/
+  // school-day.ts`) and Home (`app/home-view.ts`) can drop it as busy time.
+  assert.equal(events[0]?.allDay, true);
+});
+
+test("readCalendarEvents never tags a timed event as `allDay`", async () => {
+  const client = new FakeCalendarReadClient([
+    { items: [makeEvent({ id: "event-1", summary: "Standup", startDateTime: "2026-08-22T14:00:00-04:00", endDateTime: "2026-08-22T14:15:00-04:00" })] },
+  ]);
+  const events = await readCalendarEvents(client, { now: FIXED_NOW, timeZone: "UTC" });
+  assert.equal(events[0]?.allDay, undefined);
 });
 
 test("readCalendarEvents only calls the read-scoped client's events.list — no insert/update/delete call anywhere", async () => {

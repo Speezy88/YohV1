@@ -65,6 +65,22 @@ function isStudyBlockEvent(event: CalendarEvent): boolean {
   return event.calendarId !== undefined && event.title.trim().toLowerCase().startsWith(STUDY_BLOCK_PREFIX);
 }
 
+/**
+ * Polish-5 final fix (M1): an all-day EXTRA-calendar event (Google's
+ * date-only `date` form — `CalendarEvent.allDay`, `adapters/calendar-
+ * adapter.ts`'s `toCalendarEvent`) is never real busy time — a school
+ * calendar's "Day 3"/"Spirit Week" all-day entry must not become a
+ * calendar-anchor spanning the whole host-timeZone day. It still counts
+ * toward `isSchoolDay` above (any school event, of any kind, makes a
+ * weekday a school day) — only dropped from `anchors`. A PRIMARY all-day
+ * event (no `calendarId`) is untouched here — Spencer's own all-day events
+ * keep today's behavior (whatever it already was) and are handled instead
+ * by `mergeOverlappingAnchors`'s coalescing, same as any other anchor.
+ */
+function isAllDayExtraCalendarEvent(event: CalendarEvent): boolean {
+  return event.calendarId !== undefined && event.allDay === true;
+}
+
 // ============================================================================
 // Small calendar-shape helpers, duplicated (not imported) from
 // core/relative-date.ts / core/derived-priority.ts's own `isRealCalendarDate`/
@@ -195,7 +211,7 @@ export function computeSchoolDay(events: readonly CalendarEvent[], date: IsoDate
     return { ok: true, value: { anchors: events, protectedWindows: [] } };
   }
 
-  const anchors = events.filter((event) => !isStudyBlockEvent(event));
+  const anchors = events.filter((event) => !isStudyBlockEvent(event) && !isAllDayExtraCalendarEvent(event));
 
   const protectedWindows: CalendarEvent[] = SCHOOL_PROTECTED_WINDOWS.map((window) => {
     const startMs = wallClockToUtcMillis(year, month, day, window.startHour, window.startMinute, timeZone);
@@ -209,4 +225,117 @@ export function computeSchoolDay(events: readonly CalendarEvent[], date: IsoDate
   });
 
   return { ok: true, value: { anchors, protectedWindows } };
+}
+
+// ============================================================================
+// Polish-5 final fix (M1): normalize overlapping busy spans before
+// `work-break-fit.ts`'s `fitWorkBreakBlocks` — `validateAndSortAnchors`
+// there rejects the WHOLE fit the moment any two anchors overlap, and a
+// school calendar (or Spencer's own primary calendar) does not guarantee
+// its events never overlap each other or the two protected windows.
+// ============================================================================
+
+/** `[start, end)` millis for anything with an `IsoDateTime` start/end (a `CalendarEvent` here). */
+function spanMs(event: CalendarEvent): { readonly startMs: number; readonly endMs: number } {
+  return { startMs: Date.parse(event.start), endMs: Date.parse(event.end) };
+}
+
+/** One or more disjoint `[start, end)` millis pieces of `windowStartMs..windowEndMs` that `blockingSpans` (already merged, non-overlapping, but not necessarily sorted) do NOT cover. Empty when `blockingSpans` covers the window entirely. */
+function subtractSpans(
+  windowStartMs: number,
+  windowEndMs: number,
+  blockingSpans: readonly { readonly startMs: number; readonly endMs: number }[],
+): { readonly startMs: number; readonly endMs: number }[] {
+  let pieces: { startMs: number; endMs: number }[] = [{ startMs: windowStartMs, endMs: windowEndMs }];
+  for (const block of blockingSpans) {
+    const next: { startMs: number; endMs: number }[] = [];
+    for (const piece of pieces) {
+      if (block.endMs <= piece.startMs || block.startMs >= piece.endMs) {
+        next.push(piece); // no overlap with this piece at all
+        continue;
+      }
+      if (block.startMs > piece.startMs) next.push({ startMs: piece.startMs, endMs: block.startMs });
+      if (block.endMs < piece.endMs) next.push({ startMs: block.endMs, endMs: piece.endMs });
+    }
+    pieces = next;
+  }
+  return pieces;
+}
+
+/**
+ * Turns `anchors` (real busy `CalendarEvent`s — Spencer's own events plus
+ * any non-Study-Block, non-all-day-extra school events) and
+ * `protectedWindows` (the two school-day synthetic windows, or `[]`) into a
+ * set `work-break-fit.ts` can always fit around, by:
+ *  1. Merging any two `anchors` that overlap OR touch (one's end <= the
+ *     next's start leaves a gap; end > start does not) into a single
+ *     anchor spanning both, labelled with every merged event's own title
+ *     (deduped, joined with " / "). An anchor that never touches another
+ *     stays the exact same object — not a copy — so a day with no overlaps
+ *     is byte-identical to before this function existed.
+ *  2. Clipping each `protectedWindows` entry to the parts no merged anchor
+ *     now covers — dropped entirely if a merged anchor covers it fully,
+ *     split into more than one piece if a merged anchor sits inside it, and
+ *     left as the exact same object when nothing overlaps it at all.
+ *
+ * Never called from `computeSchoolDay` itself (whose own non-school-day
+ * "byte-for-byte unchanged" contract only concerns THAT function's output);
+ * `rituals/morning-ritual.ts` calls this on `computeSchoolDay`'s result
+ * before `fitWorkBreakBlocks`, on every day — a no-op whenever nothing
+ * overlaps, school day or not, per point 1/2 above.
+ */
+export function mergeOverlappingAnchors(
+  anchors: readonly CalendarEvent[],
+  protectedWindows: readonly CalendarEvent[],
+): SchoolDayResult {
+  const sortedByStart = [...anchors].sort((a, b) => spanMs(a).startMs - spanMs(b).startMs);
+
+  interface Group {
+    startMs: number;
+    endMs: number;
+    events: CalendarEvent[];
+  }
+  const groups: Group[] = [];
+  for (const event of sortedByStart) {
+    const { startMs, endMs } = spanMs(event);
+    const last = groups[groups.length - 1];
+    if (last && startMs <= last.endMs) {
+      last.endMs = Math.max(last.endMs, endMs);
+      last.events.push(event);
+    } else {
+      groups.push({ startMs, endMs, events: [event] });
+    }
+  }
+
+  const mergedAnchors: CalendarEvent[] = groups.map((group) => {
+    if (group.events.length === 1) return group.events[0]!; // no touch/overlap — untouched, same object.
+    const titles = [...new Set(group.events.map((e) => e.title))];
+    return {
+      id: `merged:${group.events.map((e) => e.id).join("+")}`,
+      title: titles.join(" / "),
+      start: new Date(group.startMs).toISOString(),
+      end: new Date(group.endMs).toISOString(),
+    };
+  });
+
+  const blockingSpans = groups.map((g) => ({ startMs: g.startMs, endMs: g.endMs }));
+  const clippedProtectedWindows: CalendarEvent[] = [];
+  for (const window of protectedWindows) {
+    const { startMs, endMs } = spanMs(window);
+    const pieces = subtractSpans(startMs, endMs, blockingSpans);
+    if (pieces.length === 1 && pieces[0]!.startMs === startMs && pieces[0]!.endMs === endMs) {
+      clippedProtectedWindows.push(window); // untouched — same object.
+      continue;
+    }
+    pieces.forEach((piece, index) => {
+      clippedProtectedWindows.push({
+        id: pieces.length > 1 ? `${window.id}:${index}` : window.id,
+        title: window.title,
+        start: new Date(piece.startMs).toISOString(),
+        end: new Date(piece.endMs).toISOString(),
+      });
+    });
+  }
+
+  return { anchors: mergedAnchors, protectedWindows: clippedProtectedWindows };
 }
