@@ -288,7 +288,9 @@ export function mergeOverlappingAnchors(
   anchors: readonly CalendarEvent[],
   protectedWindows: readonly CalendarEvent[],
 ): SchoolDayResult {
-  const sortedByStart = [...anchors].sort((a, b) => spanMs(a).startMs - spanMs(b).startMs);
+  // A zero-length event (end <= start, e.g. a calendar marker) occupies no
+  // time, and `fitWorkBreakBlocks` rejects it outright — drop it here.
+  const sortedByStart = anchors.filter((e) => spanMs(e).endMs > spanMs(e).startMs).sort((a, b) => spanMs(a).startMs - spanMs(b).startMs);
 
   interface Group {
     startMs: number;

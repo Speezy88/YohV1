@@ -165,6 +165,16 @@ test("mergeOverlappingAnchors: no overlaps at all — byte-identical (same objec
   assert.equal(result.protectedWindows[0], windows[0]); // same object reference
 });
 
+test("mergeOverlappingAnchors: a zero-length event (start == end) is dropped — it occupies no time", () => {
+  // Real-use bug 2026-09-28: a school-calendar marker event with start == end
+  // reached fitWorkBreakBlocks, which rejects it, so no morning Plan was built.
+  const kept = anchor("a1", "A", "2026-08-24T09:00:00.000Z", "2026-08-24T09:30:00.000Z");
+  const anchors = [kept, anchor("z", "Marker", "2026-08-24T15:00:00.000Z", "2026-08-24T15:00:00.000Z")];
+  const result = mergeOverlappingAnchors(anchors, []);
+  assert.equal(result.anchors.length, 1);
+  assert.equal(result.anchors[0], kept);
+});
+
 test("mergeOverlappingAnchors: two overlapping real events merge into one anchor spanning both, titles joined", () => {
   const anchors = [
     anchor("class", "AP Calculus", "2026-08-24T10:30:00.000Z", "2026-08-24T11:15:00.000Z"),
