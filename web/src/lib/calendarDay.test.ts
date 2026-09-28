@@ -44,14 +44,46 @@ describe("calendarDay store", () => {
     expect(mockGet()).toHaveBeenCalledWith({ query: { date: "2026-09-29" } });
   });
 
-  it("caches per date for the session: a second mount of the same date doesn't refetch", async () => {
+  it("caches per date for the session: a second mount of the same date shows the cached value instantly", async () => {
     const { result, unmount } = renderHook(() => useCalendarDay("2026-09-29"));
     await waitFor(() => expect(result.current.status).toBe("loaded"));
     unmount();
 
     const { result: result2 } = renderHook(() => useCalendarDay("2026-09-29"));
+    // Task 8 (stale-while-revalidate): the cached value is visible the
+    // instant this hook mounts again — never a flash back to "loading" —
+    // even though a background refresh is also kicked off (below).
     expect(result2.current.status).toBe("loaded");
+  });
+
+  // ==========================================================================
+  // Task 8: stale-while-revalidate — a re-selected, already-cached date
+  // refreshes in the background rather than staying stuck on its first
+  // fetch forever, since a confirmed Calendar edit can change that day's
+  // blocks without this exact date ever getting its own "plan" hint (see
+  // the "empty entityId" test below).
+  // ==========================================================================
+
+  it("re-selecting a cached date refetches in the background, keeping the cached data visible the whole time", async () => {
+    const { result, unmount } = renderHook(() => useCalendarDay("2026-09-29"));
+    await waitFor(() => expect(result.current.status).toBe("loaded"));
+    unmount();
     expect(mockGet()).toHaveBeenCalledTimes(1);
+
+    let resolveSecond: (value: unknown) => void = () => {
+      throw new Error("resolveSecond called before assigned");
+    };
+    mockGet().mockReturnValueOnce(new Promise((resolve) => (resolveSecond = resolve)));
+
+    const { result: result2 } = renderHook(() => useCalendarDay("2026-09-29"));
+    // The background refetch has started (a second call), but the cached
+    // value is still what's shown — never reset to "loading" while it's in
+    // flight.
+    expect(mockGet()).toHaveBeenCalledTimes(2);
+    expect(result2.current.status).toBe("loaded");
+
+    resolveSecond({ json: async () => ({ ok: true, value: { date: "2026-09-29", blocks: [], timeZone: "America/New_York" } }) });
+    await waitFor(() => expect(result2.current.status).toBe("loaded"));
   });
 
   it("a different date fetches independently, each cached on its own", async () => {
@@ -81,6 +113,13 @@ describe("calendarDay store", () => {
     act(() => hintCb({ seq: 1, topic: "plan", entityId: "2026-09-30" }));
     expect(mockGet()).toHaveBeenCalledTimes(1);
     act(() => hintCb({ seq: 2, topic: "plan", entityId: "2026-09-29" }));
+    await waitFor(() => expect(mockGet()).toHaveBeenCalledTimes(2));
+  });
+
+  it("a 'plan' hint with no entityId (the edited event's date couldn't be derived) also refetches", async () => {
+    const { result } = renderHook(() => useCalendarDay("2026-09-29"));
+    await waitFor(() => expect(result.current.status).toBe("loaded"));
+    act(() => hintCb({ seq: 1, topic: "plan", entityId: "" }));
     await waitFor(() => expect(mockGet()).toHaveBeenCalledTimes(2));
   });
 

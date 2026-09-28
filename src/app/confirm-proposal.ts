@@ -36,7 +36,10 @@ import {
   putTimeBudget,
   type MemoryStore,
 } from "../adapters/memory-store.ts";
+import { appendOutboxInTx } from "../adapters/notification-store.ts";
+import type { SqliteConnection } from "../adapters/sqlite.ts";
 import { parsePlanningFieldValue, PLANNING_FIELD_LABELS } from "../core/planning-field-value.ts";
+import { localIsoDate } from "../rituals/ritual-shared.ts";
 import type { CalendarEditProposal } from "./calendar-edit.ts";
 import type {
   CalendarEditChange,
@@ -52,6 +55,31 @@ import type {
   YohError,
 } from "../types/domain.ts";
 import type { ConfirmProposalResponse } from "../types/api.ts";
+
+/** The outbox topic the Calendar Day View and Home's own Plan block re-fetch on (`app/check-off.ts`, `rituals/morning-ritual.ts`, `rituals/mid-day-reflow.ts` all already write it). */
+const PLAN_TOPIC = "plan";
+
+/**
+ * Task 8: the local calendar date `PLAN_TOPIC`'s hint should carry after a
+ * confirmed `"calendar-edit"`, so `web/src/lib/calendarDay.ts`'s per-date
+ * cache refetches the right day instead of every cached date. `"move"` and
+ * `"create"` both carry a real start; `"resize"` carries only `newEnd` (its
+ * own start isn't part of `CalendarEditChange` — there's deliberately no
+ * `"delete"` variant either, see that type's own doc comment) — `undefined`
+ * for either of those, same as a date this can't derive for any other
+ * reason, tells the caller to fall back to a topic-only hint (no entityId),
+ * which `calendarDay.ts` treats as "refetch every cached date."
+ */
+function calendarEditEventDate(change: CalendarEditChange, timeZone: string): string | undefined {
+  switch (change.kind) {
+    case "move":
+      return localIsoDate(new Date(change.newStart), timeZone);
+    case "create":
+      return localIsoDate(new Date(change.start), timeZone);
+    case "resize":
+      return undefined;
+  }
+}
 
 // ============================================================================
 // Moved verbatim from chat-cli.ts (originally Task 23 / Story 4.2, AD-3) —
@@ -189,6 +217,10 @@ export interface ConfirmProposalDeps {
   readonly applyCalendarEdit?: (
     proposal: Proposal<CalendarEditChange>,
   ) => Promise<Result<{ readonly eventId: string; readonly calendarId: string }, YohError>>;
+  /** Task 8: for the one `plan` outbox hint appended after a confirmed `"calendar-edit"` (mirrors `update-task.ts`'s/`save-search-result.ts`'s identical `deps.connection?.writeTx(...)` convention). Absent — never hints (tests, or a caller that doesn't care). */
+  readonly connection?: SqliteConnection;
+  /** Task 8: Spencer's host timezone, so the hint's `entityId` is the edited event's LOCAL calendar date, not its UTC one. Required only alongside `connection` for a `"calendar-edit"` proposal — absent, the hint still fires but with no entityId (calendarDay.ts then refetches every cached date). */
+  readonly timeZone?: string;
 }
 
 export interface ConfirmProposalInput {
@@ -322,9 +354,17 @@ export async function confirmProposal(
       clearRequestIfGiven(deps.store, requestId);
       return missingDependency(proposal.kind, "applyCalendarEdit");
     }
-    const applied = await deps.applyCalendarEdit(proposal as Proposal<CalendarEditChange>);
+    const calendarChange = proposal as Proposal<CalendarEditChange>;
+    const applied = await deps.applyCalendarEdit(calendarChange);
     clearRequestIfGiven(deps.store, requestId);
     if (!applied.ok) return applied;
+    // Task 8 (Plan hint after a calendar edit): a topic-only hint (no
+    // entityId) when the date can't be derived — `calendarDay.ts` then
+    // refetches every date it has cached rather than guessing at one.
+    if (deps.connection) {
+      const date = deps.timeZone ? calendarEditEventDate(calendarChange.suggested, deps.timeZone) : undefined;
+      deps.connection.writeTx((db) => appendOutboxInTx(db, { topic: PLAN_TOPIC, entityId: date ?? "" }));
+    }
     // Post-review fix, Important #2 (re-review, AD-9): `proposal.reason` is
     // the FUTURE-tense confirm question ("Create "..." on ...–...?") —
     // reusing it verbatim here showed Spencer his own question back as if

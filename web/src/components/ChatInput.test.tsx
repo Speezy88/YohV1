@@ -133,6 +133,33 @@ describe("ChatInput", () => {
     fireEvent.keyDown(document, { key: "Enter" });
     expect(sendSpy).toHaveBeenCalledWith("/morning");
     expect(sendSpy).not.toHaveBeenCalledWith("/");
+    // The palette's own `onRun` sends it once — Enter must not ALSO fall
+    // through to ChatInput's own Enter-to-send and send a second time.
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+  });
+
+  // ==========================================================================
+  // Task 8: Enter must never be swallowed before the palette's own command
+  // registry has finished loading (`GET /api/commands`) — the Enter branch
+  // used to preventDefault()/stopPropagation() unconditionally, so a
+  // fast-typed "/command" + Enter landed before `fetchCommands()` resolved
+  // (`filtered` still `[]`) lost the keystroke entirely.
+  // ==========================================================================
+
+  it("Enter before the command registry finishes loading falls through and sends the typed text", async () => {
+    const sendSpy = vi.spyOn(chatStore, "send").mockResolvedValue(undefined);
+    // Never resolves during this test — simulates Enter landing before
+    // `GET /api/commands` returns.
+    vi.spyOn(commands, "fetchCommands").mockReturnValue(new Promise(() => {}));
+    render(<ChatInput />);
+    fireEvent.change(box(), { target: { value: "/tas" } });
+    await waitFor(() => expect(screen.getByTestId("command-palette")).toBeInTheDocument());
+    // Fired on the textarea itself (not `document`) so the keydown genuinely
+    // capture-phases through the palette's `document` listener and then
+    // bubbles back up to this component's own Enter-to-send handler,
+    // exactly like a real keypress would.
+    fireEvent.keyDown(box(), { key: "Enter" });
+    expect(sendSpy).toHaveBeenCalledWith("/tas");
   });
 
   // ==========================================================================

@@ -82,10 +82,19 @@ export function CommandPalette({ query, onRun, onClose, onHighlightedOptionChang
         e.stopPropagation();
         setHighlighted((i) => Math.max(i - 1, 0));
       } else if (e.key === "Enter") {
-        e.preventDefault();
-        e.stopPropagation();
+        // Task 8: `filtered` is `[]` until `fetchCommands()` resolves
+        // (above) — swallowing Enter unconditionally here, before checking
+        // `picked`, used to eat a fast-typed "/command" before the registry
+        // even loaded. Only claim the keypress when a row is actually
+        // picked; otherwise let it fall through to ChatInput's own
+        // Enter-to-send (the server's slash dispatch then handles it), same
+        // as if the palette weren't mounted at all.
         const picked = filtered[highlighted];
-        if (picked) onRun(picked.name);
+        if (picked) {
+          e.preventDefault();
+          e.stopPropagation();
+          onRun(picked.name);
+        }
       } else if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();

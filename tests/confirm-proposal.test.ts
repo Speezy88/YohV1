@@ -22,8 +22,8 @@ import {
   putTimeBudgetDeferralStreak,
   type MemoryStore,
 } from "../src/adapters/memory-store.ts";
-import { openSqliteConnection } from "../src/adapters/sqlite.ts";
-import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
+import { openSqliteConnection, type SqliteConnection } from "../src/adapters/sqlite.ts";
+import { getMaxOutboxSeq, initNotificationStoreSchema, tailOutboxSince } from "../src/adapters/notification-store.ts";
 import type { CalendarEditProposal } from "../src/app/calendar-edit.ts";
 import { confirmProposal, type ConfirmProposalDeps } from "../src/app/confirm-proposal.ts";
 import type { CalendarEditChange, FieldValueSuggestion, NotionPageDraft, Proposal, TimeBudget } from "../src/types/domain.ts";
@@ -32,6 +32,13 @@ function tempStore(): MemoryStore {
   const connection = openSqliteConnection({ databasePath: ":memory:" });
   initNotificationStoreSchema(connection.db); // Task 7 (Epic 8): interaction-request clears now append an outbox row.
   return createMemoryStore(connection);
+}
+
+/** Task 8: like `tempStore()`, but also hands back the raw connection — needed for the `plan` hint tests, which assert on `tailOutboxSince` directly (mirrors `tests/update-task.test.ts`'s own `setup()`). */
+function tempStoreWithConnection(): { store: MemoryStore; connection: SqliteConnection } {
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db);
+  return { store: createMemoryStore(connection), connection };
 }
 
 const NOW = "2026-08-24T09:00:00.000Z";
@@ -385,6 +392,94 @@ test("confirmProposal(calendar-edit): decline never calls applyCalendarEdit", as
   const result = await confirmProposal({ store, applyCalendarEdit }, { proposal: makeCalendarEditProposal(), accept: false });
   assert.equal(result.ok, true);
   assert.equal(called, false);
+  store.close();
+});
+
+// ============================================================================
+// Task 8 (Plan hint after a calendar edit): a confirmed "calendar-edit"
+// appends one `plan` outbox hint so `web/src/lib/calendarDay.ts`'s per-date
+// cache refetches — entityId is the edited event's LOCAL date when it can
+// be derived, or an empty string (topic-only, "refetch every cached date")
+// when it can't (e.g. a "resize" change, which carries no start at all).
+// ============================================================================
+
+test("confirmProposal(calendar-edit): accept appends a 'plan' hint carrying the edited event's local date (move)", async () => {
+  const { store, connection } = tempStoreWithConnection();
+  const applyCalendarEdit: ConfirmProposalDeps["applyCalendarEdit"] = async () => ({ ok: true, value: { eventId: "evt-1", calendarId: "primary" } });
+  const proposal = makeCalendarEditProposal(); // move, newStart "2026-09-18T18:00:00.000Z"
+  const start = getMaxOutboxSeq(connection);
+  const result = await confirmProposal({ store, applyCalendarEdit, connection, timeZone: "America/New_York" }, { proposal, accept: true });
+  assert.equal(result.ok, true);
+  assert.deepEqual(
+    tailOutboxSince(connection, start).map((h) => [h.topic, h.entityId]),
+    [["plan", "2026-09-18"]],
+  );
+  store.close();
+});
+
+test("confirmProposal(calendar-edit): a 'create' change's own local date, converted through the host timezone", async () => {
+  const { store, connection } = tempStoreWithConnection();
+  const applyCalendarEdit: ConfirmProposalDeps["applyCalendarEdit"] = async () => ({ ok: true, value: { eventId: "calendar-create-1", calendarId: "primary" } });
+  const proposal = makeCalendarEditProposal({
+    entityId: "calendar-create-1",
+    suggested: { kind: "create", calendarId: "primary", title: "Meet with Alex", start: "2026-09-29T02:45:00.000Z", end: "2026-09-29T04:15:00.000Z" },
+  });
+  const start = getMaxOutboxSeq(connection);
+  // 2026-09-29T02:45Z is still Sep 28 in America/Los_Angeles — pins that the
+  // conversion is genuinely timezone-aware, not a bare UTC-date slice.
+  const result = await confirmProposal({ store, applyCalendarEdit, connection, timeZone: "America/Los_Angeles" }, { proposal, accept: true });
+  assert.equal(result.ok, true);
+  assert.deepEqual(
+    tailOutboxSince(connection, start).map((h) => [h.topic, h.entityId]),
+    [["plan", "2026-09-28"]],
+  );
+  store.close();
+});
+
+test("confirmProposal(calendar-edit): a 'resize' change (no start to derive a date from) appends a topic-only 'plan' hint", async () => {
+  const { store, connection } = tempStoreWithConnection();
+  const applyCalendarEdit: ConfirmProposalDeps["applyCalendarEdit"] = async () => ({ ok: true, value: { eventId: "evt-1", calendarId: "primary" } });
+  const proposal = makeCalendarEditProposal({ suggested: { kind: "resize", eventId: "evt-1", calendarId: "primary", newEnd: "2026-09-18T19:00:00.000Z" } });
+  const start = getMaxOutboxSeq(connection);
+  const result = await confirmProposal({ store, applyCalendarEdit, connection, timeZone: "America/New_York" }, { proposal, accept: true });
+  assert.equal(result.ok, true);
+  assert.deepEqual(
+    tailOutboxSince(connection, start).map((h) => [h.topic, h.entityId]),
+    [["plan", ""]],
+  );
+  store.close();
+});
+
+test("confirmProposal(calendar-edit): no timeZone configured also falls back to a topic-only 'plan' hint", async () => {
+  const { store, connection } = tempStoreWithConnection();
+  const applyCalendarEdit: ConfirmProposalDeps["applyCalendarEdit"] = async () => ({ ok: true, value: { eventId: "evt-1", calendarId: "primary" } });
+  const start = getMaxOutboxSeq(connection);
+  const result = await confirmProposal({ store, applyCalendarEdit, connection }, { proposal: makeCalendarEditProposal(), accept: true });
+  assert.equal(result.ok, true);
+  assert.deepEqual(
+    tailOutboxSince(connection, start).map((h) => [h.topic, h.entityId]),
+    [["plan", ""]],
+  );
+  store.close();
+});
+
+test("confirmProposal(calendar-edit): no connection configured appends no hint at all (tests/callers that don't care)", async () => {
+  const store = tempStore();
+  const applyCalendarEdit: ConfirmProposalDeps["applyCalendarEdit"] = async () => ({ ok: true, value: { eventId: "evt-1", calendarId: "primary" } });
+  const result = await confirmProposal({ store, applyCalendarEdit, timeZone: "America/New_York" }, { proposal: makeCalendarEditProposal(), accept: true });
+  assert.equal(result.ok, true);
+  store.close();
+});
+
+test("confirmProposal(calendar-edit): a decline never appends a 'plan' hint", async () => {
+  const { store, connection } = tempStoreWithConnection();
+  const applyCalendarEdit: ConfirmProposalDeps["applyCalendarEdit"] = async () => {
+    throw new Error("must not be called on decline");
+  };
+  const start = getMaxOutboxSeq(connection);
+  const result = await confirmProposal({ store, applyCalendarEdit, connection, timeZone: "America/New_York" }, { proposal: makeCalendarEditProposal(), accept: false });
+  assert.equal(result.ok, true);
+  assert.deepEqual(tailOutboxSince(connection, start), []);
   store.close();
 });
 
