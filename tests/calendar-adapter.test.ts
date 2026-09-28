@@ -39,6 +39,7 @@ import type { calendar_v3 } from "@googleapis/calendar";
 import type { GlobalOptions } from "@googleapis/calendar";
 import {
   readCalendarEvents,
+  parseExtraCalendarIds,
   createCalendarReadClient,
   createCalendarWriteClient,
   createCalendarBroadClient,
@@ -55,6 +56,7 @@ import {
   type CalendarBroadClient,
   type CalendarIdStore,
 } from "../src/adapters/calendar-adapter.ts";
+import type { LogEntry } from "../src/adapters/logger.ts";
 import type { CalendarEditChange, IsoDate, PlanBlock } from "../src/types/domain.ts";
 
 // ============================================================================
@@ -452,6 +454,146 @@ test("createCalendarReadClient builds a CalendarReadClient from an injected alre
   >;
   const client = createCalendarReadClient(fakeAuthClient);
   assert.equal(typeof client.events.list, "function");
+});
+
+// ============================================================================
+// Extra Google calendars (polish-5 Task 2, YOH_EXTRA_CALENDAR_IDS) — read-only
+// fan-out merged into the same day window, tagged with CalendarEvent.calendarId
+// ============================================================================
+
+test("parseExtraCalendarIds trims whitespace, drops empties, dedupes, and ignores 'primary'", () => {
+  assert.deepEqual(
+    parseExtraCalendarIds(" a@x.com , , b@x.com,a@x.com , primary ,b@x.com"),
+    ["a@x.com", "b@x.com"],
+  );
+});
+
+test("parseExtraCalendarIds returns [] for undefined or empty env", () => {
+  assert.deepEqual(parseExtraCalendarIds(undefined), []);
+  assert.deepEqual(parseExtraCalendarIds(""), []);
+  assert.deepEqual(parseExtraCalendarIds("   "), []);
+});
+
+test("readCalendarEvents merges primary + extra calendars' events for the same day window, sorted by start", async () => {
+  const client = new FakeCalendarReadClient([
+    { items: [makeEvent({ id: "p1", summary: "Primary", startDateTime: "2026-08-22T17:00:00-04:00", endDateTime: "2026-08-22T17:30:00-04:00" })] },
+    { items: [makeEvent({ id: "e1", summary: "School A", startDateTime: "2026-08-22T14:00:00-04:00", endDateTime: "2026-08-22T14:30:00-04:00" })] },
+    { items: [makeEvent({ id: "e2", summary: "School B", startDateTime: "2026-08-22T15:00:00-04:00", endDateTime: "2026-08-22T15:30:00-04:00" })] },
+  ]);
+
+  const events = await readCalendarEvents(client, {
+    now: FIXED_NOW,
+    timeZone: "UTC",
+    extraCalendarIds: ["a@school.org", "b@school.org"],
+  });
+
+  assert.deepEqual(
+    events.map((e) => e.id),
+    ["e1", "e2", "p1"],
+  );
+  assert.equal(client.calls.length, 3);
+  assert.equal(client.calls[0]?.calendarId, "primary");
+  assert.equal(client.calls[1]?.calendarId, "a@school.org");
+  assert.equal(client.calls[2]?.calendarId, "b@school.org");
+  // Same day-window semantics for every calendar in the fan-out.
+  assert.equal(client.calls[1]?.timeMin, client.calls[0]?.timeMin);
+  assert.equal(client.calls[1]?.timeMax, client.calls[0]?.timeMax);
+});
+
+test("readCalendarEvents tags each extra-calendar event with its source calendarId; primary events are untagged", async () => {
+  const client = new FakeCalendarReadClient([
+    { items: [makeEvent({ id: "p1", summary: "Primary", startDateTime: "2026-08-22T14:00:00-04:00", endDateTime: "2026-08-22T14:30:00-04:00" })] },
+    { items: [makeEvent({ id: "e1", summary: "School", startDateTime: "2026-08-22T15:00:00-04:00", endDateTime: "2026-08-22T15:30:00-04:00" })] },
+  ]);
+
+  const events = await readCalendarEvents(client, { now: FIXED_NOW, timeZone: "UTC", extraCalendarIds: ["school@x.org"] });
+
+  const primary = events.find((e) => e.id === "p1");
+  const extra = events.find((e) => e.id === "e1");
+  assert.equal(primary?.calendarId, undefined);
+  assert.equal(extra?.calendarId, "school@x.org");
+});
+
+test("readCalendarEvents tolerates one extra calendar failing (403/404/network): still returns the other calendars' events and logs a warn event with the calendar id, never a token", async () => {
+  // A hand-built client (rather than `FakeCalendarReadClient`'s response
+  // queue, which has no per-call failure hook): throws for the one broken
+  // extra calendar id, and otherwise returns scripted responses keyed by
+  // calendarId, so call order doesn't matter for this test's assertions.
+  const responsesByCalendarId: Record<string, calendar_v3.Schema$Events> = {
+    primary: {
+      items: [makeEvent({ id: "p1", summary: "Primary", startDateTime: "2026-08-22T14:00:00-04:00", endDateTime: "2026-08-22T14:30:00-04:00" })],
+    },
+    "ok@school.org": {
+      items: [makeEvent({ id: "e1", summary: "OK", startDateTime: "2026-08-22T15:00:00-04:00", endDateTime: "2026-08-22T15:30:00-04:00" })],
+    },
+  };
+  const client: CalendarReadClient = {
+    events: {
+      list: async (params) => {
+        if (params.calendarId === "broken@school.org") throw new Error("404 Not Found — calendar not shared");
+        return { data: responsesByCalendarId[params.calendarId ?? "primary"] ?? { items: [] } };
+      },
+    },
+  };
+
+  const logs: LogEntry[] = [];
+  const events = await readCalendarEvents(client, {
+    now: FIXED_NOW,
+    timeZone: "UTC",
+    extraCalendarIds: ["broken@school.org", "ok@school.org"],
+    log: (entry) => logs.push(entry),
+  });
+
+  assert.deepEqual(
+    events.map((e) => e.id).sort(),
+    ["e1", "p1"],
+  );
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0]?.level, "warn");
+  assert.equal(logs[0]?.event, "calendar.extra-read-failed");
+  const detail = logs[0]?.detail as { calendarId?: string; message?: string };
+  assert.equal(detail.calendarId, "broken@school.org");
+  assert.ok(!JSON.stringify(logs[0]).toLowerCase().includes("token"), "the log entry must never include the OAuth token");
+});
+
+test("readCalendarEvents still throws when the PRIMARY calendar's read fails, even with extra calendars configured (AD-8)", async () => {
+  const failingClient: CalendarReadClient = {
+    events: {
+      list: async () => {
+        throw new Error("primary calendar unreachable");
+      },
+    },
+  };
+
+  await assert.rejects(
+    readCalendarEvents(failingClient, { now: FIXED_NOW, timeZone: "UTC", extraCalendarIds: ["a@school.org"] }),
+    /primary calendar unreachable/,
+  );
+});
+
+test("readCalendarEvents makes exactly one events.list call when YOH_EXTRA_CALENDAR_IDS is unset or empty — unchanged today's behaviour", async () => {
+  const unset = new FakeCalendarReadClient([{ items: [] }]);
+  await readCalendarEvents(unset, { now: FIXED_NOW, timeZone: "UTC" });
+  assert.equal(unset.calls.length, 1);
+
+  const emptyEnv = new FakeCalendarReadClient([{ items: [] }]);
+  await readCalendarEvents(emptyEnv, { now: FIXED_NOW, timeZone: "UTC", extraCalendarIds: parseExtraCalendarIds("") });
+  assert.equal(emptyEnv.calls.length, 1);
+});
+
+test("FR-27 edit functions reject an extra-calendar id — the read-only extra-calendar fan-out can never be targeted by an edit", async () => {
+  const client = fakeBroadClient();
+  const extraCalendarId = "spencerhatch@seattleacademy.org";
+  await assert.rejects(resolveCalendarEditRoute(client, extraCalendarId, "evt-1"), /primary calendar/);
+  await assert.rejects(
+    proposeCalendarEdit(client, extraCalendarId, "evt-1", { kind: "move", newStart: "2026-09-18T18:00:00.000Z" }),
+    /primary calendar/,
+  );
+  assert.throws(
+    () => proposeNewCalendarEvent({ calendarId: extraCalendarId, title: "x", start: "2026-09-18T14:00:00.000Z", end: "2026-09-18T15:00:00.000Z" }),
+    /primary calendar/,
+  );
+  assert.equal(client.getCalls.length, 0, "an extra-calendar id must never reach the API");
 });
 
 // ============================================================================

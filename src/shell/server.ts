@@ -71,6 +71,7 @@ import {
   createCalendarBroadClient,
   createCalendarReadClient,
   createCalendarWriteClient,
+  parseExtraCalendarIds,
   proposeCalendarEdit as calendarProposeEdit,
   proposeNewCalendarEvent,
   readCalendarEvents,
@@ -1291,7 +1292,12 @@ function buildHomeViewDeps(notion: NotionFeatureConfig, env: Readonly<Record<str
     const calendarClient = createCalendarReadClient(tokenStore.getOAuth2Client() as unknown as Parameters<typeof createCalendarReadClient>[0]);
     return {
       store: notion.store,
-      readCalendarEvents: () => readCalendarEvents(calendarClient, { timeZone: notion.timeZone }),
+      readCalendarEvents: () =>
+        readCalendarEvents(calendarClient, {
+          timeZone: notion.timeZone,
+          extraCalendarIds: parseExtraCalendarIds(env["YOH_EXTRA_CALENDAR_IDS"]),
+          log: writeStructuredLog,
+        }),
       readTasks: readTasksWith(notion),
       timeZone: notion.timeZone,
     };
@@ -1323,7 +1329,13 @@ function buildCalendarDayDeps(notion: NotionFeatureConfig, env: Readonly<Record<
     return {
       store: notion.store,
       timeZone: notion.timeZone,
-      readCalendarEventsForDate: (date) => readCalendarEvents(calendarClient, { timeZone: notion.timeZone, date }),
+      readCalendarEventsForDate: (date) =>
+        readCalendarEvents(calendarClient, {
+          timeZone: notion.timeZone,
+          date,
+          extraCalendarIds: parseExtraCalendarIds(env["YOH_EXTRA_CALENDAR_IDS"]),
+          log: writeStructuredLog,
+        }),
     };
   } catch (err) {
     writeStructuredLog({
@@ -1550,6 +1562,8 @@ function buildChatDeps(
   const readCalendarEventsFn = async (): Promise<readonly CalendarEvent[]> =>
     readCalendarEvents(createCalendarReadClient(getTokenStore().getOAuth2Client() as unknown as Parameters<typeof createCalendarReadClient>[0]), {
       timeZone,
+      extraCalendarIds: parseExtraCalendarIds(env["YOH_EXTRA_CALENDAR_IDS"]),
+      log: writeStructuredLog,
     });
   // Real-use fixes plan, Task 5 ("what's happening tomorrow"): the same
   // read-only client/binding as `readCalendarEventsFn` above, just with the
@@ -1559,6 +1573,8 @@ function buildChatDeps(
     readCalendarEvents(createCalendarReadClient(getTokenStore().getOAuth2Client() as unknown as Parameters<typeof createCalendarReadClient>[0]), {
       timeZone,
       date,
+      extraCalendarIds: parseExtraCalendarIds(env["YOH_EXTRA_CALENDAR_IDS"]),
+      log: writeStructuredLog,
     });
   // Real-use fixes plan, Task 1 ("plan my day on demand"): `/plan`'s own
   // Calendar-write seam (`app/plan-day.ts`'s `PlanDayDeps.writeCalendarPlan`)

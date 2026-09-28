@@ -13,6 +13,7 @@ import { listSlipHistories, type MemoryStore } from "../../adapters/memory-store
 import {
   createCalendarReadClient,
   createCalendarWriteClient,
+  parseExtraCalendarIds,
   readCalendarEvents,
   writeTodaysPlanToCalendar,
 } from "../../adapters/calendar-adapter.ts";
@@ -123,7 +124,12 @@ export function createMorningRitualDeps(
     store,
     readTasks: async () =>
       (await readNotionTasks(notionClient, { tasksDataSourceId, projectsDataSourceId, taskPropertyNames })).tasks,
-    readCalendarEvents: () => readCalendarEvents(calendarClient, { timeZone }),
+    readCalendarEvents: () =>
+      readCalendarEvents(calendarClient, {
+        timeZone,
+        extraCalendarIds: parseExtraCalendarIds(env["YOH_EXTRA_CALENDAR_IDS"]),
+        log: writeStructuredLog,
+      }),
     // Final whole-branch review, Finding 1: mirrors `readCalendarEvents`
     // above — bound to the same `tokenStore`, which structurally satisfies
     // `CalendarIdStore`. `blocks` is already `"calendar-anchor"`-filtered by

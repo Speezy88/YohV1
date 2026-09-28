@@ -488,6 +488,14 @@ export interface CalendarEvent {
   readonly title: string;
   readonly start: IsoDateTime;
   readonly end: IsoDateTime;
+  /**
+   * The source calendar id this event was read from, when it is one of
+   * `YOH_EXTRA_CALENDAR_IDS`'s read-only extra calendars (Task 2). Absent
+   * means Spencer's primary calendar — the default, unchanged behaviour for
+   * every event `readCalendarEvents` returned before this field existed.
+   * Task 3 uses this to tell school events apart from Spencer's own.
+   */
+  readonly calendarId?: string;
 }
 
 // ============================================================================

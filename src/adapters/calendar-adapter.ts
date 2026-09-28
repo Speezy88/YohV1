@@ -3,7 +3,16 @@
  *
  * Owns Yoh's read surface onto Spencer's primary Google Calendar (Story 1.4
  * / FR-1) — every event scheduled for "today", used to build a Plan's fixed
- * `calendar-anchor` PlanBlocks around Spencer's real commitments — AND (Task
+ * `calendar-anchor` PlanBlocks around Spencer's real commitments — PLUS
+ * (polish-5 Task 2) an optional, read-only fan-out over a configured list of
+ * EXTRA Google calendars (`YOH_EXTRA_CALENDAR_IDS`, parsed by this file's
+ * own `parseExtraCalendarIds`), merged into that same day window using the
+ * SAME read-scoped client (Google's read scope isn't calendar-specific, so
+ * no new OAuth surface is needed). Each extra calendar's events are tagged
+ * with `CalendarEvent.calendarId` so a caller (Task 3) can tell them apart
+ * from primary events; the extra-calendar read surface stays strictly
+ * read-only — `assertPrimaryCalendar` (below) still guards every edit path,
+ * unchanged by this task — AND (Task
  * 12 / Story 1.12, AD-4) Yoh's write surface onto a dedicated "Yoh Plan"
  * secondary calendar, via a genuinely separate, differently-scoped client
  * type (`CalendarWriteClient`, below `CalendarReadClient`'s section). The two
@@ -148,6 +157,7 @@
  */
 import { calendar, type calendar_v3, type GlobalOptions } from "@googleapis/calendar";
 import { isValidIsoDateTime, normalizeIsoDateTime as toUtcIsoDateTime } from "./iso-datetime.ts";
+import type { LogEntry } from "./logger.ts";
 import type {
   CalendarEditChange,
   CalendarEvent,
@@ -321,6 +331,28 @@ export interface CalendarAdapterConfig {
    * from `now`/`timeZone` exactly as before this field existed.
    */
   readonly date?: IsoDate;
+  /**
+   * Extra Google calendar ids to merge into the same day-window read,
+   * alongside the primary calendar (polish-5 Task 2, `YOH_EXTRA_CALENDAR_IDS`
+   * — e.g. Spencer's `spencerhatch@seattleacademy.org`). Parse raw env with
+   * this file's own `parseExtraCalendarIds`, never ad hoc, so every caller
+   * trims/dedupes/drops-empties/ignores-"primary" the same way. Omitted or
+   * empty (the default) reproduces exactly today's single-calendar
+   * behaviour: one `events.list` call, no fan-out. Each extra calendar is
+   * read with the SAME injected `client` (Google's read scope covers every
+   * calendar the account can see, not just "primary") and tagged onto its
+   * `CalendarEvent.calendarId`; a failing extra calendar (403/404/network)
+   * never fails the read as a whole — see `readCalendarEvents`'s own doc
+   * comment.
+   */
+  readonly extraCalendarIds?: readonly string[];
+  /**
+   * Injected structured-log seam (same `LogEntry` shape every `rituals/*.ts`
+   * ritual's own `log?` seam uses), called with a `"warn"` event when an
+   * extra calendar's read fails. Optional and a no-op when omitted — tests
+   * and callers that don't care about that diagnostic need not supply it.
+   */
+  readonly log?: (entry: LogEntry) => void;
 }
 
 /**
@@ -341,18 +373,60 @@ export interface CalendarWriteConfig {
 // ============================================================================
 
 /**
+ * Parses `YOH_EXTRA_CALENDAR_IDS` (comma-separated Google calendar ids,
+ * e.g. Spencer's `spencerhatch@seattleacademy.org`) into the list
+ * `CalendarAdapterConfig.extraCalendarIds` expects — the ONE place this env
+ * var is parsed, so every caller (`shell/server.ts`'s several `build*Deps`
+ * functions, `shell/ritual-cli/morning-deps.ts`) gets identical behaviour
+ * rather than each hand-rolling its own `.split(",")`. Trims whitespace
+ * around each id, drops empty entries (a trailing/doubled comma), dedupes
+ * (first occurrence wins), and drops `"primary"` — the primary calendar is
+ * already read unconditionally by `readCalendarEvents`, so naming it again
+ * here would just double-read and double-return it. `undefined` (the env
+ * var unset) and `""` (set but empty) both yield `[]`, `readCalendarEvents`'s
+ * own no-fan-out default.
+ *
+ * `YOH_EXTRA_CALENDAR_ICAL_URLS` is a reserved name for a possible later
+ * ICS-feed-based extra-calendar source (non-Google calendars have no OAuth
+ * id) — deliberately NOT built here or anywhere in this task.
+ */
+export function parseExtraCalendarIds(raw: string | undefined): string[] {
+  if (!raw) return [];
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  for (const part of raw.split(",")) {
+    const id = part.trim();
+    if (id === "" || id === PRIMARY_CALENDAR_ID || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
+}
+
+/**
  * Reads every one of a given day's events from Spencer's primary Google
  * Calendar via the injected read-scoped client, with each event's start/end
- * time (Story 1.4's acceptance criteria). Reads TODAY by default; Task 5's
+ * time (Story 1.4's acceptance criteria), merged with the same day window's
+ * events from every one of `config.extraCalendarIds`' calendars (polish-5
+ * Task 2), sorted by `start`. Reads TODAY by default; Task 5's
  * `config.date`, when given, reads that day instead — see
  * `CalendarAdapterConfig.date`'s own doc comment. Always queries live (no
  * caching layer in this file — see the module docstring), so an event added
- * or changed on the primary calendar before this read runs is included in
+ * or changed on any of these calendars before this read runs is included in
  * its result.
  *
- * Per AD-8, this function does not catch or wrap SDK/network errors: a
- * failure while querying the Calendar API (auth, rate limit, network)
- * propagates as a thrown error to the caller (`rituals/*.ts`/`app/*.ts`).
+ * Per AD-8, a failure reading the PRIMARY calendar is not caught here: it
+ * propagates as a thrown error to the caller (`rituals/*.ts`/`app/*.ts`),
+ * exactly as before this task. An EXTRA calendar is different by design
+ * (this task's own requirement): a single extra calendar's read failing
+ * (403 no-longer-shared, 404 deleted, network) must never fail the read as
+ * a whole, since Spencer still needs his own primary-calendar events and
+ * every OTHER extra calendar's events even when one is temporarily
+ * unreachable — so a per-extra-calendar failure is caught, reported via
+ * `config.log` as a `"warn"` `calendar.extra-read-failed` event (the
+ * calendar id only — never the OAuth token/credentials, which this function
+ * never even sees; `client` is already an authenticated instance), and that
+ * one calendar's events are simply omitted from the result.
  */
 export async function readCalendarEvents(
   client: CalendarReadClient,
@@ -368,16 +442,28 @@ export async function readCalendarEvents(
   const timeMin = start.toISOString();
   const timeMax = end.toISOString();
 
-  const response = await client.events.list({
-    calendarId: config.calendarId ?? "primary",
-    timeMin,
-    timeMax,
-    singleEvents: true,
-    orderBy: "startTime",
-  });
+  const listWindow = (calendarId: string) =>
+    client.events.list({ calendarId, timeMin, timeMax, singleEvents: true, orderBy: "startTime" });
 
-  const items = response.data.items ?? [];
-  return items.map(toCalendarEvent);
+  const primaryResponse = await listWindow(config.calendarId ?? "primary");
+  const events: CalendarEvent[] = (primaryResponse.data.items ?? []).map(toCalendarEvent);
+
+  for (const extraCalendarId of config.extraCalendarIds ?? []) {
+    try {
+      const response = await listWindow(extraCalendarId);
+      for (const item of response.data.items ?? []) {
+        events.push({ ...toCalendarEvent(item), calendarId: extraCalendarId });
+      }
+    } catch (err) {
+      config.log?.({
+        level: "warn",
+        event: "calendar.extra-read-failed",
+        detail: { calendarId: extraCalendarId, message: err instanceof Error ? err.message : String(err) },
+      });
+    }
+  }
+
+  return events.sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0));
 }
 
 // ============================================================================
