@@ -1449,3 +1449,130 @@ test("a connection.writeTx failure while raising the needs-data notification is 
   assert.ok(result.ok, "the run's own Result must still succeed — a notification-write failure is non-fatal");
   assert.ok(logs.some((l) => l.event === "morning-ritual.needs-data-notification-failed" && l.level === "warn"));
 });
+
+// ============================================================================
+// Polish-5 Task 3: school-day rules in the planner (core/school-day.ts)
+// ============================================================================
+// 2026-08-24 is a Monday. Every test below pins "now" to a UTC host
+// timeZone so lunch (10:55-11:40) and community time (12:55-13:45) fall at
+// those exact literal UTC times, matching `tests/school-day.test.ts`'s own
+// fixtures.
+const SCHOOL_TODAY = "2026-08-24";
+
+function schoolCalendarEvent(id: string, title: string, start: string, end: string): CalendarEvent {
+  return { id, title, start, end, calendarId: "spencerhatch@seattleacademy.org" };
+}
+
+test("Polish-5 Task 3: a school event titled Study Block is free time — a Task's work lands right on top of it", async () => {
+  const now = `${SCHOOL_TODAY}T09:00:00.000Z`;
+  const store = tempStore();
+  putTimeBudget(store, { date: SCHOOL_TODAY, totalMinutes: 60, workMinutes: 70, breakMinutes: 15 });
+  const events = [schoolCalendarEvent("study-1", "  Study BLOCK  ", `${SCHOOL_TODAY}T09:00:00.000Z`, `${SCHOOL_TODAY}T09:45:00.000Z`)];
+  const h = harness({
+    tasks: [makeTask("t1", "Read chapter 4", { estimatedDurationMinutes: 30, dueDate: SCHOOL_TODAY })],
+    events,
+    store,
+    declareBudgetMinutes: 0,
+    timeZone: "UTC",
+  });
+
+  const result = await runMorningRitual({ ...h.deps, now: () => new Date(now) });
+  assert.ok(result.ok && result.value.status === "delivered");
+  const work = result.value.plan.blocks.find((b) => b.kind === "work");
+  assert.ok(work, "the Task's work block must exist, unblocked by the Study Block event");
+  assert.equal(work!.start, `${SCHOOL_TODAY}T09:00:00.000Z`);
+  assert.equal(work!.end, `${SCHOOL_TODAY}T09:30:00.000Z`);
+  // The Study Block event itself never becomes a calendar-anchor block — it
+  // was excluded from `anchors` entirely, per the binding ruling (the two
+  // protected-window anchors — Lunch, Community time — still appear, since
+  // this IS a school day).
+  assert.ok(!result.value.plan.blocks.some((b) => b.kind === "calendar-anchor" && b.label.toLowerCase().includes("study")));
+  assert.ok(result.value.plan.blocks.some((b) => b.label === "Lunch"));
+});
+
+test("Polish-5 Task 3: lunch and community time stay free of work when other free time suffices, and appear as anchor blocks", async () => {
+  const now = `${SCHOOL_TODAY}T09:00:00.000Z`;
+  const store = tempStore();
+  putTimeBudget(store, { date: SCHOOL_TODAY, totalMinutes: 60, workMinutes: 70, breakMinutes: 15 });
+  const events = [schoolCalendarEvent("class-1", "AP Calculus", `${SCHOOL_TODAY}T20:00:00.000Z`, `${SCHOOL_TODAY}T20:05:00.000Z`)];
+  const h = harness({
+    tasks: [makeTask("t1", "Read chapter 4", { estimatedDurationMinutes: 30, dueDate: SCHOOL_TODAY })],
+    events,
+    store,
+    declareBudgetMinutes: 0,
+    timeZone: "UTC",
+  });
+
+  const result = await runMorningRitual({ ...h.deps, now: () => new Date(now) });
+  assert.ok(result.ok && result.value.status === "delivered");
+  const lunch = result.value.plan.blocks.find((b) => b.label === "Lunch");
+  const community = result.value.plan.blocks.find((b) => b.label === "Community time");
+  assert.ok(lunch && lunch.kind === "calendar-anchor");
+  assert.equal(lunch!.start, `${SCHOOL_TODAY}T10:55:00.000Z`);
+  assert.equal(lunch!.end, `${SCHOOL_TODAY}T11:40:00.000Z`);
+  assert.ok(community && community.kind === "calendar-anchor");
+  assert.equal(community!.start, `${SCHOOL_TODAY}T12:55:00.000Z`);
+  assert.equal(community!.end, `${SCHOOL_TODAY}T13:45:00.000Z`);
+  // The Task's own work (09:00-09:30) never touches either window.
+  const work = result.value.plan.blocks.find((b) => b.kind === "work");
+  assert.equal(work!.start, `${SCHOOL_TODAY}T09:00:00.000Z`);
+  assert.equal(work!.end, `${SCHOOL_TODAY}T09:30:00.000Z`);
+});
+
+test("Polish-5 Task 3 last resort: a due-today Task that otherwise wouldn't fit lands inside a protected window", async () => {
+  const now = `${SCHOOL_TODAY}T09:00:00.000Z`;
+  const store = tempStore();
+  putTimeBudget(store, { date: SCHOOL_TODAY, totalMinutes: 20, workMinutes: 70, breakMinutes: 15 });
+  const events = [schoolCalendarEvent("class-1", "AP Calculus", `${SCHOOL_TODAY}T20:00:00.000Z`, `${SCHOOL_TODAY}T20:05:00.000Z`)];
+  const h = harness({
+    tasks: [makeTask("t1", "Finish the essay", { estimatedDurationMinutes: 40, dueDate: SCHOOL_TODAY })],
+    events,
+    store,
+    declareBudgetMinutes: 0,
+    timeZone: "UTC",
+  });
+
+  const result = await runMorningRitual({ ...h.deps, now: () => new Date(now) });
+  assert.ok(result.ok && result.value.status === "delivered", "the rescued Task must be delivered, not nothing-fits");
+  assert.deepEqual(result.value.deferredTaskIds, []);
+  const work = result.value.plan.blocks.find((b) => b.kind === "work" && b.taskId === "t1");
+  assert.ok(work, "the rescued Task's work block must exist");
+  assert.equal(work!.start, `${SCHOOL_TODAY}T10:55:00.000Z`);
+  assert.equal(work!.end, `${SCHOOL_TODAY}T11:35:00.000Z`);
+  // The lunch protected-window anchor was consumed and dropped — no
+  // overlapping "Lunch" block remains; community time (untouched) still
+  // shows as its own anchor.
+  assert.ok(!result.value.plan.blocks.some((b) => b.label === "Lunch"));
+  assert.ok(result.value.plan.blocks.some((b) => b.label === "Community time"));
+});
+
+test("Polish-5 Task 3 last resort: a non-deadline Task (not due today, not overdue) never lands in a protected window", async () => {
+  const now = `${SCHOOL_TODAY}T09:00:00.000Z`;
+  const store = tempStore();
+  putTimeBudget(store, { date: SCHOOL_TODAY, totalMinutes: 20, workMinutes: 70, breakMinutes: 15 });
+  const events = [schoolCalendarEvent("class-1", "AP Calculus", `${SCHOOL_TODAY}T20:00:00.000Z`, `${SCHOOL_TODAY}T20:05:00.000Z`)];
+  const h = harness({
+    tasks: [makeTask("t1", "Someday project", { estimatedDurationMinutes: 40, dueDate: "2026-09-01" })],
+    events,
+    store,
+    declareBudgetMinutes: 0,
+    timeZone: "UTC",
+  });
+
+  const result = await runMorningRitual({ ...h.deps, now: () => new Date(now) });
+  assert.ok(result.ok && result.value.status === "nothing-fits", "un-rescuable — nothing was actually planned");
+  assert.deepEqual(result.value.deferredTaskIds, ["t1"]);
+});
+
+test("Polish-5 Task 3: a school-calendar event on a weekend changes nothing — byte-for-byte unchanged", async () => {
+  // The harness's own default TODAY/NOW_ISO (2026-08-22) is a Saturday.
+  const events = [schoolCalendarEvent("s1", "Saturday enrichment", "2026-08-22T15:00:00.000Z", "2026-08-22T16:00:00.000Z")];
+  const h = harness({ tasks: [makeTask("t1", "Draft the memo")], events });
+
+  const result = await runMorningRitual(h.deps);
+  assert.ok(result.ok && result.value.status === "delivered");
+  const anchor = result.value.plan.blocks.find((b) => b.kind === "calendar-anchor");
+  assert.ok(anchor, "the school-calendar event is still a plain calendar-anchor block");
+  assert.equal(anchor!.label, "Saturday enrichment");
+  assert.ok(!result.value.plan.blocks.some((b) => b.label === "Lunch" || b.label === "Community time"));
+});
