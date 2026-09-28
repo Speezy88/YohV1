@@ -66,16 +66,18 @@ function settleAndAdvance(next: SandboxCardView | undefined, patch: { status: "s
   entryId = next ? appendStreamEntry({ kind: "sandbox-card", view: next, status: "pending" }) : undefined;
 }
 
-export async function saveCard(input: { dueDate: string; estimatedDurationMinutes: string; area?: string; energy?: string }): Promise<void> {
+export type SaveCardOutcome = { readonly ok: true } | { readonly ok: false; readonly message: string };
+
+export async function saveCard(input: { dueDate: string; estimatedDurationMinutes: string; area?: string; energy?: string }): Promise<SaveCardOutcome> {
   const card = state.card;
-  if (!card) return;
+  if (!card) return { ok: true };
   const result = await requestSandboxSave(card.taskId, { ...input, exclude: state.exclude });
   if (!result.ok) {
     // FR-38: an unresolvable value re-prompts on THIS card — it stays
-    // pending, never advances, never counts as an outcome. The card's own
-    // component renders `result`'s message inline (SandboxCard.tsx, later
-    // chunk).
-    return;
+    // pending, never advances, never counts as an outcome. The rejection's
+    // own message is handed back to the caller (SandboxCard.tsx) so it can
+    // render it inline, next to the field, rather than a silent "try again".
+    return { ok: false, message: result.message };
   }
   settleAndAdvance(result.value.next, { status: "saved", receipt: result.value.receipt });
   set({
@@ -84,6 +86,7 @@ export async function saveCard(input: { dueDate: string; estimatedDurationMinute
     outcomes: [...state.outcomes, { taskId: card.taskId, taskTitle: card.taskTitle, ok: true }],
   });
   if (!result.value.next) await finishSandbox();
+  return { ok: true };
 }
 
 export async function skipCard(): Promise<void> {

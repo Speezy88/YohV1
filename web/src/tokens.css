@@ -384,6 +384,25 @@ body {
   }
 }
 
+/* Story 9.2, DESIGN.md "Sandbox Card": a single accent-solid pulse on the
+   rim once a save settles, then a static "Saved" state — applied only when
+   `useReducedMotion` is false; under reduced motion SandboxCard.tsx renders
+   the settled state directly, with no animation at all. */
+.sandbox-card-save-pulse {
+  animation: sandbox-card-save-pulse var(--duration-check-off-dissolve) ease-out;
+}
+@keyframes sandbox-card-save-pulse {
+  0% {
+    box-shadow: 0 0 0 0 var(--color-accent-solid);
+  }
+  60% {
+    box-shadow: 0 0 0 4px var(--color-accent-solid);
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
 /* Story 8.5, DESIGN.md `thinking-indicator` (UX-DR37): three dots pulsing
    in sequence. Applied only when `useReducedMotion` is false —
    ThinkingIndicator.tsx renders the dots static under reduced motion (they

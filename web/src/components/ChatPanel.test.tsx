@@ -9,7 +9,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { ChatPanel } from "./ChatPanel.tsx";
-import { __resetChatStoreForTests } from "../lib/chatStore.ts";
+import { __resetChatStoreForTests, appendStreamEntry } from "../lib/chatStore.ts";
 import { __resetChatPanelForTests, openChatPanel } from "../lib/chatPanel.ts";
 import * as chatStreamModule from "../lib/chatStream.ts";
 import * as missingDataModule from "../lib/missingData.ts";
@@ -105,6 +105,12 @@ describe("ChatPanel", () => {
     expect(screen.queryByText(/waiting on you/i)).not.toBeInTheDocument();
     expect(screen.queryByTestId("open-items-region")).not.toBeInTheDocument();
     expect(screen.queryByTestId("open-items")).not.toBeInTheDocument();
+  });
+
+  it("a sandbox-card entry renders inline in the stream, interleaved with message entries", () => {
+    appendStreamEntry({ kind: "sandbox-card", view: { taskId: "t1", taskTitle: "Chem problem set", remaining: 0 }, status: "pending" });
+    renderOpenPanel();
+    expect(screen.getByTestId("chat-stream")).toContainElement(screen.getByTestId("sandbox-card"));
   });
 
   describe("the 'N tasks missing data' chip", () => {

@@ -51,6 +51,7 @@ import { PageNavigationContext } from "../lib/navigationContext.tsx";
 import { useReducedMotion } from "../hooks/useReducedMotion.ts";
 import { ChatMessage } from "./ChatMessage.tsx";
 import { ChatInput } from "./ChatInput.tsx";
+import { SandboxCard } from "./SandboxCard.tsx";
 import { YohMark } from "./YohMark.tsx";
 
 /** Once within this many px of the stream's bottom, it still counts as "at the bottom" — avoids auto-scroll flapping off/on from sub-pixel rounding while text streams in. */
@@ -171,7 +172,11 @@ export function ChatPanel(): React.JSX.Element | null {
           <div ref={streamRef} data-testid="chat-stream" onScroll={handleScroll} className="h-full min-h-0 flex-1 overflow-y-auto">
             <div className="mx-auto flex min-h-full w-full max-w-2xl flex-col justify-end gap-4 px-1 py-2">
               {entries.map((entry) =>
-                entry.kind === "message" ? <ChatMessage key={entry.id} message={entry.message} /> : null,
+                entry.kind === "message" ? (
+                  <ChatMessage key={entry.id} message={entry.message} />
+                ) : (
+                  <SandboxCard key={entry.id} view={entry.view} status={entry.status} {...(entry.receipt ? { receipt: entry.receipt } : {})} />
+                ),
               )}
             </div>
           </div>
