@@ -152,33 +152,33 @@ describe("TasksPage", () => {
     expect(within(row("Calc problem set 4")).getByText("🟡 Medium")).toBeInTheDocument();
   });
 
-  // Real-use fixes plan, Task 2: the "Missing data" filter chip — armed
-  // either from this page or from the Chat header's "N tasks missing data"
-  // chip (`lib/missingData.ts`'s `openMissingData`, tested there).
-  describe("the 'Missing data' filter chip", () => {
-    it("is absent when the filter isn't armed", async () => {
+  // Polish-5, Task 4: the "Missing data" toolbar toggle — always visible,
+  // arms/disarms `missingDataFilterActive` itself (no separate chip).
+  describe("the 'Missing data' toggle", () => {
+    it("is visible but unpressed when the filter isn't armed", async () => {
       await renderLoaded();
-      expect(screen.queryByTestId("tasks-filter-missing-data")).not.toBeInTheDocument();
+      expect(screen.getByTestId("tasks-filter-missing-data")).toHaveAttribute("aria-pressed", "false");
     });
 
-    it("shows a clearable chip and narrows the list to Tasks with missing fields, once armed", async () => {
-      act(() => setMissingDataFilterActive(true));
-      render(<TasksPage />);
-      await screen.findByText("College essay brainstorm");
+    it("clicking the toggle arms the filter, narrows the list to Tasks with missing fields, and sets aria-pressed=true", async () => {
+      await renderLoaded();
 
-      expect(screen.getByTestId("tasks-filter-missing-data")).toHaveTextContent("Missing data");
+      fireEvent.click(screen.getByTestId("tasks-filter-missing-data"));
+
+      expect(screen.getByTestId("tasks-filter-missing-data")).toHaveAttribute("aria-pressed", "true");
+      await screen.findByText("College essay brainstorm");
       expect(screen.queryByText("Calc problem set 4")).not.toBeInTheDocument();
       expect(screen.queryByText("Email Mr. Alvarez")).not.toBeInTheDocument();
     });
 
-    it("clicking the chip's clear button drops the filter and shows every Task again", async () => {
+    it("clicking the toggle again clears the filter and shows every Task again", async () => {
       act(() => setMissingDataFilterActive(true));
       render(<TasksPage />);
       await screen.findByText("College essay brainstorm");
 
-      fireEvent.click(screen.getByRole("button", { name: "Clear Missing data filter" }));
+      fireEvent.click(screen.getByTestId("tasks-filter-missing-data"));
 
-      expect(screen.queryByTestId("tasks-filter-missing-data")).not.toBeInTheDocument();
+      expect(screen.getByTestId("tasks-filter-missing-data")).toHaveAttribute("aria-pressed", "false");
       await screen.findByText("Calc problem set 4");
       expect(screen.getByText("Email Mr. Alvarez")).toBeInTheDocument();
     });

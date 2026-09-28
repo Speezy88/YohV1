@@ -70,12 +70,12 @@ export function isOpenTask(task: Task): boolean {
 /**
  * Real-use fixes plan, Task 2: the ONE rule for "this open Task is missing
  * planning data" — a not-Completed Task with at least one undefined
- * planning field. `app/tasks-view.ts`'s `listTasks` (the Tasks page's
- * per-row "Add …" badges) and `countTasksMissingData` (the Chat header's
- * "N tasks missing data" chip count) both call this, so the two can never
- * drift — moved here, not kept in `app/tasks-view.ts` itself, since AD-16
- * requires every `app/*.ts` export to be `(deps, input) =>
- * Promise<Result<…>>`, and this is a plain, pure, synchronous helper.
+ * planning field. `app/tasks-view.ts`'s `listTasks` calls this for every
+ * row's `missing` list (the Tasks page's per-row "Add …" badges, and the
+ * toolbar's "Missing data" toggle filters on the same list client-side) —
+ * moved here, not kept in `app/tasks-view.ts` itself, since AD-16 requires
+ * every `app/*.ts` export to be `(deps, input) => Promise<Result<…>>`, and
+ * this is a plain, pure, synchronous helper.
  */
 export function taskMissingFields(task: Task): readonly PlanningFieldNames[] {
   // A completed Task needs nothing more to be planned, so it carries no "Add …" badges.

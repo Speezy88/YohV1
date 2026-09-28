@@ -313,16 +313,13 @@ export default function TasksPage(): React.JSX.Element {
     ...(justAdded.length > 0 ? [{ key: "just-added", label: "Just added", tone: "accent" as const, rows: justAdded.map((p) => ({ item: p.item, creating: p.state === "saving" })) }] : []),
     ...(loaded?.groups ?? []).map((g) => ({ key: g.key, label: g.label, tone: g.tone, rows: g.tasks.map((t) => ({ item: t, creating: false })) })),
   ];
-  // Real-use fixes plan, Task 2: the "Missing data" filter chip — the SAME
-  // per-row `missing` rule the "Add …" badges already show, filtered
-  // client-side (the rows are already on screen; no extra server round
-  // trip). Final-review: this page currently has no production control that
-  // arms `missingDataFilterActive` — Story 9.4 chunk B re-pointed the Chat
-  // header chip at running `/sandbox` instead (`lib/missingData.ts`'s
-  // `openMissingData`), leaving this filter reachable only via its own
-  // clear button once armed some other way. A toolbar toggle to arm it is
-  // queued for polish-5 (final review, OK-TO-DEFER); the filter itself is
-  // kept since it's the only list view of Tasks missing a Refining field.
+  // Polish-5, Task 4: the "Missing data" toolbar toggle — the SAME per-row
+  // `missing` rule the "Add …" badges already show, filtered client-side
+  // (the rows are already on screen; no extra server round trip). The
+  // toggle button below arms and disarms `missingDataFilterActive` itself
+  // (Story 9.4 chunk B re-pointed the Chat header chip at running
+  // `/sandbox` instead, via `lib/missingData.ts`'s `openMissingData`, so
+  // this filter needs its own always-visible control).
   const groups = missingDataFilterActive
     ? allGroups.map((g) => ({ ...g, rows: g.rows.filter(({ item }) => item.missing.length > 0) })).filter((g) => g.rows.length > 0)
     : allGroups;
@@ -439,29 +436,23 @@ export default function TasksPage(): React.JSX.Element {
                 className="min-w-0 flex-1 border-0 bg-transparent font-body text-small text-ink-primary outline-none placeholder:text-ink-secondary"
               />
             </label>
-            {/* Real-use fixes plan, Task 2: the "Missing data" filter chip.
-                Its own clear button is the ONE way to drop it (there's no
-                separate enabling control on this page; Story 9.4 chunk B
-                moved the Chat header chip to a different job — running
-                `/sandbox` — so it no longer arms this filter). */}
-            {missingDataFilterActive && (
-              <span
-                data-testid="tasks-filter-missing-data"
-                className="flex h-[38px] items-center gap-2 rounded-full bg-surface-sunken pl-3 pr-1.5 font-body text-small text-ink-primary shadow-inset"
-              >
-                Missing data
-                <button
-                  type="button"
-                  aria-label="Clear Missing data filter"
-                  onClick={() => setMissingDataFilterActive(false)}
-                  className="flex size-[26px] items-center justify-center rounded-full text-ink-secondary hover:text-ink-primary"
-                >
-                  <svg aria-hidden="true" viewBox="0 0 24 24" width={14} height={14} fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round">
-                    <path d="M6 6l12 12M18 6L6 18" />
-                  </svg>
-                </button>
-              </span>
-            )}
+            {/* Polish-5, Task 4: the "Missing data" toggle — always visible,
+                arms/disarms `missingDataFilterActive` itself. Pressed styling
+                copies the Group-by buttons to its right. */}
+            <button
+              type="button"
+              data-testid="tasks-filter-missing-data"
+              aria-pressed={missingDataFilterActive}
+              onClick={() => setMissingDataFilterActive(!missingDataFilterActive)}
+              className={
+                "h-[38px] rounded-full px-4 font-body text-small focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid " +
+                (missingDataFilterActive
+                  ? "bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end font-bold text-on-accent-solid shadow-extruded-sm"
+                  : "bg-surface-sunken text-ink-secondary shadow-inset hover:text-ink-primary")
+              }
+            >
+              Missing data
+            </button>
           </div>
           <div role="group" aria-label="Group by" className="flex gap-1 rounded-lg bg-surface-sunken p-1 shadow-inset">
             {GROUP_OPTIONS.map((option) => {

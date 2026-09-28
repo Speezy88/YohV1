@@ -8,7 +8,8 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { countTasksMissingData, listTasks, type TasksViewDeps } from "../src/app/tasks-view.ts";
+import { listTasks, type TasksViewDeps } from "../src/app/tasks-view.ts";
+import { taskMissingFields } from "../src/core/planning-field-value.ts";
 import type { Task, TaskFieldOptions } from "../src/types/domain.ts";
 
 const NOW = new Date("2026-09-28T03:00:00.000Z"); // 8pm on the 27th in Los Angeles
@@ -178,8 +179,9 @@ test("groupBy priority: the ordering follows the LIVE option list's index even w
   );
 });
 
-test("Priority is never a missing planning field: a Task with no Priority still carries an empty `missing` list, and countTasksMissingData ignores it entirely", async () => {
-  const result = await listTasks(deps({ readTasks: async () => [task("bare", { ...COMPLETE, dueDate: "2026-09-27" })] }), {});
+test("Priority is never a missing planning field: a Task with no Priority still carries an empty `missing` list", async () => {
+  const bare = task("bare", { ...COMPLETE, dueDate: "2026-09-27" });
+  const result = await listTasks(deps({ readTasks: async () => [bare] }), {});
   assert.ok(result.ok);
   const item = result.value.groups[0]?.tasks[0];
   assert.ok(item);
@@ -187,9 +189,7 @@ test("Priority is never a missing planning field: a Task with no Priority still 
   assert.deepEqual(item.missing, []); // every OTHER planning field is present; priority is simply not part of this list at all
   assert.ok(!(item.missing as readonly string[]).includes("priority"));
 
-  const count = await countTasksMissingData({ readTasks: async () => [task("bare", { ...COMPLETE, dueDate: "2026-09-27" })] }, {});
-  assert.ok(count.ok);
-  assert.equal(count.value.count, 0);
+  assert.deepEqual(taskMissingFields(bare), []);
 });
 
 test("query filters by title or Area, case-insensitively; total still counts everything", async () => {
@@ -229,35 +229,6 @@ test("an options read failure still lists the Tasks, with fallback options built
   );
 });
 
-test("countTasksMissingData counts open Tasks with at least one missing planning field, excluding completed ones (real-use fixes plan, Task 2 chip)", async () => {
-  const result = await countTasksMissingData({ readTasks: async () => TASKS }, {});
-  assert.ok(result.ok);
-  // Only "nodate" is both open and missing something — every other Task
-  // above is either fully filled in (`COMPLETE`) or Completed (`done-late`,
-  // `today-done`), which `taskMissingFields` always reports as [].
-  assert.equal(result.value.count, 1);
-});
-
-test("countTasksMissingData never counts a Completed Task, even with undefined fields", async () => {
-  const result = await countTasksMissingData({ readTasks: async () => [task("done-bare", { status: "completed" })] }, {});
-  assert.ok(result.ok);
-  assert.equal(result.value.count, 0);
-});
-
-test("countTasksMissingData is an honest, plain error naming Notion on a read failure", async () => {
-  const result = await countTasksMissingData(
-    {
-      readTasks: async () => {
-        throw new Error("notion-adapter: socket hang up");
-      },
-    },
-    {},
-  );
-  assert.equal(result.ok, false);
-  if (result.ok) return;
-  assert.equal(result.error.kind, "unreachable");
-  assert.equal(result.error.message, "I couldn't reach Notion right now; nothing was changed.");
-});
 
 test("a Notion read failure is an honest, plain error naming Notion", async () => {
   const result = await listTasks(

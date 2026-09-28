@@ -403,11 +403,6 @@ export interface TaskGroup {
   readonly tasks: readonly TaskListItem[];
 }
 
-/** `GET /api/tasks/missing-count`'s value (real-use fixes plan, Task 2): the Chat header chip's count — open (not Completed) Tasks with at least one missing planning field, the SAME rule `TaskListItem.missing` uses. */
-export interface TasksMissingCountResponse {
-  readonly count: number;
-}
-
 /** `GET /api/tasks`'s value. Empty groups are omitted. */
 export interface TasksViewResponse {
   /** The host-timezone date this list's buckets were computed for (never the browser's date). */
