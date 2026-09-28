@@ -111,14 +111,24 @@ function set(next: ChatStoreState): void {
   listeners.forEach((listener) => listener());
 }
 
+/**
+ * Task 7 (polish-5): exported subscribe/snapshot seam — the same
+ * `useSyncExternalStore` pair this store already uses internally for
+ * `useChatStore`, now also usable from plain (non-React) module code.
+ * `chatPanel.ts`'s command queue subscribes here to notice the moment
+ * `sending` flips back to `false`, without `chatStore.ts` needing to know
+ * anything about panels or queues.
+ */
 function subscribe(onChange: () => void): () => void {
   listeners.add(onChange);
   return () => listeners.delete(onChange);
 }
+export { subscribe };
 
 function snapshot(): ChatStoreState {
   return state;
 }
+export { snapshot };
 
 export function useChatStore(): ChatStoreState {
   return useSyncExternalStore(subscribe, snapshot);

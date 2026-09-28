@@ -43,7 +43,7 @@
  * Story 9.3, chunk C2: Test 1's own Save on "E2E Sandbox Task" already
  * empties the (exclude-adjusted) queue, so it's also this file's natural
  * Finale case — no separate session is needed to reach it. One outcome
- * (`e2e-sandbox`, ok:true) means the Finale resolves "Saved 1 Tasks" and
+ * (`e2e-sandbox`, ok:true) means the Finale resolves "Saved 1 Task" and
  * raises a `sandbox-complete` notification, asserted at the end of Test 1.
  * Test 2's session (Skip only, nothing saved) is ruling (a)'s all-skip
  * case — asserted there: no Finale, no notification, just the plain
@@ -123,19 +123,19 @@ test("/sandbox: Skip on the first card writes nothing and advances; Save on the 
   await expect(chat.getByTestId("sandbox-card")).toHaveCount(2);
 
   // Story 9.3: one save this session (the skip above recorded no outcome)
-  // means the Finale resolves "Saved 1 Tasks" and raises a
+  // means the Finale resolves "Saved 1 Task" and raises a
   // sandbox-complete notification. The loading bar shows first (FR-38: no
   // click required), then the resolved line.
   await expect(chat.getByTestId("sandbox-finale-bar")).toBeVisible();
-  await expect(chat.getByText("Saved 1 Tasks")).toBeVisible();
+  await expect(chat.getByText("Saved 1 Task")).toBeVisible();
 
-  const notification = page.getByTestId("notification-card").filter({ hasText: "Saved 1 Tasks" });
+  const notification = page.getByTestId("notification-card").filter({ hasText: "Saved 1 Task" });
   await expect(notification).toBeVisible();
   await notification.click();
   // A "chat" (not "chat:/sandbox") deepLink is a no-op navigation — the
   // panel was already open and nothing is typed into it.
   await expect(chat.getByRole("textbox", { name: "Message Yoh" })).toBeVisible();
-  await expect(page.getByTestId("notification-card").filter({ hasText: "Saved 1 Tasks" })).toHaveCount(0);
+  await expect(page.getByTestId("notification-card").filter({ hasText: "Saved 1 Task" })).toHaveCount(0);
 });
 
 test("a fresh /sandbox session re-offers the earlier-skipped Task, still with nothing written", async ({ page }) => {

@@ -74,11 +74,19 @@ export function NotificationOverlay(): React.JSX.Element {
   // Set of notification ids, never persisted (a fresh mount re-clamps).
   const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(new Set());
 
-  /** Story 9.3 (E8): a "chat"-prefixed deepLink opens the Chat panel (":/sandbox" also sends "/sandbox") instead of resolving a PAGES index — Chat is a panel. Every other deepLink keeps its existing page-navigation behavior. */
+  /**
+   * Story 9.3 (E8), generalized by Task 7 (polish-5): a "chat"-prefixed
+   * deepLink opens the Chat panel instead of resolving a PAGES index — Chat
+   * is a panel. Anything after a "chat:" prefix, trimmed, is sent as a
+   * command exactly as if typed (so "chat:/sandbox" sends "/sandbox",
+   * "chat:/plan" sends "/plan", ...); a bare "chat" or an empty "chat:"
+   * just opens the panel with no command. Every other deepLink keeps its
+   * existing page-navigation behavior.
+   */
   const activate = (n: NotificationRecord): void => {
     if (n.deepLink?.startsWith("chat")) {
-      const command = n.deepLink === "chat:/sandbox" ? "/sandbox" : undefined;
-      openChatWithCommand(command);
+      const rest = n.deepLink.startsWith("chat:") ? n.deepLink.slice("chat:".length).trim() : "";
+      openChatWithCommand(rest !== "" ? rest : undefined);
     } else if (n.deepLink) {
       const index = resolveDeepLinkIndex(n.deepLink);
       if (index !== undefined) nav.goTo(index);

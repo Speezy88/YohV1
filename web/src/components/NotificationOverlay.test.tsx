@@ -218,4 +218,20 @@ describe("chat deep-links (Story 9.3, E8)", () => {
     expect(() => fireEvent.click(screen.getByText("3 Tasks need data to be placed"))).not.toThrow();
     expect(openChatWithCommand).toHaveBeenCalled();
   });
+
+  // Task 7 (polish-5): `chat:<command>` is parsed generically — any command
+  // after the prefix, not just the one hardcoded "/sandbox" case.
+  it("a generic deep link 'chat:/plan' opens the Chat panel AND sends '/plan' as if typed", () => {
+    const openChatWithCommand = vi.spyOn(chatPanelModule, "openChatWithCommand").mockImplementation(() => {});
+    renderWithNav([{ id: "n1", kind: "operational", title: "x", body: "Plan is ready", createdAt: "2026-01-01T00:00:00.000Z", deepLink: "chat:/plan" }]);
+    fireEvent.click(screen.getByText("Plan is ready"));
+    expect(openChatWithCommand).toHaveBeenCalledWith("/plan");
+  });
+
+  it("a deepLink of exactly 'chat:' (empty command) just opens the panel with no command", () => {
+    const openChatWithCommand = vi.spyOn(chatPanelModule, "openChatWithCommand").mockImplementation(() => {});
+    renderWithNav([{ id: "n1", kind: "operational", title: "x", body: "Empty command", createdAt: "2026-01-01T00:00:00.000Z", deepLink: "chat:" }]);
+    fireEvent.click(screen.getByText("Empty command"));
+    expect(openChatWithCommand).toHaveBeenCalledWith(undefined);
+  });
 });

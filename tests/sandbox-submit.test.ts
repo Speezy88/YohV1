@@ -252,6 +252,18 @@ test("finishSandboxSession: every outcome ok:true raises exactly one sandbox-com
   deps.connection.close();
 });
 
+// Task 7 (polish-5): plural copy — "Saved 1 Task" (singular), not "Saved 1 Tasks".
+test("finishSandboxSession: a single saved outcome raises 'Saved 1 Task' (singular), not 'Saved 1 Tasks'", async () => {
+  const deps = baseDeps();
+  const result = await finishSandboxSession(deps, {
+    outcomes: [{ taskId: "t1", taskTitle: "Call dentist", ok: true }],
+  });
+  assert.deepEqual(result, { ok: true, value: { savedCount: 1, failedTitles: [] } });
+  const notifications = listUnreadNotifications(deps.connection);
+  assert.equal(notifications[0]?.body, "Saved 1 Task");
+  deps.connection.close();
+});
+
 test("finishSandboxSession: any ok:false raises exactly one sandbox-failed notification naming each failed Task, deep-linking to /sandbox, never claiming completion", async () => {
   const deps = baseDeps();
   const result = await finishSandboxSession(deps, {

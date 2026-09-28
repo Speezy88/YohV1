@@ -188,7 +188,7 @@ export interface SandboxFinishOutput {
 }
 
 function sandboxCompleteBody(savedCount: number): string {
-  return `Saved ${savedCount} Tasks`;
+  return `Saved ${savedCount} Task${savedCount === 1 ? "" : "s"}`;
 }
 
 function sandboxFailedBody(failedTitles: readonly string[]): string {

@@ -19,6 +19,25 @@ describe("SandboxFinale", () => {
     expect(screen.queryByText(/Couldn't save/)).not.toBeInTheDocument();
   });
 
+  // Task 7 (polish-5): plural copy — "Saved 1 Task" (singular), not "Saved 1 Tasks".
+  it("done, exactly one write succeeded: shows the singular 'Saved 1 Task'", () => {
+    render(<SandboxFinale status="done" savedCount={1} failedTitles={[]} />);
+    expect(screen.getByText("Saved 1 Task")).toBeInTheDocument();
+    expect(screen.queryByText("Saved 1 Tasks")).not.toBeInTheDocument();
+  });
+
+  // Task 7 (polish-5): the result region is persistent — mounted from the
+  // very first (pending) render, same idiom as `SandboxCard.tsx`'s Task 6
+  // status region, so a screen reader's aria-live region is already
+  // attached and announces the settle-time text change.
+  it("the result region is mounted from the first (pending) render, empty until resolve", () => {
+    render(<SandboxFinale status="pending" />);
+    const region = screen.getByTestId("sandbox-finale-result");
+    expect(region).toHaveAttribute("role", "status");
+    expect(region).toHaveAttribute("aria-live", "polite");
+    expect(region).toHaveTextContent("");
+  });
+
   // C2 fix round 1: the resolved state must itself be announced — a screen
   // reader heard "Saving your answers" on the pending bar but nothing when
   // it resolved. The resolved text lives inside a role="status"

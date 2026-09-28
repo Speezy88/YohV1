@@ -14,9 +14,17 @@
  * (the Ask Yoh pill, or wherever else focus was) — the panel returns
  * exactly where Spencer left off, never stranding focus on a now-hidden
  * element or resetting it to `<body>`.
+ *
+ * Task 7 (polish-5): `openChatWithCommand`'s command used to reach
+ * `chatStore.ts`'s `send`, which silently no-ops while a turn is already
+ * `sending` (e.g. a notification's chip tapped mid-turn) — dropping the
+ * command with no trace. `queuedCommand` below is a one-slot queue (latest
+ * request wins) subscribed to `chatStore.ts`'s own store via its exported
+ * `subscribe`/`snapshot` seam; the moment `sending` flips back to `false`,
+ * whatever is queued is sent, exactly as if typed then.
  */
 import { useSyncExternalStore } from "react";
-import { send } from "./chatStore.ts";
+import { send, subscribe as subscribeChatStore, snapshot as chatStoreSnapshot } from "./chatStore.ts";
 
 interface ChatPanelState {
   readonly open: boolean;
@@ -63,14 +71,36 @@ export function toggleChatPanel(): void {
   else openChatPanel();
 }
 
-/** Story 9.3, E8: the ONE deep-link entry point every "deep-links to Chat" notification goes through — opens the panel, and with a command sends it exactly as if typed (`chatStore.ts`'s `send`), so `"chat:/sandbox"` re-opens the queue. */
+/**
+ * Task 7 (polish-5): a one-slot command queue — the latest command
+ * requested while a turn is `sending` wins; an earlier queued command is
+ * simply replaced, never dropped without eventually being replaced by
+ * something that does get sent. `undefined` means nothing is queued.
+ */
+let queuedCommand: string | undefined;
+
+/** Fires on every `chatStore.ts` state change; sends the queued command the moment `sending` is no longer true. A no-op whenever nothing is queued, which is most of the time. */
+subscribeChatStore(() => {
+  if (queuedCommand === undefined || chatStoreSnapshot().sending) return;
+  const command = queuedCommand;
+  queuedCommand = undefined;
+  void send(command);
+});
+
+/** Story 9.3, E8: the ONE deep-link entry point every "deep-links to Chat" notification goes through — opens the panel, and with a command sends it exactly as if typed (`chatStore.ts`'s `send`), so `"chat:/sandbox"` re-opens the queue. Task 7: if a turn is already `sending`, the command is queued instead of silently dropped by `send`'s own in-flight guard, and sent as soon as that turn resolves. */
 export function openChatWithCommand(command?: string): void {
   openChatPanel();
-  if (command) void send(command);
+  if (!command) return;
+  if (chatStoreSnapshot().sending) {
+    queuedCommand = command;
+    return;
+  }
+  void send(command);
 }
 
 /** Test-only: clears module-level singleton state between tests. Never called from production code. */
 export function __resetChatPanelForTests(): void {
   state = { open: false };
   restoreFocusTo = undefined;
+  queuedCommand = undefined;
 }
