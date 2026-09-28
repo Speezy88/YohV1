@@ -92,17 +92,34 @@ describe("saveCard", () => {
 });
 
 describe("skipCard", () => {
-  it("settles the entry 'skipped', advances to next, accumulates exclude but adds NO outcome", async () => {
+  it("settles the entry 'skipped', advances to next, accumulates exclude but adds NO outcome, and resolves ok:true", async () => {
     vi.spyOn(sandboxClientModule, "requestSandboxSkip").mockResolvedValue({ ok: true, value: { next: CARD_2 } });
     const { result: session } = renderHook(() => useSandboxSession());
     const { result: store } = renderHook(() => useChatStore());
     act(() => startSandbox(CARD_1));
-    await act(() => skipCard("t1"));
+    const outcome = await skipCard("t1");
+    expect(outcome).toEqual({ ok: true });
     expect(session.current.card).toEqual(CARD_2);
     expect(session.current.exclude).toEqual(["t1"]);
     expect(session.current.outcomes).toEqual([]);
     const settled = store.current.entries.find((e) => e.kind === "sandbox-card" && e.view.taskId === "t1");
     expect(settled).toMatchObject({ status: "skipped" });
+  });
+
+  // Task 6 (polish-5): a failed skip must be visible — skipCard returns its
+  // outcome the way saveCard does, so SandboxCard can show an inline alert
+  // and leave the card pending/usable, instead of silently doing nothing.
+  it("on a request failure: returns ok:false with the server's message, does NOT advance the entry, and writes nothing to session state", async () => {
+    vi.spyOn(sandboxClientModule, "requestSandboxSkip").mockResolvedValue({ ok: false, message: "network down" });
+    const { result: session } = renderHook(() => useSandboxSession());
+    const { result: store } = renderHook(() => useChatStore());
+    act(() => startSandbox(CARD_1));
+    const outcome = await skipCard("t1");
+    expect(outcome).toEqual({ ok: false, message: "network down" });
+    expect(session.current.card).toEqual(CARD_1);
+    expect(session.current.exclude).toEqual([]);
+    const settled = store.current.entries.find((e) => e.kind === "sandbox-card" && e.view.taskId === "t1");
+    expect(settled).toMatchObject({ status: "pending" });
   });
 });
 
@@ -161,16 +178,32 @@ describe("stale card guard (final-review MUST-FIX 2)", () => {
     expect(save).not.toHaveBeenCalled();
   });
 
-  it("skipCard for a taskId that is no longer the active card is a no-op", async () => {
+  it("skipCard for a taskId that is no longer the active card is a no-op and reports the card as inactive", async () => {
     const skip = vi.spyOn(sandboxClientModule, "requestSandboxSkip");
     act(() => startSandbox(CARD_1));
     act(() => startSandbox(CARD_2));
-    await act(() => skipCard("t1"));
+    const outcome = await skipCard("t1");
+    expect(outcome).toEqual({ ok: false, message: "This card is no longer active." });
     expect(skip).not.toHaveBeenCalled();
   });
 });
 
 describe("finishSandbox", () => {
+  // Task 6 (polish-5): the all-skip finale message id must not be time-based
+  // (`Date.now()` collides when two all-skip sessions finish in the same
+  // millisecond, e.g. under fake timers or a fast test run) — it's a
+  // `crypto.randomUUID()` now, asserted here by shape.
+  it("the all-skip finale message id is a crypto.randomUUID, not a Date.now() timestamp", async () => {
+    const { result: store } = renderHook(() => useChatStore());
+    act(() => startSandbox(CARD_1));
+    __setSandboxOutcomesForTests([]);
+    await act(() => finishSandbox());
+    const finaleMessage = store.current.entries.find((e) => e.kind === "message" && e.message.text === "Nothing more to place this round.");
+    expect(finaleMessage).toBeDefined();
+    const id = finaleMessage && finaleMessage.kind === "message" ? finaleMessage.message.id : "";
+    expect(id).toMatch(/^sandbox-finale-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+  });
+
   it("Review Focus #2: with zero outcomes (all-skip), calls NO finish request, appends NO finale entry, and resets the session", async () => {
     const request = vi.spyOn(sandboxClientModule, "requestSandboxFinish");
     const append = vi.spyOn(chatStoreModule, "appendStreamEntry");

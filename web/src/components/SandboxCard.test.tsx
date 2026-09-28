@@ -54,11 +54,23 @@ describe("SandboxCard", () => {
   });
 
   it("Skip calls sandbox.ts's skipCard with this card's taskId", () => {
-    const skipCard = vi.spyOn(sandboxModule, "skipCard").mockResolvedValue(undefined);
+    const skipCard = vi.spyOn(sandboxModule, "skipCard").mockResolvedValue({ ok: true });
     render(<SandboxCard view={VIEW} status="pending" />);
     fireEvent.click(screen.getByRole("button", { name: "Skip" }));
     expect(skipCard).toHaveBeenCalledWith("t1");
     expect(skipCard).toHaveBeenCalledTimes(1);
+  });
+
+  // Task 6 (polish-5): a failed Skip must be visible, not a silent no-op —
+  // and the card stays usable (buttons re-enabled) so Spencer can retry.
+  it("a failed Skip shows an inline alert on the card and re-enables the buttons", async () => {
+    const skipCard = vi.spyOn(sandboxModule, "skipCard").mockResolvedValue({ ok: false, message: "network down" });
+    render(<SandboxCard view={VIEW} status="pending" />);
+    fireEvent.click(screen.getByRole("button", { name: "Skip" }));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Couldn't skip — try again."));
+    expect(skipCard).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Skip" })).toBeEnabled();
+    expect(screen.queryByText("Skipped")).not.toBeInTheDocument();
   });
 
   it("a saved status renders 'Saved' and disables both buttons", () => {
@@ -78,6 +90,19 @@ describe("SandboxCard", () => {
 
     rerender(<SandboxCard view={VIEW} status="skipped" />);
     expect(screen.getByRole("status")).toHaveTextContent(/skipped.*2 remaining/i);
+  });
+
+  // Task 6 (polish-5): the status region is PERSISTENT — mounted empty from
+  // the very first (pending) render, and it's the SAME node once the card
+  // settles, not a fresh node that already holds the content.
+  it("mounts the status region empty while pending, then updates the SAME node's text when the card settles", () => {
+    const { rerender } = render(<SandboxCard view={VIEW} status="pending" />);
+    const region = screen.getByRole("status");
+    expect(region).toHaveTextContent("");
+
+    rerender(<SandboxCard view={VIEW} status="saved" receipt="Due Date, Estimated Duration saved." />);
+    expect(screen.getByRole("status")).toBe(region);
+    expect(region).toHaveTextContent(/saved.*2 remaining/i);
   });
 
   it("under reduced motion, a saved card shows 'Saved' immediately with no pulse animation class", () => {

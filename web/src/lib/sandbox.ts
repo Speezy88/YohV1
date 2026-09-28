@@ -126,27 +126,35 @@ export async function saveCard(
   return { ok: true };
 }
 
-/** `taskId` (final-review MUST-FIX 2): see `saveCard`'s own note above — a mismatched `taskId` is a stale card and is a silent no-op. */
-export async function skipCard(taskId: string): Promise<void> {
+/**
+ * Task 6 (polish-5): returns its outcome the way `saveCard` returns
+ * `SaveCardOutcome`, instead of doing nothing visible on failure —
+ * SandboxCard sets its local error text off this and re-enables the card.
+ * `taskId` (final-review MUST-FIX 2): see `saveCard`'s own note above — a
+ * mismatched `taskId` is a stale card and is a silent no-op (reported as
+ * `ok:false` here too, mirroring `saveCard`, though a live card's own Skip
+ * button can't actually go stale under itself).
+ */
+export async function skipCard(taskId: string): Promise<SaveCardOutcome> {
   const card = state.card;
-  if (!card) return;
-  if (card.taskId !== taskId) return;
+  if (!card) return { ok: true };
+  if (card.taskId !== taskId) return { ok: false, message: "This card is no longer active." };
   const result = await requestSandboxSkip(card.taskId, { exclude: state.exclude });
-  const next = result.ok ? result.value.next : state.card; // a network hiccup on skip leaves the card in place — nothing was written either way
-  if (result.ok) {
-    settleAndAdvance(next, { status: "skipped" });
-    // Fix round 1: skipping past a card whose LAST save attempt failed is
-    // how a failure actually reaches `outcomes` — it never gets recorded at
-    // the moment of the failed save itself (FR-38 re-prompts in place).
-    const failedThisCard = lastFailedCard?.taskId === card.taskId;
-    lastFailedCard = undefined;
-    set({
-      card: next,
-      exclude: [...state.exclude, card.taskId],
-      outcomes: failedThisCard ? [...state.outcomes, { taskId: card.taskId, taskTitle: card.taskTitle, ok: false }] : state.outcomes,
-    });
-    if (!next) await finishSandbox();
-  }
+  if (!result.ok) return { ok: false, message: result.message }; // a network hiccup on skip leaves the card in place — nothing was written either way
+  const next = result.value.next;
+  settleAndAdvance(next, { status: "skipped" });
+  // Fix round 1: skipping past a card whose LAST save attempt failed is
+  // how a failure actually reaches `outcomes` — it never gets recorded at
+  // the moment of the failed save itself (FR-38 re-prompts in place).
+  const failedThisCard = lastFailedCard?.taskId === card.taskId;
+  lastFailedCard = undefined;
+  set({
+    card: next,
+    exclude: [...state.exclude, card.taskId],
+    outcomes: failedThisCard ? [...state.outcomes, { taskId: card.taskId, taskTitle: card.taskTitle, ok: false }] : state.outcomes,
+  });
+  if (!next) await finishSandbox();
+  return { ok: true };
 }
 
 /**
@@ -182,7 +190,7 @@ export async function finishSandbox(): Promise<void> {
   if (outcomes.length === 0) {
     appendStreamEntry({
       kind: "message",
-      message: { id: `sandbox-finale-${Date.now()}`, role: "assistant", text: "Nothing more to place this round.", receipts: [], status: "done" },
+      message: { id: `sandbox-finale-${crypto.randomUUID()}`, role: "assistant", text: "Nothing more to place this round.", receipts: [], status: "done" },
     });
     set(EMPTY);
     return;

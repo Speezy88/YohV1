@@ -40,11 +40,11 @@ describe("checkOff client", () => {
     for (const verb of ["undo", "hold", "release"] as const) expect(api[":id"][verb].$post).toHaveBeenCalledWith({ param: { id: "p1" } });
   });
 
-  it("an {ok: false} envelope and a rejected request both come back as a failure outcome", async () => {
+  it("an {ok: false} envelope surfaces the server's own message; a rejected request surfaces the fixed copy, never err.message", async () => {
     api[":id"].undo.$post.mockResolvedValue(respond({ ok: false, error: { kind: "conflict", message: "too late" } }));
     expect(await requestUndo("p1")).toEqual({ ok: false, message: "too late" });
     api.$post.mockRejectedValue(new Error("offline"));
-    expect(await requestCheckOff("t1")).toEqual({ ok: false, message: "offline" });
+    expect(await requestCheckOff("t1")).toEqual({ ok: false, message: "Couldn't reach Yoh — try again." });
   });
 
   it("remainingMs is the server's commitAt - asOf, never below zero", () => {

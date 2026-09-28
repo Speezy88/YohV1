@@ -11,7 +11,11 @@
  * showing the server's own message — the card never advances or leaves
  * history on a rejection (FR-38). `sandbox.ts`'s `saveCard` returns the
  * outcome directly (`SaveCardOutcome`); this component keeps a rejection's
- * message in local state and clears it on the next attempt.
+ * message in local state and clears it on the next attempt. Task 6
+ * (polish-5): `skipCard` mirrors that same `SaveCardOutcome` shape — a
+ * failed Skip reuses this same `errorText` state and `role=alert` markup
+ * (with a fixed "Couldn't skip — try again." rather than the server's own
+ * message) and leaves the card pending and usable.
  */
 import { useState } from "react";
 import { saveCard, skipCard } from "../lib/sandbox.ts";
@@ -70,6 +74,20 @@ export function SandboxCard({ view, status, receipt }: SandboxCardProps): React.
   const [busy, setBusy] = useState(false);
   const [errorText, setErrorText] = useState<string | undefined>(undefined);
 
+  // Task 6 (polish-5): a PERSISTENT status region — mounted from the card's
+  // very first (pending) render, not created fresh on settle. Only its text
+  // content changes here; the `<p>` element itself (same `key`, in both
+  // branches below) is the same DOM node throughout, so a screen reader's
+  // `aria-live="polite"` region is already attached and announces the
+  // settle-time text change rather than a brand-new node that starts out
+  // already holding the content (easy to miss for a live region).
+  const statusText = status === "pending" ? "" : `${SETTLED_LABEL[status]}. ${view.remaining} remaining.`;
+  const statusRegion = (
+    <p key="sandbox-status-region" role="status" aria-live="polite" className="sr-only">
+      {statusText}
+    </p>
+  );
+
   if (status !== "pending") {
     return (
       <div
@@ -83,7 +101,7 @@ export function SandboxCard({ view, status, receipt }: SandboxCardProps): React.
             counter's new value — read together so a screen reader user
             hears "Saved. 2 remaining." as one utterance. Visually hidden;
             the paragraphs above already show the same status text sighted. */}
-        <p role="status" aria-live="polite" className="sr-only">{`${SETTLED_LABEL[status]}. ${view.remaining} remaining.`}</p>
+        {statusRegion}
       </div>
     );
   }
@@ -115,8 +133,18 @@ export function SandboxCard({ view, status, receipt }: SandboxCardProps): React.
     }
   };
 
-  const onSkip = (): void => {
-    void skipCard(view.taskId);
+  const onSkip = async (): Promise<void> => {
+    setBusy(true);
+    setErrorText(undefined);
+    const outcome = await skipCard(view.taskId);
+    setBusy(false);
+    if (!outcome.ok) {
+      // Task 6 (polish-5): a fixed, generic line — never the server's own
+      // message (unlike `onSave`'s FR-38 re-prompt above) — since a failed
+      // Skip has no field-level correction to make; the card just stays
+      // pending and usable, re-enabled by `setBusy(false)` above.
+      setErrorText("Couldn't skip — try again.");
+    }
   };
 
   return (
@@ -177,7 +205,7 @@ export function SandboxCard({ view, status, receipt }: SandboxCardProps): React.
       <div className="flex items-center justify-between">
         <span className="font-body text-numerals tabular-nums text-ink-secondary">{view.remaining} remaining</span>
         <div className="flex gap-2">
-          <button type="button" disabled={busy} onClick={onSkip} className={SECONDARY_BUTTON}>
+          <button type="button" disabled={busy} onClick={() => void onSkip()} className={SECONDARY_BUTTON}>
             Skip
           </button>
           <button type="button" disabled={busy || !canSave} onClick={() => void onSave()} className={PRIMARY_BUTTON}>
@@ -185,6 +213,7 @@ export function SandboxCard({ view, status, receipt }: SandboxCardProps): React.
           </button>
         </div>
       </div>
+      {statusRegion}
     </div>
   );
 }

@@ -25,8 +25,12 @@ async function settle<T>(request: () => Promise<{ json(): Promise<unknown> }>): 
     const res = await request();
     const result = (await res.json()) as { ok: true; value: T } | { ok: false; error: { message: string } };
     return result.ok ? { ok: true, value: result.value } : { ok: false, message: result.error.message };
-  } catch (err) {
-    return { ok: false, message: err instanceof Error ? err.message : String(err) };
+  } catch {
+    // Task 6 (polish-5): a thrown fetch (network down, DNS failure, etc.) has
+    // no message worth showing Spencer — `err.message` here is a browser/
+    // fetch implementation detail, not something actionable. Mirrors
+    // `checkOff.ts`'s identical catch verbatim.
+    return { ok: false, message: "Couldn't reach Yoh — try again." };
   }
 }
 
