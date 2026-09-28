@@ -122,7 +122,7 @@ describe("ChatPanel", () => {
     expect(screen.getByText("Saved 2 Tasks")).toBeInTheDocument();
   });
 
-  describe("the 'N tasks missing data' chip", () => {
+  describe("the 'N need data' chip", () => {
     it("is hidden while the count is loading", () => {
       vi.spyOn(missingDataModule, "useMissingDataCount").mockReturnValue({ status: "loading" });
       renderOpenPanel();
@@ -135,16 +135,16 @@ describe("ChatPanel", () => {
       expect(screen.queryByTestId("missing-data-chip")).not.toBeInTheDocument();
     });
 
-    it("shows the singular label for a count of 1", () => {
+    it("shows 'N need data' for a count of 1", () => {
       vi.spyOn(missingDataModule, "useMissingDataCount").mockReturnValue({ status: "loaded", count: 1 });
       renderOpenPanel();
-      expect(screen.getByTestId("missing-data-chip")).toHaveTextContent("1 task missing data");
+      expect(screen.getByTestId("missing-data-chip")).toHaveTextContent("1 need data");
     });
 
-    it("shows the plural label for a count greater than 1", () => {
+    it("shows 'N need data' for a count greater than 1", () => {
       vi.spyOn(missingDataModule, "useMissingDataCount").mockReturnValue({ status: "loaded", count: 3 });
       renderOpenPanel();
-      expect(screen.getByTestId("missing-data-chip")).toHaveTextContent("3 tasks missing data");
+      expect(screen.getByTestId("missing-data-chip")).toHaveTextContent("3 need data");
     });
 
     it("clicking it calls the one exported click handler, `openMissingData`", () => {

@@ -316,8 +316,9 @@ export default function TasksPage(): React.JSX.Element {
   // Real-use fixes plan, Task 2: the "Missing data" filter chip — the SAME
   // per-row `missing` rule the "Add …" badges already show, filtered
   // client-side (the rows are already on screen; no extra server round
-  // trip). Armed either from here or from the Chat header's "N tasks
-  // missing data" chip (`lib/missingData.ts`'s `openMissingData`).
+  // trip). Armed from this page's own control below (Story 9.4, chunk B:
+  // the Chat header chip no longer arms this filter — it runs `/sandbox`
+  // instead, via `lib/missingData.ts`'s `openMissingData`).
   const groups = missingDataFilterActive
     ? allGroups.map((g) => ({ ...g, rows: g.rows.filter(({ item }) => item.missing.length > 0) })).filter((g) => g.rows.length > 0)
     : allGroups;
@@ -434,11 +435,11 @@ export default function TasksPage(): React.JSX.Element {
                 className="min-w-0 flex-1 border-0 bg-transparent font-body text-small text-ink-primary outline-none placeholder:text-ink-secondary"
               />
             </label>
-            {/* Real-use fixes plan, Task 2: the "Missing data" filter chip —
-                armed either here or from the Chat header's "N tasks missing
-                data" chip (`lib/missingData.ts`'s `openMissingData`). Its own
-                clear button is the ONE way to drop it (there's no separate
-                enabling control on this page). */}
+            {/* Real-use fixes plan, Task 2: the "Missing data" filter chip.
+                Its own clear button is the ONE way to drop it (there's no
+                separate enabling control on this page; Story 9.4 chunk B
+                moved the Chat header chip to a different job — running
+                `/sandbox` — so it no longer arms this filter). */}
             {missingDataFilterActive && (
               <span
                 data-testid="tasks-filter-missing-data"

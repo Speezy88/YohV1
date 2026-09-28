@@ -118,11 +118,11 @@ development_status:
   8-9-cli-parity-check-and-retirement: done
   epic-8-retrospective: optional
 
-  epic-9: in-progress
+  epic-9: done
   9-1-two-tier-data-completeness-gate: done
   9-2-sandbox-card-flow: done
   9-3-sandbox-finale-and-proof-of-action-notification: done
-  9-4-needs-data-notification-and-indicator: backlog
+  9-4-needs-data-notification-and-indicator: done
   epic-9-retrospective: optional
 
   # epic-13 (backlog, to be planned): "Yoh remembers you" -- persistent chat memory. Added 2026-09-27 (Spencer),

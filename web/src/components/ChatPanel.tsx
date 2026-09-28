@@ -25,8 +25,9 @@
  * panel entirely — a proposal or question that arrives as part of THIS
  * turn's own reply still renders inline in the stream (`ChatMessage.tsx`'s
  * `message.question`), unchanged. The header's top-right now shows a quiet
- * "N tasks missing data" chip instead (`lib/missingData.ts`), which closes
- * this panel and opens the Tasks page filtered to those Tasks on click.
+ * "N need data" chip instead (`lib/missingData.ts`, re-pointed to the
+ * sandbox queue by Story 9.4 chunk B), which runs `/sandbox` in this same
+ * panel on click.
  *
  * Task 6 addendum (Spencer): Task 2 removed "Waiting on you" and left
  * ritual-raised open interaction requests (self-check, data-completeness,
@@ -42,12 +43,11 @@
  * run on every render without tracking what it already showed. `OpenItems.tsx`
  * is gone (nothing else used it); the server route/store it read stay.
  */
-import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { appendPendingOpenItem, useChatStore } from "../lib/chatStore.ts";
 import { useChatPanel, closeChatPanel } from "../lib/chatPanel.ts";
 import { useMissingDataCount, missingDataChipLabel, openMissingData } from "../lib/missingData.ts";
 import { startOpenItemsStream, useOpenItems } from "../lib/openItems.ts";
-import { PageNavigationContext } from "../lib/navigationContext.tsx";
 import { useReducedMotion } from "../hooks/useReducedMotion.ts";
 import { ChatMessage } from "./ChatMessage.tsx";
 import { ChatInput } from "./ChatInput.tsx";
@@ -61,7 +61,6 @@ const AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 48;
 export function ChatPanel(): React.JSX.Element | null {
   const { open } = useChatPanel();
   const { entries } = useChatStore();
-  const nav = useContext(PageNavigationContext);
   const missingDataCount = useMissingDataCount();
   const openItems = useOpenItems();
   const reducedMotion = useReducedMotion();
@@ -144,13 +143,13 @@ export function ChatPanel(): React.JSX.Element | null {
           </div>
           <div className="flex items-center gap-3">
             {chipLabel && (
-              // Real-use fixes plan, Task 2: the "N tasks missing data"
-              // chip. `openMissingData` is its ONE click handler — Epic 9
-              // re-points it at `/sandbox` in one line, nowhere else.
+              // Real-use fixes plan, Task 2: the "N need data" chip
+              // (Story 9.4, chunk B, re-points it at the sandbox queue).
+              // `openMissingData` is its ONE click handler.
               <button
                 type="button"
                 data-testid="missing-data-chip"
-                onClick={() => openMissingData(nav)}
+                onClick={() => openMissingData()}
                 className="rounded-full border-[length:var(--rim-width)] border-rim-interactive px-3 py-1.5 font-body text-small text-ink-secondary shadow-extruded-sm hover:text-ink-primary"
               >
                 {chipLabel}
