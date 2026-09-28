@@ -148,3 +148,21 @@ test("POST /api/sandbox/finish: a non-array outcomes body is a 400 validation en
   assert.equal(status, 400);
   assert.equal(body.error?.kind, "validation");
 });
+
+// Fix round 1: a malformed element (missing/wrong-typed field) must also be
+// a 400, not a "Couldn't save undefined." notification.
+test("POST /api/sandbox/finish: a malformed outcome element (missing taskTitle) is a 400 validation envelope, and no notification is written", async () => {
+  const { app, connection } = setup();
+  const { status, body } = await post(app, "/api/sandbox/finish", { outcomes: [{ taskId: "t1", ok: false }] });
+  assert.equal(status, 400);
+  assert.equal(body.error?.kind, "validation");
+  assert.equal(listUnreadNotifications(connection).length, 0);
+});
+
+test("POST /api/sandbox/finish: a wrong-typed 'ok' field (string, not boolean) is a 400 validation envelope", async () => {
+  const { app, connection } = setup();
+  const { status, body } = await post(app, "/api/sandbox/finish", { outcomes: [{ taskId: "t1", taskTitle: "Chem problem set", ok: "true" }] });
+  assert.equal(status, 400);
+  assert.equal(body.error?.kind, "validation");
+  assert.equal(listUnreadNotifications(connection).length, 0);
+});

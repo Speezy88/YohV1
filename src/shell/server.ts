@@ -1035,8 +1035,18 @@ export function createApp(deps: ServerDeps) {
         "/api/sandbox/finish",
         validator("json", (value, c) => {
           const outcomes = (value as { outcomes?: unknown } | null)?.outcomes;
-          if (!Array.isArray(outcomes)) {
-            const invalid: ApiFailure = { ok: false, error: { kind: "validation", message: "sandbox/finish: outcomes must be an array" } };
+          const elementsOk =
+            Array.isArray(outcomes) &&
+            outcomes.every(
+              (o) =>
+                typeof o === "object" &&
+                o !== null &&
+                typeof (o as { taskId?: unknown }).taskId === "string" &&
+                typeof (o as { taskTitle?: unknown }).taskTitle === "string" &&
+                typeof (o as { ok?: unknown }).ok === "boolean",
+            );
+          if (!elementsOk) {
+            const invalid: ApiFailure = { ok: false, error: { kind: "validation", message: "sandbox/finish: outcomes must be an array of {taskId, taskTitle, ok}" } };
             return c.json(invalid, httpStatus(invalid));
           }
           return { outcomes } satisfies SandboxFinishRequest;
