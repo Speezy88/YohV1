@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { SandboxCard } from "./SandboxCard.tsx";
 import * as sandboxModule from "../lib/sandbox.ts";
+import * as reducedMotionModule from "../hooks/useReducedMotion.ts";
 import type { SandboxCardView } from "../../../src/types/api.ts";
 
 const VIEW: SandboxCardView = { taskId: "t1", taskTitle: "Chem problem set", area: "School", remaining: 2 };
@@ -51,6 +52,21 @@ describe("SandboxCard", () => {
   it("a skipped status renders 'Skipped' and disables both buttons", () => {
     render(<SandboxCard view={VIEW} status="skipped" />);
     expect(screen.getByText("Skipped")).toBeInTheDocument();
+  });
+
+  it("the settled state announces the new remaining count to screen readers, after a save and after a skip (FR-37)", () => {
+    const { rerender } = render(<SandboxCard view={VIEW} status="saved" receipt="Due Date, Estimated Duration saved." />);
+    expect(screen.getByRole("status")).toHaveTextContent(/saved.*2 remaining/i);
+
+    rerender(<SandboxCard view={VIEW} status="skipped" />);
+    expect(screen.getByRole("status")).toHaveTextContent(/skipped.*2 remaining/i);
+  });
+
+  it("under reduced motion, a saved card shows 'Saved' immediately with no pulse animation class", () => {
+    vi.spyOn(reducedMotionModule, "useReducedMotion").mockReturnValue(true);
+    render(<SandboxCard view={VIEW} status="saved" receipt="Due Date, Estimated Duration saved." />);
+    expect(screen.getByText("Saved")).toBeInTheDocument();
+    expect(screen.getByTestId("sandbox-card").className).not.toContain("sandbox-card-save-pulse");
   });
 
   it("a rejected save shows the server's message inline, on this same card, and leaves it retryable", async () => {

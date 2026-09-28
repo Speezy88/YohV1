@@ -58,12 +58,16 @@ export function SandboxCard({ view, status, receipt }: SandboxCardProps): React.
     return (
       <div
         data-testid="sandbox-card"
-        aria-live="polite"
         className={`flex flex-col gap-1 rounded-md bg-surface-raised p-5 font-body text-body text-ink-primary shadow-extruded-sm ${!reducedMotion && status === "saved" ? "sandbox-card-save-pulse" : ""}`}
       >
         <p className="m-0 font-medium text-title">{view.taskTitle}</p>
         <p className="m-0 text-ink-secondary">{SETTLED_LABEL[status]}</p>
         {receipt && <p className="m-0 font-body text-caption text-ink-secondary">{receipt}</p>}
+        {/* FR-37: the ONE announcement of this settling — status plus the
+            counter's new value — read together so a screen reader user
+            hears "Saved. 2 remaining." as one utterance. Visually hidden;
+            the paragraphs above already show the same status text sighted. */}
+        <p role="status" aria-live="polite" className="sr-only">{`${SETTLED_LABEL[status]}. ${view.remaining} remaining.`}</p>
       </div>
     );
   }
