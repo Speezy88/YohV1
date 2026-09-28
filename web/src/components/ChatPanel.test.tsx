@@ -107,7 +107,7 @@ describe("ChatPanel", () => {
     expect(screen.queryByTestId("open-items")).not.toBeInTheDocument();
   });
 
-  it("a sandbox-card entry renders inline in the stream, interleaved with message entries", () => {
+  it("a sandbox-card entry renders inline in the stream", () => {
     appendStreamEntry({ kind: "sandbox-card", view: { taskId: "t1", taskTitle: "Chem problem set", remaining: 0, options: { area: [], energy: [] } }, status: "pending" });
     renderOpenPanel();
     expect(screen.getByTestId("chat-stream")).toContainElement(screen.getByTestId("sandbox-card"));

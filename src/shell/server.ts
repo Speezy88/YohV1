@@ -555,14 +555,8 @@ const OPEN_ITEMS_NOT_CONFIGURED: ApiFailure = {
   error: { kind: "unreachable", message: errorCopyForWire({ kind: "unreachable", message: "server: chat dependencies not configured" }) },
 };
 
-/** Task 6B: the Tasks page routes' "not configured" failure (Notion isn't set up). */
-const TASKS_NOT_CONFIGURED: ApiFailure = {
-  ok: false,
-  error: { kind: "unreachable", message: "I'm not set up to do that yet — my Notion connection isn't configured." },
-};
-
-/** Story 9.2: the /sandbox routes' "not configured" failure (Notion isn't set up). */
-const SANDBOX_NOT_CONFIGURED: ApiFailure = {
+/** Task 6B/Story 9.2 (Task 10 hygiene): the Tasks page and /sandbox routes' shared "not configured" failure (Notion isn't set up). */
+const NOTION_NOT_CONFIGURED: ApiFailure = {
   ok: false,
   error: { kind: "unreachable", message: "I'm not set up to do that yet — my Notion connection isn't configured." },
 };
@@ -863,7 +857,7 @@ export function createApp(deps: ServerDeps) {
           return { ...(groupBy !== undefined ? { groupBy: groupBy as TasksGroupBy } : {}), ...(query !== undefined ? { query } : {}) } satisfies TasksListRequest;
         }),
         async (c) => {
-          if (!tasksDeps) return c.json(TASKS_NOT_CONFIGURED, httpStatus(TASKS_NOT_CONFIGURED));
+          if (!tasksDeps) return c.json(NOTION_NOT_CONFIGURED, httpStatus(NOTION_NOT_CONFIGURED));
           const result = wire(await listTasks(tasksDeps, c.req.valid("query")));
           return c.json(result, httpStatus(result));
         },
@@ -879,7 +873,7 @@ export function createApp(deps: ServerDeps) {
           return { text } satisfies CreateTaskRequest;
         }),
         async (c) => {
-          if (!tasksDeps) return c.json(TASKS_NOT_CONFIGURED, httpStatus(TASKS_NOT_CONFIGURED));
+          if (!tasksDeps) return c.json(NOTION_NOT_CONFIGURED, httpStatus(NOTION_NOT_CONFIGURED));
           const result = wire(await createTask(tasksDeps, c.req.valid("json")));
           return c.json(result, httpStatus(result));
         },
@@ -902,7 +896,7 @@ export function createApp(deps: ServerDeps) {
           } satisfies QuickAddPreviewRequest;
         }),
         async (c) => {
-          if (!tasksDeps) return c.json(TASKS_NOT_CONFIGURED, httpStatus(TASKS_NOT_CONFIGURED));
+          if (!tasksDeps) return c.json(NOTION_NOT_CONFIGURED, httpStatus(NOTION_NOT_CONFIGURED));
           const result = wire(await previewQuickAdd(tasksDeps, c.req.valid("json")));
           return c.json(result, httpStatus(result));
         },
@@ -918,7 +912,7 @@ export function createApp(deps: ServerDeps) {
           return { field: body.field as EditableTaskField, value: body.value } satisfies UpdateTaskFieldRequest;
         }),
         async (c) => {
-          if (!tasksDeps) return c.json(TASKS_NOT_CONFIGURED, httpStatus(TASKS_NOT_CONFIGURED));
+          if (!tasksDeps) return c.json(NOTION_NOT_CONFIGURED, httpStatus(NOTION_NOT_CONFIGURED));
           const result = wire(await updateTask(tasksDeps, { taskId: c.req.param("id"), ...c.req.valid("json") }));
           return c.json(result, httpStatus(result));
         },
@@ -935,7 +929,7 @@ export function createApp(deps: ServerDeps) {
           return { title } satisfies RenameTaskRequest;
         }),
         async (c) => {
-          if (!tasksDeps) return c.json(TASKS_NOT_CONFIGURED, httpStatus(TASKS_NOT_CONFIGURED));
+          if (!tasksDeps) return c.json(NOTION_NOT_CONFIGURED, httpStatus(NOTION_NOT_CONFIGURED));
           const result = wire(await renameTask(tasksDeps, { taskId: c.req.param("id"), ...c.req.valid("json") }));
           return c.json(result, httpStatus(result));
         },
@@ -954,7 +948,7 @@ export function createApp(deps: ServerDeps) {
           return { ...(exclude !== undefined ? { exclude: exclude as string[] } : {}) } satisfies SandboxStartRequest;
         }),
         async (c) => {
-          if (!sandboxDeps) return c.json(SANDBOX_NOT_CONFIGURED, httpStatus(SANDBOX_NOT_CONFIGURED));
+          if (!sandboxDeps) return c.json(NOTION_NOT_CONFIGURED, httpStatus(NOTION_NOT_CONFIGURED));
           const result = wire(await sandboxQueue(sandboxDeps, { ...c.req.valid("json"), withOptions: true }));
           if (!result.ok) return c.json(result, httpStatus(result));
           return c.json({ ok: true, value: { card: firstCardView(result.value.items, result.value.options) } }, 200);
@@ -986,7 +980,7 @@ export function createApp(deps: ServerDeps) {
           } satisfies SandboxSaveRequest;
         }),
         async (c) => {
-          if (!sandboxDeps) return c.json(SANDBOX_NOT_CONFIGURED, httpStatus(SANDBOX_NOT_CONFIGURED));
+          if (!sandboxDeps) return c.json(NOTION_NOT_CONFIGURED, httpStatus(NOTION_NOT_CONFIGURED));
           const taskId = c.req.param("taskId");
           const body = c.req.valid("json");
           const result = wire(
@@ -1013,7 +1007,7 @@ export function createApp(deps: ServerDeps) {
           return { exclude } satisfies SandboxSkipRequest;
         }),
         async (c) => {
-          if (!sandboxDeps) return c.json(SANDBOX_NOT_CONFIGURED, httpStatus(SANDBOX_NOT_CONFIGURED));
+          if (!sandboxDeps) return c.json(NOTION_NOT_CONFIGURED, httpStatus(NOTION_NOT_CONFIGURED));
           const taskId = c.req.param("taskId");
           const body = c.req.valid("json");
           const next = wire(await sandboxQueue(sandboxDeps, { exclude: [...body.exclude, taskId], withOptions: true }));
@@ -1028,7 +1022,7 @@ export function createApp(deps: ServerDeps) {
       // uses. No new app/*.ts file: this is exactly `/api/commands`'s own
       // "call straight through" shape.
       .get("/api/sandbox/count", async (c) => {
-        if (!sandboxDeps) return c.json(SANDBOX_NOT_CONFIGURED, httpStatus(SANDBOX_NOT_CONFIGURED));
+        if (!sandboxDeps) return c.json(NOTION_NOT_CONFIGURED, httpStatus(NOTION_NOT_CONFIGURED));
         const queueResult = wire(await sandboxQueue(sandboxDeps, {}));
         const result: ApiResult<NeedsDataCountResponse> = queueResult.ok
           ? { ok: true, value: { count: queueResult.value.items.length } }
@@ -1059,7 +1053,7 @@ export function createApp(deps: ServerDeps) {
           return { outcomes } satisfies SandboxFinishRequest;
         }),
         async (c) => {
-          if (!sandboxDeps) return c.json(SANDBOX_NOT_CONFIGURED, httpStatus(SANDBOX_NOT_CONFIGURED));
+          if (!sandboxDeps) return c.json(NOTION_NOT_CONFIGURED, httpStatus(NOTION_NOT_CONFIGURED));
           const result = wire(await finishSandboxSession(sandboxDeps, c.req.valid("json")));
           return c.json(result, httpStatus(result));
         },

@@ -31,7 +31,7 @@ import { sandboxQueue, type SandboxQueueDeps } from "./sandbox-queue.ts";
 import type { LogEntry } from "../adapters/logger.ts";
 import type { SqliteConnection } from "../adapters/sqlite.ts";
 import type { NotionTaskWriteBindings } from "../adapters/notion-adapter.ts";
-import type { SandboxSaveResponse } from "../types/api.ts";
+import type { SandboxFinishResponse, SandboxSaveResponse } from "../types/api.ts";
 import type { PlanningFieldNames, Result, Task, YohError } from "../types/domain.ts";
 
 export interface SandboxSubmitDeps {
@@ -182,10 +182,8 @@ export interface SandboxSessionOutcome {
 export interface SandboxFinishInput {
   readonly outcomes: readonly SandboxSessionOutcome[];
 }
-export interface SandboxFinishOutput {
-  readonly savedCount: number;
-  readonly failedTitles: readonly string[];
-}
+/** Task 10 (hygiene): identical in shape to the wire type `SandboxFinishResponse` (`src/types/api.ts`) — an alias, not a redeclaration. */
+export type SandboxFinishOutput = SandboxFinishResponse;
 
 function sandboxCompleteBody(savedCount: number): string {
   return `Saved ${savedCount} Task${savedCount === 1 ? "" : "s"}`;

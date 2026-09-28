@@ -373,6 +373,16 @@ export interface CalendarWriteConfig {
 // ============================================================================
 
 /**
+ * The only calendar FR-27's confirm-gated path may touch (AD-13). Google has
+ * no "primary only" OAuth scope, so `GOOGLE_CALENDAR_BROAD_SCOPE` covers every
+ * calendar Spencer can access — this constant plus `assertPrimaryCalendar`
+ * below is the ONE place that restriction is enforced in code. (Task 10
+ * hygiene: hoisted here, above `parseExtraCalendarIds`'s use of it, from its
+ * original spot next to `assertPrimaryCalendar` further down this file.)
+ */
+const PRIMARY_CALENDAR_ID = "primary";
+
+/**
  * Parses `YOH_EXTRA_CALENDAR_IDS` (comma-separated Google calendar ids,
  * e.g. Spencer's `spencerhatch@seattleacademy.org`) into the list
  * `CalendarAdapterConfig.extraCalendarIds` expects — the ONE place this env
@@ -463,6 +473,10 @@ export async function readCalendarEvents(
     }
   }
 
+  // Merges the primary + extra-calendar events back into one chronological list;
+  // plain string comparison is correct here only because `a.start`/`b.start` are
+  // already normalized-UTC `IsoDateTime` strings (`toCalendarEvent`), whose
+  // lexical order matches chronological order.
   return events.sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0));
 }
 
@@ -611,14 +625,8 @@ export async function writeTodaysPlanToCalendar(
 // FR-27 (AD-13): confirm-gated Calendar editing beyond Yoh-owned events
 // ============================================================================
 
-/**
- * The only calendar FR-27's confirm-gated path may touch (AD-13). Google has
- * no "primary only" OAuth scope, so `GOOGLE_CALENDAR_BROAD_SCOPE` covers every
- * calendar Spencer can access — this constant plus `assertPrimaryCalendar`
- * below is the ONE place that restriction is enforced in code.
- */
-const PRIMARY_CALENDAR_ID = "primary";
-
+// `PRIMARY_CALENDAR_ID` (Task 10 hygiene: hoisted above `readCalendarEvents`'s
+// section, where `parseExtraCalendarIds` first uses it).
 function assertPrimaryCalendar(calendarId: string): void {
   if (calendarId !== PRIMARY_CALENDAR_ID) {
     throw new Error(`calendar-adapter: FR-27 calendar edits are limited to the primary calendar, got "${calendarId}"`);

@@ -299,12 +299,23 @@ describe("chatStore", () => {
       act(() => {
         id = appendStreamEntry({ kind: "sandbox-card", view: CARD, status: "pending" });
         otherId = appendStreamEntry({ kind: "sandbox-card", view: { ...CARD, taskId: "t2" }, status: "pending" });
-        updateStreamEntry(id, { status: "saved", receipt: "Due Date, Estimated Duration saved." });
+        updateStreamEntry(id, "sandbox-card", { status: "saved", receipt: "Due Date, Estimated Duration saved." });
       });
       const patched = result.current.entries.find((e) => e.id === id);
       const other = result.current.entries.find((e) => e.id === otherId);
       expect(patched).toMatchObject({ status: "saved", receipt: "Due Date, Estimated Duration saved." });
       expect(other).toMatchObject({ status: "pending" });
+    });
+
+    it("Task 10 hygiene: ignores the patch if the found entry's kind doesn't match the given kind", () => {
+      const { result } = renderHook(() => useChatStore());
+      let id!: string;
+      act(() => {
+        id = appendStreamEntry({ kind: "sandbox-card", view: CARD, status: "pending" });
+        // `id` actually names a "sandbox-card" entry — this call names the WRONG kind on purpose.
+        updateStreamEntry(id, "sandbox-finale", { status: "done" });
+      });
+      expect(result.current.entries.find((e) => e.id === id)).toMatchObject({ kind: "sandbox-card", status: "pending" });
     });
   });
 });

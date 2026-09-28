@@ -224,7 +224,7 @@ describe("finishSandbox", () => {
       { taskId: "t2", taskTitle: "File taxes", ok: true },
     ]);
     await act(() => finishSandbox());
-    expect(update).toHaveBeenCalledWith(expect.any(String), { status: "done", savedCount: 2, failedTitles: [] });
+    expect(update).toHaveBeenCalledWith(expect.any(String), "sandbox-finale", { status: "done", savedCount: 2, failedTitles: [] });
   });
 
   it("plays the chime when savedCount >= 1", async () => {
@@ -249,7 +249,7 @@ describe("finishSandbox", () => {
     const update = vi.spyOn(chatStoreModule, "updateStreamEntry");
     __setSandboxOutcomesForTests([{ taskId: "t1", taskTitle: "Call dentist", ok: true }]);
     await act(() => finishSandbox());
-    expect(update).toHaveBeenCalledWith(expect.any(String), { status: "done", summaryFailed: true });
+    expect(update).toHaveBeenCalledWith(expect.any(String), "sandbox-finale", { status: "done", summaryFailed: true });
     expect(chime).not.toHaveBeenCalled();
   });
 

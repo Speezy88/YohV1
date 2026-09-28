@@ -141,13 +141,26 @@ export function setDraft(draft: string): void {
 /** Generic append (Story 9.2) — any future `StreamEntry` kind (Story 9.3's `"sandbox-finale"`) reuses this unchanged. */
 export function appendStreamEntry(entry: DistributiveOmit<StreamEntry, "id">): string {
   const id = `entry-${++nextId}`;
-  set({ ...state, entries: [...state.entries, { ...entry, id } as StreamEntry] });
+  set({ ...state, entries: [...state.entries, { ...entry, id }] });
   return id;
 }
 
-/** Generic patch (Story 9.2) — merges `patch` onto the entry with this `id`, regardless of kind. */
-export function updateStreamEntry(id: string, patch: Partial<StreamEntry>): void {
-  set({ ...state, entries: state.entries.map((e) => (e.id === id ? ({ ...e, ...patch } as StreamEntry) : e)) });
+/**
+ * Generic patch (Story 9.2), typed per `kind` (Task 10 hygiene) so a caller's
+ * `patch` can only name fields that entry kind actually has — no
+ * `as StreamEntry` cast. Ignores the patch if the found entry's `kind`
+ * doesn't match `kind` (e.g. a stale id from a prior entry of a different
+ * kind), rather than merging mismatched fields onto it.
+ */
+export function updateStreamEntry<K extends StreamEntry["kind"]>(
+  id: string,
+  kind: K,
+  patch: Partial<Omit<Extract<StreamEntry, { kind: K }>, "kind" | "id">>,
+): void {
+  set({
+    ...state,
+    entries: state.entries.map((e) => (e.id === id && e.kind === kind ? { ...e, ...patch } : e)),
+  });
 }
 
 function messageEntries(entries: readonly StreamEntry[]): ReadonlyArray<Extract<StreamEntry, { kind: "message" }>> {

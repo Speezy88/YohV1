@@ -77,14 +77,14 @@ export function startSandbox(card: SandboxCardView): void {
   // stays rendered live while a new session begins on B, and saving C would
   // write C's values onto Task B (see `saveCard`/`skipCard`'s own taskId
   // guard below for the second half of this fix).
-  if (entryId) updateStreamEntry(entryId, { status: "skipped" });
+  if (entryId) updateStreamEntry(entryId, "sandbox-card", { status: "skipped" });
   entryId = appendStreamEntry({ kind: "sandbox-card", view: card, status: "pending" });
   lastFailedCard = undefined;
   set({ card, exclude: [], outcomes: [] });
 }
 
 function settleAndAdvance(next: SandboxCardView | undefined, patch: { status: "saved" | "skipped" | "failed"; receipt?: string }): void {
-  if (entryId) updateStreamEntry(entryId, patch);
+  if (entryId) updateStreamEntry(entryId, "sandbox-card", patch);
   entryId = next ? appendStreamEntry({ kind: "sandbox-card", view: next, status: "pending" }) : undefined;
 }
 
@@ -203,14 +203,14 @@ export async function finishSandbox(): Promise<void> {
   if (elapsed < SANDBOX_FINALE_MIN_DURATION_MS) await sleep(SANDBOX_FINALE_MIN_DURATION_MS - elapsed);
 
   if (result.ok) {
-    updateStreamEntry(finaleId, { status: "done", savedCount: result.value.savedCount, failedTitles: result.value.failedTitles });
+    updateStreamEntry(finaleId, "sandbox-finale", { status: "done", savedCount: result.value.savedCount, failedTitles: result.value.failedTitles });
     if (result.value.savedCount >= 1) playSandboxCompleteChime();
   } else {
     // AD-17: the request itself failed (never reached the server, or the
     // server rejected it outright) — the client must NOT invent its own
     // savedCount/failedTitles from local state. `summaryFailed` says only
     // that the summary couldn't be confirmed; no chime either.
-    updateStreamEntry(finaleId, { status: "done", summaryFailed: true });
+    updateStreamEntry(finaleId, "sandbox-finale", { status: "done", summaryFailed: true });
   }
   set(EMPTY);
 }
