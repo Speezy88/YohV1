@@ -6,9 +6,20 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, renderHook } from "@testing-library/react";
-import { startSandbox, saveCard, skipCard, finishSandbox, useSandboxSession, __resetSandboxForTests } from "./sandbox.ts";
+import {
+  startSandbox,
+  saveCard,
+  skipCard,
+  finishSandbox,
+  useSandboxSession,
+  __resetSandboxForTests,
+  __setSandboxOutcomesForTests,
+  SANDBOX_FINALE_MIN_DURATION_MS,
+} from "./sandbox.ts";
 import { __resetChatStoreForTests, useChatStore } from "./chatStore.ts";
 import * as sandboxClientModule from "./sandboxClient.ts";
+import * as chatStoreModule from "./chatStore.ts";
+import * as sandboxSoundModule from "./sandboxSound.ts";
 import type { SandboxCardView } from "../../../src/types/api.ts";
 
 const CARD_1: SandboxCardView = { taskId: "t1", taskTitle: "Chem problem set", estimatedDurationMinutes: 45, remaining: 1 };
@@ -18,7 +29,10 @@ beforeEach(() => {
   __resetChatStoreForTests();
   __resetSandboxForTests();
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+});
 
 describe("startSandbox", () => {
   it("seeds the session with the given card, empty exclude/outcomes, and appends a pending sandbox-card entry", () => {
@@ -92,11 +106,58 @@ describe("skipCard", () => {
   });
 });
 
-describe("finishSandbox (Story 9.2 scope: a quiet reset — Story 9.3 replaces this body)", () => {
-  it("resets the session to empty", async () => {
+describe("finishSandbox", () => {
+  it("Review Focus #2: with zero outcomes (all-skip), calls NO finish request, appends NO finale entry, and resets the session", async () => {
+    const request = vi.spyOn(sandboxClientModule, "requestSandboxFinish");
+    const append = vi.spyOn(chatStoreModule, "appendStreamEntry");
     const { result: session } = renderHook(() => useSandboxSession());
     act(() => startSandbox(CARD_1));
+    __setSandboxOutcomesForTests([]);
     await act(() => finishSandbox());
+    expect(request).not.toHaveBeenCalled();
+    expect(append).not.toHaveBeenCalledWith(expect.objectContaining({ kind: "sandbox-finale" }));
     expect(session.current).toEqual({ card: undefined, exclude: [], outcomes: [] });
+  });
+
+  it("appends a pending sandbox-finale entry, then resolves it with the server's savedCount/failedTitles", async () => {
+    vi.spyOn(sandboxClientModule, "requestSandboxFinish").mockResolvedValue({ ok: true, value: { savedCount: 2, failedTitles: [] } });
+    const update = vi.spyOn(chatStoreModule, "updateStreamEntry");
+    __setSandboxOutcomesForTests([
+      { taskId: "t1", taskTitle: "Call dentist", ok: true },
+      { taskId: "t2", taskTitle: "File taxes", ok: true },
+    ]);
+    await act(() => finishSandbox());
+    expect(update).toHaveBeenCalledWith(expect.any(String), { status: "done", savedCount: 2, failedTitles: [] });
+  });
+
+  it("plays the chime when savedCount >= 1", async () => {
+    const chime = vi.spyOn(sandboxSoundModule, "playSandboxCompleteChime").mockImplementation(() => {});
+    vi.spyOn(sandboxClientModule, "requestSandboxFinish").mockResolvedValue({ ok: true, value: { savedCount: 1, failedTitles: [] } });
+    __setSandboxOutcomesForTests([{ taskId: "t1", taskTitle: "Call dentist", ok: true }]);
+    await act(() => finishSandbox());
+    expect(chime).toHaveBeenCalledTimes(1);
+  });
+
+  it("does NOT play the chime when savedCount is 0 (all failed)", async () => {
+    const chime = vi.spyOn(sandboxSoundModule, "playSandboxCompleteChime").mockImplementation(() => {});
+    vi.spyOn(sandboxClientModule, "requestSandboxFinish").mockResolvedValue({ ok: true, value: { savedCount: 0, failedTitles: ["Chem problem set"] } });
+    __setSandboxOutcomesForTests([{ taskId: "t1", taskTitle: "Chem problem set", ok: false }]);
+    await act(() => finishSandbox());
+    expect(chime).not.toHaveBeenCalled();
+  });
+
+  // Review Focus #3: waits only for the REMAINING time, never a flat extra delay on top of a slow response.
+  it("holds the pending state for at least SANDBOX_FINALE_MIN_DURATION_MS total, but never longer than necessary when the response is already slow", async () => {
+    vi.useFakeTimers();
+    let resolveRequest!: (v: { ok: true; value: { savedCount: number; failedTitles: string[] } }) => void;
+    vi.spyOn(sandboxClientModule, "requestSandboxFinish").mockReturnValue(new Promise((resolve) => (resolveRequest = resolve)));
+    __setSandboxOutcomesForTests([{ taskId: "t1", taskTitle: "Call dentist", ok: true }]);
+
+    const done = finishSandbox();
+    // Slower than the minimum: the server takes longer than SANDBOX_FINALE_MIN_DURATION_MS to answer.
+    await vi.advanceTimersByTimeAsync(SANDBOX_FINALE_MIN_DURATION_MS + 500);
+    resolveRequest({ ok: true, value: { savedCount: 1, failedTitles: [] } });
+    await vi.advanceTimersByTimeAsync(0);
+    await done; // resolves promptly — no extra flat delay stacked on top of the already-slow response
   });
 });

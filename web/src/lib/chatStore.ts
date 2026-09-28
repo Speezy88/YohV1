@@ -40,7 +40,7 @@ export interface ChatViewMessage {
   readonly errorText?: string;
 }
 
-/** One entry in the chat stream: an ordinary turn, or (Story 9.2) an inline Sandbox Card. */
+/** One entry in the chat stream: an ordinary turn, (Story 9.2) an inline Sandbox Card, or (Story 9.3) the session-ending Finale. */
 export type StreamEntry =
   | { readonly kind: "message"; readonly id: string; readonly message: ChatViewMessage }
   | {
@@ -49,6 +49,15 @@ export type StreamEntry =
       readonly view: SandboxCardView;
       readonly status: "pending" | "saved" | "skipped" | "failed";
       readonly receipt?: string;
+    }
+  // Story 9.3: the Finale — a loading bar (pending) while `finishSandbox()` waits
+  // for the batch to settle, then the resolved outcome (done).
+  | {
+      readonly kind: "sandbox-finale";
+      readonly id: string;
+      readonly status: "pending" | "done";
+      readonly savedCount?: number;
+      readonly failedTitles?: readonly string[];
     };
 
 /** `Omit` over a union collapses to the union's shared keys only — this distributes it per member, so `appendStreamEntry`/`updateStreamEntry` keep each branch's own fields (`message`, `view`, `status`, ...). */

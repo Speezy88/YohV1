@@ -174,8 +174,11 @@ export function ChatPanel(): React.JSX.Element | null {
               {entries.map((entry) =>
                 entry.kind === "message" ? (
                   <ChatMessage key={entry.id} message={entry.message} />
-                ) : (
+                ) : entry.kind === "sandbox-card" ? (
                   <SandboxCard key={entry.id} view={entry.view} status={entry.status} {...(entry.receipt ? { receipt: entry.receipt } : {})} />
+                ) : (
+                  // C2 renders SandboxFinale
+                  <></>
                 ),
               )}
             </div>

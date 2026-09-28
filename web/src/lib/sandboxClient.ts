@@ -14,6 +14,8 @@ import type {
   SandboxStartResponse,
   SandboxSaveResponse,
   SandboxSkipResponse,
+  SandboxFinishRequest,
+  SandboxFinishResponse,
 } from "../../../src/types/api.ts";
 
 export type SandboxOutcomeResult<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly message: string };
@@ -38,4 +40,9 @@ export function requestSandboxSave(taskId: string, body: SandboxSaveRequest): Pr
 
 export function requestSandboxSkip(taskId: string, body: SandboxSkipRequest): Promise<SandboxOutcomeResult<SandboxSkipResponse>> {
   return settle(() => apiClient.api.sandbox[":taskId"].skip.$post({ param: { taskId }, json: { ...body, exclude: [...body.exclude] } }));
+}
+
+/** Story 9.3: the Finale's one route call — settles the session's accumulated outcomes. */
+export function requestSandboxFinish(outcomes: SandboxFinishRequest["outcomes"]): Promise<SandboxOutcomeResult<SandboxFinishResponse>> {
+  return settle(() => apiClient.api.sandbox.finish.$post({ json: { outcomes: [...outcomes] } }));
 }

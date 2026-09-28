@@ -19,7 +19,8 @@
  */
 import { useSyncExternalStore } from "react";
 import { appendStreamEntry, updateStreamEntry } from "./chatStore.ts";
-import { requestSandboxSave, requestSandboxSkip } from "./sandboxClient.ts";
+import { requestSandboxSave, requestSandboxSkip, requestSandboxFinish } from "./sandboxClient.ts";
+import { playSandboxCompleteChime } from "./sandboxSound.ts";
 import type { SandboxCardView } from "../../../src/types/api.ts";
 
 interface SandboxOutcomeRecord {
@@ -102,15 +103,59 @@ export async function skipCard(): Promise<void> {
 }
 
 /**
- * Story 9.2 scope: a quiet reset — matches the "all-skip session ends
- * quietly, no Finale, no server round trip, no notification" ruling for
- * the zero-saves case, and is the placeholder every OTHER case (>=1 save)
- * falls back to until Story 9.3 replaces this body with the real `POST
- * /api/sandbox/finish` call, the Finale bar `StreamEntry`, and the reward
- * chime. Never throws; safe to call unconditionally.
+ * Story 9.3: how long the Finale's loading bar stays up at minimum, so a
+ * near-instant response (the common case — every card write already
+ * settled before the client advanced past it, Task 2) never flashes
+ * illegibly. Waits only for whatever time REMAINS after the request
+ * settles, never a flat delay stacked on top of an already-slow response
+ * (Review Focus #3).
+ */
+export const SANDBOX_FINALE_MIN_DURATION_MS = 500;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Called automatically the instant the (exclude-adjusted) queue empties —
+ * `saveCard`/`skipCard`'s own tail above, never a separate click (FR-38).
+ * Ruling (a): a session that saved NOTHING this round (zero outcomes,
+ * however many cards were skipped) ends quietly — no Finale, no server
+ * call, no notification, no chime — since "Saved 0 Tasks" is never a
+ * sentence Spencer should see. Otherwise, appends a pending Finale entry,
+ * waits for `POST /api/sandbox/finish` to settle (at least
+ * `SANDBOX_FINALE_MIN_DURATION_MS` total), resolves the entry with the
+ * server's outcome, and plays the reward chime once when at least one
+ * card saved this session. Never throws; safe to call unconditionally.
  */
 export async function finishSandbox(): Promise<void> {
+  const outcomes = state.outcomes;
   entryId = undefined;
+  if (outcomes.length === 0) {
+    appendStreamEntry({
+      kind: "message",
+      message: { id: `sandbox-finale-${Date.now()}`, role: "assistant", text: "Nothing more to place this round.", receipts: [], status: "done" },
+    });
+    set(EMPTY);
+    return;
+  }
+
+  const finaleId = appendStreamEntry({ kind: "sandbox-finale", status: "pending" });
+  const startedAt = Date.now();
+  const result = await requestSandboxFinish(outcomes);
+  const elapsed = Date.now() - startedAt;
+  if (elapsed < SANDBOX_FINALE_MIN_DURATION_MS) await sleep(SANDBOX_FINALE_MIN_DURATION_MS - elapsed);
+
+  if (result.ok) {
+    updateStreamEntry(finaleId, { status: "done", savedCount: result.value.savedCount, failedTitles: result.value.failedTitles });
+    if (result.value.savedCount >= 1) playSandboxCompleteChime();
+  } else {
+    updateStreamEntry(finaleId, {
+      status: "done",
+      savedCount: 0,
+      failedTitles: outcomes.filter((o) => !o.ok).map((o) => o.taskTitle),
+    });
+  }
   set(EMPTY);
 }
 
@@ -118,4 +163,9 @@ export async function finishSandbox(): Promise<void> {
 export function __resetSandboxForTests(): void {
   entryId = undefined;
   state = EMPTY;
+}
+
+/** Test-only: seeds this session's accumulated outcomes without driving a full save/skip sequence. Never called from production code. */
+export function __setSandboxOutcomesForTests(outcomes: readonly SandboxOutcomeRecord[]): void {
+  state = { ...state, outcomes };
 }

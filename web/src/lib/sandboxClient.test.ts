@@ -7,15 +7,16 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { apiClient } from "./apiClient.ts";
-import { requestSandboxStart, requestSandboxSave, requestSandboxSkip } from "./sandboxClient.ts";
+import { requestSandboxStart, requestSandboxSave, requestSandboxSkip, requestSandboxFinish } from "./sandboxClient.ts";
 
 vi.mock("./apiClient.ts", () => {
   const byId = { save: { $post: vi.fn() }, skip: { $post: vi.fn() } };
-  return { apiClient: { api: { sandbox: { start: { $post: vi.fn() }, ":taskId": byId } } } };
+  return { apiClient: { api: { sandbox: { start: { $post: vi.fn() }, finish: { $post: vi.fn() }, ":taskId": byId } } } };
 });
 
 const api = apiClient.api.sandbox as unknown as {
   start: { $post: ReturnType<typeof vi.fn> };
+  finish: { $post: ReturnType<typeof vi.fn> };
   ":taskId": Record<"save" | "skip", { $post: ReturnType<typeof vi.fn> }>;
 };
 
@@ -47,5 +48,12 @@ describe("sandboxClient", () => {
     api[":taskId"].skip.$post.mockRejectedValue(new Error("network down"));
     const result = await requestSandboxSkip("t1", { exclude: [] });
     expect(result).toEqual({ ok: false, message: "network down" });
+  });
+
+  it("requestSandboxFinish resolves ok:true with the server's savedCount/failedTitles", async () => {
+    api.finish.$post.mockResolvedValue(respond({ ok: true, value: { savedCount: 2, failedTitles: [] } }));
+    const result = await requestSandboxFinish([{ taskId: "t1", taskTitle: "Call dentist", ok: true }]);
+    expect(result).toEqual({ ok: true, value: { savedCount: 2, failedTitles: [] } });
+    expect(api.finish.$post).toHaveBeenCalledWith({ json: { outcomes: [{ taskId: "t1", taskTitle: "Call dentist", ok: true }] } });
   });
 });
