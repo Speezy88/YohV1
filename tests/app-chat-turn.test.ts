@@ -1224,7 +1224,13 @@ test("/sandbox with a non-empty queue returns the first card as ChatTurnResponse
   assert.equal(result.ok, true);
   if (!result.ok) return;
   assert.equal(result.value.reply, "");
-  assert.deepEqual(result.value.sandboxCard, { taskId: "t1", taskTitle: "Chem problem set", estimatedDurationMinutes: 45, remaining: 0 });
+  assert.deepEqual(result.value.sandboxCard, {
+    taskId: "t1",
+    taskTitle: "Chem problem set",
+    estimatedDurationMinutes: 45,
+    remaining: 0,
+    options: { area: [], energy: [] },
+  });
   assert.equal((llmClient as any).calls.length, 0, "a recognized /sandbox command must never call the LLM client");
 });
 

@@ -22,8 +22,8 @@ import * as chatStoreModule from "./chatStore.ts";
 import * as sandboxSoundModule from "./sandboxSound.ts";
 import type { SandboxCardView } from "../../../src/types/api.ts";
 
-const CARD_1: SandboxCardView = { taskId: "t1", taskTitle: "Chem problem set", estimatedDurationMinutes: 45, remaining: 1 };
-const CARD_2: SandboxCardView = { taskId: "t2", taskTitle: "History essay", dueDate: "2026-10-01", remaining: 0 };
+const CARD_1: SandboxCardView = { taskId: "t1", taskTitle: "Chem problem set", estimatedDurationMinutes: 45, remaining: 1, options: { area: [], energy: [] } };
+const CARD_2: SandboxCardView = { taskId: "t2", taskTitle: "History essay", dueDate: "2026-10-01", remaining: 0, options: { area: [], energy: [] } };
 
 beforeEach(() => {
   __resetChatStoreForTests();

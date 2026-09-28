@@ -5,7 +5,24 @@ import * as sandboxModule from "../lib/sandbox.ts";
 import * as reducedMotionModule from "../hooks/useReducedMotion.ts";
 import type { SandboxCardView } from "../../../src/types/api.ts";
 
-const VIEW: SandboxCardView = { taskId: "t1", taskTitle: "Chem problem set", area: "School", remaining: 2 };
+const VIEW: SandboxCardView = { taskId: "t1", taskTitle: "Chem problem set", area: "School", remaining: 2, options: { area: [], energy: [] } };
+
+// Task 5 (polish-5): live Area/Energy options — the select-rendering path.
+const OPTIONS_VIEW: SandboxCardView = {
+  taskId: "t2",
+  taskTitle: "Physics lab report",
+  area: "School",
+  energy: "low",
+  remaining: 0,
+  options: {
+    area: ["School", "Personal", "Math"],
+    energy: [
+      { value: "low", label: "Low" },
+      { value: "medium", label: "Medium" },
+      { value: "high", label: "High" },
+    ],
+  },
+};
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -82,5 +99,45 @@ describe("SandboxCard", () => {
     expect(saveCard).toHaveBeenCalledTimes(1);
     expect(screen.queryByText("Saved")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  });
+
+  it("an empty options list falls back to free-text Area/Energy inputs", () => {
+    render(<SandboxCard view={VIEW} status="pending" />);
+    expect(screen.getByLabelText(/^Area/i).tagName).toBe("INPUT");
+    expect(screen.getByLabelText(/^Energy/i).tagName).toBe("INPUT");
+  });
+
+  it("renders Area/Energy as selects fed with the live options, pre-selecting the view's value", () => {
+    render(<SandboxCard view={OPTIONS_VIEW} status="pending" />);
+    const areaSelect = screen.getByLabelText(/^Area/i) as HTMLSelectElement;
+    expect(areaSelect.tagName).toBe("SELECT");
+    expect(areaSelect.value).toBe("School");
+    expect(screen.getByRole("option", { name: "Personal" })).toBeInTheDocument();
+
+    const energySelect = screen.getByLabelText(/^Energy/i) as HTMLSelectElement;
+    expect(energySelect.tagName).toBe("SELECT");
+    expect(energySelect.value).toBe("low");
+    expect(screen.getByRole("option", { name: "Medium" })).toBeInTheDocument();
+  });
+
+  it("keeps a view value that isn't among the live options as an extra, still-selected option — never drops it", () => {
+    const view: SandboxCardView = { ...OPTIONS_VIEW, area: "Legacy Area" };
+    render(<SandboxCard view={view} status="pending" />);
+    const areaSelect = screen.getByLabelText(/^Area/i) as HTMLSelectElement;
+    expect(areaSelect.value).toBe("Legacy Area");
+    expect(screen.getByRole("option", { name: "Legacy Area" })).toBeInTheDocument();
+  });
+
+  it("Save sends the value picked from the Area/Energy selects", async () => {
+    const saveCard = vi.spyOn(sandboxModule, "saveCard").mockResolvedValue({ ok: true });
+    render(<SandboxCard view={OPTIONS_VIEW} status="pending" />);
+    fireEvent.change(screen.getByLabelText(/Due Date/i), { target: { value: "2026-09-30" } });
+    fireEvent.change(screen.getByLabelText(/Estimated Duration/i), { target: { value: "45" } });
+    fireEvent.change(screen.getByLabelText(/^Area/i), { target: { value: "Personal" } });
+    fireEvent.change(screen.getByLabelText(/^Energy/i), { target: { value: "high" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(saveCard).toHaveBeenCalledWith("t2", { dueDate: "2026-09-30", estimatedDurationMinutes: "45", area: "Personal", energy: "high" }),
+    );
   });
 });

@@ -16,7 +16,7 @@
  * the `/api/*` surface. `web/` may `import type` from here (AD-17) and from
  * nothing else in `src/` except other `types/` files.
  */
-import type { ChatTurn, EditableTaskField, Energy, IsoDate, PlanningFieldNames, Proposal, RefiningFieldNames, Result, TaskFieldOptions, TaskStatus, YohError } from "./domain.ts";
+import type { ChatTurn, EditableTaskField, Energy, IsoDate, PlanningFieldNames, Proposal, RefiningFieldNames, Result, TaskFieldOption, TaskFieldOptions, TaskStatus, YohError } from "./domain.ts";
 
 // ============================================================================
 // Serialized Result envelope
@@ -521,6 +521,19 @@ export interface MorningViewResponse {
 // /sandbox card flow (Story 9.2) — new shapes only.
 // ============================================================================
 
+/**
+ * Task 5 (polish-5): the Sandbox Card's live Area/Energy option lists — read
+ * from the same `readTaskFieldOptions` source `GET /api/tasks` uses. An
+ * empty array means "no live options were read" (the read failed, isn't
+ * configured, or — for `area` only — Area is a free-text property on this
+ * workspace); the card then falls back to today's free-text input for that
+ * field, same as `TaskRow.tsx`'s own live-options-vs-free-text convention.
+ */
+export interface SandboxCardOptions {
+  readonly area: readonly string[];
+  readonly energy: readonly TaskFieldOption<Energy>[];
+}
+
 /** One Sandbox Card as the client renders it — the queue's first item, plus how many remain AFTER it. */
 export interface SandboxCardView {
   readonly taskId: string;
@@ -530,6 +543,8 @@ export interface SandboxCardView {
   readonly area?: string;
   readonly energy?: Energy;
   readonly remaining: number;
+  /** Task 5 (polish-5): always present, even when both lists are empty — the card decides text-vs-select from the lists' own length, never from this field's presence. */
+  readonly options: SandboxCardOptions;
 }
 
 export interface SandboxStartRequest {

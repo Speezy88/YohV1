@@ -209,7 +209,7 @@ const runChatTurn: ChatTurnFn = async (deps, input) => {
     const sandboxChatDeps: SandboxQueueDeps = { ...sandbox, now: () => new Date() };
     const queue = await sandboxQueue(sandboxChatDeps, {});
     if (!queue.ok) return queue;
-    const card = firstCardView(queue.value.items);
+    const card = firstCardView(queue.value.items, queue.value.options);
     if (!card) return { ok: true, value: { reply: "Nothing's missing a Due Date or Duration.", receipts: [] } };
     return { ok: true, value: { reply: "", receipts: [], sandboxCard: card } };
   }
@@ -273,6 +273,7 @@ const sandbox: NonNullable<ServerDeps["sandbox"]> = {
   store,
   timeZone: TIME_ZONE,
   readTasks: async () => (await readNotionTasks(tasksDb.client, TASKS_CONFIG)).tasks,
+  readFieldOptions: () => readTaskFieldOptions(tasksDb.client, TASKS_CONFIG),
   ...bindNotionTaskWrites(() => ({ ok: true, value: { client: tasksDb.client, config: TASKS_CONFIG } })),
 };
 

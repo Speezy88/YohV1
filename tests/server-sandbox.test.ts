@@ -50,7 +50,14 @@ test("POST /api/sandbox/start returns the first (soonest-due) card", async () =>
   const { status, body } = await post(app, "/api/sandbox/start", {});
   assert.equal(status, 200);
   assert.ok(body.ok);
-  assert.deepEqual(body.value?.["card"], { taskId: "t1", taskTitle: "Chem problem set", estimatedDurationMinutes: 45, area: "School", remaining: 0 });
+  assert.deepEqual(body.value?.["card"], {
+    taskId: "t1",
+    taskTitle: "Chem problem set",
+    estimatedDurationMinutes: 45,
+    area: "School",
+    remaining: 0,
+    options: { area: [], energy: [] },
+  });
 });
 
 test("POST /api/sandbox/start with exclude omits that taskId", async () => {

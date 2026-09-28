@@ -200,7 +200,7 @@ test("ConfirmProposalResponse carries exactly applied/receipts", () => {
 });
 
 test("SandboxCardView/SandboxStartRequest/SandboxStartResponse are exactly the wire shape E7 names", () => {
-  const view: SandboxCardView = { taskId: "t1", taskTitle: "Chem problem set", dueDate: "2026-09-30", remaining: 2 };
+  const view: SandboxCardView = { taskId: "t1", taskTitle: "Chem problem set", dueDate: "2026-09-30", remaining: 2, options: { area: [], energy: [] } };
   const startReq: SandboxStartRequest = { exclude: ["t2"] };
   const startRes: SandboxStartResponse = { card: view };
   const emptyRes: SandboxStartResponse = { card: undefined };
@@ -239,7 +239,7 @@ test("ChatTurnResponse.sandboxCard is additive and optional — a plain reply ne
   const withCard: ChatTurnResponse = {
     reply: "",
     receipts: [],
-    sandboxCard: { taskId: "t1", taskTitle: "Chem problem set", remaining: 0 },
+    sandboxCard: { taskId: "t1", taskTitle: "Chem problem set", remaining: 0, options: { area: [], energy: [] } },
   };
   assert.equal("sandboxCard" in plain, false);
   assert.ok(withCard.sandboxCard);

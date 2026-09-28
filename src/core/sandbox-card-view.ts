@@ -17,17 +17,23 @@
  * rather than importing `app/sandbox-queue.ts`'s `SandboxQueueItem` — `core/`
  * may import only `types/` and `core/` (AD-1), never `app/`.
  */
-import type { SandboxCardView } from "../types/api.ts";
+import type { SandboxCardOptions, SandboxCardView } from "../types/api.ts";
 
 /**
  * `remaining` is what the card itself shows as "N remaining" — the queue's
- * length AFTER this card (E7).
+ * length AFTER this card (E7). `options` (Task 5, polish-5) is the SAME
+ * `SandboxCardOptions` for every card in a given queue read — it describes
+ * the workspace's live Area/Energy schema, not anything per-Task — so every
+ * caller passes it straight through from its own `sandboxQueue` read.
  *
  * Picks the `SandboxCardView` fields explicitly rather than spreading `first`
  * — the caller's own item type (`SandboxQueueItem`) carries extra fields
  * (e.g. `missingFields`) that must never leak onto the wire shape.
  */
-export function firstCardView<T extends Omit<SandboxCardView, "remaining">>(items: readonly T[]): SandboxCardView | undefined {
+export function firstCardView<T extends Omit<SandboxCardView, "remaining" | "options">>(
+  items: readonly T[],
+  options: SandboxCardOptions,
+): SandboxCardView | undefined {
   const [first, ...rest] = items;
   if (!first) return undefined;
   return {
@@ -38,5 +44,6 @@ export function firstCardView<T extends Omit<SandboxCardView, "remaining">>(item
     ...(first.area !== undefined ? { area: first.area } : {}),
     ...(first.energy !== undefined ? { energy: first.energy } : {}),
     remaining: rest.length,
+    options,
   };
 }

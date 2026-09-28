@@ -259,7 +259,7 @@ describe("chatStore", () => {
   // StreamEntry / sandboxCard (Story 9.2, Task 6)
   // ==========================================================================
 
-  const CARD: SandboxCardView = { taskId: "t1", taskTitle: "Chem problem set", estimatedDurationMinutes: 45, remaining: 2 };
+  const CARD: SandboxCardView = { taskId: "t1", taskTitle: "Chem problem set", estimatedDurationMinutes: 45, remaining: 2, options: { area: [], energy: [] } };
 
   it("a done event carrying sandboxCard appends a pending sandbox-card entry AFTER the (empty) assistant reply", async () => {
     const stream = controllableStream();

@@ -16,6 +16,7 @@
 import { useState } from "react";
 import { saveCard, skipCard } from "../lib/sandbox.ts";
 import { useReducedMotion } from "../hooks/useReducedMotion.ts";
+import { optionLabel } from "../lib/tasks.ts";
 import type { SandboxCardView } from "../../../src/types/api.ts";
 
 export interface SandboxCardProps {
@@ -42,6 +43,21 @@ const SETTLED_LABEL: Record<Exclude<SandboxCardProps["status"], "pending">, stri
   skipped: "Skipped",
   failed: "Couldn't save",
 };
+
+interface SelectOption {
+  readonly value: string;
+  readonly label: string;
+}
+
+/**
+ * Task 5 (polish-5): the live options list, plus — if `current` isn't among
+ * them — `current` itself appended as an extra, already-selected option.
+ * Never silently drops a value the view sent just because it's since fallen
+ * out of the live Notion schema.
+ */
+function withCurrent(options: readonly SelectOption[], current: string): readonly SelectOption[] {
+  return current === "" || options.some((o) => o.value === current) ? options : [...options, { value: current, label: current }];
+}
 
 export function SandboxCard({ view, status, receipt }: SandboxCardProps): React.JSX.Element {
   const reducedMotion = useReducedMotion();
@@ -73,6 +89,14 @@ export function SandboxCard({ view, status, receipt }: SandboxCardProps): React.
   }
 
   const canSave = dueDate.trim() !== "" && estimatedDurationMinutes.trim() !== "";
+  const areaOptions = withCurrent(
+    view.options.area.map((a) => ({ value: a, label: a })),
+    area,
+  );
+  const energyOptions = withCurrent(
+    view.options.energy.map((o) => ({ value: o.value, label: optionLabel(o.label) })),
+    energy,
+  );
 
   const onSave = async (): Promise<void> => {
     setBusy(true);
@@ -106,7 +130,7 @@ export function SandboxCard({ view, status, receipt }: SandboxCardProps): React.
       <div className="grid grid-cols-2 gap-3">
         <label className="flex flex-col gap-1 text-caption text-ink-secondary">
           Due Date
-          <input type="date" aria-label="Due Date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className={RIM_INPUT} />
+          <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className={RIM_INPUT} />
         </label>
         <label className="flex flex-col gap-1 text-caption text-ink-secondary">
           Estimated Duration (minutes)
@@ -114,7 +138,6 @@ export function SandboxCard({ view, status, receipt }: SandboxCardProps): React.
             type="number"
             inputMode="numeric"
             min={1}
-            aria-label="Estimated Duration"
             value={estimatedDurationMinutes}
             onChange={(e) => setEstimatedDurationMinutes(e.target.value)}
             className={RIM_INPUT}
@@ -122,11 +145,33 @@ export function SandboxCard({ view, status, receipt }: SandboxCardProps): React.
         </label>
         <label className="flex flex-col gap-1 text-caption text-ink-secondary">
           Area (optional)
-          <input type="text" aria-label="Area" value={area} onChange={(e) => setArea(e.target.value)} className={PLAIN_INPUT} />
+          {view.options.area.length > 0 ? (
+            <select value={area} onChange={(e) => setArea(e.target.value)} className={PLAIN_INPUT}>
+              <option value="">—</option>
+              {areaOptions.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input type="text" value={area} onChange={(e) => setArea(e.target.value)} className={PLAIN_INPUT} />
+          )}
         </label>
         <label className="flex flex-col gap-1 text-caption text-ink-secondary">
           Energy (optional)
-          <input type="text" aria-label="Energy" placeholder="low / medium / high" value={energy} onChange={(e) => setEnergy(e.target.value)} className={PLAIN_INPUT} />
+          {view.options.energy.length > 0 ? (
+            <select value={energy} onChange={(e) => setEnergy(e.target.value)} className={PLAIN_INPUT}>
+              <option value="">—</option>
+              {energyOptions.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input type="text" placeholder="low / medium / high" value={energy} onChange={(e) => setEnergy(e.target.value)} className={PLAIN_INPUT} />
+          )}
         </label>
       </div>
       <div className="flex items-center justify-between">

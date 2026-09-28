@@ -160,7 +160,7 @@ export async function saveSandboxCardAndAdvance(deps: SaveSandboxCardDeps, input
   const next = await sandboxQueue(deps, { exclude: [...exclude, input.taskId] });
   if (!next.ok) return next;
 
-  return { ok: true, value: { receipt: submitted.value.receipt, next: firstCardView(next.value.items) } };
+  return { ok: true, value: { receipt: submitted.value.receipt, next: firstCardView(next.value.items, next.value.options) } };
 }
 
 /**

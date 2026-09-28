@@ -21,7 +21,8 @@ import { errorCopyForThrown } from "../core/error-copy.ts";
 import { isOpenTask } from "../core/planning-field-value.ts";
 import type { LogEntry } from "../adapters/logger.ts";
 import type { MemoryStore } from "../adapters/memory-store.ts";
-import type { Energy, IsoDate, RequiredFieldNames, Result, Task, YohError } from "../types/domain.ts";
+import type { SandboxCardOptions } from "../types/api.ts";
+import type { Energy, IsoDate, RequiredFieldNames, Result, Task, TaskFieldOptions, YohError } from "../types/domain.ts";
 
 export interface SandboxQueueItem {
   readonly taskId: string;
@@ -40,6 +41,18 @@ export interface SandboxQueueDeps {
   readonly now: () => Date;
   readonly timeZone: string;
   readonly log?: (entry: LogEntry) => void;
+  /**
+   * Task 5 (polish-5): the SAME live-schema read `buildTasksDeps`
+   * (`shell/server.ts`) already binds for the Tasks page's own inline
+   * selects — the Sandbox Card's Area/Energy fields render as `<select>`s
+   * from this, falling back to free text when it's absent, throws, or
+   * returns `area: undefined` (`readSandboxCardOptions` below handles all
+   * three identically to `app/tasks-view.ts`'s own `readFieldOptions`
+   * catch). Optional so every existing `SandboxQueueDeps` literal (tests,
+   * the fixture server before this task) stays valid — absent simply means
+   * "no live options," never a hard failure.
+   */
+  readonly readFieldOptions?: () => Promise<TaskFieldOptions>;
 }
 
 export interface SandboxQueueInput {
@@ -49,6 +62,8 @@ export interface SandboxQueueInput {
 
 export interface SandboxQueueResponse {
   readonly items: readonly SandboxQueueItem[];
+  /** Task 5 (polish-5): the live Area/Energy option lists every card `firstCardView` builds from this response's `items` carries (`SandboxCardView.options`). */
+  readonly options: SandboxCardOptions;
 }
 
 /** Soonest-due-first; no-due-date last; ties broken by title (stable, locale-independent). */
@@ -58,6 +73,30 @@ function compareItems(a: SandboxQueueItem, b: SandboxQueueItem): number {
   if (b.dueDate === undefined) return -1;
   if (a.dueDate !== b.dueDate) return a.dueDate < b.dueDate ? -1 : 1;
   return a.taskTitle < b.taskTitle ? -1 : a.taskTitle > b.taskTitle ? 1 : 0;
+}
+
+/**
+ * Task 5 (polish-5): the ONE place `sandboxQueue` resolves `deps.readFieldOptions`
+ * into the wire's `SandboxCardOptions` — absent dep, a throw, or a
+ * successful read whose `area` is `undefined` (Area is a free-text property
+ * on this workspace) all fall back to an empty `area` list; only the throw
+ * and the `area: undefined` case log a warn (an absent dep is simply "not
+ * configured," the same convention `app/tasks-view.ts`'s own
+ * `readFieldOptions` catch does NOT extend to — that one only logs on an
+ * actual throw, since it always has the dep).
+ */
+async function readSandboxCardOptions(deps: SandboxQueueDeps): Promise<SandboxCardOptions> {
+  if (!deps.readFieldOptions) return { area: [], energy: [] };
+  try {
+    const options = await deps.readFieldOptions();
+    if (options.area === undefined) {
+      deps.log?.({ level: "warn", event: "sandbox-queue.options-area-undefined" });
+    }
+    return { area: options.area ?? [], energy: options.energy };
+  } catch (err) {
+    deps.log?.({ level: "warn", event: "sandbox-queue.options-read-failed", detail: { message: err instanceof Error ? err.message : String(err) } });
+    return { area: [], energy: [] };
+  }
 }
 
 export async function sandboxQueue(deps: SandboxQueueDeps, input: SandboxQueueInput): Promise<Result<SandboxQueueResponse, YohError>> {
@@ -94,5 +133,6 @@ export async function sandboxQueue(deps: SandboxQueueDeps, input: SandboxQueueIn
     })
     .sort(compareItems);
 
-  return { ok: true, value: { items } };
+  const options = await readSandboxCardOptions(deps);
+  return { ok: true, value: { items, options } };
 }

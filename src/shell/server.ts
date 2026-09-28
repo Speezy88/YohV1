@@ -957,7 +957,7 @@ export function createApp(deps: ServerDeps) {
           if (!sandboxDeps) return c.json(SANDBOX_NOT_CONFIGURED, httpStatus(SANDBOX_NOT_CONFIGURED));
           const result = wire(await sandboxQueue(sandboxDeps, c.req.valid("json")));
           if (!result.ok) return c.json(result, httpStatus(result));
-          return c.json({ ok: true, value: { card: firstCardView(result.value.items) } }, 200);
+          return c.json({ ok: true, value: { card: firstCardView(result.value.items, result.value.options) } }, 200);
         },
       )
       .post(
@@ -1018,7 +1018,7 @@ export function createApp(deps: ServerDeps) {
           const body = c.req.valid("json");
           const next = wire(await sandboxQueue(sandboxDeps, { exclude: [...body.exclude, taskId] }));
           if (!next.ok) return c.json(next, httpStatus(next));
-          return c.json({ ok: true, value: { next: firstCardView(next.value.items) } }, 200);
+          return c.json({ ok: true, value: { next: firstCardView(next.value.items, next.value.options) } }, 200);
         },
       )
       // Story 9.4 (E9, UX-DR42): the ONE computed source for the Needs-Data
@@ -1384,6 +1384,10 @@ function buildSandboxDeps(notion: NotionFeatureConfig): ServerDeps["sandbox"] {
     store: notion.store,
     timeZone: notion.timeZone,
     readTasks: async () => (await readTasksWith(notion)()).tasks,
+    // Task 5 (polish-5): the SAME live-schema read `buildTasksDeps` above
+    // binds for the Tasks page's own inline selects — the Sandbox Card's
+    // Area/Energy fields render as `<select>`s from this.
+    readFieldOptions: () => readTaskFieldOptions(notion.notionClient, config),
     ...bindNotionTaskWrites(() => ({ ok: true, value: { client: notion.notionClient, config } })),
   };
 }

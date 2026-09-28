@@ -456,7 +456,7 @@ async function dispatchSlashCommand(deps: ChatTurnDeps, line: string): Promise<R
     case "/sandbox": {
       const queue = await sandboxQueue(deps, {});
       if (!queue.ok) return queue;
-      const card = firstCardView(queue.value.items);
+      const card = firstCardView(queue.value.items, queue.value.options);
       if (!card) return { ok: true, value: { reply: "Nothing's missing a Due Date or Duration.", receipts: [] } };
       return { ok: true, value: { reply: "", receipts: [], sandboxCard: card } };
     }
