@@ -582,6 +582,11 @@ export interface SandboxFinishResponse {
   readonly failedTitles: readonly string[];
 }
 
+/** Story 9.4 (E9, UX-DR42): `GET /api/sandbox/count`'s response — the ONE computed source shared by the Needs-Data Indicator and the needs-data notification's count (AD-11). */
+export interface NeedsDataCountResponse {
+  readonly count: number;
+}
+
 /**
  * The server's Hono route type, re-exported TYPE-ONLY so `web/`'s typed
  * Hono RPC client (Story 7.5) is compiler-checked end to end while `web/`

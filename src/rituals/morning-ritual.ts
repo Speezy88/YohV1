@@ -201,7 +201,8 @@ import {
 } from "../adapters/memory-store.ts";
 import type { LogEntry } from "../adapters/logger.ts";
 import { PUSHOVER_MESSAGE_LIMIT, PUSHOVER_TITLE_LIMIT } from "../adapters/notification-adapter.ts";
-import { appendOutboxInTx } from "../adapters/notification-store.ts";
+import { appendOutboxInTx, createNotificationInTx } from "../adapters/notification-store.ts";
+import type { SqliteConnection } from "../adapters/sqlite.ts";
 import type { DataCompletenessGateResult } from "../core/data-completeness-gate.ts";
 import { orderByDerivedPriority } from "../core/derived-priority.ts";
 import { generatePlanReasoning } from "../core/plan-reasoning.ts";
@@ -454,6 +455,19 @@ export interface MorningRitualDeps {
    * `writeTodaysPlanToCalendar`'s own doc comment for why.
    */
   readonly writeCalendarPlan?: (blocks: readonly PlanBlock[]) => Promise<void>;
+  /**
+   * Story 9.4 (FR-34, AD-5): the process's shared SQLite connection,
+   * threaded through ONLY so this ritual can raise its own `needs-data`
+   * in-app notification (`createNotificationInTx`) the same way
+   * `app/check-off.ts` raises its own `operational` notification. Never
+   * used to open a second connection (AD-10) — this file writes through it
+   * exactly once, inside its own `writeTx`. Optional, mirroring
+   * `writeCalendarPlan` immediately above: a test that doesn't care about
+   * the needs-data notification need not stub it, and the step below is
+   * simply skipped when it's absent — every existing call site and test
+   * that predates this story keeps compiling and passing unchanged.
+   */
+  readonly connection?: SqliteConnection;
   readonly log?: (entry: LogEntry) => void;
   /** Forces color on/off for the returned `rendered` text; defaults to `shouldUseColor()`. The notification body is always plain. */
   readonly color?: boolean;
@@ -684,6 +698,37 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
 
   const candidates = gate.value.completeTasks;
   const incompleteTaskIds = gate.value.incomplete.map((report) => report.taskId);
+
+  // --- 3.5. Needs-data notification (Story 9.4, FR-34, AD-5) ----------------
+  // `needs-data` and `operational` are the only two notification kinds a
+  // ritual may raise (AD-5) — this is the one place this file raises one of
+  // its own. Fires at most once per run, whenever THIS run's own
+  // Data-Completeness Gate call (just above) found at least one Task
+  // missing a Required field — deliberately placed before every branch
+  // below, so it applies uniformly whether this run goes on to
+  // `nothing-to-plan`, `nothing-fits`, or `delivered`: a Task missing a
+  // Required field is exactly as real on a day nothing else could be
+  // planned as on an ordinary one. The count is read straight off
+  // `gate.value.incomplete` — the very rule `app/sandbox-queue.ts`'s own
+  // `sandboxQueue` (Story 9.2) applies to answer the identical question, so
+  // the two can never disagree on the RULE, even though each takes its own
+  // fresh Notion read at its own moment (AD-1 forbids this file importing
+  // `app/` outright). Wrapped exactly like the Time-Budget-deferral-streak
+  // sync elsewhere in this file: non-fatal, logged as a warn, never turned
+  // into a failure `Result` — a notification write must never block
+  // reporting today's actual Plan outcome.
+  if (incompleteTaskIds.length > 0 && deps.connection) {
+    try {
+      const count = incompleteTaskIds.length;
+      const body = `${count} Tasks need data to be placed`;
+      deps.connection.writeTx((db) => {
+        createNotificationInTx(db, { kind: "needs-data", title: body, body, deepLink: "chat:/sandbox", createdAt: nowIso });
+      });
+      log({ level: "info", event: "morning-ritual.needs-data-notification-created", detail: { count } });
+    } catch (err) {
+      log({ level: "warn", event: "morning-ritual.needs-data-notification-failed", detail: describeError(err) });
+    }
+  }
 
   // --- 4. Anything to plan? (AD-11 / UX-DR10) -------------------------------
   if (candidates.length === 0) {

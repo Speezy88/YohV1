@@ -851,6 +851,21 @@ test("createMorningRitualDeps delivers the morning Plan in the app only — send
   assert.equal(fetchCalls, 0, "the morning Plan must never be pushed to Pushover");
 });
 
+test("createMorningRitualDeps threads a given connection straight through, so the ritual can raise its own needs-data notification", () => {
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  const store = createMemoryStore(connection);
+  const deps = createMorningRitualDeps(store, BASE_ENV, connection);
+  assert.equal(deps.connection, connection, "the SAME connection object, not a re-opened one (AD-10: one connection per process)");
+  store.close();
+});
+
+test("createMorningRitualDeps omits connection entirely when none is given — every pre-9.4 call site (this file's own existing tests) keeps compiling and passing unchanged", () => {
+  const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
+  const deps = createMorningRitualDeps(store, BASE_ENV);
+  assert.equal("connection" in deps, false);
+  store.close();
+});
+
 test("AD-5: ritual-cli.ts never waits for input — it reads no stdin at all", () => {
   const source = readFileSync(join(import.meta.dirname, "..", "src", "shell", "ritual-cli.ts"), "utf8");
   assert.doesNotMatch(source, /node:readline/, "a one-shot cron entry point must not open a readline interface");

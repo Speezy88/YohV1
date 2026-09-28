@@ -11,6 +11,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   clearUncheckedDay,
   createMemoryStore,
@@ -25,7 +26,7 @@ import {
   type MemoryStore,
 } from "../src/adapters/memory-store.ts";
 import { openSqliteConnection, type SqliteConnection } from "../src/adapters/sqlite.ts";
-import { initNotificationStoreSchema, tailOutboxSince } from "../src/adapters/notification-store.ts";
+import { initNotificationStoreSchema, listUnreadNotifications, tailOutboxSince } from "../src/adapters/notification-store.ts";
 import {
   MORNING_RITUAL_ID,
   PLAN_GENERATION_DEGRADED_THRESHOLD_MS,
@@ -1296,4 +1297,102 @@ test("a delivered run with writeCalendarPlan undefined behaves exactly as before
 
   assert.ok(result.ok && result.value.status === "delivered");
   assert.equal(h.notifications.length, 1);
+});
+
+// ============================================================================
+// The needs-data notification (Story 9.4, FR-34, AD-5)
+// ============================================================================
+
+/** A Task missing BOTH Required fields — the shape `/sandbox`'s queue (Story 9.2) is built to find. */
+function incompleteRequiredTask(id: string, title: string): Task {
+  return {
+    id,
+    title,
+    createdAt: NOW_ISO,
+    updatedAt: NOW_ISO,
+    area: "Work",
+    status: "not-started",
+    energy: "medium",
+    // dueDate and estimatedDurationMinutes deliberately absent
+  };
+}
+
+test("a delivered run with 1+ Tasks missing a Required field raises exactly one needs-data notification, with the right title/body/deepLink", async () => {
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db);
+  const store = createMemoryStore(connection);
+  const h = harness({
+    store,
+    tasks: [makeTask("t1", "Draft the memo", { estimatedDurationMinutes: 60 }), incompleteRequiredTask("t2", "Renew the passport")],
+  });
+
+  const result = await runMorningRitual({ ...h.deps, connection });
+  assert.ok(result.ok && result.value.status === "delivered");
+  assert.deepEqual(result.value.incompleteTaskIds, ["t2"]);
+
+  const notifications = listUnreadNotifications(connection);
+  const needsData = notifications.filter((n) => n.kind === "needs-data");
+  assert.equal(needsData.length, 1, "exactly one needs-data notification, no more");
+  assert.equal(needsData[0]!.title, "1 Tasks need data to be placed");
+  assert.equal(needsData[0]!.body, "1 Tasks need data to be placed");
+  assert.equal(needsData[0]!.deepLink, "chat:/sandbox");
+});
+
+test("no needs-data notification is raised when the count is zero, even with a connection wired (AC: 'No notification is raised when the count is zero')", async () => {
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db);
+  const store = createMemoryStore(connection);
+  const h = harness({ store, tasks: [makeTask("t1", "Draft the memo", { estimatedDurationMinutes: 60 })] });
+
+  const result = await runMorningRitual({ ...h.deps, connection });
+  assert.ok(result.ok && result.value.status === "delivered");
+  assert.deepEqual(result.value.incompleteTaskIds, []);
+
+  assert.equal(listUnreadNotifications(connection).filter((n) => n.kind === "needs-data").length, 0);
+});
+
+test("no needs-data notification is raised — and nothing throws — when MorningRitualDeps.connection is simply absent (every pre-9.4 test keeps passing)", async () => {
+  const h = harness({ tasks: [incompleteRequiredTask("t1", "Renew the passport")] });
+  const result = await runMorningRitual(h.deps); // h.deps carries no connection at all
+  assert.ok(result.ok, `expected success, got ${JSON.stringify(result)}`);
+  // No assertion is even possible on the notifications table here — h.deps's
+  // own store's connection was never exposed to this test, by design; the
+  // only claim this test makes is that omitting `connection` never throws.
+});
+
+test("a nothing-to-plan run (every Task incomplete) ALSO raises the needs-data notification — not gated behind reaching 'delivered'", async () => {
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db);
+  const store = createMemoryStore(connection);
+  const h = harness({ store, tasks: [incompleteRequiredTask("t1", "Renew the passport"), incompleteRequiredTask("t2", "File taxes")] });
+
+  const result = await runMorningRitual({ ...h.deps, connection });
+  assert.ok(result.ok && result.value.status === "nothing-to-plan", `expected nothing-to-plan, got ${JSON.stringify(result)}`);
+
+  const needsData = listUnreadNotifications(connection).filter((n) => n.kind === "needs-data");
+  assert.equal(needsData.length, 1);
+  assert.equal(needsData[0]!.title, "2 Tasks need data to be placed");
+});
+
+test("runMorningRitual's own file only ever raises the needs-data kind through createNotificationInTx (AD-5) — a source scan, not just a behavioral check", () => {
+  const contents = readFileSync(new URL("../src/rituals/morning-ritual.ts", import.meta.url), "utf8");
+  const kinds = [...contents.matchAll(/createNotificationInTx\([^)]*kind:\s*"([^"]+)"/gs)].map((m) => m[1]);
+  assert.deepEqual(kinds, ["needs-data"], "morning-ritual.ts must never construct any OTHER NotificationKind literal");
+});
+
+test("a connection.writeTx failure while raising the needs-data notification is caught and logged — it never fails the overall run", async () => {
+  const store = tempStore(); // no notification-store schema on THIS store's own connection
+  const brokenConnection: SqliteConnection = {
+    db: {} as never,
+    writeTx: () => {
+      throw new Error("simulated: notifications table unavailable");
+    },
+    close: () => {},
+  };
+  const logs: LogEntry[] = [];
+  const h = harness({ store, tasks: [incompleteRequiredTask("t1", "Renew the passport")] });
+
+  const result = await runMorningRitual({ ...h.deps, connection: brokenConnection, log: (e) => logs.push(e) });
+  assert.ok(result.ok, "the run's own Result must still succeed — a notification-write failure is non-fatal");
+  assert.ok(logs.some((l) => l.event === "morning-ritual.needs-data-notification-failed" && l.level === "warn"));
 });

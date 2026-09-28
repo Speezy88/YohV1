@@ -146,6 +146,13 @@ export async function planDay(deps: PlanDayDeps, _input: Record<string, never>):
     bumpLevels: computeBumpLevels(deps.store),
     ...(deps.writeCalendarPlan ? { writeCalendarPlan: deps.writeCalendarPlan } : {}),
     ...(deps.log ? { log: deps.log } : {}),
+    // Story 9.4: the needs-data notification must fire from an on-demand
+    // /plan run exactly as it does from the 6am cron run — it's in-app
+    // only (never a Pushover push), so /plan's own "no push" carve-out
+    // doesn't apply to it. `deps.connection` is already carried on
+    // `PlanDayDeps` (inherited from `SurfaceOpenItemsDeps`, used today for
+    // FR-25's inference); this is simply its second consumer.
+    ...(deps.connection ? { connection: deps.connection } : {}),
   });
 
   if (!outcome.ok) {

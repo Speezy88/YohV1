@@ -19,6 +19,7 @@ import {
 import { writeStructuredLog } from "../../adapters/logger.ts";
 import { loadTaskPropertyNamesFromEnv, readNotionTasks } from "../../adapters/notion-adapter.ts";
 import { createTokenStore, loadGoogleOAuthConfigFromEnv } from "../../adapters/token-store.ts";
+import type { SqliteConnection } from "../../adapters/sqlite.ts";
 import { computeSlipBumpLevels } from "../../core/slip-bump.ts";
 import type { MorningRitualDeps } from "../../rituals/morning-ritual.ts";
 import { Client } from "@notionhq/client";
@@ -55,6 +56,7 @@ import type { ExternalId } from "../../types/domain.ts";
 export function createMorningRitualDeps(
   store: MemoryStore,
   env: Readonly<Record<string, string | undefined>> = process.env,
+  connection?: SqliteConnection,
 ): MorningRitualDeps {
   const timeZone = env["YOH_TIMEZONE"];
   if (!timeZone) {
@@ -143,5 +145,9 @@ export function createMorningRitualDeps(
     // (all four `create*RitualDeps` functions used to have their own
     // byte-identical copy of it).
     log: (entry) => writeStructuredLog(entry),
+    // Story 9.4: threaded straight through, never re-opened — this process
+    // already owns the one shared connection (AD-10); this function just
+    // hands it to the ritual so it can raise its own needs-data notification.
+    ...(connection ? { connection } : {}),
   };
 }

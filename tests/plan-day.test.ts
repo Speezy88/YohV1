@@ -31,7 +31,7 @@ import {
   putTimeBudget,
   type MemoryStore,
 } from "../src/adapters/memory-store.ts";
-import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
+import { initNotificationStoreSchema, listUnreadNotifications } from "../src/adapters/notification-store.ts";
 import { planDay, type PlanDayDeps } from "../src/app/plan-day.ts";
 import { MORNING_RITUAL_ID, runMorningRitual } from "../src/rituals/morning-ritual.ts";
 import type { PlanNotification } from "../src/rituals/ritual-shared.ts";
@@ -241,4 +241,38 @@ test("no Time Budget declared at all: planDay fails honestly rather than fabrica
   assert.equal(result.ok, false);
   if (result.ok) return;
   assert.match(result.error.message, /Time Budget/i);
+});
+
+// ============================================================================
+// The needs-data notification fires from /plan exactly as from the 6am cron (Story 9.4)
+// ============================================================================
+
+test("planDay raises the identical needs-data notification when deps.connection is wired and a Task is missing a Required field", async () => {
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db);
+  const store = createMemoryStore(connection);
+  const incomplete: Task = {
+    id: "t2",
+    title: "Renew the passport",
+    createdAt: NOW_ISO,
+    updatedAt: NOW_ISO,
+    area: "Errands",
+    status: "not-started",
+    // dueDate and estimatedDurationMinutes deliberately absent
+  };
+  const { deps } = harness({ store, tasks: [makeTask("t1", "Draft the memo"), incomplete] });
+
+  const result = await planDay({ ...deps, connection }, {});
+  assert.ok(result.ok, `expected success, got ${JSON.stringify(result)}`);
+
+  const needsData = listUnreadNotifications(connection).filter((n) => n.kind === "needs-data");
+  assert.equal(needsData.length, 1);
+  assert.equal(needsData[0]!.title, "1 Tasks need data to be placed");
+  assert.equal(needsData[0]!.deepLink, "chat:/sandbox");
+});
+
+test("planDay raises no needs-data notification, and never throws, when deps.connection is omitted (today's default — no test in this file predating 9.4 sets it)", async () => {
+  const { deps } = harness({ tasks: [makeTask("t1", "Draft the memo")] });
+  const result = await planDay(deps, {});
+  assert.ok(result.ok);
 });

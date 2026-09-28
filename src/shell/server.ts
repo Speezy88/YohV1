@@ -132,6 +132,7 @@ import type {
   CreateTaskRequest,
   EventHint,
   HealthResponse,
+  NeedsDataCountResponse,
   QuickAddPreviewRequest,
   RenameTaskRequest,
   SandboxFinishRequest,
@@ -1028,6 +1029,20 @@ export function createApp(deps: ServerDeps) {
           return c.json({ ok: true, value: { next: firstCardView(next.value.items) } }, 200);
         },
       )
+      // Story 9.4 (E9, UX-DR42): the ONE computed source for the Needs-Data
+      // Indicator and the needs-data notification's count alike (AD-11) —
+      // a thin transport wrapper over Story 9.2's sandboxQueue, same "not
+      // configured" convention every other Notion-backed route already
+      // uses. No new app/*.ts file: this is exactly `/api/commands`'s own
+      // "call straight through" shape.
+      .get("/api/sandbox/count", async (c) => {
+        if (!sandboxDeps) return c.json(SANDBOX_NOT_CONFIGURED, httpStatus(SANDBOX_NOT_CONFIGURED));
+        const queueResult = wire(await sandboxQueue(sandboxDeps, {}));
+        const result: ApiResult<NeedsDataCountResponse> = queueResult.ok
+          ? { ok: true, value: { count: queueResult.value.items.length } }
+          : queueResult;
+        return c.json(result, httpStatus(result));
+      })
       // Story 9.3 (Task 3, E9): the Finale's one route — settles the
       // session's already-completed writes into a proof-of-action
       // notification (app/sandbox-submit.ts's finishSandboxSession).

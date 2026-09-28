@@ -1378,7 +1378,7 @@ export async function main(
     let deps: MorningRitualDeps;
     let sendFailureAlert: (notification: PlanNotification) => Promise<void>;
     try {
-      deps = createMorningRitualDeps(store, env);
+      deps = createMorningRitualDeps(store, env, connection);
       sendFailureAlert = createFailureAlertSender(env);
     } catch (err) {
       io.writeError(`ritual-cli: ${err instanceof Error ? err.message : String(err)}`);
