@@ -351,6 +351,24 @@ test("runMidDayReflow: a Task added to Notion since the morning Plan appears in 
   );
 });
 
+test("Polish-5 Task 1: a Completed Task with Duration + Due present is never scheduled into a re-flow, even though it fully satisfies the Data-Completeness Gate", async () => {
+  const completedFull: Task = { ...makeTask("t-done", "Already finished"), status: "completed" };
+  const tasksWithCompleted: readonly Task[] = [...DEFAULT_TASKS, completedFull];
+  const { deps, store } = harness({ tasks: tasksWithCompleted });
+
+  const result = await runMidDayReflow(deps);
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.value.status, "reflowed");
+
+  const stored = getPlan(store, TODAY);
+  assert.ok(
+    !stored!.data.blocks.some((b) => b.kind === "work" && b.taskId === "t-done"),
+    "a Completed Task is never scheduled into the re-fit remainder, even with every field present",
+  );
+  assert.deepEqual(result.value.incompleteTaskIds, [], "a Completed Task is never counted incomplete either");
+});
+
 test("runMidDayReflow: a Task fully completed before the re-flow boundary is excluded from re-fitting", async () => {
   // t1 and t2 are both fully in the past. Only t3 remains scheduled ahead.
   const { deps, store } = harness({ tasks: DEFAULT_TASKS });

@@ -343,6 +343,32 @@ test("an incomplete Task does not block the complete Tasks from being planned (A
   assert.deepEqual(result.value.incompleteTaskIds, ["t2"]);
 });
 
+test("Polish-5 Task 1: a Completed Task with Duration + Due present is never planned, even though it fully satisfies the Data-Completeness Gate", async () => {
+  const completedFull: Task = {
+    id: "t-done",
+    title: "Already finished",
+    createdAt: NOW_ISO,
+    updatedAt: NOW_ISO,
+    area: "Work",
+    energy: "medium",
+    dueDate: "2026-08-22",
+    estimatedDurationMinutes: 30,
+    status: "completed",
+  };
+  const h = harness({ tasks: [makeTask("t1", "Draft the memo", { estimatedDurationMinutes: 60 }), completedFull] });
+
+  const result = await runMorningRitual(h.deps);
+  assert.ok(result.ok && result.value.status === "delivered");
+
+  const workBlocks = result.value.plan.blocks.filter((b) => b.kind === "work");
+  assert.deepEqual(
+    workBlocks.map((b) => b.taskId),
+    ["t1"],
+    "a Completed Task is never a plan candidate, even with every field present",
+  );
+  assert.deepEqual(result.value.incompleteTaskIds, [], "a Completed Task is never counted incomplete either");
+});
+
 test("Story 9.1: a Task missing only a Refining Field (Energy) is still planned, and its block carries missingRefining: ['energy']", async () => {
   const refiningOnlyMissing: Task = {
     id: "t9",
@@ -1333,8 +1359,8 @@ test("a delivered run with 1+ Tasks missing a Required field raises exactly one 
   const notifications = listUnreadNotifications(connection);
   const needsData = notifications.filter((n) => n.kind === "needs-data");
   assert.equal(needsData.length, 1, "exactly one needs-data notification, no more");
-  assert.equal(needsData[0]!.title, "1 Tasks need data to be placed");
-  assert.equal(needsData[0]!.body, "1 Tasks need data to be placed");
+  assert.equal(needsData[0]!.title, "1 Task needs data to be placed");
+  assert.equal(needsData[0]!.body, "1 Task needs data to be placed");
   assert.equal(needsData[0]!.deepLink, "chat:/sandbox");
 });
 
@@ -1398,7 +1424,7 @@ test("final-review MUST-FIX 1: a mixed set counts only the open Task, excluding 
   assert.ok(result.ok);
   const needsData = listUnreadNotifications(connection).filter((n) => n.kind === "needs-data");
   assert.equal(needsData.length, 1);
-  assert.equal(needsData[0]!.title, "1 Tasks need data to be placed", "the completed Task is excluded from the count");
+  assert.equal(needsData[0]!.title, "1 Task needs data to be placed", "the completed Task is excluded from the count");
 });
 
 test("runMorningRitual's own file only ever raises the needs-data kind through createNotificationInTx (AD-5) — a source scan, not just a behavioral check", () => {

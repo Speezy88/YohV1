@@ -239,9 +239,10 @@ import { appendOutboxInTx } from "../adapters/notification-store.ts";
 import type { LogEntry } from "../adapters/logger.ts";
 import type { DataCompletenessGateResult } from "../core/data-completeness-gate.ts";
 import { orderByDerivedPriority } from "../core/derived-priority.ts";
+import { isOpenTask } from "../core/planning-field-value.ts";
 import { fitWorkBreakBlocks } from "../core/work-break-fit.ts";
 import { runDataCompletenessGate } from "./data-completeness.ts";
-import { localIsoDate, renderPlan } from "./ritual-shared.ts";
+import { localIsoDate, missingRefiningFor, renderPlan } from "./ritual-shared.ts";
 import type {
   CalendarEvent,
   CompleteTask,
@@ -249,19 +250,10 @@ import type {
   IsoDate,
   Plan,
   PlanBlock,
-  RefiningFieldNames,
   Result,
   Task,
   YohError,
 } from "../types/domain.ts";
-
-/** Story 9.1 (AD-11 amended) — see `morning-ritual.ts`'s own copy of this helper for the full doc comment. */
-function missingRefiningFor(task: CompleteTask): readonly RefiningFieldNames[] | undefined {
-  const missing: RefiningFieldNames[] = [];
-  if (task.area.kind === "missing") missing.push("area");
-  if (task.energy.kind === "missing") missing.push("energy");
-  return missing.length > 0 ? missing : undefined;
-}
 
 const MINUTES_TO_MS = 60_000;
 
@@ -514,10 +506,17 @@ export async function runMidDayReflow(deps: MidDayReflowDeps): Promise<Result<Mi
     return failure("unreachable", `mid-day-reflow: could not read Notion Tasks — ${describeError(err)}`, err);
   }
 
+  // Polish-5 Task 1: a completed Task is dropped here, BEFORE the
+  // Data-Completeness Gate ever sees it — the SAME `isOpenTask` rule
+  // `morning-ritual.ts` applies to its own re-read, so a Completed Task is
+  // never a re-flow candidate, never counted incomplete, and never tagged
+  // `missingRefining` here either.
+  const openTasks = rawTasks.filter(isOpenTask);
+
   // --- Merge overrides, gate, sync the interaction request -------------------
   let gate: Result<DataCompletenessGateResult, YohError>;
   try {
-    gate = runDataCompletenessGate(deps.store, rawTasks);
+    gate = runDataCompletenessGate(deps.store, openTasks);
   } catch (err) {
     log({ level: "error", event: "mid-day-reflow.gate-sync-failed", detail: describeError(err) });
     return failure(

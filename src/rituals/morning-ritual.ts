@@ -214,6 +214,7 @@ import {
   ATTENTION,
   formatPlanDate,
   localIsoDate,
+  missingRefiningFor,
   paint,
   renderBlockLine,
   renderPlan,
@@ -228,7 +229,6 @@ import type {
   Plan,
   PlanBlock,
   Proposal,
-  RefiningFieldNames,
   Result,
   Task,
   TimeBudget,
@@ -580,22 +580,6 @@ function describeError(err: unknown): string {
 }
 
 /**
- * Story 9.1 (AD-11 amended): the list of Refining Fields (Area, Energy)
- * `task` is missing, in the fixed `["area", "energy"]` order — `undefined`
- * (never `[]`) when neither is missing. `core/work-break-fit.ts` itself has
- * no Refining-field awareness (it only ever sees `estimatedDurationMinutes`/
- * `dueDate`/`id`/`title`), so this file is where a `"work"` `PlanBlock`
- * actually gets tagged with `missingRefining` — the one place a
- * `CompleteTask`'s own `Refining<T>` state is read back off after the gate.
- */
-function missingRefiningFor(task: CompleteTask): readonly RefiningFieldNames[] | undefined {
-  const missing: RefiningFieldNames[] = [];
-  if (task.area.kind === "missing") missing.push("area");
-  if (task.energy.kind === "missing") missing.push("energy");
-  return missing.length > 0 ? missing : undefined;
-}
-
-/**
  * Generates and delivers today's Morning Plan. See the module docstring for
  * the full step-by-step orchestration and the reasoning behind each ordering
  * choice.
@@ -661,6 +645,16 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
     return failure("unreachable", `morning-ritual: could not read Notion Tasks — ${describeError(err)}`, err);
   }
 
+  // Polish-5 Task 1: a completed Task is dropped here, BEFORE the
+  // Data-Completeness Gate ever sees it — the SAME `isOpenTask` rule
+  // `app/sandbox-queue.ts` applies, now applied at the earliest possible
+  // point rather than filtered back out of the gate's outputs afterward
+  // (Final-review MUST-FIX 1 had only reached the needs-data count; this
+  // closes the same gap for `candidates`/`missingRefining` too). A
+  // completed Task is therefore never a plan candidate, never counted
+  // incomplete, and never tagged `missingRefining`.
+  const openTasks = rawTasks.filter(isOpenTask);
+
   // --- 3. Merge overrides, gate, sync the interaction request ---------------
   // Task 27 / Story 5.3: the Plan-generation timer starts here — right
   // before the Data-Completeness Gate. Per this story's own AC wording,
@@ -687,7 +681,7 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
   const planGenerationStartMs = performance.now();
   let gate: Result<DataCompletenessGateResult, YohError>;
   try {
-    gate = runDataCompletenessGate(deps.store, rawTasks);
+    gate = runDataCompletenessGate(deps.store, openTasks);
   } catch (err) {
     log({ level: "error", event: "morning-ritual.gate-sync-failed", detail: describeError(err) });
     return failure("conflict", `morning-ritual: could not record the Data-Completeness prompt — ${describeError(err)}`, err);
@@ -718,24 +712,21 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
   // sync elsewhere in this file: non-fatal, logged as a warn, never turned
   // into a failure `Result` — a notification write must never block
   // reporting today's actual Plan outcome.
-  // Final-review MUST-FIX 1: this notification's own count excludes
-  // completed Tasks — the SAME `isOpenTask` rule `app/sandbox-queue.ts`
-  // applies before gating, so a Task Spencer already finished never raises
-  // "N Tasks need data to be placed" just because it lacks a Due
-  // Date/Duration it will never need. `incompleteTaskIds` itself (used in
-  // the Result value below, unrelated to this notification) is left as-is
-  // per the review's ruling — the planning path's own completed-Task
-  // handling is out of this epic's scope.
-  const rawTaskById = new Map(rawTasks.map((t) => [t.id, t] as const));
-  const openIncompleteCount = incompleteTaskIds.filter((taskId) => {
-    const rawTask = rawTaskById.get(taskId);
-    return rawTask === undefined || isOpenTask(rawTask);
-  }).length;
+  // Polish-5 Task 1: `gate.value.incomplete` is already open-only, since
+  // `openTasks` (completed Tasks dropped) is what was fed into the gate
+  // above — so `incompleteTaskIds.length` IS the open-incomplete count
+  // directly, with no second completed-Task filter needed here any more
+  // (Final-review MUST-FIX 1's `rawTaskById`/`isOpenTask` re-filter is gone;
+  // the exclusion now happens once, upstream, for candidates/incomplete/
+  // missingRefining alike).
+  const openIncompleteCount = incompleteTaskIds.length;
 
   if (openIncompleteCount > 0 && deps.connection) {
     try {
       const count = openIncompleteCount;
-      const body = `${count} Tasks need data to be placed`;
+      // Pluralizes both the noun and the verb: "1 Task needs data to be
+      // placed" / "N Tasks need data to be placed".
+      const body = count === 1 ? "1 Task needs data to be placed" : `${count} Tasks need data to be placed`;
       deps.connection.writeTx((db) => {
         createNotificationInTx(db, { kind: "needs-data", title: body, body, deepLink: "chat:/sandbox", createdAt: nowIso });
       });

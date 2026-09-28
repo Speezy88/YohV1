@@ -267,7 +267,7 @@ test("planDay raises the identical needs-data notification when deps.connection 
 
   const needsData = listUnreadNotifications(connection).filter((n) => n.kind === "needs-data");
   assert.equal(needsData.length, 1);
-  assert.equal(needsData[0]!.title, "1 Tasks need data to be placed");
+  assert.equal(needsData[0]!.title, "1 Task needs data to be placed");
   assert.equal(needsData[0]!.deepLink, "chat:/sandbox");
 });
 

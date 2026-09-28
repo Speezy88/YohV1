@@ -27,7 +27,33 @@
  * applied within `rituals/*.ts` itself: this is deliberately the leaf every
  * sibling ritual file depends on, never the reverse).
  */
-import type { IsoDate, IsoDateTime, Plan, PlanBlock } from "../types/domain.ts";
+import type { CompleteTask, IsoDate, IsoDateTime, Plan, PlanBlock, RefiningFieldNames } from "../types/domain.ts";
+
+// ============================================================================
+// missingRefiningFor — the one CompleteTask -> missingRefining tagging rule
+// ============================================================================
+
+/**
+ * Story 9.1 (AD-11 amended) — the list of Refining Fields (Area, Energy)
+ * `task` is missing, in the fixed `["area", "energy"]` order — `undefined`
+ * (never `[]`) when neither is missing. `core/work-break-fit.ts` itself has
+ * no Refining-field awareness (it only ever sees `estimatedDurationMinutes`/
+ * `dueDate`/`id`/`title`), so this is where a `"work"` `PlanBlock` actually
+ * gets tagged with `missingRefining` — the one place a `CompleteTask`'s own
+ * `Refining<T>` state is read back off after the gate.
+ *
+ * Polish-5 Task 1: moved here from being duplicated verbatim in both
+ * `morning-ritual.ts` and `mid-day-reflow.ts` (each builds a `"work"`
+ * `PlanBlock` from a gated `CompleteTask` and needs the identical tagging
+ * rule) — this is now the one place it lives; both files import it from
+ * here rather than keeping their own copy.
+ */
+export function missingRefiningFor(task: CompleteTask): readonly RefiningFieldNames[] | undefined {
+  const missing: RefiningFieldNames[] = [];
+  if (task.area.kind === "missing") missing.push("area");
+  if (task.energy.kind === "missing") missing.push("energy");
+  return missing.length > 0 ? missing : undefined;
+}
 
 // ============================================================================
 // DESIGN.md color tokens (UX-DR1) — defined once, for every caller
