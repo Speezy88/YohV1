@@ -150,7 +150,7 @@ export function ChatPanel(): React.JSX.Element | null {
                 type="button"
                 data-testid="missing-data-chip"
                 onClick={() => openMissingData()}
-                className="rounded-full border-[length:var(--rim-width)] border-rim-interactive px-3 py-1.5 font-body text-small text-ink-secondary shadow-extruded-sm hover:text-ink-primary"
+                className="rounded-full border-[length:var(--rim-width)] border-rim-interactive px-3 py-1.5 font-body text-small tabular-nums text-ink-secondary shadow-extruded-sm hover:text-ink-primary"
               >
                 {chipLabel}
               </button>

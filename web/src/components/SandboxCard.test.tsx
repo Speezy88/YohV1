@@ -33,13 +33,14 @@ describe("SandboxCard", () => {
     fireEvent.change(screen.getByLabelText(/Due Date/i), { target: { value: "2026-09-30" } });
     fireEvent.change(screen.getByLabelText(/Estimated Duration/i), { target: { value: "45" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(saveCard).toHaveBeenCalledWith({ dueDate: "2026-09-30", estimatedDurationMinutes: "45", area: "School" }));
+    await waitFor(() => expect(saveCard).toHaveBeenCalledWith("t1", { dueDate: "2026-09-30", estimatedDurationMinutes: "45", area: "School" }));
   });
 
-  it("Skip calls sandbox.ts's skipCard with no fields sent", () => {
+  it("Skip calls sandbox.ts's skipCard with this card's taskId", () => {
     const skipCard = vi.spyOn(sandboxModule, "skipCard").mockResolvedValue(undefined);
     render(<SandboxCard view={VIEW} status="pending" />);
     fireEvent.click(screen.getByRole("button", { name: "Skip" }));
+    expect(skipCard).toHaveBeenCalledWith("t1");
     expect(skipCard).toHaveBeenCalledTimes(1);
   });
 

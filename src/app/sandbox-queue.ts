@@ -18,6 +18,7 @@
 import { mergeStoredOverrides } from "../rituals/data-completeness.ts";
 import { checkDataCompleteness } from "../core/data-completeness-gate.ts";
 import { errorCopyForThrown } from "../core/error-copy.ts";
+import { isOpenTask } from "../core/planning-field-value.ts";
 import type { LogEntry } from "../adapters/logger.ts";
 import type { MemoryStore } from "../adapters/memory-store.ts";
 import type { Energy, IsoDate, RequiredFieldNames, Result, Task, YohError } from "../types/domain.ts";
@@ -67,7 +68,10 @@ export async function sandboxQueue(deps: SandboxQueueDeps, input: SandboxQueueIn
     return { ok: false, error: { kind: "unreachable", message: errorCopyForThrown(err, { service: "Notion" }) } };
   }
 
-  const merged = mergeStoredOverrides(deps.store, tasks);
+  // Final-review MUST-FIX 1: a completed Task needs nothing more placed —
+  // exclude it before gating, so it never lands in the queue (nor its chip
+  // count) just because it lacks a Due Date/Duration it will never need.
+  const merged = mergeStoredOverrides(deps.store, tasks.filter(isOpenTask));
   const gated = checkDataCompleteness(merged);
   if (!gated.ok) return gated;
 

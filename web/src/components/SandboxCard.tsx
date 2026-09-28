@@ -77,7 +77,7 @@ export function SandboxCard({ view, status, receipt }: SandboxCardProps): React.
   const onSave = async (): Promise<void> => {
     setBusy(true);
     setErrorText(undefined);
-    const outcome = await saveCard({
+    const outcome = await saveCard(view.taskId, {
       dueDate,
       estimatedDurationMinutes,
       ...(area.trim() !== "" ? { area: area.trim() } : {}),
@@ -92,7 +92,7 @@ export function SandboxCard({ view, status, receipt }: SandboxCardProps): React.
   };
 
   const onSkip = (): void => {
-    void skipCard();
+    void skipCard(view.taskId);
   };
 
   return (

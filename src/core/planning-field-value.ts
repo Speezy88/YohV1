@@ -55,6 +55,19 @@ export const PLANNING_FIELD_LABELS: Record<PlanningFieldNames, string> = {
 const PLANNING_FIELDS = Object.keys(PLANNING_FIELD_LABELS) as PlanningFieldNames[];
 
 /**
+ * Final-review MUST-FIX 1: the ONE predicate for "this Task is still open" —
+ * used to be inlined as `task.status === "completed"` only inside
+ * `taskMissingFields` below, but Epic 9's Data-Completeness Gate
+ * (`core/data-completeness-gate.ts`) no longer treats Status as a gate
+ * field, so `app/sandbox-queue.ts` and `rituals/morning-ritual.ts`'s
+ * needs-data notification both need the same "exclude completed" rule the
+ * Tasks-page badges already had, without duplicating it.
+ */
+export function isOpenTask(task: Task): boolean {
+  return task.status !== "completed";
+}
+
+/**
  * Real-use fixes plan, Task 2: the ONE rule for "this open Task is missing
  * planning data" — a not-Completed Task with at least one undefined
  * planning field. `app/tasks-view.ts`'s `listTasks` (the Tasks page's
@@ -66,7 +79,7 @@ const PLANNING_FIELDS = Object.keys(PLANNING_FIELD_LABELS) as PlanningFieldNames
  */
 export function taskMissingFields(task: Task): readonly PlanningFieldNames[] {
   // A completed Task needs nothing more to be planned, so it carries no "Add …" badges.
-  return task.status === "completed" ? [] : PLANNING_FIELDS.filter((field) => task[field] === undefined);
+  return isOpenTask(task) ? PLANNING_FIELDS.filter((field) => task[field] === undefined) : [];
 }
 
 /**

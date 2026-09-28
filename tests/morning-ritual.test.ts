@@ -1374,6 +1374,33 @@ test("a nothing-to-plan run (every Task incomplete) ALSO raises the needs-data n
   assert.equal(needsData[0]!.title, "2 Tasks need data to be placed");
 });
 
+test("final-review MUST-FIX 1: a completed-only-missing set raises no needs-data notification", async () => {
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db);
+  const store = createMemoryStore(connection);
+  const h = harness({ store, tasks: [{ ...incompleteRequiredTask("done", "Already finished"), status: "completed" }] });
+
+  const result = await runMorningRitual({ ...h.deps, connection });
+  assert.ok(result.ok);
+  assert.equal(listUnreadNotifications(connection).filter((n) => n.kind === "needs-data").length, 0, "an all-completed missing set raises nothing");
+});
+
+test("final-review MUST-FIX 1: a mixed set counts only the open Task, excluding the completed one", async () => {
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db);
+  const store = createMemoryStore(connection);
+  const h = harness({
+    store,
+    tasks: [{ ...incompleteRequiredTask("done", "Already finished"), status: "completed" }, incompleteRequiredTask("open", "Renew the passport")],
+  });
+
+  const result = await runMorningRitual({ ...h.deps, connection });
+  assert.ok(result.ok);
+  const needsData = listUnreadNotifications(connection).filter((n) => n.kind === "needs-data");
+  assert.equal(needsData.length, 1);
+  assert.equal(needsData[0]!.title, "1 Tasks need data to be placed", "the completed Task is excluded from the count");
+});
+
 test("runMorningRitual's own file only ever raises the needs-data kind through createNotificationInTx (AD-5) — a source scan, not just a behavioral check", () => {
   const contents = readFileSync(new URL("../src/rituals/morning-ritual.ts", import.meta.url), "utf8");
   const kinds = [...contents.matchAll(/createNotificationInTx\([^)]*kind:\s*"([^"]+)"/gs)].map((m) => m[1]);

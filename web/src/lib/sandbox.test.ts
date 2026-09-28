@@ -53,7 +53,7 @@ describe("saveCard", () => {
     const { result: session } = renderHook(() => useSandboxSession());
     const { result: store } = renderHook(() => useChatStore());
     act(() => startSandbox(CARD_1));
-    await act(() => saveCard({ dueDate: "2026-09-30", estimatedDurationMinutes: "45" }));
+    await act(() => saveCard("t1", { dueDate: "2026-09-30", estimatedDurationMinutes: "45" }));
     expect(session.current.card).toEqual(CARD_2);
     // Review Focus #4 — exclude accumulates the SAVED taskId too, not just skips.
     expect(session.current.exclude).toEqual(["t1"]);
@@ -67,7 +67,7 @@ describe("saveCard", () => {
     vi.spyOn(sandboxClientModule, "requestSandboxSave").mockResolvedValue({ ok: false, message: "no existing Area option matches" });
     const { result: session } = renderHook(() => useSandboxSession());
     act(() => startSandbox(CARD_1));
-    await act(() => saveCard({ dueDate: "2026-09-30", estimatedDurationMinutes: "45", area: "Nope" }));
+    await act(() => saveCard("t1", { dueDate: "2026-09-30", estimatedDurationMinutes: "45", area: "Nope" }));
     expect(session.current.card).toEqual(CARD_1);
     expect(session.current.exclude).toEqual([]);
     expect(session.current.outcomes).toEqual([]);
@@ -75,7 +75,7 @@ describe("saveCard", () => {
 
   it("saveCard is a no-op with no active card", async () => {
     const spy = vi.spyOn(sandboxClientModule, "requestSandboxSave");
-    await act(() => saveCard({ dueDate: "2026-09-30", estimatedDurationMinutes: "45" }));
+    await act(() => saveCard("t1", { dueDate: "2026-09-30", estimatedDurationMinutes: "45" }));
     expect(spy).not.toHaveBeenCalled();
   });
 
@@ -86,7 +86,7 @@ describe("saveCard", () => {
     });
     const { result: session } = renderHook(() => useSandboxSession());
     act(() => startSandbox(CARD_2));
-    await act(() => saveCard({ dueDate: "2026-10-01", estimatedDurationMinutes: "20" }));
+    await act(() => saveCard("t2", { dueDate: "2026-10-01", estimatedDurationMinutes: "20" }));
     expect(session.current.card).toEqual(undefined);
   });
 });
@@ -97,7 +97,7 @@ describe("skipCard", () => {
     const { result: session } = renderHook(() => useSandboxSession());
     const { result: store } = renderHook(() => useChatStore());
     act(() => startSandbox(CARD_1));
-    await act(() => skipCard());
+    await act(() => skipCard("t1"));
     expect(session.current.card).toEqual(CARD_2);
     expect(session.current.exclude).toEqual(["t1"]);
     expect(session.current.outcomes).toEqual([]);
@@ -112,8 +112,8 @@ describe("failed save tracking (fix round 1: how a failure reaches outcomes at a
     vi.spyOn(sandboxClientModule, "requestSandboxSkip").mockResolvedValue({ ok: true, value: { next: CARD_2 } });
     const { result: session } = renderHook(() => useSandboxSession());
     act(() => startSandbox(CARD_1));
-    await act(() => saveCard({ dueDate: "2026-09-30", estimatedDurationMinutes: "45", area: "Nope" }));
-    await act(() => skipCard());
+    await act(() => saveCard("t1", { dueDate: "2026-09-30", estimatedDurationMinutes: "45", area: "Nope" }));
+    await act(() => skipCard("t1"));
     expect(session.current.outcomes).toEqual([{ taskId: "t1", taskTitle: "Chem problem set", ok: false }]);
   });
 
@@ -123,8 +123,8 @@ describe("failed save tracking (fix round 1: how a failure reaches outcomes at a
       .mockResolvedValueOnce({ ok: true, value: { receipt: "Due Date, Estimated Duration saved.", next: CARD_2 } });
     const { result: session } = renderHook(() => useSandboxSession());
     act(() => startSandbox(CARD_1));
-    await act(() => saveCard({ dueDate: "2026-09-30", estimatedDurationMinutes: "45", area: "Nope" }));
-    await act(() => saveCard({ dueDate: "2026-09-30", estimatedDurationMinutes: "45" }));
+    await act(() => saveCard("t1", { dueDate: "2026-09-30", estimatedDurationMinutes: "45", area: "Nope" }));
+    await act(() => saveCard("t1", { dueDate: "2026-09-30", estimatedDurationMinutes: "45" }));
     expect(session.current.outcomes).toEqual([{ taskId: "t1", taskTitle: "Chem problem set", ok: true }]);
   });
 
@@ -135,9 +135,38 @@ describe("failed save tracking (fix round 1: how a failure reaches outcomes at a
       .spyOn(sandboxClientModule, "requestSandboxFinish")
       .mockResolvedValue({ ok: true, value: { savedCount: 0, failedTitles: ["Chem problem set"] } });
     act(() => startSandbox(CARD_1));
-    await act(() => saveCard({ dueDate: "2026-09-30", estimatedDurationMinutes: "45", area: "Nope" }));
-    await act(() => skipCard());
+    await act(() => saveCard("t1", { dueDate: "2026-09-30", estimatedDurationMinutes: "45", area: "Nope" }));
+    await act(() => skipCard("t1"));
     expect(finish).toHaveBeenCalledWith([{ taskId: "t1", taskTitle: "Chem problem set", ok: false }]);
+  });
+});
+
+describe("stale card guard (final-review MUST-FIX 2)", () => {
+  it("startSandbox settles any existing pending card as 'skipped' before appending the new one", () => {
+    const { result: store } = renderHook(() => useChatStore());
+    act(() => startSandbox(CARD_1));
+    act(() => startSandbox(CARD_2));
+    const staleEntry = store.current.entries.find((e) => e.kind === "sandbox-card" && e.view.taskId === "t1");
+    expect(staleEntry).toMatchObject({ status: "skipped" });
+    const newEntry = store.current.entries.find((e) => e.kind === "sandbox-card" && e.view.taskId === "t2");
+    expect(newEntry).toMatchObject({ status: "pending" });
+  });
+
+  it("saveCard for a taskId that is no longer the active card is a no-op — it never calls the server and reports the card as inactive", async () => {
+    const save = vi.spyOn(sandboxClientModule, "requestSandboxSave");
+    act(() => startSandbox(CARD_1));
+    act(() => startSandbox(CARD_2)); // t1's card is now stale
+    const outcome = await saveCard("t1", { dueDate: "2026-09-30", estimatedDurationMinutes: "45" });
+    expect(outcome).toEqual({ ok: false, message: "This card is no longer active." });
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("skipCard for a taskId that is no longer the active card is a no-op", async () => {
+    const skip = vi.spyOn(sandboxClientModule, "requestSandboxSkip");
+    act(() => startSandbox(CARD_1));
+    act(() => startSandbox(CARD_2));
+    await act(() => skipCard("t1"));
+    expect(skip).not.toHaveBeenCalled();
   });
 });
 

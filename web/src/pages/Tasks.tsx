@@ -316,9 +316,13 @@ export default function TasksPage(): React.JSX.Element {
   // Real-use fixes plan, Task 2: the "Missing data" filter chip — the SAME
   // per-row `missing` rule the "Add …" badges already show, filtered
   // client-side (the rows are already on screen; no extra server round
-  // trip). Armed from this page's own control below (Story 9.4, chunk B:
-  // the Chat header chip no longer arms this filter — it runs `/sandbox`
-  // instead, via `lib/missingData.ts`'s `openMissingData`).
+  // trip). Final-review: this page currently has no production control that
+  // arms `missingDataFilterActive` — Story 9.4 chunk B re-pointed the Chat
+  // header chip at running `/sandbox` instead (`lib/missingData.ts`'s
+  // `openMissingData`), leaving this filter reachable only via its own
+  // clear button once armed some other way. A toolbar toggle to arm it is
+  // queued for polish-5 (final review, OK-TO-DEFER); the filter itself is
+  // kept since it's the only list view of Tasks missing a Refining field.
   const groups = missingDataFilterActive
     ? allGroups.map((g) => ({ ...g, rows: g.rows.filter(({ item }) => item.missing.length > 0) })).filter((g) => g.rows.length > 0)
     : allGroups;

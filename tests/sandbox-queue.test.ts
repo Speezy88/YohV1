@@ -91,6 +91,21 @@ test("sandboxQueue: merges a stored TaskFieldOverride before gating — a previo
   assert.deepEqual(result.value.items, []);
 });
 
+test("sandboxQueue: a completed Task missing Due Date is never queued (final-review MUST-FIX 1)", async () => {
+  const store = tempStore();
+  const readTasks = async () => [
+    task({ id: "done", title: "Already finished", status: "completed", estimatedDurationMinutes: 30 }),
+    task({ id: "open", title: "Still open", estimatedDurationMinutes: 30 }),
+  ];
+  const result = await sandboxQueue({ store, readTasks, now: NOW, timeZone: "UTC" }, {});
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.deepEqual(
+    result.value.items.map((i) => i.taskId),
+    ["open"],
+  );
+});
+
 test("sandboxQueue: a readTasks failure is reported as a clear Result failure, never throws", async () => {
   const store = tempStore();
   const readTasks = async (): Promise<readonly Task[]> => {

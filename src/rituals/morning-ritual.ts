@@ -206,6 +206,7 @@ import type { SqliteConnection } from "../adapters/sqlite.ts";
 import type { DataCompletenessGateResult } from "../core/data-completeness-gate.ts";
 import { orderByDerivedPriority } from "../core/derived-priority.ts";
 import { generatePlanReasoning } from "../core/plan-reasoning.ts";
+import { isOpenTask } from "../core/planning-field-value.ts";
 import { buildTimeBudgetChangeProposal, nextTimeBudgetDeferralStreak, resolveTodayTimeBudget } from "../core/time-budget.ts";
 import { fitWorkBreakBlocks } from "../core/work-break-fit.ts";
 import { runDataCompletenessGate } from "./data-completeness.ts";
@@ -717,9 +718,23 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
   // sync elsewhere in this file: non-fatal, logged as a warn, never turned
   // into a failure `Result` — a notification write must never block
   // reporting today's actual Plan outcome.
-  if (incompleteTaskIds.length > 0 && deps.connection) {
+  // Final-review MUST-FIX 1: this notification's own count excludes
+  // completed Tasks — the SAME `isOpenTask` rule `app/sandbox-queue.ts`
+  // applies before gating, so a Task Spencer already finished never raises
+  // "N Tasks need data to be placed" just because it lacks a Due
+  // Date/Duration it will never need. `incompleteTaskIds` itself (used in
+  // the Result value below, unrelated to this notification) is left as-is
+  // per the review's ruling — the planning path's own completed-Task
+  // handling is out of this epic's scope.
+  const rawTaskById = new Map(rawTasks.map((t) => [t.id, t] as const));
+  const openIncompleteCount = incompleteTaskIds.filter((taskId) => {
+    const rawTask = rawTaskById.get(taskId);
+    return rawTask === undefined || isOpenTask(rawTask);
+  }).length;
+
+  if (openIncompleteCount > 0 && deps.connection) {
     try {
-      const count = incompleteTaskIds.length;
+      const count = openIncompleteCount;
       const body = `${count} Tasks need data to be placed`;
       deps.connection.writeTx((db) => {
         createNotificationInTx(db, { kind: "needs-data", title: body, body, deepLink: "chat:/sandbox", createdAt: nowIso });

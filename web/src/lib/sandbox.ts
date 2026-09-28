@@ -70,6 +70,14 @@ export function useSandboxSession(): SandboxSessionState {
 }
 
 export function startSandbox(card: SandboxCardView): void {
+  // Final-review MUST-FIX 2: a still-pending card from a PRIOR session (e.g.
+  // Spencer skipped card B, leaving C pending, then re-triggered /sandbox
+  // via the chip/typed command/notification before touching C) must lose
+  // its Save/Skip controls the instant a new session starts — otherwise C
+  // stays rendered live while a new session begins on B, and saving C would
+  // write C's values onto Task B (see `saveCard`/`skipCard`'s own taskId
+  // guard below for the second half of this fix).
+  if (entryId) updateStreamEntry(entryId, { status: "skipped" });
   entryId = appendStreamEntry({ kind: "sandbox-card", view: card, status: "pending" });
   lastFailedCard = undefined;
   set({ card, exclude: [], outcomes: [] });
@@ -82,9 +90,20 @@ function settleAndAdvance(next: SandboxCardView | undefined, patch: { status: "s
 
 export type SaveCardOutcome = { readonly ok: true } | { readonly ok: false; readonly message: string };
 
-export async function saveCard(input: { dueDate: string; estimatedDurationMinutes: string; area?: string; energy?: string }): Promise<SaveCardOutcome> {
+/**
+ * `taskId` (final-review MUST-FIX 2) is the card's OWN taskId, passed by the
+ * caller as `view.taskId` — never inferred from `state.card`, which may by
+ * now belong to a DIFFERENT, newer session (see `startSandbox`'s own note).
+ * A `taskId` that no longer matches `state.card?.taskId` is a stale card:
+ * no request is sent, and nothing is written.
+ */
+export async function saveCard(
+  taskId: string,
+  input: { dueDate: string; estimatedDurationMinutes: string; area?: string; energy?: string },
+): Promise<SaveCardOutcome> {
   const card = state.card;
   if (!card) return { ok: true };
+  if (card.taskId !== taskId) return { ok: false, message: "This card is no longer active." };
   const result = await requestSandboxSave(card.taskId, { ...input, exclude: state.exclude });
   if (!result.ok) {
     // FR-38: an unresolvable value re-prompts on THIS card — it stays
@@ -107,9 +126,11 @@ export async function saveCard(input: { dueDate: string; estimatedDurationMinute
   return { ok: true };
 }
 
-export async function skipCard(): Promise<void> {
+/** `taskId` (final-review MUST-FIX 2): see `saveCard`'s own note above — a mismatched `taskId` is a stale card and is a silent no-op. */
+export async function skipCard(taskId: string): Promise<void> {
   const card = state.card;
   if (!card) return;
+  if (card.taskId !== taskId) return;
   const result = await requestSandboxSkip(card.taskId, { exclude: state.exclude });
   const next = result.ok ? result.value.next : state.card; // a network hiccup on skip leaves the card in place — nothing was written either way
   if (result.ok) {

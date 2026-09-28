@@ -141,6 +141,13 @@ describe("ChatPanel", () => {
       expect(screen.getByTestId("missing-data-chip")).toHaveTextContent("1 need data");
     });
 
+    // Final-review Chunk 4B gap: the AC/brief call for tabular numerals, same as SandboxCard's own "N remaining".
+    it("renders its count in tabular numerals", () => {
+      vi.spyOn(missingDataModule, "useMissingDataCount").mockReturnValue({ status: "loaded", count: 1 });
+      renderOpenPanel();
+      expect(screen.getByTestId("missing-data-chip").className).toContain("tabular-nums");
+    });
+
     it("shows 'N need data' for a count greater than 1", () => {
       vi.spyOn(missingDataModule, "useMissingDataCount").mockReturnValue({ status: "loaded", count: 3 });
       renderOpenPanel();
