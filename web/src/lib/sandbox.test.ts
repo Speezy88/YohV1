@@ -106,6 +106,41 @@ describe("skipCard", () => {
   });
 });
 
+describe("failed save tracking (fix round 1: how a failure reaches outcomes at all)", () => {
+  it("a failed save, then a skip on the SAME card, records an ok:false outcome for it", async () => {
+    vi.spyOn(sandboxClientModule, "requestSandboxSave").mockResolvedValue({ ok: false, message: "no existing Area option matches" });
+    vi.spyOn(sandboxClientModule, "requestSandboxSkip").mockResolvedValue({ ok: true, value: { next: CARD_2 } });
+    const { result: session } = renderHook(() => useSandboxSession());
+    act(() => startSandbox(CARD_1));
+    await act(() => saveCard({ dueDate: "2026-09-30", estimatedDurationMinutes: "45", area: "Nope" }));
+    await act(() => skipCard());
+    expect(session.current.outcomes).toEqual([{ taskId: "t1", taskTitle: "Chem problem set", ok: false }]);
+  });
+
+  it("a failed save, then a successful save on the SAME card (a retry), records only the ok:true outcome", async () => {
+    vi.spyOn(sandboxClientModule, "requestSandboxSave")
+      .mockResolvedValueOnce({ ok: false, message: "no existing Area option matches" })
+      .mockResolvedValueOnce({ ok: true, value: { receipt: "Due Date, Estimated Duration saved.", next: CARD_2 } });
+    const { result: session } = renderHook(() => useSandboxSession());
+    act(() => startSandbox(CARD_1));
+    await act(() => saveCard({ dueDate: "2026-09-30", estimatedDurationMinutes: "45", area: "Nope" }));
+    await act(() => saveCard({ dueDate: "2026-09-30", estimatedDurationMinutes: "45" }));
+    expect(session.current.outcomes).toEqual([{ taskId: "t1", taskTitle: "Chem problem set", ok: true }]);
+  });
+
+  it("a failure-only session (skip after a failed save empties the queue) still calls requestSandboxFinish with the ok:false outcome", async () => {
+    vi.spyOn(sandboxClientModule, "requestSandboxSave").mockResolvedValue({ ok: false, message: "no existing Area option matches" });
+    vi.spyOn(sandboxClientModule, "requestSandboxSkip").mockResolvedValue({ ok: true, value: { next: undefined } });
+    const finish = vi
+      .spyOn(sandboxClientModule, "requestSandboxFinish")
+      .mockResolvedValue({ ok: true, value: { savedCount: 0, failedTitles: ["Chem problem set"] } });
+    act(() => startSandbox(CARD_1));
+    await act(() => saveCard({ dueDate: "2026-09-30", estimatedDurationMinutes: "45", area: "Nope" }));
+    await act(() => skipCard());
+    expect(finish).toHaveBeenCalledWith([{ taskId: "t1", taskTitle: "Chem problem set", ok: false }]);
+  });
+});
+
 describe("finishSandbox", () => {
   it("Review Focus #2: with zero outcomes (all-skip), calls NO finish request, appends NO finale entry, and resets the session", async () => {
     const request = vi.spyOn(sandboxClientModule, "requestSandboxFinish");
@@ -138,11 +173,21 @@ describe("finishSandbox", () => {
     expect(chime).toHaveBeenCalledTimes(1);
   });
 
-  it("does NOT play the chime when savedCount is 0 (all failed)", async () => {
+  it("does NOT play the chime when savedCount is 0 (all failed, but the server DID respond)", async () => {
     const chime = vi.spyOn(sandboxSoundModule, "playSandboxCompleteChime").mockImplementation(() => {});
     vi.spyOn(sandboxClientModule, "requestSandboxFinish").mockResolvedValue({ ok: true, value: { savedCount: 0, failedTitles: ["Chem problem set"] } });
     __setSandboxOutcomesForTests([{ taskId: "t1", taskTitle: "Chem problem set", ok: false }]);
     await act(() => finishSandbox());
+    expect(chime).not.toHaveBeenCalled();
+  });
+
+  it("fix round 1 / AD-17: when requestSandboxFinish itself fails, settles the entry with summaryFailed:true (no client-computed savedCount/failedTitles) and never plays the chime", async () => {
+    const chime = vi.spyOn(sandboxSoundModule, "playSandboxCompleteChime").mockImplementation(() => {});
+    vi.spyOn(sandboxClientModule, "requestSandboxFinish").mockResolvedValue({ ok: false, message: "network down" });
+    const update = vi.spyOn(chatStoreModule, "updateStreamEntry");
+    __setSandboxOutcomesForTests([{ taskId: "t1", taskTitle: "Call dentist", ok: true }]);
+    await act(() => finishSandbox());
+    expect(update).toHaveBeenCalledWith(expect.any(String), { status: "done", summaryFailed: true });
     expect(chime).not.toHaveBeenCalled();
   });
 

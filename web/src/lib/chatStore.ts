@@ -51,13 +51,18 @@ export type StreamEntry =
       readonly receipt?: string;
     }
   // Story 9.3: the Finale — a loading bar (pending) while `finishSandbox()` waits
-  // for the batch to settle, then the resolved outcome (done).
+  // for the batch to settle, then the resolved outcome (done). AD-17: on a
+  // `POST /api/sandbox/finish` request failure itself (not a server-reported
+  // per-Task failure), the client never computes its own savedCount/failedTitles
+  // — `summaryFailed` says only that the summary couldn't be confirmed; C2
+  // renders that as its own distinct copy, with no invented counts.
   | {
       readonly kind: "sandbox-finale";
       readonly id: string;
       readonly status: "pending" | "done";
       readonly savedCount?: number;
       readonly failedTitles?: readonly string[];
+      readonly summaryFailed?: true;
     };
 
 /** `Omit` over a union collapses to the union's shared keys only — this distributes it per member, so `appendStreamEntry`/`updateStreamEntry` keep each branch's own fields (`message`, `view`, `status`, ...). */

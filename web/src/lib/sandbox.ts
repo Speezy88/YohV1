@@ -39,6 +39,18 @@ const EMPTY: SandboxSessionState = { card: undefined, exclude: [], outcomes: [] 
 let state: SandboxSessionState = EMPTY;
 /** Internal-only: which chatStore entry the CURRENT `state.card` corresponds to. Exactly one is ever pending at a time. */
 let entryId: string | undefined;
+/**
+ * Internal-only: the current card's most recent save attempt, if it failed
+ * and hasn't been superseded yet. Fix round 1: `outcomes` otherwise never
+ * contains a failure (a failed save returns early without recording
+ * anything, and a skip on an untouched card records nothing either) — a
+ * `sandbox-failed` Finale would be unreachable from the UI. Recorded as an
+ * `ok:false` outcome only once the card is actually let go via a successful
+ * `skipCard` on the SAME card; a later successful `saveCard` on the same
+ * card clears it instead, so a retry-then-succeed session never leaves a
+ * stray failure behind (one outcome per task).
+ */
+let lastFailedCard: { taskId: string; taskTitle: string } | undefined;
 const listeners = new Set<() => void>();
 
 function set(next: SandboxSessionState): void {
@@ -59,6 +71,7 @@ export function useSandboxSession(): SandboxSessionState {
 
 export function startSandbox(card: SandboxCardView): void {
   entryId = appendStreamEntry({ kind: "sandbox-card", view: card, status: "pending" });
+  lastFailedCard = undefined;
   set({ card, exclude: [], outcomes: [] });
 }
 
@@ -75,11 +88,15 @@ export async function saveCard(input: { dueDate: string; estimatedDurationMinute
   const result = await requestSandboxSave(card.taskId, { ...input, exclude: state.exclude });
   if (!result.ok) {
     // FR-38: an unresolvable value re-prompts on THIS card — it stays
-    // pending, never advances, never counts as an outcome. The rejection's
-    // own message is handed back to the caller (SandboxCard.tsx) so it can
-    // render it inline, next to the field, rather than a silent "try again".
+    // pending, never advances. Fix round 1: remembered (not yet an outcome)
+    // so that if Spencer then skips this same card instead of retrying, the
+    // session doesn't quietly forget the failure — see `lastFailedCard`.
+    lastFailedCard = { taskId: card.taskId, taskTitle: card.taskTitle };
     return { ok: false, message: result.message };
   }
+  // A successful save on this card supersedes any earlier failed attempt on
+  // it — only one outcome per task, and it's the latest one.
+  lastFailedCard = undefined;
   settleAndAdvance(result.value.next, { status: "saved", receipt: result.value.receipt });
   set({
     card: result.value.next,
@@ -97,7 +114,16 @@ export async function skipCard(): Promise<void> {
   const next = result.ok ? result.value.next : state.card; // a network hiccup on skip leaves the card in place — nothing was written either way
   if (result.ok) {
     settleAndAdvance(next, { status: "skipped" });
-    set({ card: next, exclude: [...state.exclude, card.taskId], outcomes: state.outcomes });
+    // Fix round 1: skipping past a card whose LAST save attempt failed is
+    // how a failure actually reaches `outcomes` — it never gets recorded at
+    // the moment of the failed save itself (FR-38 re-prompts in place).
+    const failedThisCard = lastFailedCard?.taskId === card.taskId;
+    lastFailedCard = undefined;
+    set({
+      card: next,
+      exclude: [...state.exclude, card.taskId],
+      outcomes: failedThisCard ? [...state.outcomes, { taskId: card.taskId, taskTitle: card.taskTitle, ok: false }] : state.outcomes,
+    });
     if (!next) await finishSandbox();
   }
 }
@@ -131,6 +157,7 @@ function sleep(ms: number): Promise<void> {
 export async function finishSandbox(): Promise<void> {
   const outcomes = state.outcomes;
   entryId = undefined;
+  lastFailedCard = undefined;
   if (outcomes.length === 0) {
     appendStreamEntry({
       kind: "message",
@@ -150,11 +177,11 @@ export async function finishSandbox(): Promise<void> {
     updateStreamEntry(finaleId, { status: "done", savedCount: result.value.savedCount, failedTitles: result.value.failedTitles });
     if (result.value.savedCount >= 1) playSandboxCompleteChime();
   } else {
-    updateStreamEntry(finaleId, {
-      status: "done",
-      savedCount: 0,
-      failedTitles: outcomes.filter((o) => !o.ok).map((o) => o.taskTitle),
-    });
+    // AD-17: the request itself failed (never reached the server, or the
+    // server rejected it outright) — the client must NOT invent its own
+    // savedCount/failedTitles from local state. `summaryFailed` says only
+    // that the summary couldn't be confirmed; no chime either.
+    updateStreamEntry(finaleId, { status: "done", summaryFailed: true });
   }
   set(EMPTY);
 }
@@ -162,6 +189,7 @@ export async function finishSandbox(): Promise<void> {
 /** Test-only: clears module-level singleton state between tests. Never called from production code. */
 export function __resetSandboxForTests(): void {
   entryId = undefined;
+  lastFailedCard = undefined;
   state = EMPTY;
 }
 
