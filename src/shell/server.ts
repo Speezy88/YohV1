@@ -119,7 +119,7 @@ import { createTask, previewQuickAdd, type CreateTaskDeps } from "../app/create-
 import { renameTask, updateTask, type UpdateTaskDeps } from "../app/update-task.ts";
 import { listResearch, type ResearchListDeps } from "../app/research-list.ts";
 import { sandboxQueue, type SandboxQueueDeps } from "../app/sandbox-queue.ts";
-import { saveSandboxCardAndAdvance, type SandboxSubmitDeps } from "../app/sandbox-submit.ts";
+import { finishSandboxSession, saveSandboxCardAndAdvance, type SandboxSubmitDeps } from "../app/sandbox-submit.ts";
 import { firstCardView } from "../core/sandbox-card-view.ts";
 import type {
   AnswerOpenItemRequest,
@@ -134,6 +134,7 @@ import type {
   HealthResponse,
   QuickAddPreviewRequest,
   RenameTaskRequest,
+  SandboxFinishRequest,
   SandboxSaveRequest,
   SandboxSkipRequest,
   SandboxStartRequest,
@@ -1025,6 +1026,25 @@ export function createApp(deps: ServerDeps) {
           const next = wire(await sandboxQueue(sandboxDeps, { exclude: [...body.exclude, taskId] }));
           if (!next.ok) return c.json(next, httpStatus(next));
           return c.json({ ok: true, value: { next: firstCardView(next.value.items) } }, 200);
+        },
+      )
+      // Story 9.3 (Task 3, E9): the Finale's one route — settles the
+      // session's already-completed writes into a proof-of-action
+      // notification (app/sandbox-submit.ts's finishSandboxSession).
+      .post(
+        "/api/sandbox/finish",
+        validator("json", (value, c) => {
+          const outcomes = (value as { outcomes?: unknown } | null)?.outcomes;
+          if (!Array.isArray(outcomes)) {
+            const invalid: ApiFailure = { ok: false, error: { kind: "validation", message: "sandbox/finish: outcomes must be an array" } };
+            return c.json(invalid, httpStatus(invalid));
+          }
+          return { outcomes } satisfies SandboxFinishRequest;
+        }),
+        async (c) => {
+          if (!sandboxDeps) return c.json(SANDBOX_NOT_CONFIGURED, httpStatus(SANDBOX_NOT_CONFIGURED));
+          const result = wire(await finishSandboxSession(sandboxDeps, c.req.valid("json")));
+          return c.json(result, httpStatus(result));
         },
       )
       // Task 6C (FR-43, UX-DR43): the Research Hub page's one route — pure

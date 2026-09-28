@@ -21,6 +21,9 @@ import type {
   OpenItemsResponse,
   PendingCheckOffResponse,
   SandboxCardView,
+  SandboxFinishRequest,
+  SandboxFinishResponse,
+  SandboxOutcome,
   SandboxSaveRequest,
   SandboxSaveResponse,
   SandboxSkipRequest,
@@ -216,6 +219,19 @@ test("SandboxSaveRequest/Response and SandboxSkipRequest/Response are exactly E7
   // @ts-expect-error — exclude is required on a save request, never optional.
   const missingExclude: SandboxSaveRequest = { dueDate: "2026-09-30", estimatedDurationMinutes: "45" };
   assert.ok(saveReq && saveRes && skipReq && skipRes && missingExclude);
+});
+
+test("SandboxOutcome/SandboxFinishRequest/SandboxFinishResponse are exactly {taskId, taskTitle, ok} / {outcomes} / {savedCount, failedTitles}", () => {
+  const outcome: SandboxOutcome = { taskId: "t1", taskTitle: "Call dentist", ok: true };
+  const request: SandboxFinishRequest = { outcomes: [outcome] };
+  const response: SandboxFinishResponse = { savedCount: 1, failedTitles: [] };
+  // @ts-expect-error — no extra field on the outcome.
+  const extra: SandboxOutcome = { taskId: "t1", taskTitle: "x", ok: true, extra: 1 };
+  // @ts-expect-error — the response never carries a bare success flag; savedCount/failedTitles are the whole shape.
+  const wrongResponse: SandboxFinishResponse = { ok: true };
+  assert.deepEqual(request.outcomes[0], outcome);
+  assert.deepEqual(response, { savedCount: 1, failedTitles: [] });
+  assert.ok(extra && wrongResponse);
 });
 
 test("ChatTurnResponse.sandboxCard is additive and optional — a plain reply never requires it", () => {

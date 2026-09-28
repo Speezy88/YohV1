@@ -568,6 +568,20 @@ export interface SandboxSkipResponse {
   readonly next: SandboxCardView | undefined;
 }
 
+// Task 3 (Story 9.3): the Finale's one route shape.
+export interface SandboxOutcome {
+  readonly taskId: string;
+  readonly taskTitle: string;
+  readonly ok: boolean;
+}
+export interface SandboxFinishRequest {
+  readonly outcomes: readonly SandboxOutcome[];
+}
+export interface SandboxFinishResponse {
+  readonly savedCount: number;
+  readonly failedTitles: readonly string[];
+}
+
 /**
  * The server's Hono route type, re-exported TYPE-ONLY so `web/`'s typed
  * Hono RPC client (Story 7.5) is compiler-checked end to end while `web/`

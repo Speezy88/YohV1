@@ -9,7 +9,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
-import { initNotificationStoreSchema, getMaxOutboxSeq, tailOutboxSince } from "../src/adapters/notification-store.ts";
+import { initNotificationStoreSchema, getMaxOutboxSeq, listUnreadNotifications, tailOutboxSince } from "../src/adapters/notification-store.ts";
 import { bindNotionTaskWrites, readNotionTasks } from "../src/adapters/notion-adapter.ts";
 import { createMemoryStore } from "../src/adapters/memory-store.ts";
 import { createApp, type ServerDeps } from "../src/shell/server.ts";
@@ -120,4 +120,31 @@ test("every sandbox route reports the shared 'not configured' envelope when deps
   assert.equal(save.status, 503);
   const skip = await post(app, "/api/sandbox/t1/skip", { exclude: [] });
   assert.equal(skip.status, 503);
+  const finish = await post(app, "/api/sandbox/finish", { outcomes: [] });
+  assert.equal(finish.status, 503);
+  assert.equal(finish.body.error?.kind, "unreachable");
+});
+
+// Story 9.3 (Task 3, E9): POST /api/sandbox/finish — the Finale's one route.
+test("POST /api/sandbox/finish: every outcome ok:true reports savedCount and raises a sandbox-complete notification", async () => {
+  const { app, connection } = setup();
+  const { status, body } = await post(app, "/api/sandbox/finish", { outcomes: [{ taskId: "t1", taskTitle: "Call dentist", ok: true }] });
+  assert.equal(status, 200);
+  assert.deepEqual(body.value, { savedCount: 1, failedTitles: [] });
+  assert.equal(listUnreadNotifications(connection)[0]?.kind, "sandbox-complete");
+});
+
+test("POST /api/sandbox/finish: a failed outcome reports failedTitles and raises sandbox-failed", async () => {
+  const { app, connection } = setup();
+  const { status, body } = await post(app, "/api/sandbox/finish", { outcomes: [{ taskId: "t1", taskTitle: "Chem problem set", ok: false }] });
+  assert.equal(status, 200);
+  assert.deepEqual(body.value, { savedCount: 0, failedTitles: ["Chem problem set"] });
+  assert.equal(listUnreadNotifications(connection)[0]?.kind, "sandbox-failed");
+});
+
+test("POST /api/sandbox/finish: a non-array outcomes body is a 400 validation envelope", async () => {
+  const { app } = setup();
+  const { status, body } = await post(app, "/api/sandbox/finish", { outcomes: "nope" });
+  assert.equal(status, 400);
+  assert.equal(body.error?.kind, "validation");
 });

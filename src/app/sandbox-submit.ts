@@ -22,7 +22,7 @@
  * one server round trip, raising the session's proof-of-action
  * notification from the client's own accumulated outcome list.
  */
-import { appendOutboxInTx } from "../adapters/notification-store.ts";
+import { appendOutboxInTx, createNotificationInTx } from "../adapters/notification-store.ts";
 import { errorCopy, errorCopyForThrown } from "../core/error-copy.ts";
 import { PLANNING_FIELD_LABELS, parsePlanningFieldValue } from "../core/planning-field-value.ts";
 import { firstCardView } from "../core/sandbox-card-view.ts";
@@ -161,4 +161,59 @@ export async function saveSandboxCardAndAdvance(deps: SaveSandboxCardDeps, input
   if (!next.ok) return next;
 
   return { ok: true, value: { receipt: submitted.value.receipt, next: firstCardView(next.value.items) } };
+}
+
+/**
+ * Story 9.3, E6: the Finale's one server round trip. Every card write in
+ * `outcomes` already completed (success or failure) synchronously before
+ * the client advanced past it (`submitSandboxCard`, above) — nothing is
+ * actually still in flight here. Raises AT MOST ONE of `sandbox-complete`
+ * (every outcome ok:true) or `sandbox-failed` (any outcome ok:false, each
+ * failed Task named) — never both, and never when `outcomes` is empty
+ * (ruling: the client never calls this for an all-skip session; this is
+ * the defensive floor if it ever does).
+ */
+export interface SandboxSessionOutcome {
+  readonly taskId: string;
+  readonly taskTitle: string;
+  /** true = this card's write succeeded this session; a skipped card never appears here. */
+  readonly ok: boolean;
+}
+export interface SandboxFinishInput {
+  readonly outcomes: readonly SandboxSessionOutcome[];
+}
+export interface SandboxFinishOutput {
+  readonly savedCount: number;
+  readonly failedTitles: readonly string[];
+}
+
+function sandboxCompleteBody(savedCount: number): string {
+  return `Saved ${savedCount} Tasks`;
+}
+
+function sandboxFailedBody(failedTitles: readonly string[]): string {
+  return failedTitles.length === 1 ? `Couldn't save ${failedTitles[0]}.` : `Couldn't save: ${failedTitles.join(", ")}.`;
+}
+
+export async function finishSandboxSession(deps: SandboxSubmitDeps, input: SandboxFinishInput): Promise<Result<SandboxFinishOutput, YohError>> {
+  const outcomes = input.outcomes;
+  const savedCount = outcomes.filter((o) => o.ok).length;
+  const failedTitles = outcomes.filter((o) => !o.ok).map((o) => o.taskTitle);
+
+  if (outcomes.length === 0) {
+    return { ok: true, value: { savedCount: 0, failedTitles: [] } };
+  }
+
+  const createdAt = deps.now().toISOString();
+  deps.connection.writeTx((db) => {
+    if (failedTitles.length === 0) {
+      const body = sandboxCompleteBody(savedCount);
+      createNotificationInTx(db, { kind: "sandbox-complete", title: body, body, deepLink: "chat", createdAt });
+    } else {
+      const body = sandboxFailedBody(failedTitles);
+      createNotificationInTx(db, { kind: "sandbox-failed", title: body, body, deepLink: "chat:/sandbox", createdAt });
+    }
+  });
+
+  return { ok: true, value: { savedCount, failedTitles } };
 }

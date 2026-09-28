@@ -2,8 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { createMemoryStore } from "../src/adapters/memory-store.ts";
-import { initNotificationStoreSchema, tailOutboxSince, getMaxOutboxSeq } from "../src/adapters/notification-store.ts";
-import { saveSandboxCardAndAdvance, submitSandboxCard, type SandboxSubmitDeps, type SaveSandboxCardDeps } from "../src/app/sandbox-submit.ts";
+import { initNotificationStoreSchema, listUnreadNotifications, tailOutboxSince, getMaxOutboxSeq } from "../src/adapters/notification-store.ts";
+import { finishSandboxSession, saveSandboxCardAndAdvance, submitSandboxCard, type SandboxSubmitDeps, type SaveSandboxCardDeps } from "../src/app/sandbox-submit.ts";
 import type { Task } from "../src/types/domain.ts";
 
 const NOW = () => new Date("2026-09-27T15:00:00.000Z");
@@ -230,5 +230,82 @@ test("saveSandboxCardAndAdvance: the next card excludes both the saved taskId AN
   assert.equal(result.ok, true);
   if (!result.ok) return;
   assert.equal(result.value.next, undefined, "t3 was already in the caller's exclude list");
+  deps.connection.close();
+});
+
+// Story 9.3 (Task 1, E6): finishSandboxSession — the Finale's one server
+// round trip, raising the session's proof-of-action notification.
+test("finishSandboxSession: every outcome ok:true raises exactly one sandbox-complete notification, 'Saved {n} Tasks', deep-linking to Chat", async () => {
+  const deps = baseDeps();
+  const result = await finishSandboxSession(deps, {
+    outcomes: [
+      { taskId: "t1", taskTitle: "Call dentist", ok: true },
+      { taskId: "t2", taskTitle: "File taxes", ok: true },
+    ],
+  });
+  assert.deepEqual(result, { ok: true, value: { savedCount: 2, failedTitles: [] } });
+  const notifications = listUnreadNotifications(deps.connection);
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0]?.kind, "sandbox-complete");
+  assert.equal(notifications[0]?.body, "Saved 2 Tasks");
+  assert.equal(notifications[0]?.deepLink, "chat");
+  deps.connection.close();
+});
+
+test("finishSandboxSession: any ok:false raises exactly one sandbox-failed notification naming each failed Task, deep-linking to /sandbox, never claiming completion", async () => {
+  const deps = baseDeps();
+  const result = await finishSandboxSession(deps, {
+    outcomes: [{ taskId: "t1", taskTitle: "Chem problem set", ok: false }],
+  });
+  assert.deepEqual(result, { ok: true, value: { savedCount: 0, failedTitles: ["Chem problem set"] } });
+  const notifications = listUnreadNotifications(deps.connection);
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0]?.kind, "sandbox-failed");
+  assert.equal(notifications[0]?.body, "Couldn't save Chem problem set.");
+  assert.equal(notifications[0]?.deepLink, "chat:/sandbox");
+  assert.ok(!/saved/i.test(notifications[0]?.body ?? ""), "must never claim completion");
+  deps.connection.close();
+});
+
+// Review Focus #1: a MIXED session (some saved, some failed) must report failed, not complete,
+// and the failed Tasks must "stay in the count" (i.e. named, not silently dropped).
+test("finishSandboxSession: a mixed session (2 saved, 1 failed) raises sandbox-failed, never sandbox-complete, and names only the failed Task", async () => {
+  const deps = baseDeps();
+  const result = await finishSandboxSession(deps, {
+    outcomes: [
+      { taskId: "t1", taskTitle: "Call dentist", ok: true },
+      { taskId: "t2", taskTitle: "History essay", ok: false },
+      { taskId: "t3", taskTitle: "File taxes", ok: true },
+    ],
+  });
+  assert.deepEqual(result, { ok: true, value: { savedCount: 2, failedTitles: ["History essay"] } });
+  const notifications = listUnreadNotifications(deps.connection);
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0]?.kind, "sandbox-failed");
+  assert.equal(notifications[0]?.body, "Couldn't save History essay.");
+  deps.connection.close();
+});
+
+test("finishSandboxSession: multiple failures are all named in one notification body", async () => {
+  const deps = baseDeps();
+  const result = await finishSandboxSession(deps, {
+    outcomes: [
+      { taskId: "t1", taskTitle: "Chem problem set", ok: false },
+      { taskId: "t2", taskTitle: "History essay", ok: false },
+    ],
+  });
+  assert.deepEqual(result, { ok: true, value: { savedCount: 0, failedTitles: ["Chem problem set", "History essay"] } });
+  assert.equal(listUnreadNotifications(deps.connection)[0]?.body, "Couldn't save: Chem problem set, History essay.");
+  deps.connection.close();
+});
+
+// Review Focus #2: defense in depth — the client never calls this with an empty outcomes
+// array (ruling (a): an all-skip session never reaches the route at all), but the function
+// itself must not raise "Saved 0 Tasks" if it ever is.
+test("finishSandboxSession: an empty outcomes array raises NO notification and reports zero", async () => {
+  const deps = baseDeps();
+  const result = await finishSandboxSession(deps, { outcomes: [] });
+  assert.deepEqual(result, { ok: true, value: { savedCount: 0, failedTitles: [] } });
+  assert.equal(listUnreadNotifications(deps.connection).length, 0);
   deps.connection.close();
 });
