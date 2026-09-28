@@ -25,10 +25,13 @@
 import { appendOutboxInTx } from "../adapters/notification-store.ts";
 import { errorCopy, errorCopyForThrown } from "../core/error-copy.ts";
 import { PLANNING_FIELD_LABELS, parsePlanningFieldValue } from "../core/planning-field-value.ts";
+import { firstCardView } from "../core/sandbox-card-view.ts";
 import { TASKS_TOPIC } from "./create-task.ts";
+import { sandboxQueue, type SandboxQueueDeps } from "./sandbox-queue.ts";
 import type { LogEntry } from "../adapters/logger.ts";
 import type { SqliteConnection } from "../adapters/sqlite.ts";
 import type { NotionTaskWriteBindings } from "../adapters/notion-adapter.ts";
+import type { SandboxSaveResponse } from "../types/api.ts";
 import type { PlanningFieldNames, Result, Task, YohError } from "../types/domain.ts";
 
 export interface SandboxSubmitDeps {
@@ -130,4 +133,32 @@ export async function submitSandboxCard(deps: SandboxSubmitDeps, input: SandboxC
   hint(deps, input.taskId);
   const receipt = `${changed.map((f) => PLANNING_FIELD_LABELS[f]).join(", ")} saved.`;
   return { ok: true, value: { taskId: input.taskId, taskTitle: task.title, receipt } };
+}
+
+/**
+ * Chunk 9.2-B fix round 1: `POST /api/sandbox/:taskId/save`'s ONE app
+ * function (AGENTS.md: a shell may call only one) — `submitSandboxCard`'s
+ * write, then (only on success) `sandboxQueue` re-derived with the just-
+ * saved `taskId` folded into `exclude`, built into the exact `{ receipt,
+ * next }` wire shape the route used to assemble itself from two separate
+ * calls. Reuses `SandboxSubmitDeps`/`SandboxQueueDeps` verbatim (no
+ * duplicated deps shape) — the route's own merged `sandboxDeps` object
+ * already satisfies both.
+ */
+export interface SaveSandboxCardDeps extends SandboxSubmitDeps, SandboxQueueDeps {}
+
+export interface SaveSandboxCardInput extends SandboxCardInput {
+  /** This session's already-handled taskIds, NOT including this card (mirrors `SandboxSaveRequest.exclude`). */
+  readonly exclude: readonly string[];
+}
+
+export async function saveSandboxCardAndAdvance(deps: SaveSandboxCardDeps, input: SaveSandboxCardInput): Promise<Result<SandboxSaveResponse, YohError>> {
+  const { exclude, ...cardInput } = input;
+  const submitted = await submitSandboxCard(deps, cardInput);
+  if (!submitted.ok) return submitted;
+
+  const next = await sandboxQueue(deps, { exclude: [...exclude, input.taskId] });
+  if (!next.ok) return next;
+
+  return { ok: true, value: { receipt: submitted.value.receipt, next: firstCardView(next.value.items) } };
 }

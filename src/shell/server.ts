@@ -119,7 +119,7 @@ import { createTask, previewQuickAdd, type CreateTaskDeps } from "../app/create-
 import { renameTask, updateTask, type UpdateTaskDeps } from "../app/update-task.ts";
 import { listResearch, type ResearchListDeps } from "../app/research-list.ts";
 import { sandboxQueue, type SandboxQueueDeps } from "../app/sandbox-queue.ts";
-import { submitSandboxCard, type SandboxSubmitDeps } from "../app/sandbox-submit.ts";
+import { saveSandboxCardAndAdvance, type SandboxSubmitDeps } from "../app/sandbox-submit.ts";
 import { firstCardView } from "../core/sandbox-card-view.ts";
 import type {
   AnswerOpenItemRequest,
@@ -995,19 +995,17 @@ export function createApp(deps: ServerDeps) {
           if (!sandboxDeps) return c.json(SANDBOX_NOT_CONFIGURED, httpStatus(SANDBOX_NOT_CONFIGURED));
           const taskId = c.req.param("taskId");
           const body = c.req.valid("json");
-          const submitted = wire(
-            await submitSandboxCard(sandboxDeps, {
+          const result = wire(
+            await saveSandboxCardAndAdvance(sandboxDeps, {
               taskId,
               dueDate: body.dueDate,
               estimatedDurationMinutes: body.estimatedDurationMinutes,
               ...(body.area !== undefined ? { area: body.area } : {}),
               ...(body.energy !== undefined ? { energy: body.energy } : {}),
+              exclude: body.exclude,
             }),
           );
-          if (!submitted.ok) return c.json(submitted, httpStatus(submitted));
-          const next = wire(await sandboxQueue(sandboxDeps, { exclude: [...body.exclude, taskId] }));
-          if (!next.ok) return c.json(next, httpStatus(next));
-          return c.json({ ok: true, value: { receipt: submitted.value.receipt, next: firstCardView(next.value.items) } }, 200);
+          return c.json(result, httpStatus(result));
         },
       )
       .post(
