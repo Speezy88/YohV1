@@ -39,6 +39,15 @@
  * now empty). Test 2: a fresh `/sandbox` session afterward re-offers
  * "College essay brainstorm" (skipped, not saved, so still eligible) —
  * Skip there again confirms it was never written.
+ *
+ * Story 9.3, chunk C2: Test 1's own Save on "E2E Sandbox Task" already
+ * empties the (exclude-adjusted) queue, so it's also this file's natural
+ * Finale case — no separate session is needed to reach it. One outcome
+ * (`e2e-sandbox`, ok:true) means the Finale resolves "Saved 1 Tasks" and
+ * raises a `sandbox-complete` notification, asserted at the end of Test 1.
+ * Test 2's session (Skip only, nothing saved) is ruling (a)'s all-skip
+ * case — asserted there: no Finale, no notification, just the plain
+ * "Nothing more to place this round." stream line.
  */
 import { expect, test, type Page } from "@playwright/test";
 
@@ -112,6 +121,21 @@ test("/sandbox: Skip on the first card writes nothing and advances; Save on the 
 
   // The queue is empty now — no third card is appended.
   await expect(chat.getByTestId("sandbox-card")).toHaveCount(2);
+
+  // Story 9.3: one save this session (the skip above recorded no outcome)
+  // means the Finale resolves "Saved 1 Tasks" and raises a
+  // sandbox-complete notification. The loading bar shows first (FR-38: no
+  // click required), then the resolved line.
+  await expect(chat.getByTestId("sandbox-finale-bar")).toBeVisible();
+  await expect(chat.getByText("Saved 1 Tasks")).toBeVisible();
+
+  const notification = page.getByTestId("notification-card").filter({ hasText: "Saved 1 Tasks" });
+  await expect(notification).toBeVisible();
+  await notification.click();
+  // A "chat" (not "chat:/sandbox") deepLink is a no-op navigation — the
+  // panel was already open and nothing is typed into it.
+  await expect(chat.getByRole("textbox", { name: "Message Yoh" })).toBeVisible();
+  await expect(page.getByTestId("notification-card").filter({ hasText: "Saved 1 Tasks" })).toHaveCount(0);
 });
 
 test("a fresh /sandbox session re-offers the earlier-skipped Task, still with nothing written", async ({ page }) => {
@@ -137,4 +161,12 @@ test("a fresh /sandbox session re-offers the earlier-skipped Task, still with no
 
   // Nothing left in the queue — no next card is appended.
   await expect(chat.getByTestId("sandbox-card")).toHaveCount(1);
+
+  // Ruling (a): an all-skip session (zero saves, however many skips) ends
+  // quietly — no Finale bar/result, no notification, just a plain stream
+  // line. Never "Saved 0 Tasks".
+  await expect(chat.getByTestId("sandbox-finale-bar")).toHaveCount(0);
+  await expect(chat.getByTestId("sandbox-finale-result")).toHaveCount(0);
+  await expect(chat.getByText("Nothing more to place this round.")).toBeVisible();
+  await expect(page.getByTestId("notification-card")).toHaveCount(0);
 });
