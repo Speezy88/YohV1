@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { renderHook, act } from "@testing-library/react";
-import { useReducedMotion } from "./useReducedMotion.ts";
+import { useReducedMotion, prefersReducedMotion } from "./useReducedMotion.ts";
 
 function mockMatchMedia(matches: boolean): { listeners: Array<() => void>; mql: MediaQueryList } {
   const listeners: Array<() => void> = [];
@@ -33,5 +33,14 @@ describe("useReducedMotion", () => {
     (mql as { matches: boolean }).matches = true;
     act(() => listeners.forEach((cb) => cb()));
     expect(result.current).toBe(true);
+  });
+});
+
+describe("prefersReducedMotion (plain, non-hook read)", () => {
+  it("returns the OS preference directly, with no component needed", () => {
+    mockMatchMedia(true);
+    expect(prefersReducedMotion()).toBe(true);
+    mockMatchMedia(false);
+    expect(prefersReducedMotion()).toBe(false);
   });
 });

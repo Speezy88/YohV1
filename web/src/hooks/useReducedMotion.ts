@@ -9,8 +9,13 @@ import { useEffect, useState } from "react";
 
 const QUERY = "(prefers-reduced-motion: reduce)";
 
+/** The plain, non-hook read — the one `matchMedia` call site every caller (hook or not) goes through. */
+export function prefersReducedMotion(): boolean {
+  return window.matchMedia(QUERY).matches;
+}
+
 export function useReducedMotion(): boolean {
-  const [reduced, setReduced] = useState(() => window.matchMedia(QUERY).matches);
+  const [reduced, setReduced] = useState(prefersReducedMotion);
 
   useEffect(() => {
     const mql = window.matchMedia(QUERY);

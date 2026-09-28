@@ -42,6 +42,7 @@ import { PAGES } from "../lib/pages.ts";
 import { usePageNavigationContext } from "../lib/navigationContext.tsx";
 import { dismissNotification, useNotifications } from "../lib/notifications.ts";
 import { useReducedMotion } from "../hooks/useReducedMotion.ts";
+import { openChatWithCommand } from "../lib/chatPanel.ts";
 import { Icon } from "./icons/Icon.tsx";
 import type { NotificationRecord } from "../../../src/types/api.ts";
 
@@ -50,12 +51,12 @@ const MAX_VISIBLE = 3;
 const CLAMP_THRESHOLD_CHARS = 140;
 
 /**
- * Maps a notification's `deepLink` to a `PAGES` index. No producer sets a
- * real `deepLink` yet (every notification raised so far is `operational`
- * with `deepLink: null` — Story 7.7 is the first consumer), so this accepts
- * a bare page id ("tasks") or a leading-slash path ("/tasks"),
- * case-insensitive; an unrecognized target just dismisses without
- * navigating, never throws.
+ * Maps a notification's `deepLink` to a `PAGES` index. Accepts a bare page
+ * id ("tasks") or a leading-slash path ("/tasks"), case-insensitive; an
+ * unrecognized target just dismisses without navigating, never throws.
+ * A `deepLink` starting with "chat" is handled separately by `activate`
+ * below and never reaches this resolver — Chat is a panel, not a `PAGES`
+ * entry (Story 9.3, E8).
  */
 function resolveDeepLinkIndex(deepLink: string): number | undefined {
   const id = deepLink.replace(/^\//, "").toLowerCase();
@@ -73,8 +74,12 @@ export function NotificationOverlay(): React.JSX.Element {
   // Set of notification ids, never persisted (a fresh mount re-clamps).
   const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(new Set());
 
+  /** Story 9.3 (E8): a "chat"-prefixed deepLink opens the Chat panel (":/sandbox" also sends "/sandbox") instead of resolving a PAGES index — Chat is a panel. Every other deepLink keeps its existing page-navigation behavior. */
   const activate = (n: NotificationRecord): void => {
-    if (n.deepLink) {
+    if (n.deepLink?.startsWith("chat")) {
+      const command = n.deepLink === "chat:/sandbox" ? "/sandbox" : undefined;
+      openChatWithCommand(command);
+    } else if (n.deepLink) {
       const index = resolveDeepLinkIndex(n.deepLink);
       if (index !== undefined) nav.goTo(index);
     }

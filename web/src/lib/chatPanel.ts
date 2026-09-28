@@ -16,6 +16,7 @@
  * element or resetting it to `<body>`.
  */
 import { useSyncExternalStore } from "react";
+import { send } from "./chatStore.ts";
 
 interface ChatPanelState {
   readonly open: boolean;
@@ -60,6 +61,12 @@ export function closeChatPanel(): void {
 export function toggleChatPanel(): void {
   if (state.open) closeChatPanel();
   else openChatPanel();
+}
+
+/** Story 9.3, E8: the ONE deep-link entry point every "deep-links to Chat" notification goes through — opens the panel, and with a command sends it exactly as if typed (`chatStore.ts`'s `send`), so `"chat:/sandbox"` re-opens the queue. */
+export function openChatWithCommand(command?: string): void {
+  openChatPanel();
+  if (command) void send(command);
 }
 
 /** Test-only: clears module-level singleton state between tests. Never called from production code. */

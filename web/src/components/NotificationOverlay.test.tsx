@@ -11,6 +11,7 @@ import { NotificationOverlay } from "./NotificationOverlay.tsx";
 import { PageNavigationContext } from "../lib/navigationContext.tsx";
 import * as reducedMotionModule from "../hooks/useReducedMotion.ts";
 import * as notificationsModule from "../lib/notifications.ts";
+import * as chatPanelModule from "../lib/chatPanel.ts";
 import type { NotificationRecord } from "../../../src/types/api.ts";
 
 function renderWithNav(records: readonly NotificationRecord[], goTo = vi.fn()) {
@@ -190,5 +191,31 @@ describe("NotificationOverlay", () => {
   it("shows no '+N more' affordance when the store holds 3 or fewer", () => {
     renderWithNav([{ id: "n1", kind: "operational", title: "x", body: "x", createdAt: "2026-01-01T00:00:00.000Z", deepLink: null }]);
     expect(screen.queryByTestId("notification-more-indicator")).not.toBeInTheDocument();
+  });
+});
+
+describe("chat deep-links (Story 9.3, E8)", () => {
+  it("a deepLink of 'chat' opens the Chat panel and sends nothing, and never calls page navigation", () => {
+    const openChatWithCommand = vi.spyOn(chatPanelModule, "openChatWithCommand").mockImplementation(() => {});
+    const dismiss = vi.spyOn(notificationsModule, "dismissNotification");
+    const { goTo } = renderWithNav([{ id: "n1", kind: "sandbox-complete", title: "Saved 2 Tasks", body: "Saved 2 Tasks", createdAt: "2026-01-01T00:00:00.000Z", deepLink: "chat" }]);
+    fireEvent.click(screen.getByText("Saved 2 Tasks"));
+    expect(openChatWithCommand).toHaveBeenCalledWith(undefined);
+    expect(goTo).not.toHaveBeenCalled();
+    expect(dismiss).toHaveBeenCalledWith("n1");
+  });
+
+  it("a deepLink of 'chat:/sandbox' opens the Chat panel AND sends '/sandbox' as if typed", () => {
+    const openChatWithCommand = vi.spyOn(chatPanelModule, "openChatWithCommand").mockImplementation(() => {});
+    renderWithNav([{ id: "n1", kind: "sandbox-failed", title: "x", body: "Couldn't save Chem problem set.", createdAt: "2026-01-01T00:00:00.000Z", deepLink: "chat:/sandbox" }]);
+    fireEvent.click(screen.getByText("Couldn't save Chem problem set."));
+    expect(openChatWithCommand).toHaveBeenCalledWith("/sandbox");
+  });
+
+  it("a deepLink starting with 'chat' in some other unrecognized shape still opens the panel with no command, never throwing (Review Focus #4)", () => {
+    const openChatWithCommand = vi.spyOn(chatPanelModule, "openChatWithCommand").mockImplementation(() => {});
+    renderWithNav([{ id: "n1", kind: "needs-data", title: "x", body: "3 Tasks need data to be placed", createdAt: "2026-01-01T00:00:00.000Z", deepLink: "chat:/something-unrecognized" }]);
+    expect(() => fireEvent.click(screen.getByText("3 Tasks need data to be placed"))).not.toThrow();
+    expect(openChatWithCommand).toHaveBeenCalled();
   });
 });
