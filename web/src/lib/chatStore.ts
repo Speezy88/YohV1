@@ -1,18 +1,30 @@
 /**
  * web/src/lib/chatStore.ts
  *
- * Story 8.5, contract C6: the ONE chat transcript + unsent-draft store,
- * shared by the Chat page and (Story 8.8) the Home Chat Bubble. Module-level
- * state behind `useSyncExternalStore`, the same shape as `homeView.ts` and
- * `notifications.ts`. Client memory only for Phase 2 (`[DECISION DEFAULT]`,
- * AD-10): never persisted, so the transcript lasts for the page session. It
- * survives a page swipe or the Screensaver because `PageShell.tsx` keeps
- * every page mounted and this state lives outside any component.
+ * Story 8.5, contract C6, extended by Story 9.2: the ONE chat transcript +
+ * unsent-draft store, shared by the Chat page and (Story 8.8) the Home Chat
+ * Bubble. Module-level state behind `useSyncExternalStore`, the same shape
+ * as `homeView.ts` and `notifications.ts`. Client memory only for Phase 2
+ * (`[DECISION DEFAULT]`, AD-10): never persisted, so the transcript lasts
+ * for the page session. It survives a page swipe or the Screensaver because
+ * `PageShell.tsx` keeps every page mounted and this state lives outside any
+ * component.
+ *
+ * `ChatStoreState.entries` is a `StreamEntry` union — `"message"` (an
+ * ordinary turn, unchanged `ChatViewMessage` payload) or `"sandbox-card"` (a
+ * Sandbox Card rendered inline, Story 9.2) — so a card genuinely interleaves
+ * with turns in one ordered stream and "stays in chat history" once
+ * settled. `history` sent to the server (`ChatTurnRequest.history`) is
+ * still built from `"message"` entries only — a card is never appended to
+ * the LLM-facing transcript. `appendStreamEntry`/`updateStreamEntry` are
+ * generic over any future `StreamEntry` kind (Story 9.3 adds a
+ * `"sandbox-finale"` kind and reuses these two verbatim).
  */
 import { useSyncExternalStore } from "react";
 import { streamChat } from "./chatStream.ts";
+import { startSandbox } from "./sandbox.ts";
 import { addLocalFailureNotice } from "./notifications.ts";
-import type { ChatStreamEvent, ChatTurnRequest, OpenItem, OpenItemQuestion } from "../../../src/types/api.ts";
+import type { ChatStreamEvent, ChatTurnRequest, OpenItem, OpenItemQuestion, SandboxCardView } from "../../../src/types/api.ts";
 
 export interface ChatViewMessage {
   readonly id: string;
@@ -28,8 +40,22 @@ export interface ChatViewMessage {
   readonly errorText?: string;
 }
 
+/** One entry in the chat stream: an ordinary turn, or (Story 9.2) an inline Sandbox Card. */
+export type StreamEntry =
+  | { readonly kind: "message"; readonly id: string; readonly message: ChatViewMessage }
+  | {
+      readonly kind: "sandbox-card";
+      readonly id: string;
+      readonly view: SandboxCardView;
+      readonly status: "pending" | "saved" | "skipped" | "failed";
+      readonly receipt?: string;
+    };
+
+/** `Omit` over a union collapses to the union's shared keys only — this distributes it per member, so `appendStreamEntry`/`updateStreamEntry` keep each branch's own fields (`message`, `view`, `status`, ...). */
+type DistributiveOmit<T, K extends keyof never> = T extends unknown ? Omit<T, K> : never;
+
 export interface ChatStoreState {
-  readonly messages: readonly ChatViewMessage[];
+  readonly entries: readonly StreamEntry[];
   readonly draft: string;
   readonly sending: boolean;
 }
@@ -42,7 +68,7 @@ export interface ChatStoreState {
  */
 const INITIAL_STATUS_TEXT = "Thinking…";
 
-const EMPTY: ChatStoreState = { messages: [], draft: "", sending: false };
+const EMPTY: ChatStoreState = { entries: [], draft: "", sending: false };
 
 let state: ChatStoreState = EMPTY;
 let nextId = 0;
@@ -88,13 +114,39 @@ export function setDraft(draft: string): void {
   set({ ...state, draft });
 }
 
-function patchMessage(id: string, patch: (message: ChatViewMessage) => Partial<ChatViewMessage>): void {
-  set({ ...state, messages: state.messages.map((m) => (m.id === id ? { ...m, ...patch(m) } : m)) });
+/** Generic append (Story 9.2) — any future `StreamEntry` kind (Story 9.3's `"sandbox-finale"`) reuses this unchanged. */
+export function appendStreamEntry(entry: DistributiveOmit<StreamEntry, "id">): string {
+  const id = `entry-${++nextId}`;
+  set({ ...state, entries: [...state.entries, { ...entry, id } as StreamEntry] });
+  return id;
 }
 
-/** The transcript as `ChatTurnRequest.history`. A turn with no text (a failed reply) is left out: the Messages API rejects empty content. */
-function historyOf(messages: readonly ChatViewMessage[]): ChatTurnRequest["history"] {
-  return messages.filter((m) => m.status !== "streaming" && m.text.trim() !== "").map((m) => ({ role: m.role, content: m.text }));
+/** Generic patch (Story 9.2) — merges `patch` onto the entry with this `id`, regardless of kind. */
+export function updateStreamEntry(id: string, patch: Partial<StreamEntry>): void {
+  set({ ...state, entries: state.entries.map((e) => (e.id === id ? ({ ...e, ...patch } as StreamEntry) : e)) });
+}
+
+function messageEntries(entries: readonly StreamEntry[]): ReadonlyArray<Extract<StreamEntry, { kind: "message" }>> {
+  return entries.filter((e): e is Extract<StreamEntry, { kind: "message" }> => e.kind === "message");
+}
+
+function patchMessage(id: string, patch: (message: ChatViewMessage) => Partial<ChatViewMessage>): void {
+  set({
+    ...state,
+    entries: state.entries.map((e) => (e.kind === "message" && e.message.id === id ? { ...e, message: { ...e.message, ...patch(e.message) } } : e)),
+  });
+}
+
+function appendMessage(message: ChatViewMessage): void {
+  set({ ...state, entries: [...state.entries, { kind: "message", id: message.id, message }] });
+}
+
+/** The transcript as `ChatTurnRequest.history` — "message" entries only, a card is never appended to the LLM-facing transcript. A turn with no text (a failed reply) is left out: the Messages API rejects empty content. */
+function historyOf(entries: readonly StreamEntry[]): ChatTurnRequest["history"] {
+  return messageEntries(entries)
+    .map((e) => e.message)
+    .filter((m) => m.status !== "streaming" && m.text.trim() !== "")
+    .map((m) => ({ role: m.role, content: m.text }));
 }
 
 /**
@@ -102,9 +154,10 @@ function historyOf(messages: readonly ChatViewMessage[]): ChatTurnRequest["histo
  * (showing the Thinking Indicator) appear in the same synchronous update
  * that clears the draft, before any network activity (NFR-Latency). Stream
  * events then fold into the placeholder: `status` replaces its status text,
- * `delta` appends, `done` sets the final reply/receipts/question, and
- * `error` marks it failed with the server's message, keeping any text that
- * already streamed.
+ * `delta` appends, `done` sets the final reply/receipts/question (and, when
+ * the response carries a `sandboxCard`, starts a Sandbox session — Story
+ * 9.2), and `error` marks it failed with the server's message, keeping any
+ * text that already streamed.
  *
  * A transport failure (the request never completed) is handled by what it
  * left behind. With no reply text yet, the exchange never happened: both
@@ -118,16 +171,10 @@ export async function send(message: string): Promise<void> {
 
   const userId = `chat-${++nextId}`;
   const assistantId = `chat-${++nextId}`;
-  const request: ChatTurnRequest = { message: trimmed, history: [...historyOf(state.messages), { role: "user", content: trimmed }] };
-  set({
-    messages: [
-      ...state.messages,
-      { id: userId, role: "user", text: trimmed, receipts: [], status: "done" },
-      { id: assistantId, role: "assistant", text: "", receipts: [], status: "streaming", statusText: INITIAL_STATUS_TEXT },
-    ],
-    draft: "",
-    sending: true,
-  });
+  const request: ChatTurnRequest = { message: trimmed, history: [...historyOf(state.entries), { role: "user", content: trimmed }] };
+  appendMessage({ id: userId, role: "user", text: trimmed, receipts: [], status: "done" });
+  appendMessage({ id: assistantId, role: "assistant", text: "", receipts: [], status: "streaming", statusText: INITIAL_STATUS_TEXT });
+  set({ ...state, draft: "", sending: true });
 
   const onEvent = (event: ChatStreamEvent): void => {
     switch (event.type) {
@@ -144,6 +191,7 @@ export async function send(message: string): Promise<void> {
           status: "done",
           ...(event.response.question ? { question: event.response.question } : {}),
         }));
+        if (event.response.sandboxCard) startSandbox(event.response.sandboxCard);
         set({ ...state, sending: false });
         return;
       case "error":
@@ -156,14 +204,14 @@ export async function send(message: string): Promise<void> {
   try {
     await streamChat(request, { onEvent });
   } catch {
-    const partial = state.messages.find((m) => m.id === assistantId);
+    const partial = messageEntries(state.entries).find((e) => e.id === assistantId)?.message;
     if (partial && partial.text !== "") {
       patchMessage(assistantId, () => ({ status: "error" }));
       set({ ...state, sending: false });
       return;
     }
     set({
-      messages: state.messages.filter((m) => m.id !== userId && m.id !== assistantId),
+      entries: state.entries.filter((e) => !(e.kind === "message" && (e.id === userId || e.id === assistantId))),
       draft: state.draft === "" ? trimmed : state.draft,
       sending: false,
     });
@@ -189,20 +237,14 @@ export function recordAnsweredOpenItem(
 ): void {
   const userId = `chat-${++nextId}`;
   const assistantId = `chat-${++nextId}`;
-  set({
-    ...state,
-    messages: [
-      ...state.messages,
-      { id: userId, role: "user", text: youText, receipts: [], status: "done" },
-      {
-        id: assistantId,
-        role: "assistant",
-        text: yoh.message ?? "",
-        receipts: yoh.receipts,
-        status: "done",
-        ...(yoh.next ? { question: yoh.next } : {}),
-      },
-    ],
+  appendMessage({ id: userId, role: "user", text: youText, receipts: [], status: "done" });
+  appendMessage({
+    id: assistantId,
+    role: "assistant",
+    text: yoh.message ?? "",
+    receipts: yoh.receipts,
+    status: "done",
+    ...(yoh.next ? { question: yoh.next } : {}),
   });
 }
 
@@ -225,10 +267,7 @@ export function appendPendingOpenItem(item: OpenItem): void {
   if (shownPendingRequestIds.has(key)) return;
   shownPendingRequestIds.add(key);
   const id = `chat-${++nextId}`;
-  set({
-    ...state,
-    messages: [...state.messages, { id, role: "assistant", text: item.promptText, receipts: [], question: item.question, status: "done" }],
-  });
+  appendMessage({ id, role: "assistant", text: item.promptText, receipts: [], question: item.question, status: "done" });
 }
 
 /**
@@ -244,11 +283,11 @@ export function appendPendingOpenItem(item: OpenItem): void {
  * re-raises under the same requestId+questionId later is treated as new.
  */
 export function resolveMessageQuestion(messageId: string): void {
-  const message = state.messages.find((m) => m.id === messageId);
-  if (message?.question) {
-    shownPendingRequestIds.delete(pendingItemKey(message.question.requestId, message.question.questionId));
+  const entry = messageEntries(state.entries).find((e) => e.message.id === messageId);
+  if (entry?.message.question) {
+    shownPendingRequestIds.delete(pendingItemKey(entry.message.question.requestId, entry.message.question.questionId));
   }
-  set({ ...state, messages: state.messages.map((m) => (m.id === messageId ? { ...m, question: undefined } : m)) });
+  patchMessage(messageId, () => ({ question: undefined }));
 }
 
 /** Test-only: clears the module-level transcript (and the pending-item dedupe set) between tests. Never called from production code. */
