@@ -458,3 +458,23 @@ body {
     background-position: -200% 0;
   }
 }
+
+/* Story 9.3, UX-DR39 Sandbox Finale: the loading bar's shimmer, reusing
+   the Thinking Indicator's own sweep keyframe/duration token
+   (`thinking-shimmer-sweep`, `--duration-thinking-shimmer`) rather than a
+   second one. Reduced motion drops this class entirely
+   (`SandboxFinale.tsx`), leaving a plain solid bar — the instant fallback
+   every animation in `web/` must have. */
+.sandbox-finale-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+.sandbox-finale-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, var(--color-on-accent-solid), transparent);
+  background-size: 200% 100%;
+  mix-blend-mode: overlay;
+  animation: thinking-shimmer-sweep var(--duration-thinking-shimmer) linear infinite;
+}

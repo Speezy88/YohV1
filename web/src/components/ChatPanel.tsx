@@ -52,6 +52,7 @@ import { useReducedMotion } from "../hooks/useReducedMotion.ts";
 import { ChatMessage } from "./ChatMessage.tsx";
 import { ChatInput } from "./ChatInput.tsx";
 import { SandboxCard } from "./SandboxCard.tsx";
+import { SandboxFinale } from "./SandboxFinale.tsx";
 import { YohMark } from "./YohMark.tsx";
 
 /** Once within this many px of the stream's bottom, it still counts as "at the bottom" — avoids auto-scroll flapping off/on from sub-pixel rounding while text streams in. */
@@ -177,8 +178,13 @@ export function ChatPanel(): React.JSX.Element | null {
                 ) : entry.kind === "sandbox-card" ? (
                   <SandboxCard key={entry.id} view={entry.view} status={entry.status} {...(entry.receipt ? { receipt: entry.receipt } : {})} />
                 ) : (
-                  // C2 renders SandboxFinale
-                  <></>
+                  <SandboxFinale
+                    key={entry.id}
+                    status={entry.status}
+                    {...(entry.savedCount !== undefined ? { savedCount: entry.savedCount } : {})}
+                    {...(entry.failedTitles ? { failedTitles: entry.failedTitles } : {})}
+                    {...(entry.summaryFailed ? { summaryFailed: entry.summaryFailed } : {})}
+                  />
                 ),
               )}
             </div>

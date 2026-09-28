@@ -113,6 +113,15 @@ describe("ChatPanel", () => {
     expect(screen.getByTestId("chat-stream")).toContainElement(screen.getByTestId("sandbox-card"));
   });
 
+  // Story 9.3, chunk C2: the "sandbox-finale" StreamEntry renders as
+  // SandboxFinale inline in the stream — chunk C1 left a placeholder here.
+  it("a sandbox-finale entry renders inline in the stream", () => {
+    appendStreamEntry({ kind: "sandbox-finale", status: "done", savedCount: 2, failedTitles: [] });
+    renderOpenPanel();
+    expect(screen.getByTestId("chat-stream")).toContainElement(screen.getByTestId("sandbox-finale-result"));
+    expect(screen.getByText("Saved 2 Tasks")).toBeInTheDocument();
+  });
+
   describe("the 'N tasks missing data' chip", () => {
     it("is hidden while the count is loading", () => {
       vi.spyOn(missingDataModule, "useMissingDataCount").mockReturnValue({ status: "loading" });
