@@ -50,7 +50,8 @@ export interface SandboxQueueDeps {
    * three identically to `app/tasks-view.ts`'s own `readFieldOptions`
    * catch). Optional so every existing `SandboxQueueDeps` literal (tests,
    * the fixture server before this task) stays valid — absent simply means
-   * "no live options," never a hard failure.
+   * "no live options," never a hard failure. Only actually called when
+   * `input.withOptions` is true (fix round 1) — never for a plain count.
    */
   readonly readFieldOptions?: () => Promise<TaskFieldOptions>;
 }
@@ -58,6 +59,17 @@ export interface SandboxQueueDeps {
 export interface SandboxQueueInput {
   /** taskIds to leave out — the CURRENT `/sandbox` session's already-handled cards. Omitted/`[]` for the "true" global count. */
   readonly exclude?: readonly string[];
+  /**
+   * Fix round 1 (Task 5, polish-5): only a card-producing caller (the
+   * `/sandbox` chat dispatch, `saveSandboxCardAndAdvance`, and the
+   * `/api/sandbox/start`/`:taskId/skip` routes) sets this — it's the ONE
+   * gate on `deps.readFieldOptions` ever being called. A plain count read
+   * (`GET /api/sandbox/count`, and any future needs-data count) omits it,
+   * so a live Notion schema read never rides along with a request that only
+   * needs `items.length`. Omitted/false: `options` comes back as `{area:
+   * [], energy: []}` without touching `deps.readFieldOptions` at all.
+   */
+  readonly withOptions?: boolean;
 }
 
 export interface SandboxQueueResponse {
@@ -75,27 +87,24 @@ function compareItems(a: SandboxQueueItem, b: SandboxQueueItem): number {
   return a.taskTitle < b.taskTitle ? -1 : a.taskTitle > b.taskTitle ? 1 : 0;
 }
 
+const EMPTY_OPTIONS: SandboxCardOptions = { area: [], energy: [] };
+
 /**
- * Task 5 (polish-5): the ONE place `sandboxQueue` resolves `deps.readFieldOptions`
- * into the wire's `SandboxCardOptions` — absent dep, a throw, or a
- * successful read whose `area` is `undefined` (Area is a free-text property
- * on this workspace) all fall back to an empty `area` list; only the throw
- * and the `area: undefined` case log a warn (an absent dep is simply "not
- * configured," the same convention `app/tasks-view.ts`'s own
- * `readFieldOptions` catch does NOT extend to — that one only logs on an
- * actual throw, since it always has the dep).
+ * Task 5 (polish-5), fix round 1: the ONE place `sandboxQueue` resolves
+ * `deps.readFieldOptions` into the wire's `SandboxCardOptions` — absent dep
+ * or a throw both fall back to `EMPTY_OPTIONS`; only the throw logs a warn
+ * (an absent dep is simply "not configured," and `area: undefined` is a
+ * legitimate live-schema answer — Area is a free-text property on this
+ * workspace — never a failure worth logging).
  */
 async function readSandboxCardOptions(deps: SandboxQueueDeps): Promise<SandboxCardOptions> {
-  if (!deps.readFieldOptions) return { area: [], energy: [] };
+  if (!deps.readFieldOptions) return EMPTY_OPTIONS;
   try {
     const options = await deps.readFieldOptions();
-    if (options.area === undefined) {
-      deps.log?.({ level: "warn", event: "sandbox-queue.options-area-undefined" });
-    }
     return { area: options.area ?? [], energy: options.energy };
   } catch (err) {
     deps.log?.({ level: "warn", event: "sandbox-queue.options-read-failed", detail: { message: err instanceof Error ? err.message : String(err) } });
-    return { area: [], energy: [] };
+    return EMPTY_OPTIONS;
   }
 }
 
@@ -133,6 +142,10 @@ export async function sandboxQueue(deps: SandboxQueueDeps, input: SandboxQueueIn
     })
     .sort(compareItems);
 
-  const options = await readSandboxCardOptions(deps);
+  // Fix round 1: a plain count (GET /api/sandbox/count, and any future
+  // needs-data count) never sets `withOptions` — `deps.readFieldOptions` is
+  // then never even called, so a live Notion schema read never rides along
+  // with a request that only needs `items.length`.
+  const options = input.withOptions ? await readSandboxCardOptions(deps) : EMPTY_OPTIONS;
   return { ok: true, value: { items, options } };
 }

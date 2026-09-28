@@ -89,3 +89,26 @@ test("GET /api/sandbox/count reports a clear 'not configured' error when deps.sa
   assert.equal(body.ok, false);
   assert.match(body.error.message, /not set up|not configured/i);
 });
+
+// Fix round 1 (controller ruling): the count route must never trigger a live
+// Notion schema read — it only ever needs items.length.
+test("GET /api/sandbox/count never calls readFieldOptions, even when the dep is configured", async () => {
+  let calls = 0;
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  const sandbox: NonNullable<ServerDeps["sandbox"]> = {
+    store: createMemoryStore(connection),
+    readTasks: async () => [taskMissingBothFields("t1", "Renew the passport")],
+    timeZone: "UTC",
+    updateTaskField: NOOP_UPDATE_TASK_FIELD,
+    readFieldOptions: async () => {
+      calls++;
+      return { area: [], energy: [], status: [] };
+    },
+  };
+  const app = createApp(baseDeps(sandbox));
+  const res = await app.request("/api/sandbox/count");
+  const body = (await res.json()) as { ok: true; value: { count: number } };
+  assert.equal(res.status, 200);
+  assert.equal(body.value.count, 1);
+  assert.equal(calls, 0, "readFieldOptions must never be called for a plain count");
+});

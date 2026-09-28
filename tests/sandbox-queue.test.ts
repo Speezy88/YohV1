@@ -139,7 +139,7 @@ test("firstCardView: undefined for an empty queue; the first item with remaining
 
 // Task 5 (polish-5): SandboxCard Area/Energy as live-option selects —
 // sandboxQueue's own options-read seam.
-test("sandboxQueue: options come from readFieldOptions, alongside items", async () => {
+test("sandboxQueue: withOptions:true reads options from readFieldOptions, alongside items", async () => {
   const store = tempStore();
   const readTasks = async () => [task({ id: "t1", title: "One" })];
   const readFieldOptions = async (): Promise<TaskFieldOptions> => ({
@@ -151,7 +151,7 @@ test("sandboxQueue: options come from readFieldOptions, alongside items", async 
     ],
     status: [{ value: "not-started", label: "Not started" }],
   });
-  const result = await sandboxQueue({ store, readTasks, now: NOW, timeZone: "UTC", readFieldOptions }, {});
+  const result = await sandboxQueue({ store, readTasks, now: NOW, timeZone: "UTC", readFieldOptions }, { withOptions: true });
   assert.equal(result.ok, true);
   if (!result.ok) return;
   assert.deepEqual(result.value.options, {
@@ -164,10 +164,31 @@ test("sandboxQueue: options come from readFieldOptions, alongside items", async 
   });
 });
 
-test("sandboxQueue: readFieldOptions absent gives empty option lists; the card is still produced", async () => {
+// Fix round 1 (controller ruling): a plain count read must never touch
+// Notion's schema — `withOptions` omitted/false is the ONE gate on
+// `deps.readFieldOptions` ever being called.
+test("sandboxQueue: withOptions omitted (or false) never calls readFieldOptions, and options come back empty", async () => {
   const store = tempStore();
   const readTasks = async () => [task({ id: "t1", title: "One" })];
-  const result = await sandboxQueue({ store, readTasks, now: NOW, timeZone: "UTC" }, {});
+  let calls = 0;
+  const readFieldOptions = async (): Promise<TaskFieldOptions> => {
+    calls++;
+    return { area: [], energy: [], status: [] };
+  };
+  const omitted = await sandboxQueue({ store, readTasks, now: NOW, timeZone: "UTC", readFieldOptions }, {});
+  const explicitFalse = await sandboxQueue({ store, readTasks, now: NOW, timeZone: "UTC", readFieldOptions }, { withOptions: false });
+  assert.equal(omitted.ok, true);
+  assert.equal(explicitFalse.ok, true);
+  if (!omitted.ok || !explicitFalse.ok) return;
+  assert.deepEqual(omitted.value.options, EMPTY_OPTIONS);
+  assert.deepEqual(explicitFalse.value.options, EMPTY_OPTIONS);
+  assert.equal(calls, 0, "readFieldOptions must never be called for a plain count");
+});
+
+test("sandboxQueue: readFieldOptions absent (withOptions:true) gives empty option lists; the card is still produced", async () => {
+  const store = tempStore();
+  const readTasks = async () => [task({ id: "t1", title: "One" })];
+  const result = await sandboxQueue({ store, readTasks, now: NOW, timeZone: "UTC" }, { withOptions: true });
   assert.equal(result.ok, true);
   if (!result.ok) return;
   assert.deepEqual(result.value.options, EMPTY_OPTIONS);
@@ -181,7 +202,10 @@ test("sandboxQueue: an options read failure gives empty option lists, logs a war
     throw new Error("notion down");
   };
   const logs: LogEntry[] = [];
-  const result = await sandboxQueue({ store, readTasks, now: NOW, timeZone: "UTC", readFieldOptions, log: (e) => logs.push(e) }, {});
+  const result = await sandboxQueue(
+    { store, readTasks, now: NOW, timeZone: "UTC", readFieldOptions, log: (e) => logs.push(e) },
+    { withOptions: true },
+  );
   assert.equal(result.ok, true);
   if (!result.ok) return;
   assert.deepEqual(result.value.options, EMPTY_OPTIONS);
@@ -189,7 +213,9 @@ test("sandboxQueue: an options read failure gives empty option lists, logs a war
   assert.equal(logs.some((l) => l.level === "warn" && l.event === "sandbox-queue.options-read-failed"), true);
 });
 
-test("sandboxQueue: readFieldOptions returning area: undefined gives an empty Area list but keeps Energy's own options, and logs a warn", async () => {
+// Fix round 1 (controller ruling): Area being free text is a legitimate
+// live-schema answer, not a failure — no warn.
+test("sandboxQueue: readFieldOptions returning area: undefined gives an empty Area list, keeps Energy's own options, and logs NO warn", async () => {
   const store = tempStore();
   const readTasks = async () => [task({ id: "t1", title: "One" })];
   const readFieldOptions = async (): Promise<TaskFieldOptions> => ({
@@ -198,9 +224,12 @@ test("sandboxQueue: readFieldOptions returning area: undefined gives an empty Ar
     status: [],
   });
   const logs: LogEntry[] = [];
-  const result = await sandboxQueue({ store, readTasks, now: NOW, timeZone: "UTC", readFieldOptions, log: (e) => logs.push(e) }, {});
+  const result = await sandboxQueue(
+    { store, readTasks, now: NOW, timeZone: "UTC", readFieldOptions, log: (e) => logs.push(e) },
+    { withOptions: true },
+  );
   assert.equal(result.ok, true);
   if (!result.ok) return;
   assert.deepEqual(result.value.options, { area: [], energy: [{ value: "low", label: "Low" }] });
-  assert.equal(logs.some((l) => l.level === "warn" && l.event === "sandbox-queue.options-area-undefined"), true);
+  assert.equal(logs.length, 0, "Area being free text is not a failure and must not be logged");
 });

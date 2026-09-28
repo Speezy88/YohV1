@@ -207,7 +207,7 @@ const runChatTurn: ChatTurnFn = async (deps, input) => {
   // `/api/sandbox/*` routes.
   if (input.message.trim() === "/sandbox") {
     const sandboxChatDeps: SandboxQueueDeps = { ...sandbox, now: () => new Date() };
-    const queue = await sandboxQueue(sandboxChatDeps, {});
+    const queue = await sandboxQueue(sandboxChatDeps, { withOptions: true });
     if (!queue.ok) return queue;
     const card = firstCardView(queue.value.items, queue.value.options);
     if (!card) return { ok: true, value: { reply: "Nothing's missing a Due Date or Duration.", receipts: [] } };

@@ -955,7 +955,7 @@ export function createApp(deps: ServerDeps) {
         }),
         async (c) => {
           if (!sandboxDeps) return c.json(SANDBOX_NOT_CONFIGURED, httpStatus(SANDBOX_NOT_CONFIGURED));
-          const result = wire(await sandboxQueue(sandboxDeps, c.req.valid("json")));
+          const result = wire(await sandboxQueue(sandboxDeps, { ...c.req.valid("json"), withOptions: true }));
           if (!result.ok) return c.json(result, httpStatus(result));
           return c.json({ ok: true, value: { card: firstCardView(result.value.items, result.value.options) } }, 200);
         },
@@ -1016,7 +1016,7 @@ export function createApp(deps: ServerDeps) {
           if (!sandboxDeps) return c.json(SANDBOX_NOT_CONFIGURED, httpStatus(SANDBOX_NOT_CONFIGURED));
           const taskId = c.req.param("taskId");
           const body = c.req.valid("json");
-          const next = wire(await sandboxQueue(sandboxDeps, { exclude: [...body.exclude, taskId] }));
+          const next = wire(await sandboxQueue(sandboxDeps, { exclude: [...body.exclude, taskId], withOptions: true }));
           if (!next.ok) return c.json(next, httpStatus(next));
           return c.json({ ok: true, value: { next: firstCardView(next.value.items, next.value.options) } }, 200);
         },

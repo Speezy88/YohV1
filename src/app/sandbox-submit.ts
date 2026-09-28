@@ -157,7 +157,7 @@ export async function saveSandboxCardAndAdvance(deps: SaveSandboxCardDeps, input
   const submitted = await submitSandboxCard(deps, cardInput);
   if (!submitted.ok) return submitted;
 
-  const next = await sandboxQueue(deps, { exclude: [...exclude, input.taskId] });
+  const next = await sandboxQueue(deps, { exclude: [...exclude, input.taskId], withOptions: true });
   if (!next.ok) return next;
 
   return { ok: true, value: { receipt: submitted.value.receipt, next: firstCardView(next.value.items, next.value.options) } };
