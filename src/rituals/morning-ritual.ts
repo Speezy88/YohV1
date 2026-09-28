@@ -656,18 +656,47 @@ interface SchoolDayLastResortInput {
  * `fitWorkBreakBlocks` a second time, per the brief's own preference, over
  * editing `work-break-fit.ts` itself.
  *
- * Pass 2's own budget is `remainingAfterPass1 + protectedMinutesTotal` —
- * whatever of Spencer's declared Time Budget pass 1 left unused, PLUS
- * exactly the two protected windows' own minutes as a bonus (mirroring how
- * a ordinary Calendar anchor's span already costs pass 1 nothing — this
- * makes the SAME "free" treatment available to a rescued Task specifically
- * for protected-window minutes, and only for those). Since
- * `fitWorkBreakBlocks` enforces its own budget as a hard cap regardless of
- * where within its given anchors a Task's minutes land, this guarantees
- * `usedMinutesPass1 + usedMinutesPass2 <= budget.totalMinutes +
- * protectedMinutesTotal` — the TimeBudget is never exceeded by more than
- * the two protected windows' own span, which is exactly what "may use
- * protected-window time" means.
+ * Pass 2's own budget is EXACTLY `protectedMinutesTotal` (the two protected
+ * windows' own real minutes — 45 + 50 = 95 — never `remainingAfterPass1 +
+ * protectedMinutesTotal`; review fix, Critical #1). Intended policy: a
+ * rescue may use up to the protected windows' own minutes, ON TOP OF
+ * Spencer's declared TimeBudget, deadline Tasks only — never a blended
+ * pool that includes whatever pass 1 happened to leave over. Two reasons
+ * `remainingAfterPass1` must NOT be added:
+ *  (1) `buildProtectedWindowOnlyAnchors`'s pass-2 anchors mark everything
+ *      busy except the two real windows, with ONE trailing filler anchor
+ *      running from the end of community time to `+24h` so `placeMinutes`
+ *      has somewhere to resolve to — `fitWorkBreakBlocks` skips any anchor
+ *      "for free" with no bound on how far the cursor jumps, and its own
+ *      deferral check (`computeRequiredBudgetMinutes` vs. `remainingBudgetMinutes`)
+ *      is a pure minutes count with no idea only 95 of those minutes are
+ *      physically reachable today. Inflating the budget by
+ *      `remainingAfterPass1` let a rescue candidate whose required minutes
+ *      fit the inflated total but exceeded the real 95-minute capacity get
+ *      fully "rescued" with the overflow silently placed ~24h later, behind
+ *      that filler anchor — `deferredTaskIds: []` (reported delivered)
+ *      while part of the Task's own work landed tomorrow. Capping the
+ *      budget to exactly `protectedMinutesTotal` guarantees any candidate
+ *      that passes the deferral check also physically fits inside the two
+ *      real windows (accepted logical minutes <= real open minutes), so the
+ *      next-day-spillover case cannot happen at all.
+ *  (2) `remainingAfterPass1` never legitimately helps here anyway: a Task
+ *      that didn't fit pass 1's own `remainingBudgetMinutes` cannot newly
+ *      fit on `remainingAfterPass1` alone (same number), since Calendar
+ *      anchors never enter `computeRequiredBudgetMinutes` — the addend only
+ *      ever manifested as extra slack beyond the 95-minute cap it
+ *      shouldn't have had, which is also what let a rescue silently exceed
+ *      Spencer's own declared TimeBudget by more than the two protected
+ *      windows' own span (ruling 3: "the TimeBudget is never exceeded" —
+ *      the only overage this last-resort pass may ever introduce is
+ *      exactly the protected minutes it's named for). Since
+ *      `fitWorkBreakBlocks` enforces its own budget as a hard cap
+ *      regardless of where within its given anchors a Task's minutes land,
+ *      this guarantees `usedMinutesPass2 <= protectedMinutesTotal`, so
+ *      `usedMinutesPass1 + usedMinutesPass2 <= budget.totalMinutes +
+ *      protectedMinutesTotal` — the TimeBudget is never exceeded by more
+ *      than the two protected windows' own span, which is exactly what
+ *      "may use protected-window time" means.
  *
  * A rescue candidate that still doesn't fit even with that bonus was
  * genuinely too large for the day (the TimeBudget really did run out, not
@@ -693,11 +722,14 @@ function applySchoolDayLastResort(input: SchoolDayLastResortInput): Result<FitWo
     return { ok: true, value: pass1 };
   }
 
-  const usedMinutesPass1 = sumMinutes(pass1.blocks.filter((block) => block.kind !== "calendar-anchor"));
-  const remainingAfterPass1 = Math.max(0, budget.totalMinutes - usedMinutesPass1);
   const protectedMinutesTotal = sumMinutes(protectedWindows);
 
-  const pass2Budget: TimeBudget = { ...budget, totalMinutes: remainingAfterPass1 + protectedMinutesTotal };
+  // Review fix, Critical #1: EXACTLY `protectedMinutesTotal` — never
+  // `remainingAfterPass1 + protectedMinutesTotal`. See this function's own
+  // doc comment for the full reasoning (next-day spillover + exceeding
+  // Spencer's declared TimeBudget by more than the protected windows'
+  // own span).
+  const pass2Budget: TimeBudget = { ...budget, totalMinutes: protectedMinutesTotal };
   const pass2Anchors = buildProtectedWindowOnlyAnchors(Date.parse(startTime), protectedWindows);
 
   const pass2 = fitWorkBreakBlocks({ tasks: rescueCandidates, budget: pass2Budget, calendarEvents: pass2Anchors, startTime });

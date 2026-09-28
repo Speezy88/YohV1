@@ -1546,6 +1546,38 @@ test("Polish-5 Task 3 last resort: a due-today Task that otherwise wouldn't fit 
   assert.ok(result.value.plan.blocks.some((b) => b.label === "Community time"));
 });
 
+test("Polish-5 Task 3 last resort, review fix: a rescue whose required minutes exceed the real 95-minute protected-window capacity is never spilled into tomorrow — it stays fully deferred", async () => {
+  // Review finding (task-3-review.md, Critical #1): with pass2Budget.totalMinutes
+  // = remainingAfterPass1 + protectedMinutesTotal, a rescue candidate whose
+  // required minutes fit that INFLATED budget but exceed the real 95 real
+  // minutes (lunch 45 + community 50) got fully "rescued" with the overflow
+  // silently placed ~24h later, behind buildProtectedWindowOnlyAnchors's own
+  // filler anchor — deferredTaskIds said [] (delivered) while a work block
+  // actually landed on 2026-08-25. totalMinutes:100 + a 120-minute due-today
+  // Task reproduces exactly that: required budget = 120 + 1 forced break
+  // (15) = 135, which is > 95 (the real capacity) but WAS <= the old
+  // buggy pass2Budget (100 + 95 = 195).
+  const now = `${SCHOOL_TODAY}T09:00:00.000Z`;
+  const store = tempStore();
+  putTimeBudget(store, { date: SCHOOL_TODAY, totalMinutes: 100, workMinutes: 70, breakMinutes: 15 });
+  const events = [schoolCalendarEvent("class-1", "AP Calculus", `${SCHOOL_TODAY}T20:00:00.000Z`, `${SCHOOL_TODAY}T20:05:00.000Z`)];
+  const h = harness({
+    tasks: [makeTask("t1", "Write the term paper", { estimatedDurationMinutes: 120, dueDate: SCHOOL_TODAY })],
+    events,
+    store,
+    declareBudgetMinutes: 0,
+    timeZone: "UTC",
+  });
+
+  const result = await runMorningRitual({ ...h.deps, now: () => new Date(now) });
+  // The Task genuinely cannot fit inside the real 95 protected minutes, so
+  // it must stay deferred — never "delivered" with part of it dated
+  // tomorrow.
+  assert.ok(result.ok);
+  assert.equal(result.value.status, "nothing-fits", "a Task too big for the real protected-window capacity must stay deferred, not be partially placed into tomorrow");
+  assert.deepEqual(result.value.deferredTaskIds, ["t1"]);
+});
+
 test("Polish-5 Task 3 last resort: a non-deadline Task (not due today, not overdue) never lands in a protected window", async () => {
   const now = `${SCHOOL_TODAY}T09:00:00.000Z`;
   const store = tempStore();
