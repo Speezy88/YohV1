@@ -14,13 +14,17 @@
  * sources rather than assumed).
  *
  * Deliberately SKIPS "College essay brainstorm" rather than saving it:
- * `tp-nodate` is also `web/e2e/tasks.spec.ts`'s ("No date · 2", the
- * "College essay brainstorm" row's own "Add due date"/"Add time" badges)
- * and `web/e2e/missing-data-chip.spec.ts`'s ("3 tasks missing data") fixture
- * Task, and every spec file shares ONE fixture server/DB for the whole
- * Playwright run (`web/playwright.config.ts`'s own `workers: 1` doc
- * comment) — actually writing `tp-nodate`'s Due Date/Duration here would
- * silently break those two already-committed specs' counts. `e2e-sandbox`
+ * `tp-nodate` is also `web/e2e/tasks.spec.ts`'s (the "No date" bucket,
+ * asserted there as "1 or 2" precisely because this spec's run order isn't
+ * guaranteed, and the "College essay brainstorm" row's own "Add due
+ * date"/"Add time" badges) and `web/e2e/missing-data-chip.spec.ts`'s ("3
+ * tasks missing data" — unaffected either way, since this spec only ever
+ * fills `e2e-sandbox`'s Required fields, never its Refining Energy, so it
+ * stays counted as missing) fixture Task, and every spec file shares ONE
+ * fixture server/DB for the whole Playwright run (`web/playwright.config.ts`'s
+ * own `workers: 1` doc comment) — actually writing `tp-nodate`'s Due
+ * Date/Duration here would silently break those two already-committed
+ * specs' assertions on it. `e2e-sandbox`
  * ("E2E Sandbox Task") has no such cross-spec assertion depending on it
  * staying incomplete, so it's this spec's own Save target — matching the
  * per-story plan's original intent (`tests/e2e/fixture-server.ts`'s own

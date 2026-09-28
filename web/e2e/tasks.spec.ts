@@ -73,11 +73,14 @@ test("the list is grouped by Due, shows completed Tasks, and badges what's missi
   // Story 9.2's own dedicated fixture Task ("E2E Sandbox Task") also starts
   // with no Due Date, alongside "College essay brainstorm" — but every spec
   // file shares ONE fixture server/DB for the whole serial run (`workers: 1`),
-  // and `sandbox.spec.ts` (which runs earlier, alphabetically) genuinely
-  // Saves "E2E Sandbox Task"'s Due Date through the real write path as part
-  // of its own smoke — so by the time this spec runs, only "College essay
-  // brainstorm" is left without one.
-  await expect(page.getByRole("heading", { name: "No date · 1" })).toBeVisible();
+  // and `sandbox.spec.ts` genuinely Saves "E2E Sandbox Task"'s Due Date
+  // through the real write path as part of its own smoke. Playwright doesn't
+  // guarantee spec file order (config sets no explicit order, and Spencer
+  // may run this file alone), so this must pass whether or not
+  // sandbox.spec.ts has already run: "No date" is 2 (both Tasks) before it
+  // runs, 1 (just "College essay brainstorm") after — assert the bucket
+  // exists with one of those two counts, not the exact number.
+  await expect(page.getByRole("heading", { name: /^No date · [12]$/ })).toBeVisible();
   await expect(row(page, "Return library books").getByRole("checkbox")).toHaveAttribute("aria-checked", "true");
   await expect(row(page, "College essay brainstorm")).toContainText("Add due date");
   await expect(row(page, "College essay brainstorm")).toContainText("Add time");
