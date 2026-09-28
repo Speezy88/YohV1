@@ -51,6 +51,23 @@ test("I3 (final-review): attached negation and stands-alone slip words still rea
   assert.equal(parseNightCloseOutAnswer("slipped"), "slipped");
 });
 
+// Task 9: a completion word followed by a partial clause ("but not",
+// "except", "apart from", "other than", "besides") is slipped — the Task
+// stays open — distinct from I3's "done, not bad"/"completed, missed the
+// bonus question though", which have no such connector and stay completed.
+test("Task 9: a completion word followed by a partial clause reads as slipped", () => {
+  assert.equal(parseNightCloseOutAnswer("done but not the reading"), "slipped");
+  assert.equal(parseNightCloseOutAnswer("done except the reading"), "slipped");
+  assert.equal(parseNightCloseOutAnswer("finished apart from problem 3"), "slipped");
+  assert.equal(parseNightCloseOutAnswer("completed other than the last question"), "slipped");
+  assert.equal(parseNightCloseOutAnswer("done besides the essay"), "slipped");
+});
+
+test("Task 9: I3's completed cases still stand — no partial-clause connector present", () => {
+  assert.equal(parseNightCloseOutAnswer("done, not bad"), "completed");
+  assert.equal(parseNightCloseOutAnswer("completed, missed the bonus question though"), "completed");
+});
+
 test("isSkipAnswer recognizes only the literal 'skip' (case-insensitive)", () => {
   assert.equal(isSkipAnswer("skip"), true);
   assert.equal(isSkipAnswer("SKIP"), true);

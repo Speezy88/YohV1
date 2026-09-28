@@ -381,7 +381,7 @@ export function parseQuickAdd(text: string, ctx: QuickAddContext): QuickAddParse
     return window === undefined ? undefined : { start: window.start, end: i, field: "dueDate", value: window.resolved };
   }
 
-  const ANYWHERE_RULES = [tryDuration2, tryDuration1, tryEnergyPhrase, tryDeepLightWork, tryDueAnywhere, tryStatusPhrase, tryAreaForTo, tryPriorityPhrase, tryPriorityCode];
+  const ANYWHERE_RULES = [tryDuration2, tryDuration1, tryEnergyPhrase, tryDeepLightWork, tryDueAnywhere, tryStatusPhrase, tryAreaForTo, tryPriorityPhrase];
 
   let frontier = words.length - 1;
   let i = words.length - 1;
@@ -399,7 +399,12 @@ export function parseQuickAdd(text: string, ctx: QuickAddContext): QuickAddParse
     }
 
     if (!match && i === frontier) {
-      match = tryBareEnergy(i) ?? tryBareDate(i);
+      // Task 9 (M3): a bare p-code ("p1"/"p2"/"p3") is read as Priority only
+      // at the trailing frontier, like tryBareEnergy/tryBareDate — never in
+      // the middle of the title ("Physics p1 homework" keeps "p1" as title
+      // text). An explicit "priority high"/"high priority" phrase
+      // (`tryPriorityPhrase`, in ANYWHERE_RULES above) still works anywhere.
+      match = tryBareEnergy(i) ?? tryBareDate(i) ?? tryPriorityCode(i);
     }
 
     if (match) {

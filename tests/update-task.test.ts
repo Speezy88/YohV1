@@ -144,6 +144,36 @@ test("Priority rejects a value with no matching live option; nothing is written"
   assert.equal(db.updates.length, 0);
 });
 
+test("Priority: when the live options read fails, it's an unreachable error, never 'try one of: .'", async () => {
+  const { db, deps } = setup();
+  const down: UpdateTaskDeps = { ...deps, readFieldOptions: async () => { throw new Error("down"); } };
+  const result = await updateTask(down, { taskId: "t1", field: "priority", value: "high" });
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.equal(result.error.kind, "unreachable");
+  assert.equal(result.error.message, "I couldn't reach Notion right now; nothing was changed.");
+  assert.equal(db.updates.length, 0);
+});
+
+test("Priority: when the live options read succeeds but Priority has no options, it's a validation error naming the real cause", async () => {
+  const db = createFakeNotionTasksDb({ seed: [{ id: "t1", title: "Calc set", area: "Math", status: "Nothing" }], priorityOptions: [] });
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db);
+  const writes = bindNotionTaskWrites(() => ({ ok: true, value: { client: db.client, config: { tasksDataSourceId: "tasks-ds" } } }));
+  const deps: UpdateTaskDeps = {
+    updateTaskField: writes.updateTaskField,
+    updateTaskTitle: writes.updateTaskTitle,
+    readFieldOptions: () => readTaskFieldOptions(db.client, { tasksDataSourceId: "tasks-ds" }),
+    connection,
+  };
+  const result = await updateTask(deps, { taskId: "t1", field: "priority", value: "high" });
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.equal(result.error.kind, "validation");
+  assert.equal(result.error.message, "Priority isn't set up in Notion.");
+  assert.equal(db.updates.length, 0);
+});
+
 test("success appends one 'tasks' hint; a Notion outage returns a plain error and appends none", async () => {
   const { db, deps, connection } = setup();
   const start = getMaxOutboxSeq(connection);

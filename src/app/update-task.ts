@@ -126,8 +126,21 @@ export async function updateTask(deps: UpdateTaskDeps, input: UpdateTaskInput): 
     // Task 7 binding ruling: Priority is a string equal to the live option
     // name (like Area), validated against the LIVE options — never a
     // `PlanningFieldNames` case.
-    const options = await liveOptions(deps);
-    const parsed = parsePriorityValue(input.value, options?.priority ?? []);
+    //
+    // Task 9 (M1): unlike Energy/Status (which fall back to plain words),
+    // Priority has no non-Notion fallback, so a failed options read and an
+    // empty options list are two different, distinguishable failures — not
+    // both silently folded into "no matching option" (`try one of: .`).
+    let options: TaskFieldOptions | undefined;
+    try {
+      options = await deps.readFieldOptions?.();
+    } catch (err) {
+      return { ok: false, error: { kind: "unreachable", message: errorCopyForThrown(err, { service: "Notion" }) } };
+    }
+    if (!options?.priority || options.priority.length === 0) {
+      return invalid("Priority isn't set up in Notion.");
+    }
+    const parsed = parsePriorityValue(input.value, options.priority);
     if (!parsed.ok) return invalid(parsed.message);
     value = parsed.value;
   } else {

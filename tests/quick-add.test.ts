@@ -168,10 +168,32 @@ test("'high priority'/'priority high' set Priority to the matching live option, 
   assert.equal(parseQuickAdd("Errand priority low", PRIORITY_CTX).fields.priority, "🟢 Low");
 });
 
-test("p1/p2/p3 set Priority to High/Medium/Low, anywhere in the line", () => {
+test("p1/p2/p3 set Priority to High/Medium/Low, at the end of the line", () => {
   assert.equal(parseQuickAdd("Lab report p1", PRIORITY_CTX).fields.priority, "🔴 High");
   assert.equal(parseQuickAdd("Lab report p2", PRIORITY_CTX).fields.priority, "🟡 Medium");
   assert.equal(parseQuickAdd("Lab report p3", PRIORITY_CTX).fields.priority, "🟢 Low");
+});
+
+// Task 9 (M3): a bare p-code is title text everywhere EXCEPT the trailing
+// frontier — unlike "priority high"/"high priority" (`tryPriorityPhrase`,
+// still recognized anywhere), so "p1" in the middle of a title never gets
+// silently swallowed into Priority.
+test("a bare p-code in the middle of the title is left as title text, never read as Priority", () => {
+  const parsed = parseQuickAdd("Physics p1 homework", PRIORITY_CTX);
+  assert.equal(parsed.fields.priority, undefined);
+  assert.equal(parsed.title, "Physics p1 homework");
+});
+
+test("a bare p-code at the end of the title still sets Priority and is dropped from the title", () => {
+  const parsed = parseQuickAdd("Physics homework p1", PRIORITY_CTX);
+  assert.equal(parsed.fields.priority, "🔴 High");
+  assert.equal(parsed.title, "Physics homework");
+});
+
+test("an explicit 'priority high' phrase still works anywhere, including in the middle of the title", () => {
+  const parsed = parseQuickAdd("Physics priority high homework", PRIORITY_CTX);
+  assert.equal(parsed.fields.priority, "🔴 High");
+  assert.equal(parsed.title, "Physics homework");
 });
 
 test("without ctx.priorityOptions, 'priority'/'p1' never set Priority (no live options to validate against)", () => {

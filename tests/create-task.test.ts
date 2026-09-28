@@ -293,3 +293,47 @@ test("an over-long Haiku title falls back to the deterministic title", async () 
   assert.equal(result.value.task.title, "Draft budget priority");
   assert.deepEqual(db.rows(), [{ id: "created-1", title: "Draft budget priority", energy: "Deep" }]);
 });
+
+// ---------------------------------------------------------------------------
+// Task 9 (M4): fields Haiku alone set (never shown as a preview chip, since
+// the Haiku fallback runs only on submit) are disclosed after the fact, in
+// the receipt's "— also read: ..." clause.
+// ---------------------------------------------------------------------------
+
+test("the receipt discloses fields ONLY Haiku set, after the deterministic ones", async () => {
+  const { deps } = setup();
+  const result = await createTask(
+    {
+      ...deps,
+      llmClient: DUMMY_LLM_CLIENT,
+      normalize: fakeNormalize(() => ({ title: "Draft budget", dueDate: "2026-09-28", estimatedDurationMinutes: "60", energy: "high" })),
+    },
+    { text: "Draft budget priority" },
+  );
+  assert.ok(result.ok, JSON.stringify(result));
+  assert.equal(result.value.receipt, 'Added "Draft budget" to Tasks — also read: Due Mon, 60 min, Energy Deep.');
+});
+
+test("no Haiku-only fields: the receipt is unchanged", async () => {
+  const { deps } = setup();
+  const result = await createTask(
+    { ...deps, llmClient: DUMMY_LLM_CLIENT, normalize: fakeNormalize(() => ({ title: "Draft budget" })) },
+    { text: "Draft budget priority" },
+  );
+  assert.ok(result.ok, JSON.stringify(result));
+  assert.equal(result.value.receipt, 'Added "Draft budget" to Tasks.');
+});
+
+test("a field the deterministic parse ALSO set is never listed as Haiku-only, even when Haiku echoes a conflicting value", async () => {
+  const { deps } = setup();
+  const result = await createTask(
+    {
+      ...deps,
+      llmClient: DUMMY_LLM_CLIENT,
+      normalize: fakeNormalize(() => ({ title: "Draft budget", estimatedDurationMinutes: "999" })),
+    },
+    { text: "Draft budget 30m priority" },
+  );
+  assert.ok(result.ok, JSON.stringify(result));
+  assert.equal(result.value.receipt, 'Added "Draft budget" to Tasks.');
+});

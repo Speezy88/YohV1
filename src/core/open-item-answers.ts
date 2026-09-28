@@ -27,19 +27,25 @@ export type NightCloseOutStatus = "completed" | "slipped";
  * question though" wrote Status = Slipped to real Notion even though
  * Spencer said he'd done it. Negation now only counts as slipped when it
  * ATTACHES to a completion word (`not done`, `didn't finish`, `not
- * finished`, `didn't do it`) or when the WHOLE reply is nothing but a slip
- * word (`missed`, `nope`, `no`, `slipped`, `not yet`). Anything else that
- * merely contains "not"/"missed" alongside a completion word (`done, not
- * bad`) falls through to the completed check below.
+ * finished`, `didn't do it`), when the WHOLE reply is nothing but a slip
+ * word (`missed`, `nope`, `no`, `slipped`, `not yet`), or when a completion
+ * word is followed by a PARTIAL-clause connector (`but not`, `except`,
+ * `apart from`, `other than`, `besides` — Task 9: "done but not the
+ * reading" means the Task is still open, not done). Anything else that
+ * merely contains "not"/"missed" alongside a completion word with no such
+ * connector (`done, not bad`) falls through to the completed check below.
  */
 const NIGHT_CLOSE_OUT_SLIPPED_RE =
   /\b(?:not|didn['’]?t|did not|never)\s+(?:get\s+)?(?:done|finish(?:ed)?|complete(?:d)?|do(?:\s+it)?|get\s+to\s+it)\b|^(?:nope|no|not yet|slipped?|missed(?: it)?)\W*$/;
+/** Task 9: a completion word, then later a partial-clause connector — "finished apart from problem 3", "done except the reading". */
+const NIGHT_CLOSE_OUT_PARTIAL_RE = /\b(?:completed?|done|finished)\b.*\b(?:but\s+not|except|apart from|other than|besides)\b/;
 const NIGHT_CLOSE_OUT_COMPLETED_RE = /\b(completed?|done|finished)\b/;
 
 export function parseNightCloseOutAnswer(raw: string): NightCloseOutStatus | undefined {
   const normalized = raw.trim().toLowerCase();
   if (normalized === "") return undefined;
   if (NIGHT_CLOSE_OUT_SLIPPED_RE.test(normalized)) return "slipped";
+  if (NIGHT_CLOSE_OUT_PARTIAL_RE.test(normalized)) return "slipped";
   if (NIGHT_CLOSE_OUT_COMPLETED_RE.test(normalized)) return "completed";
   return undefined;
 }

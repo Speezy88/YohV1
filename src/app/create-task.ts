@@ -18,9 +18,12 @@
  *
  * `previewQuickAdd` is the same parse with no write at all: the chips the
  * quick-add row shows while Spencer types ("Yoh reads: Due Fri, Oct 2 · 90
- * min …"), so nothing is ever read from his line without him seeing it
- * first. It matches `#tag`s against the Area options the page already
- * holds from its last list read, so a keystroke never costs a Notion call.
+ * min …") — the deterministic parse only. The Haiku fallback (below) runs
+ * only on submit, never while typing, so a field it alone reads was never
+ * shown as a chip first; it's disclosed after the fact instead, in the
+ * success receipt's "— also read: ..." clause (Task 9, M4). It matches
+ * `#tag`s against the Area options the page already holds from its last
+ * list read, so a keystroke never costs a Notion call.
  */
 import type { AnthropicMessagesClient } from "../adapters/llm-adapter.ts";
 import type { LogEntry } from "../adapters/logger.ts";
@@ -35,7 +38,7 @@ import {
   DEFAULT_TASK_STATUS_OPTION_NAMES,
 } from "../adapters/notion-adapter.ts";
 import { errorCopy, errorCopyForThrown } from "../core/error-copy.ts";
-import { hasUnresolvedFieldWords, matchAreaTag, parseQuickAdd, type QuickAddFields } from "../core/quick-add.ts";
+import { hasUnresolvedFieldWords, matchAreaTag, parseQuickAdd, type QuickAddField, type QuickAddFields } from "../core/quick-add.ts";
 import { normalizeQuickAdd, type NormalizeQuickAddDeps } from "./quick-add-normalize.ts";
 import type { NotionCreatePageBindingFn } from "./create-item.ts";
 import type { CreateTaskRequest, CreateTaskResponse, QuickAddPreviewRequest, QuickAddPreviewResponse, TaskListItem } from "../types/api.ts";
@@ -77,6 +80,39 @@ function fail(kind: YohError["kind"], message: string): { ok: false; error: YohE
 }
 
 const NEW_TASK_FIELDS: readonly PlanningFieldNames[] = ["estimatedDurationMinutes", "area", "dueDate", "energy"];
+
+/** Task 9 (M4): the receipt's "also read" clause lists fields in this order, regardless of the order Haiku returned them in. */
+const HAIKU_RECEIPT_FIELD_ORDER: readonly QuickAddField[] = ["dueDate", "estimatedDurationMinutes", "area", "energy", "status", "priority"];
+
+/**
+ * The short words for one field Haiku alone read (the deterministic parse
+ * left it undefined) — several may appear on the same receipt line, so
+ * each stays brief; never the fuller "Due Date set to Fri, Oct 2." wording
+ * `update-task.ts`'s single-field receipts use.
+ */
+function haikuFieldWords(field: QuickAddField, fields: QuickAddFields, options: TaskFieldOptions): string {
+  switch (field) {
+    case "dueDate": {
+      const [y, m, d] = fields.dueDate!.split("-").map(Number);
+      const weekday = new Date(Date.UTC(y!, m! - 1, d!)).toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" });
+      return `Due ${weekday}`;
+    }
+    case "estimatedDurationMinutes":
+      return `${fields.estimatedDurationMinutes} min`;
+    case "area":
+      return `Area ${fields.area}`;
+    case "energy": {
+      const label = options.energy.find((o) => o.value === fields.energy)?.label ?? DEFAULT_ENERGY_OPTION_NAMES[fields.energy!];
+      return `Energy ${label}`;
+    }
+    case "status": {
+      const label = options.status.find((o) => o.value === fields.status)?.label ?? DEFAULT_TASK_STATUS_OPTION_NAMES[fields.status!];
+      return `Status ${label}`;
+    }
+    case "priority":
+      return `Priority ${fields.priority}`;
+  }
+}
 
 export async function previewQuickAdd(deps: QuickAddPreviewDeps, input: QuickAddPreviewRequest): Promise<Result<QuickAddPreviewResponse, YohError>> {
   const resolveArea = areaMatcher(input.areaOptions);
@@ -125,6 +161,10 @@ export async function createTask(deps: CreateTaskDeps, input: CreateTaskRequest)
   // the deterministic parse alone — the Task is still created either way.
   let title = parsed.title;
   let fields: QuickAddFields = parsed.fields;
+  // Task 9 (M4): fields Haiku set that the deterministic parse left
+  // undefined — computed BEFORE the merge below (which lets `parsed.fields`
+  // win on conflict), so a field both sides agree on is never listed twice.
+  let haikuOnlyFields: readonly QuickAddField[] = [];
   if (hasUnresolvedFieldWords(parsed.title)) {
     const haiku = await normalizeQuickAdd(
       {
@@ -143,6 +183,9 @@ export async function createTask(deps: CreateTaskDeps, input: CreateTaskRequest)
       // by `quick-add-normalize.ts` — `undefined` here means it failed that
       // check, so the deterministic title is kept untouched.
       if (haiku.value.title !== undefined) title = haiku.value.title;
+      haikuOnlyFields = HAIKU_RECEIPT_FIELD_ORDER.filter(
+        (field) => haiku.value.fields[field] !== undefined && parsed.fields[field] === undefined,
+      );
       fields = { ...haiku.value.fields, ...parsed.fields };
     } else {
       deps.log?.({ level: "warn", event: "create-task.quick-add-normalize-failed", detail: { message: haiku.error.message } });
@@ -187,5 +230,8 @@ export async function createTask(deps: CreateTaskDeps, input: CreateTaskRequest)
     missing: NEW_TASK_FIELDS.filter((field) => fields[field as keyof QuickAddFields] === undefined),
     overdue: false,
   };
-  return { ok: true, value: { task, receipt: `Added "${title}" to Tasks.` } };
+  // Task 9 (M4): a field only Haiku read is disclosed here rather than
+  // silently applied — it was never shown as a preview chip beforehand.
+  const alsoRead = haikuOnlyFields.length > 0 ? ` — also read: ${haikuOnlyFields.map((field) => haikuFieldWords(field, fields, options)).join(", ")}.` : ".";
+  return { ok: true, value: { task, receipt: `Added "${title}" to Tasks${alsoRead}` } };
 }
