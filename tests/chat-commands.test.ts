@@ -11,6 +11,7 @@ import {
   isCalendarDeleteRequestCommand,
   isCalendarEditCommand,
   isMidDayReflowCommand,
+  isPlanEditRequest,
   isPlanDayCommand,
   isPlanViewCommand,
   isSaveSearchResultCommand,
@@ -400,4 +401,36 @@ test("parseDayViewCommand never matches a calendar-EDIT line — those stay isCa
 test("parseDayViewCommand never matches isPlanViewCommand's own bare 'what's my plan' territory", () => {
   assert.equal(isPlanViewCommand("what's my plan"), true);
   assert.equal(parseDayViewCommand("what's my plan"), undefined);
+});
+
+// Real-use bug 2026-09-28: "I'm behind" (the phrase plan-day's reply suggests)
+// was never recognized, and plan-change requests fell through to Task capture.
+test("isMidDayReflowCommand recognizes \"I'm behind\" phrasings", () => {
+  for (const line of ["I'm behind", "im behind", "I am behind schedule", "I\u2019m behind today", "i'm so behind!"]) {
+    assert.equal(isMidDayReflowCommand(line), true, line);
+  }
+  for (const line of ["I'm behind on my essay, add a task", "who's behind this", "behind the scenes"]) {
+    assert.equal(isMidDayReflowCommand(line), false, line);
+  }
+});
+
+test("isPlanEditRequest recognizes requests to change which Tasks are in the Plan", () => {
+  for (const line of [
+    "change the plan to work in the indigenous tradition poster instead of the labs",
+    "work on the poster instead of the labs",
+    "can you update my plan",
+    "swap the essay for the reading",
+    "rearrange today's plan",
+  ]) {
+    assert.equal(isPlanEditRequest(line), true, line);
+  }
+  for (const line of [
+    "what's the plan for today",
+    "plan my day",
+    "history poster due wednesday low energy",
+    "move my dentist appointment to 3pm",
+    "what should I eat instead of pizza",
+  ]) {
+    assert.equal(isPlanEditRequest(line), false, line);
+  }
 });

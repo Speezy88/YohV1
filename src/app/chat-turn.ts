@@ -41,6 +41,7 @@ import {
   isCalendarEditCommand,
   isMidDayReflowCommand,
   isPlanDayCommand,
+  isPlanEditRequest,
   isPlanViewCommand,
   isSaveSearchResultCommand,
   parseCreateItemCommand,
@@ -107,6 +108,9 @@ export const STATUS_CHECKING_TASKS = "Checking your Tasks…";
  * AD-13 says there is no delete variant for Yoh to attempt at all.
  */
 export const CALENDAR_DELETE_NOT_SUPPORTED_REPLY = "I can't delete or cancel calendar events for you — you'll need to do that directly in Google Calendar.";
+
+/** The plain, honest reply for a request to change which Tasks are in today's Plan (`isPlanEditRequest`) — not supported yet; only a re-fit is. */
+export const PLAN_EDIT_NOT_SUPPORTED_REPLY = "I can't swap or pick which Tasks are in today's Plan yet — I can only re-fit it. Say \"I'm behind\" and I'll re-fit the rest of the day from now.";
 
 export interface ChatTurnDeps extends CreateItemDeps, CalendarEditDeps, WebSearchDeps, SaveSearchResultDeps {
   readonly store: MemoryStore;
@@ -349,6 +353,10 @@ export async function chatTurn(deps: ChatTurnDeps, input: ChatTurnRequest): Prom
   // CREATE against a request that was never asking for one.
   if (isCalendarDeleteRequestCommand(input.message)) {
     return { ok: true, value: { reply: CALENDAR_DELETE_NOT_SUPPORTED_REPLY, receipts: [] } };
+  }
+
+  if (isPlanEditRequest(input.message)) {
+    return { ok: true, value: { reply: PLAN_EDIT_NOT_SUPPORTED_REPLY, receipts: [] } };
   }
 
   if (isCalendarEditCommand(input.message)) {

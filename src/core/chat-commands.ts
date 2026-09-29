@@ -148,9 +148,34 @@ export function isPlanDayCommand(line: string): boolean {
  */
 const MID_DAY_REFLOW_COMMAND_RE =
   /^(?:please\s+)?(?:(?:re-?flow|refit)(?:\s+(?:my\s+)?(?:day|plan))?|redo\s+(?:my\s+)?(?:day|plan))\??$/i;
+// "I'm behind" / "I am behind (schedule|today)" — the phrase `app/plan-day.ts`'s
+// already-planned reply tells Spencer to say (real-use bug 2026-09-28: it
+// was never recognized).
+const IM_BEHIND_RE = /^(?:i'?m|i\s+am|im)\s+(?:so\s+|really\s+|a\s+bit\s+)?behind(?:\s+(?:schedule|today|on\s+my\s+plan))?[.!]*$/i;
 
 export function isMidDayReflowCommand(line: string): boolean {
-  return MID_DAY_REFLOW_COMMAND_RE.test(line.trim());
+  const trimmed = line.trim().replace(/[’]/g, "'");
+  return MID_DAY_REFLOW_COMMAND_RE.test(trimmed) || IM_BEHIND_RE.test(trimmed);
+}
+
+/**
+ * Recognizes a request to change WHICH Tasks are in today's Plan ("work on
+ * the poster instead of the labs", "change my plan", "swap the essay for
+ * reading") — something Yoh can't do yet (only a re-fit exists). Real-use
+ * bug 2026-09-28: such a line fell through to `classifyCapture`, which read
+ * it as a new Task and replied with create-item's "couldn't tell what you
+ * want" error. Deliberately simple keyword heuristic, not NLU; `chatTurn`
+ * answers it honestly before any LLM call.
+ */
+const PLAN_EDIT_PATTERNS: readonly RegExp[] = [
+  /\b(?:change|edit|update|modify|swap|switch|rearrange|reorder|adjust|tweak|fix)\b[^.?!]*\b(?:my|the|today'?s)\s+plan\b/i,
+  /\b(?:work\s+on|do|study|focus\s+on|start)\b[^.?!]*\binstead\s+of\b/i,
+  /\bswap\b[^.?!]+\b(?:for|with)\b/i,
+];
+
+export function isPlanEditRequest(line: string): boolean {
+  const trimmed = line.trim().replace(/[’]/g, "'");
+  return PLAN_EDIT_PATTERNS.some((re) => re.test(trimmed));
 }
 
 // ============================================================================

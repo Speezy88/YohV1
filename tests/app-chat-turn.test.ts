@@ -17,7 +17,7 @@ import assert from "node:assert/strict";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { createMemoryStore, getCurrentTimeBudget, getPlan, putOpenInteractionRequest, putPlan, putTimeBudget, type MemoryStore } from "../src/adapters/memory-store.ts";
 import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
-import { CALENDAR_DELETE_NOT_SUPPORTED_REPLY, chatTurn, MAX_CHAT_HISTORY_TURNS, STATUS_THINKING, type ChatTurnDeps } from "../src/app/chat-turn.ts";
+import { CALENDAR_DELETE_NOT_SUPPORTED_REPLY, chatTurn, PLAN_EDIT_NOT_SUPPORTED_REPLY, MAX_CHAT_HISTORY_TURNS, STATUS_THINKING, type ChatTurnDeps } from "../src/app/chat-turn.ts";
 import { COMMANDS } from "../src/app/commands.ts";
 import type { AnthropicMessagesClient } from "../src/adapters/llm-adapter.ts";
 import type { ChatSession } from "../src/app/chat-session.ts";
@@ -1250,4 +1250,13 @@ test("/sandbox is case-insensitive and ignores a trailing word, matching every o
   assert.equal(result.ok, true);
   if (!result.ok) return;
   assert.ok(result.value.sandboxCard);
+});
+
+test("a plan-change request gets the honest can't-swap reply, with zero LLM calls and no Task draft (real-use bug 2026-09-28)", async () => {
+  const deps = baseDeps({ llmClient: throwingLlmClient() });
+  const result = await chatTurn(deps, { message: "change the plan to work in the indigenous tradition poster instead of the labs", history: [] });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.value.reply, PLAN_EDIT_NOT_SUPPORTED_REPLY);
+  assert.equal(result.value.question, undefined);
 });
