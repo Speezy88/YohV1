@@ -13,7 +13,7 @@ import { apiClient } from "./apiClient.ts";
 import { __resetHomeViewForTests, startHomeViewStream, useHomeView } from "./homeView.ts";
 
 vi.mock("./apiClient.ts", () => ({
-  apiClient: { api: { home: { $get: vi.fn() } } },
+  apiClient: { api: { home: { $get: vi.fn() }, plan: { sync: { $post: vi.fn() } } } },
 }));
 
 describe("homeView store", () => {
@@ -93,5 +93,32 @@ describe("homeView store", () => {
     stop();
     act(() => void window.dispatchEvent(new Event("focus")));
     expect(apiClient.api.home.$get).toHaveBeenCalledTimes(2);
+  });
+  it("syncs the Yoh Plan calendar before refetching on focus, but not on the initial load", async () => {
+    const order: string[] = [];
+    const sync = apiClient.api.plan.sync.$post as ReturnType<typeof vi.fn>;
+    const home = apiClient.api.home.$get as ReturnType<typeof vi.fn>;
+    sync.mockReset().mockImplementation(async () => { order.push("sync"); return { ok: true }; });
+    home.mockReset().mockImplementation(async () => { order.push("home"); return { ok: true, json: async () => ({ ok: false, error: { kind: "unreachable", message: "x" } }) }; });
+    const stop = startHomeViewStream();
+    await waitFor(() => expect(home).toHaveBeenCalledTimes(1));
+    expect(sync).not.toHaveBeenCalled();
+    act(() => void window.dispatchEvent(new Event("focus")));
+    await waitFor(() => expect(home).toHaveBeenCalledTimes(2));
+    expect(order).toEqual(["home", "sync", "home"]);
+    stop();
+  });
+
+  it("still refetches when the focus sync fails", async () => {
+    const sync = apiClient.api.plan.sync.$post as ReturnType<typeof vi.fn>;
+    const home = apiClient.api.home.$get as ReturnType<typeof vi.fn>;
+    sync.mockReset().mockRejectedValue(new Error("offline"));
+    home.mockReset().mockResolvedValue({ ok: true, json: async () => ({ ok: false, error: { kind: "unreachable", message: "x" } }) });
+    const stop = startHomeViewStream();
+    await waitFor(() => expect(home).toHaveBeenCalledTimes(1));
+    act(() => void window.dispatchEvent(new Event("focus")));
+    await waitFor(() => expect(home).toHaveBeenCalledTimes(2));
+    expect(sync).toHaveBeenCalledTimes(1);
+    stop();
   });
 });

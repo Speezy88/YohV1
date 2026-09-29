@@ -237,6 +237,12 @@ export type ReshuffleApproveResponse =
   | { readonly status: "applied"; readonly calendarFailedBlockIds: readonly string[] }
   | { readonly status: "recomputed"; readonly preview: ReshufflePreviewView; readonly question: OpenItemQuestion };
 
+/** `POST /api/plan/sync`'s value: what the Yoh Plan calendar sync did. */
+export interface PlanSyncResponse {
+  readonly status: "no-plan" | "unchanged" | "applied" | "skipped-conflict";
+  readonly calendarFailedBlockIds?: readonly string[];
+}
+
 /** `POST /api/plan/reshuffle/discard`'s value. */
 export interface ReshuffleDiscardResponse {
   readonly discarded: true;

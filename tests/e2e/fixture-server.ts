@@ -47,7 +47,7 @@ import { firstCardView } from "../../src/core/sandbox-card-view.ts";
 import { localIsoDate } from "../../src/rituals/ritual-shared.ts";
 import { startCheckOffCommitSweep, startServer, type ChatTurnFn, type ServerDeps } from "../../src/shell/server.ts";
 import type { AnthropicMessagesClient } from "../../src/adapters/llm-adapter.ts";
-import type { Plan, Task } from "../../src/types/domain.ts";
+import type { Plan, PlanBlock, PlanCalendarSnapshotEntry, Task, YohPlanEvent } from "../../src/types/domain.ts";
 import { createFakeNotionStatusClient } from "../fakes/fake-notion-status-client.ts";
 import { createFakeNotionCreateClient } from "../fakes/fake-notion-create-client.ts";
 import { createFakeNotionTasksDb } from "../fakes/fake-notion-tasks-db.ts";
@@ -92,6 +92,29 @@ function defaultPlan(version: number): Plan {
   };
 }
 putPlan(store, defaultPlan(1));
+
+/**
+ * Yoh Plan calendar sync (web/e2e/plan-calendar-sync.spec.ts): the fake calendar mirrors what Yoh
+ * last wrote, as Google would. `fixtureYohPlanEvents` is what the calendar holds now (a spec edits
+ * it via `POST /__fixture/yoh-plan-events`); the snapshot is what Yoh last wrote. Both follow the
+ * stored Plan on reset and on every fake calendar write. The timed sweep is not started here.
+ */
+export const fixtureYohPlanEvents: YohPlanEvent[] = [];
+let fixturePlanSnapshot: PlanCalendarSnapshotEntry[] = [];
+function mirrorPlanToCalendar(blocks: readonly PlanBlock[]): void {
+  const written = blocks.filter((b) => b.kind !== "calendar-anchor");
+  fixturePlanSnapshot = written.map((b) => ({
+    eventId: `evt-${b.id}`,
+    blockId: b.id,
+    kind: b.kind,
+    ...(b.taskId ? { taskId: b.taskId } : {}),
+    ...(b.routineId ? { routineId: b.routineId } : {}),
+    start: b.start,
+    end: b.end,
+  }));
+  fixtureYohPlanEvents.splice(0, fixtureYohPlanEvents.length, ...written.map((b) => ({ eventId: `evt-${b.id}`, blockId: b.id, title: b.label, start: b.start, end: b.end })));
+}
+mirrorPlanToCalendar(store.getRecord<Plan>("plan", today)?.data.blocks ?? []);
 // Reshuffle (like the morning ritual) needs a declared Time Budget; 6 h of work + 1 h of breaks covers every fixture Plan.
 putTimeBudget(store, { date: today, totalMinutes: 420, workMinutes: 360, breakMinutes: 60 });
 
@@ -123,7 +146,9 @@ function resetFixturePlan(scenario: boolean): void {
   for (const open of listOpenReshuffleProposals(store)) clearInteractionRequest(store, open.requestId, open.requestVersion);
   connection.db.transaction(() => replaceDayPinsAndDropsInTx(connection.db, today, [], []))();
   const version = (store.getRecord<Plan>("plan", today)?.version ?? 0) + 1;
-  putPlan(store, scenario ? scenarioPlan(version) : defaultPlan(version), (db) => appendOutboxInTx(db, { topic: "plan", entityId: today }));
+  const next = scenario ? scenarioPlan(version) : defaultPlan(version);
+  putPlan(store, next, (db) => appendOutboxInTx(db, { topic: "plan", entityId: today }));
+  mirrorPlanToCalendar(next.blocks);
 }
 
 const notion = createFakeNotionStatusClient();
@@ -189,8 +214,17 @@ const reshufflePlanDeps: NonNullable<ServerDeps["plan"]> = {
   readCalendarEvents: async () => [],
   writeCalendarPlan: async (blocks) => {
     fixturePlanCalendarWrites.push(blocks.map((b) => b.id));
+    mirrorPlanToCalendar(blocks);
     return { written: blocks.map((b) => b.id), failed: [] };
   },
+};
+
+/** `POST /api/plan/sync` over the fixture Plan and its fake calendar mirror. */
+const planSyncDeps: NonNullable<ServerDeps["planSync"]> = {
+  ...reshufflePlanDeps,
+  readYohPlanEvents: async () => [...fixtureYohPlanEvents],
+  readPlanCalendarSnapshot: () => fixturePlanSnapshot,
+  readPlanCalendarWriteState: () => ({}),
 };
 
 /** `web/e2e/chat.spec.ts` asserts on this exact text. */
@@ -401,10 +435,20 @@ const handle = startServer(
           resetFixturePlan(url.pathname === "/__fixture/reshuffle-scenario");
           return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
         }
+        if (url.pathname === "/__fixture/yoh-plan-events") {
+          if (request.method === "POST") {
+            return request.json().then((body) => {
+              const events = body as YohPlanEvent[];
+              fixtureYohPlanEvents.splice(0, fixtureYohPlanEvents.length, ...events);
+              return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
+            });
+          }
+          return new Response(JSON.stringify(fixtureYohPlanEvents), { headers: { "Content-Type": "application/json" } });
+        }
         return url.pathname === "/__fixture/state" ? fixtureState(url) : options.fetch(request);
       },
     }),
-  { homeView, calendarDay, checkOff, plan: reshufflePlanDeps, chat, tasks: tasksPage, research, sandbox },
+  { homeView, calendarDay, checkOff, plan: reshufflePlanDeps, planSync: planSyncDeps, chat, tasks: tasksPage, research, sandbox },
 );
 const sweep = startCheckOffCommitSweep({ connection, ...checkOff, now: () => new Date() }, { log: quiet });
 

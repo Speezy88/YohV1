@@ -69,7 +69,16 @@ export function startHomeViewStream(): () => void {
   const stopHints = onHint((hint) => {
     if (hint.topic === "plan" || hint.topic === "open-items") void refetch();
   });
-  const stopVisible = onVisibleRefresh(() => void refetch());
+  // Focus / visible polling: first fold any Yoh Plan calendar edits into the
+  // Plan (a failed sync must never block the refresh), then refetch Home.
+  const stopVisible = onVisibleRefresh(async () => {
+    try {
+      await apiClient.api.plan.sync.$post();
+    } catch {
+      // Best effort; Home still refetches below.
+    }
+    await refetch();
+  });
   return () => {
     stopHints();
     stopVisible();

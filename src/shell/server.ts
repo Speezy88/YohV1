@@ -76,6 +76,7 @@ import {
   proposeCalendarEdit as calendarProposeEdit,
   proposeNewCalendarEvent,
   readCalendarEvents,
+  readYohPlanEvents,
   resolveCalendarEditRoute as calendarResolveRoute,
   writeTodaysPlanToCalendar,
   type CalendarApplyBindingFn,
@@ -119,6 +120,8 @@ import { surfaceOpenItems } from "../app/surface-open-items.ts";
 import { answerOpenItem, type AnswerOpenItemDeps } from "../app/answer-open-item.ts";
 import { approveReshuffleById, discardReshuffleById, requestReshuffleView } from "../app/decide-reshuffle.ts";
 import type { ApproveReshuffleDeps } from "../app/approve-reshuffle.ts";
+import { syncPlanFromCalendar, type SyncPlanFromCalendarDeps, type SyncPlanFromCalendarOutput } from "../app/sync-plan-from-calendar.ts";
+import { errorCopyForThrown } from "../core/error-copy.ts";
 import { parseReshuffleRequest } from "../core/reshuffle-preview.ts";
 import { listTasks, type TasksViewDeps } from "../app/tasks-view.ts";
 import { createTask, previewQuickAdd, type CreateTaskDeps } from "../app/create-task.ts";
@@ -130,6 +133,7 @@ import { firstCardView } from "../core/sandbox-card-view.ts";
 import type {
   AnswerOpenItemRequest,
   ApiResult,
+  PlanSyncResponse,
   CalendarDayRequest,
   ChatStreamEvent,
   ChatTurnRequest,
@@ -274,6 +278,78 @@ export function startHeartbeatWriter(connection: SqliteConnection, options: Hear
   const handle = setIntervalFn(() => writeHeartbeat(connection, now().toISOString()), intervalMs);
 
   return {
+    stop(): void {
+      clearIntervalFn(handle);
+    },
+  };
+}
+
+// ============================================================================
+// Yoh Plan calendar sync sweep — folds Spencer's edits on the Yoh Plan calendar
+// back into today's Plan every 2 minutes, and on demand (`POST /api/plan/sync`).
+// ============================================================================
+
+export const PLAN_CALENDAR_SYNC_INTERVAL_MS = 2 * 60 * 1000;
+
+export interface PlanCalendarSyncSweepOptions {
+  readonly intervalMs?: number;
+  readonly setIntervalFn?: typeof setInterval;
+  readonly clearIntervalFn?: typeof clearInterval;
+  readonly log?: (entry: LogEntry) => void;
+}
+
+type PlanSyncResult = Result<SyncPlanFromCalendarOutput, YohError>;
+
+export interface PlanCalendarSyncSweepHandle {
+  readonly startup: Promise<PlanSyncResult>;
+  /** Runs one sync now, or joins the one already running; resolves to that run's Result. */
+  runOnce(): Promise<PlanSyncResult>;
+  stop(): void;
+}
+
+/** One lock per deps object, so the timer and `POST /api/plan/sync` never overlap. */
+const planSyncRunners = new WeakMap<SyncPlanFromCalendarDeps, () => Promise<PlanSyncResult>>();
+
+function getPlanSyncRunner(deps: SyncPlanFromCalendarDeps, log: (entry: LogEntry) => void): () => Promise<PlanSyncResult> {
+  const existing = planSyncRunners.get(deps);
+  if (existing) return existing;
+  let inFlight: Promise<PlanSyncResult> | undefined;
+  const runOnce = (): Promise<PlanSyncResult> => {
+    if (inFlight) return inFlight;
+    inFlight = (async (): Promise<PlanSyncResult> => {
+      try {
+        const result = await syncPlanFromCalendar(deps, {});
+        if (!result.ok) {
+          log({ level: "error", event: "server.plan-sync-failed", detail: { message: result.error.message } });
+        } else if (result.value.status === "applied") {
+          log({ level: "info", event: "server.plan-sync", detail: { ...result.value } });
+        }
+        return result;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        log({ level: "error", event: "server.plan-sync-failed", detail: { message } });
+        return { ok: false, error: { kind: "unreachable", message: errorCopyForThrown(err), detail: err } };
+      } finally {
+        inFlight = undefined;
+      }
+    })();
+    return inFlight;
+  };
+  planSyncRunners.set(deps, runOnce);
+  return runOnce;
+}
+
+export function startPlanCalendarSyncSweep(deps: SyncPlanFromCalendarDeps, options: PlanCalendarSyncSweepOptions = {}): PlanCalendarSyncSweepHandle {
+  const intervalMs = options.intervalMs ?? PLAN_CALENDAR_SYNC_INTERVAL_MS;
+  const setIntervalFn = options.setIntervalFn ?? setInterval;
+  const clearIntervalFn = options.clearIntervalFn ?? clearInterval;
+  const log = options.log ?? ((entry: LogEntry) => writeStructuredLog(entry));
+  const runOnce = getPlanSyncRunner(deps, log);
+  const startup = runOnce();
+  const handle = setIntervalFn(() => void runOnce(), intervalMs);
+  return {
+    startup,
+    runOnce,
     stop(): void {
       clearIntervalFn(handle);
     },
@@ -486,6 +562,8 @@ export interface ServerDeps {
    * absent, the routes report a clear `unreachable` error.
    */
   readonly plan?: ApproveReshuffleDeps;
+  /** `POST /api/plan/sync`'s dependencies (the Yoh Plan calendar sync) — absent, the route reports `unchanged`. */
+  readonly planSync?: SyncPlanFromCalendarDeps;
   /**
    * Story 7.10: the check-off routes' dependencies (`connection` comes from
    * this object's own). Optional for the same reason as `homeView` —
@@ -510,7 +588,11 @@ export interface ServerDeps {
    * (default: the real `chatTurn`), the same DI convention as
    * `eventStream.sleep`.
    */
-  readonly chat?: Omit<ChatTurnDeps & AnswerOpenItemDeps, "session" | "emit" | "today"> & { readonly runChatTurn?: ChatTurnFn };
+  readonly chat?: Omit<ChatTurnDeps & AnswerOpenItemDeps, "session" | "emit" | "today"> & {
+    readonly runChatTurn?: ChatTurnFn;
+    /** The Yoh Plan calendar sync's two reads; `buildPlanSyncDeps` joins them with `reshuffle`. */
+    readonly planSyncReads?: Pick<SyncPlanFromCalendarDeps, "readYohPlanEvents" | "readPlanCalendarSnapshot" | "readPlanCalendarWriteState">;
+  };
   /**
    * Story 8.5, contract C3: the ONE `ChatSession` every chat route in this
    * process shares (`startServer` builds it; Stories 8.6/8.7's routes reuse
@@ -822,6 +904,15 @@ export function createApp(deps: ServerDeps) {
           return c.json(result, httpStatus(result));
         },
       )
+      // The Yoh Plan calendar sync, on demand (tab focus). Shares the sweep's lock.
+      .post("/api/plan/sync", async (c) => {
+        if (!deps.planSync) {
+          const idle: ApiResult<PlanSyncResponse> = { ok: true, value: { status: "unchanged" } };
+          return c.json(idle, httpStatus(idle));
+        }
+        const result = wire(await getPlanSyncRunner(deps.planSync, log)());
+        return c.json(result, httpStatus(result));
+      })
       .post("/api/plan/reshuffle/approve", validator("json", validateReshuffleDecision), async (c) => {
         if (!deps.plan) return c.json(PLAN_NOT_CONFIGURED, httpStatus(PLAN_NOT_CONFIGURED));
         const result = wire(await approveReshuffleById(deps.plan, c.req.valid("json")));
@@ -1238,7 +1329,7 @@ export function startServer(
   env: Readonly<Record<string, string | undefined>> = process.env,
   serveFn: ServeFn = (options) => serve({ ...options }),
   /** Story 7.8's `homeView`, Story 7.10's `checkOff`, Story 8.5's `chat`, Task 6C's `research`, Task 4's `calendarDay`, and Story 9.2's `sandbox`, threaded through the same way `connection` already is. */
-  features: Pick<ServerDeps, "homeView" | "calendarDay" | "checkOff" | "plan" | "chat" | "tasks" | "research" | "sandbox"> = {},
+  features: Pick<ServerDeps, "homeView" | "calendarDay" | "checkOff" | "plan" | "planSync" | "chat" | "tasks" | "research" | "sandbox"> = {},
 ): ServerHandle {
   const port = parsePort(env["YOH_SERVER_PORT"]);
   // Contract C3: one ChatSession per server process, shared by every chat route.
@@ -1250,6 +1341,7 @@ export function startServer(
     ...(features.calendarDay ? { calendarDay: features.calendarDay } : {}),
     ...(features.checkOff ? { checkOff: features.checkOff } : {}),
     ...(features.plan ? { plan: features.plan } : {}),
+    ...(features.planSync ? { planSync: features.planSync } : {}),
     ...(features.chat ? { chat: features.chat } : {}),
     ...(features.tasks ? { tasks: features.tasks } : {}),
     ...(features.research ? { research: features.research } : {}),
@@ -1486,6 +1578,12 @@ function buildPlanDeps(chat: ServerDeps["chat"]): ServerDeps["plan"] {
   return { ...chat.reshuffle, store: chat.store };
 }
 
+/** `POST /api/plan/sync` and the sweep's deps: the reshuffle binding plus the two Yoh Plan calendar reads `buildChatDeps` built. */
+function buildPlanSyncDeps(chat: ServerDeps["chat"]): ServerDeps["planSync"] {
+  if (!chat?.reshuffle || !chat.planSyncReads) return undefined;
+  return { ...chat.reshuffle, store: chat.store, ...chat.planSyncReads };
+}
+
 function buildChatDeps(
   connection: SqliteConnection,
   notion: NotionFeatureConfig | undefined,
@@ -1710,6 +1808,15 @@ function buildChatDeps(
     // fresh `SlipHistory` rows written hours later, e.g. via `/night`).
     writeCalendarPlan: (blocks) => writeTodaysPlanToCalendar(getCalendarWriteClient(), getTokenStore(), blocks, { timeZone, snapshot: createPlanCalendarSnapshotStore(connection) }),
     log: (entry) => writeStructuredLog(entry),
+    planSyncReads: {
+      readYohPlanEvents: async () => {
+        const calendarId = getTokenStore().getCalendarId();
+        if (!calendarId) return [];
+        return readYohPlanEvents(createCalendarReadClient(getTokenStore().getOAuth2Client() as unknown as Parameters<typeof createCalendarReadClient>[0]), calendarId, { timeZone, now: new Date() });
+      },
+      readPlanCalendarSnapshot: (date) => createPlanCalendarSnapshotStore(connection).list(date),
+      readPlanCalendarWriteState: (date) => createPlanCalendarSnapshotStore(connection).writeState(date),
+    },
     // Reshuffle approval (chat "Approve" answers via `answerOpenItem`) — the
     // same narrow Yoh-Plan-calendar writer `/plan` uses, never the broad client.
     reshuffle: {
@@ -1763,8 +1870,10 @@ if (import.meta.main) {
   const research = buildResearchDeps(notion, process.env);
   const sandbox = notion ? buildSandboxDeps(notion) : undefined;
   const plan = buildPlanDeps(chat);
+  const planSync = buildPlanSyncDeps(chat);
   const handle = startServer(connection, process.env, undefined, {
     ...(plan ? { plan } : {}),
+    ...(planSync ? { planSync } : {}),
     ...(homeView ? { homeView } : {}),
     ...(calendarDay ? { calendarDay } : {}),
     ...(checkOff ? { checkOff } : {}),
@@ -1776,6 +1885,7 @@ if (import.meta.main) {
   // Story 7.10, AD-20: the startup sweep commits anything left overdue by a
   // previous process, then the commit timer takes over.
   const checkOffSweep = checkOff ? startCheckOffCommitSweep({ ...checkOff, connection, now: () => new Date() }) : undefined;
+  const planSyncSweep = planSync ? startPlanCalendarSyncSweep(planSync) : undefined;
   writeStructuredLog({
     level: "info",
     event: "server.listening",
@@ -1791,6 +1901,7 @@ if (import.meta.main) {
     writeStructuredLog({ level: "info", event: "server.stopping", detail: { signal } });
     heartbeat.stop();
     checkOffSweep?.stop();
+    planSyncSweep?.stop();
     handle.close();
     setTimeout(() => {
       connection.close();
