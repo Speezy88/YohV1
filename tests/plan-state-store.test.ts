@@ -272,3 +272,30 @@ test("T5: a rolled-back first write does not leave the day-pin tables marked rea
   connection.writeTx((db) => replaceDayPinsAndDropsInTx(db, "2026-08-22", [], ["y"]));
   assert.deepEqual(listDayDrops(connection.db, "2026-08-22"), ["y"]);
 });
+
+test("day pins round-trip durationMinutes, omitting the key when absent", () => {
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  replaceDayPinsAndDropsInTx(
+    connection.db,
+    "2026-08-22",
+    [
+      { date: "2026-08-22", subject: { kind: "task", taskId: "a" }, start: "2026-08-22T10:00:00.000Z", durationMinutes: 45 },
+      { date: "2026-08-22", subject: { kind: "task", taskId: "b" }, start: "2026-08-22T11:00:00.000Z" },
+    ],
+    [],
+  );
+  const pins = listDayPins(connection.db, "2026-08-22");
+  assert.equal(pins[0]!.durationMinutes, 45);
+  assert.equal("durationMinutes" in pins[1]!, false);
+});
+
+test("a day_pins table created with the old schema gains duration_minutes", () => {
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  connection.db.exec(`CREATE TABLE day_pins (date TEXT NOT NULL, subject_kind TEXT NOT NULL, subject_id TEXT NOT NULL, start TEXT NOT NULL, PRIMARY KEY (date, subject_kind, subject_id))`);
+  connection.db.prepare("INSERT INTO day_pins VALUES ('2026-08-22','task','old','2026-08-22T09:00:00.000Z')").run();
+  const before = listDayPins(connection.db, "2026-08-22");
+  assert.equal(before.length, 1);
+  assert.equal("durationMinutes" in before[0]!, false);
+  replaceDayPinsAndDropsInTx(connection.db, "2026-08-22", [{ date: "2026-08-22", subject: { kind: "task", taskId: "n" }, start: "2026-08-22T09:00:00.000Z", durationMinutes: 30 }], []);
+  assert.equal(listDayPins(connection.db, "2026-08-22")[0]!.durationMinutes, 30);
+});

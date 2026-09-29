@@ -85,6 +85,7 @@ function ensureDayPinTables(db: Database.Database): void {
       subject_kind TEXT NOT NULL,
       subject_id TEXT NOT NULL,
       start TEXT NOT NULL,
+      duration_minutes INTEGER,
       PRIMARY KEY (date, subject_kind, subject_id)
     );
     CREATE TABLE IF NOT EXISTS day_drops (
@@ -93,6 +94,9 @@ function ensureDayPinTables(db: Database.Database): void {
       PRIMARY KEY (date, task_id)
     );
   `);
+  // Databases created before pins carried a length lack the column.
+  const columns = db.prepare("PRAGMA table_info(day_pins)").all() as { name: string }[];
+  if (!columns.some((c) => c.name === "duration_minutes")) db.exec("ALTER TABLE day_pins ADD COLUMN duration_minutes INTEGER");
   // DDL inside a transaction rolls back with it, so only remember the tables outside one.
   if (!db.inTransaction) dayPinTablesReady.add(db);
 }
@@ -101,12 +105,13 @@ function ensureDayPinTables(db: Database.Database): void {
 export function listDayPins(db: Database.Database, date: string): DayPin[] {
   ensureDayPinTables(db);
   const rows = db
-    .prepare("SELECT subject_kind, subject_id, start FROM day_pins WHERE date = ? ORDER BY start, subject_id")
-    .all(date) as { subject_kind: string; subject_id: string; start: string }[];
+    .prepare("SELECT subject_kind, subject_id, start, duration_minutes FROM day_pins WHERE date = ? ORDER BY start, subject_id")
+    .all(date) as { subject_kind: string; subject_id: string; start: string; duration_minutes: number | null }[];
   return rows.map((r) => ({
     date,
     subject: r.subject_kind === "routine" ? { kind: "routine" as const, routineId: r.subject_id } : { kind: "task" as const, taskId: r.subject_id },
     start: r.start,
+    ...(r.duration_minutes !== null ? { durationMinutes: r.duration_minutes } : {}),
   }));
 }
 
@@ -126,9 +131,9 @@ export function replaceDayPinsAndDropsInTx(
   ensureDayPinTables(db);
   db.prepare("DELETE FROM day_pins WHERE date = ?").run(date);
   db.prepare("DELETE FROM day_drops WHERE date = ?").run(date);
-  const insertPin = db.prepare("INSERT INTO day_pins (date, subject_kind, subject_id, start) VALUES (?, ?, ?, ?)");
+  const insertPin = db.prepare("INSERT INTO day_pins (date, subject_kind, subject_id, start, duration_minutes) VALUES (?, ?, ?, ?, ?)");
   for (const pin of pins) {
-    insertPin.run(date, pin.subject.kind, pin.subject.kind === "task" ? pin.subject.taskId : pin.subject.routineId, pin.start);
+    insertPin.run(date, pin.subject.kind, pin.subject.kind === "task" ? pin.subject.taskId : pin.subject.routineId, pin.start, pin.durationMinutes ?? null);
   }
   const insertDrop = db.prepare("INSERT OR IGNORE INTO day_drops (date, task_id) VALUES (?, ?)");
   for (const taskId of drops) insertDrop.run(date, taskId);

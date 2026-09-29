@@ -491,6 +491,8 @@ export interface DayPin {
     | { readonly kind: "task"; readonly taskId: ExternalId }
     | { readonly kind: "routine"; readonly routineId: string };
   readonly start: IsoDateTime;
+  /** Minutes the pinned Task is placed for; absent means the Task's remaining estimate. Ignored for routine pins. */
+  readonly durationMinutes?: number;
 }
 
 /** The suggested payload of a `reshuffle` Proposal: the full proposed day plus what changed. */

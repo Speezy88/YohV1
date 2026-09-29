@@ -327,3 +327,34 @@ test("a request pin into an under-way routine is rejected naming the routine; a 
   assert.equal(held.value.rejectedReason, undefined);
   assert.equal(held.value.releasedPins?.[0]?.taskId, "b");
 });
+
+// ---------------------------------------------------------------------------
+// Pin length (DayPin.durationMinutes)
+// ---------------------------------------------------------------------------
+
+test("a pin with durationMinutes places the Task for that length (longer than its estimate) and subtracts it from the budget", () => {
+  const openTasks = [task("a", 60, "2026-08-25"), task("b", 30, "2026-08-23")];
+  const pin: DayPin = { ...pinOf("b", "2026-08-22T11:00:00.000Z"), durationMinutes: 50 };
+  const result = computeDayRefit(baseInput({ openTasks, pins: [pin] }));
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  const bWork = result.value.blocks.filter((x) => x.kind === "work" && x.taskId === "b");
+  assert.deepEqual(bWork.map((x) => [x.start, x.end]), [["2026-08-22T11:00:00.000Z", "2026-08-22T11:50:00.000Z"]]);
+  const plain = computeDayRefit(baseInput({ openTasks, pins: [pinOf("b", "2026-08-22T11:00:00.000Z")] }));
+  assert.equal(plain.ok, true);
+  if (!plain.ok) return;
+  const workMin = (blocks: readonly PlanBlock[], id: string) =>
+    blocks.filter((x) => x.kind === "work" && x.taskId === id).reduce((s, x) => s + (Date.parse(x.end) - Date.parse(x.start)) / 60000, 0);
+  assert.equal(workMin(plain.value.blocks, "b"), 30);
+  assert.equal(workMin(result.value.blocks, "b"), 50);
+});
+
+test("a pin with durationMinutes shorter than the estimate places the shorter length", () => {
+  const openTasks = [task("b", 90, "2026-08-23")];
+  const pin: DayPin = { ...pinOf("b", "2026-08-22T11:00:00.000Z"), durationMinutes: 20 };
+  const result = computeDayRefit(baseInput({ openTasks, pins: [pin] }));
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  const bWork = result.value.blocks.filter((x) => x.kind === "work" && x.taskId === "b");
+  assert.deepEqual(bWork.map((x) => [x.start, x.end]), [["2026-08-22T11:00:00.000Z", "2026-08-22T11:20:00.000Z"]]);
+});
