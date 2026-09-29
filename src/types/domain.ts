@@ -419,8 +419,11 @@ export type CalendarEditChange =
  *  - `break`: a work/break-rhythm rest block (FR-6–FR-8), no Task attached.
  *  - `calendar-anchor`: a fixed Google Calendar event the Plan is built
  *    around, not a block Yoh can reschedule (FR-1).
+ *  - `routine`: one of Spencer's declared Routines (`routineId` set) — occupies
+ *    time like an anchor but is written to the calendar and never counts
+ *    against the Time Budget.
  */
-export type PlanBlockKind = "work" | "break" | "calendar-anchor";
+export type PlanBlockKind = "work" | "break" | "calendar-anchor" | "routine";
 
 /**
  * PlanBlock carries a stable `id` (AD-9). Every reference to a PlanBlock —
@@ -433,8 +436,10 @@ export interface PlanBlock {
   readonly kind: PlanBlockKind;
   readonly start: IsoDateTime;
   readonly end: IsoDateTime;
-  /** Set when `kind` is `"work"`; absent for `"break"` and `"calendar-anchor"` blocks. */
+  /** Set when `kind` is `"work"`; absent for `"break"`, `"calendar-anchor"` and `"routine"` blocks. */
   readonly taskId?: ExternalId;
+  /** Set when `kind` is `"routine"`: the declared Routine this block places. */
+  readonly routineId?: string;
   /** Short human-readable label shown in the Plan notification (Task title, "Break", or the Calendar event's own title). */
   readonly label: string;
   /**
@@ -463,6 +468,8 @@ export interface Plan {
   readonly blocks: readonly PlanBlock[];
   /** FR-3's one-line reasoning for why the Plan is ordered/shaped this way. */
   readonly reasoning: string;
+  /** Labels of declared Routines that found no free slot today. Absent when every Routine was placed (or none applied). */
+  readonly unplacedRoutineLabels?: readonly string[];
   readonly version: number;
   readonly createdAt: IsoDateTime;
   readonly updatedAt: IsoDateTime;

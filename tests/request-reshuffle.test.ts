@@ -5,6 +5,8 @@ import { createMemoryStore, getPlan, listOpenInteractionRequests, putPlan, putTi
 import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
 import { localIsoDate } from "../src/rituals/ritual-shared.ts";
 import { requestReshuffle, type RequestReshuffleDeps } from "../src/app/request-reshuffle.ts";
+import { initRoutineStoreSchema, upsertRoutine } from "../src/adapters/routine-store.ts";
+import type { SqliteConnection } from "../src/adapters/sqlite.ts";
 import type { CalendarEvent, Plan, Task } from "../src/types/domain.ts";
 
 const TZ = "America/New_York";
@@ -12,10 +14,14 @@ const NOW = new Date("2026-08-22T18:00:00.000Z");
 const NOW_ISO = NOW.toISOString();
 const iso = (mins: number): string => new Date(NOW.getTime() + mins * 60_000).toISOString();
 
+const connections = new WeakMap<MemoryStore, SqliteConnection>();
+
 function tempStore(): MemoryStore {
   const connection = openSqliteConnection({ databasePath: ":memory:" });
   initNotificationStoreSchema(connection.db);
-  return createMemoryStore(connection);
+  const store = createMemoryStore(connection);
+  connections.set(store, connection);
+  return store;
 }
 
 function task(id: string, title: string, overrides: Partial<Task> = {}): Task {
@@ -271,4 +277,27 @@ test("pin-task on an open Task missing required data names the fields it needs",
   assert.equal(!r.ok && r.error.kind, "validation");
   assert.equal(!r.ok && r.error.message, "Fresh needs Estimated Duration and Due Date before I can place it.");
   store.close();
+});
+
+test("routines: previews include routine blocks; move-block on a routine block pins that routine", async () => {
+  const a = setup([task("t1", "Past"), task("t2", "Future")]);
+  // 2026-08-22 is a Saturday; "sat" routine at 15:00 New York = 19:00Z.
+  const connection = connections.get(a.store)!;
+  initRoutineStoreSchema(connection.db);
+  upsertRoutine(connection, { id: "routine-commute", label: "Commute", days: ["sat"], startMinutes: 15 * 60, durationMinutes: 30 });
+  const plan = getPlan(a.store, a.today)!.data;
+  putPlan(a.store, { ...plan, blocks: [...plan.blocks, { id: "v1-routine-routine-commute", kind: "routine", routineId: "routine-commute", start: "2026-08-22T19:00:00.000Z", end: "2026-08-22T19:30:00.000Z", label: "Commute" }] });
+  const reflow = await requestReshuffle(a.deps, { request });
+  assert.equal(reflow.ok, true);
+  if (!reflow.ok) return;
+  assert.equal(reflow.value.proposal.suggested.blocks.find((b) => b.kind === "routine")?.start, "2026-08-22T19:00:00.000Z");
+  const moved = await requestReshuffle(a.deps, { request: { kind: "move-block", planBlockId: "v1-routine-routine-commute", newStart: "2026-08-22T21:00:00.000Z" } });
+  assert.equal(moved.ok, true);
+  if (!moved.ok) return;
+  const s = moved.value.proposal.suggested;
+  assert.deepEqual(s.pins, [{ date: a.today, subject: { kind: "routine", routineId: "routine-commute" }, start: "2026-08-22T21:00:00.000Z" }]);
+  const b = s.blocks.find((x) => x.kind === "routine")!;
+  assert.equal(b.start, "2026-08-22T21:00:00.000Z");
+  assert.equal(b.pinned, true);
+  a.store.close();
 });

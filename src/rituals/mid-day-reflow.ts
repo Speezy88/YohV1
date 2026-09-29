@@ -240,6 +240,9 @@ import type { DataCompletenessGateResult } from "../core/data-completeness-gate.
 import { isOpenTask } from "../core/planning-field-value.ts";
 import { listDayDrops, listDayPins, replaceDayPinsAndDropsInTx } from "../adapters/plan-state-store.ts";
 import { computeDayRefit, elapsedMinutesWithinBlock } from "./reshuffle.ts";
+import { listRoutinesFromStore } from "../adapters/routine-store.ts";
+import { appendUnplacedRoutines } from "../core/routine-placement.ts";
+import type { Routine } from "../core/routine-commands.ts";
 import { runDataCompletenessGate } from "./data-completeness.ts";
 import { describeError, failure, localIsoDate, missingRefiningFor, renderPlan } from "./ritual-shared.ts";
 import type {
@@ -277,6 +280,8 @@ export interface MidDayReflowDeps {
   readonly timeZone: string;
   /** Slip-Bump levels (Task 17 / FR-11), threaded through to the ordering exactly as `morning-ritual.ts` does. Omitted -> "no bump" for every Task. */
   readonly bumpLevels?: Readonly<Record<ExternalId, number>>;
+  /** Declared Routines to keep placing for the rest of today. Defaults to reading them from `store`. */
+  readonly readRoutines?: () => readonly Routine[];
   readonly log?: (entry: LogEntry) => void;
   /** Forces color on/off for `rendered`; defaults to `renderPlan`'s own `shouldUseColor()`. */
   readonly color?: boolean;
@@ -373,7 +378,7 @@ function buildReflowReasoning(refitTaskCount: number, deferredCount: number): st
  * no `work`/`break` block has started yet as of `nowMs`.
  */
 function findBlockerOverrideBlockId(blocks: readonly PlanBlock[], nowMs: number): string | undefined {
-  const eligible = blocks.filter((b) => b.kind !== "calendar-anchor");
+  const eligible = blocks.filter((b) => b.kind === "work" || b.kind === "break");
 
   const inProgress = eligible.find((b) => Date.parse(b.start) <= nowMs && nowMs < Date.parse(b.end));
   if (inProgress) return inProgress.id;
@@ -599,6 +604,7 @@ export async function runMidDayReflow(deps: MidDayReflowDeps): Promise<Result<Mi
     pastBlocks,
     pins: activePins,
     drops: storedDrops,
+    routines: (deps.readRoutines ?? (() => listRoutinesFromStore(deps.store)))(),
     ...(deps.bumpLevels ? { bumpLevels: deps.bumpLevels } : {}),
     idPrefix: `v${nextVersion}`,
     log,
@@ -627,7 +633,8 @@ export async function runMidDayReflow(deps: MidDayReflowDeps): Promise<Result<Mi
     id: existingPlan.data.id,
     date: today,
     blocks: mergedBlocks,
-    reasoning: buildReflowReasoning(refitTaskIds.size, fitted.value.deferredTaskIds.length),
+    reasoning: appendUnplacedRoutines(buildReflowReasoning(refitTaskIds.size, fitted.value.deferredTaskIds.length), refit.value.unplacedRoutineLabels ?? []),
+    ...((refit.value.unplacedRoutineLabels ?? []).length > 0 ? { unplacedRoutineLabels: refit.value.unplacedRoutineLabels } : {}),
     version: nextVersion,
     createdAt: existingPlan.data.createdAt,
     updatedAt: nowIso,

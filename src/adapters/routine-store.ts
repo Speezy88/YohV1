@@ -65,3 +65,18 @@ export function listRoutines(connection: SqliteConnection): readonly Routine[] {
   const rows = connection.db.prepare(`SELECT id, label, days, start, duration_minutes FROM routines ORDER BY start, label`).all() as RoutineRow[];
   return rows.map(rowToRoutine);
 }
+
+/**
+ * Every routine, read straight off a `MemoryStore`'s database. A store whose
+ * routine table was never created (older tests, fresh fixtures) has none.
+ */
+export function listRoutinesFromStore(store: { withDb<T>(fn: (db: Database.Database) => T): T }): readonly Routine[] {
+  return store.withDb((db) => {
+    try {
+      const rows = db.prepare(`SELECT id, label, days, start, duration_minutes FROM routines ORDER BY start, label`).all() as RoutineRow[];
+      return rows.map(rowToRoutine);
+    } catch {
+      return [];
+    }
+  });
+}

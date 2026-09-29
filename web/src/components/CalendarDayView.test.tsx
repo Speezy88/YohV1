@@ -171,6 +171,16 @@ describe("CalendarDayView", () => {
     expect(el).toHaveClass("truncate");
   });
 
+  it("a routine block renders Yoh-owned (solid accent outline, no gradient/stripes) with its label", () => {
+    render(<CalendarDayView blocks={[block({ id: "r1", kind: "routine", label: "Commute" })]} timeZone={UTC} now={NOON_UTC} />);
+    const el = screen.getByTestId("calendar-block");
+    expect(el).toHaveAttribute("data-kind", "routine");
+    expect(el).toHaveClass("border-accent-solid");
+    expect(el).not.toHaveClass("bg-gradient-to-br");
+    expect(el).not.toHaveClass("text-event-fixed-ink");
+    expect(el.textContent).toBe("Commute");
+  });
+
   it("an untitled or punctuation-only label shows (No title)", () => {
     render(<CalendarDayView blocks={[block({ id: "b1", kind: "work", label: "   " }), block({ id: "e1", kind: "fixed", label: "--" })]} timeZone={UTC} now={NOON_UTC} />);
     const [work, fixed] = screen.getAllByTestId("calendar-block");

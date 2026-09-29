@@ -161,6 +161,7 @@ export function shouldUseColor(
 
 /** The plain-text marker a `calendar-anchor` block carries so a fixed Calendar event reads as immovable WITHOUT relying on color or on the reader knowing about `PlanBlockKind` (UX-DR20). */
 const ANCHOR_MARKER = "(fixed)";
+const ROUTINE_MARKER = "(routine)";
 
 /** DESIGN.md's `spacing.wrap-width` (`80ch`) — `renderPlan`'s own default wrap column, so output stays readable without resizing the terminal. (Story 8.9: this was `WRAP_WIDTH`, a constant `shell/chat-cli.ts` also imported directly for its own divider line; now private to this file, since `chat-cli.ts` was retired and no other caller ever needed it.) */
 const PLAN_WRAP_WIDTH = 80;
@@ -241,7 +242,8 @@ export function renderPlan(plan: Plan, options: RenderPlanOptions = {}): string 
  */
 export function renderBlockLine(block: PlanBlock, timeZone: string, width: number): string[] {
   const range = `${formatLocalTime(block.start, timeZone)}-${formatLocalTime(block.end, timeZone)}`;
-  const item = block.kind === "calendar-anchor" ? `${block.label} ${ANCHOR_MARKER}` : block.label;
+  const item =
+    block.kind === "calendar-anchor" ? `${block.label} ${ANCHOR_MARKER}` : block.kind === "routine" ? `${block.label} ${ROUTINE_MARKER}` : block.label;
   return wrapWithHangingIndent(`${range}  `, item, width);
 }
 

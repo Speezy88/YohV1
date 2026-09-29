@@ -207,3 +207,68 @@ test("pins never reach derived-priority: it sees only the un-pinned Tasks", () =
   const aWithout = without.value.blocks.filter((x) => x.taskId === "a").map((x) => [x.start, x.end]);
   assert.deepEqual(aWith, aWithout);
 });
+
+// ---- Routines (Epic 10, T6b) ----
+
+const dayMs = (hhmm: string): number => Date.parse(`2026-08-22T${hhmm}:00.000Z`);
+
+test("routines: placed at declared time, work routes around them, budget is unaffected", () => {
+  const routines = [{ id: "r1", label: "Commute", days: ["sat"] as const, startMinutes: 11 * 60, durationMinutes: 30 }];
+  const withR = computeDayRefit(baseInput({ fixedEvents: [], routines }));
+  const without = computeDayRefit(baseInput({ fixedEvents: [] }));
+  assert.equal(withR.ok && without.ok, true);
+  if (!withR.ok || !without.ok) return;
+  const rb = withR.value.blocks.filter((b) => b.kind === "routine");
+  assert.equal(rb.length, 1);
+  assert.equal(rb[0]!.start, "2026-08-22T11:00:00.000Z");
+  assert.equal(rb[0]!.routineId, "r1");
+  for (const b of withR.value.blocks.filter((x) => x.kind !== "routine")) {
+    assert.ok(!(dayMs("11:00") < Date.parse(b.end) && Date.parse(b.start) < dayMs("11:30")), `${b.id} overlaps routine`);
+  }
+  const minutes = (blocks: readonly PlanBlock[]) => blocks.filter((b) => b.kind === "work").reduce((s, b) => s + (Date.parse(b.end) - Date.parse(b.start)) / 60000, 0);
+  assert.equal(minutes(withR.value.blocks), minutes(without.value.blocks), "same work minutes with or without the routine");
+  assert.deepEqual(withR.value.unplacedRoutineLabels ?? [], []);
+});
+
+test("routines: shifted around an anchor; unfit routines are reported unplaced", () => {
+  const routines = [
+    { id: "r1", label: "Commute", days: ["sat"] as const, startMinutes: 10 * 60, durationMinutes: 30 },
+    { id: "r2", label: "Huge", days: ["sat"] as const, startMinutes: 12 * 60, durationMinutes: 24 * 60 },
+  ];
+  const r = computeDayRefit(baseInput({ routines }));
+  assert.equal(r.ok, true);
+  if (!r.ok) return;
+  const commute = r.value.blocks.find((b) => b.routineId === "r1")!;
+  assert.equal(commute.start, "2026-08-22T09:30:00.000Z"); // anchor 10:00-10:30; a tie between 09:30 and 10:30 goes earlier
+  assert.deepEqual(r.value.unplacedRoutineLabels, ["Huge"]);
+});
+
+test("routines: only routines declared for the day's weekday apply", () => {
+  const routines = [{ id: "r1", label: "Weekday thing", days: ["mon"] as const, startMinutes: 11 * 60, durationMinutes: 30 }];
+  const r = computeDayRefit(baseInput({ routines })); // 2026-08-22 is a Saturday
+  assert.equal(r.ok, true);
+  if (!r.ok) return;
+  assert.equal(r.value.blocks.some((b) => b.kind === "routine"), false);
+});
+
+test("routines: a routine pin overrides the declared time; pinned Tasks are placed first", () => {
+  const routines = [{ id: "r1", label: "Commute", days: ["sat"] as const, startMinutes: 11 * 60, durationMinutes: 30 }];
+  const pins = [{ date: DATE, subject: { kind: "routine" as const, routineId: "r1" }, start: "2026-08-22T14:00:00.000Z" }];
+  const r = computeDayRefit(baseInput({ routines, pins, fixedEvents: [] }));
+  assert.equal(r.ok, true);
+  if (!r.ok) return;
+  const b = r.value.blocks.find((x) => x.routineId === "r1")!;
+  assert.equal(b.start, "2026-08-22T14:00:00.000Z");
+  assert.equal(b.pinned, true);
+});
+
+test("routines: a routine goes around a pinned Task", () => {
+  const routines = [{ id: "r1", label: "Commute", days: ["sat"] as const, startMinutes: 11 * 60, durationMinutes: 30 }];
+  const pins = [{ date: DATE, subject: { kind: "task" as const, taskId: "a" }, start: "2026-08-22T11:00:00.000Z" }];
+  const r = computeDayRefit(baseInput({ routines, pins, fixedEvents: [] }));
+  assert.equal(r.ok, true);
+  if (!r.ok) return;
+  const b = r.value.blocks.find((x) => x.routineId === "r1")!;
+  const pinnedEnd = Math.max(...r.value.blocks.filter((x) => x.taskId === "a").map((x) => Date.parse(x.end)));
+  assert.ok(Date.parse(b.start) >= pinnedEnd || Date.parse(b.end) <= dayMs("11:00"));
+});

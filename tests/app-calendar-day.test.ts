@@ -124,3 +124,14 @@ test("a thrown Calendar-read failure returns an honest 'unreachable' error, neve
   assert.doesNotMatch(result.error.message, /ECONNREFUSED|10\.0\.0\.1|secret-internal-detail/);
   deps.store.close();
 });
+
+test("a stored Plan's routine block is returned as a routine calendar block", async () => {
+  const deps = baseDeps();
+  const plan = samplePlanForDate("2026-09-29");
+  putPlan(deps.store, { ...plan, blocks: [...plan.blocks, { id: "r1", kind: "routine", start: "2026-09-29T16:00:00.000Z", end: "2026-09-29T16:30:00.000Z", label: "Commute", routineId: "routine-commute" }] });
+  const result = await getCalendarDay(deps, { date: "2026-09-29" });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.value.blocks.find((b) => b.kind === "routine")?.label, "Commute");
+  deps.store.close();
+});

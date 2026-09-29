@@ -21,7 +21,7 @@ export function toFixedBlock(event: CalendarEvent, nowMs: number): HomeCalendarB
 }
 
 /** A stored Plan's own `"work"`/`"break"` block, Yoh-owned — `completed` is the caller's own live-status lookup (today's Home view has one; a read of another day currently doesn't, and passes a constant `false`). */
-export function toOwnedBlock(block: PlanBlock & { kind: "work" | "break" }, completed: boolean, nowMs: number): HomeCalendarBlock {
+export function toOwnedBlock(block: PlanBlock & { kind: "work" | "break" | "routine" }, completed: boolean, nowMs: number): HomeCalendarBlock {
   return {
     id: block.id,
     kind: block.kind,

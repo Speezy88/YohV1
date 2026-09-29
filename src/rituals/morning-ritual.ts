@@ -210,6 +210,9 @@ import { isOpenTask } from "../core/planning-field-value.ts";
 import { buildTimeBudgetChangeProposal, nextTimeBudgetDeferralStreak, resolveTodayTimeBudget } from "../core/time-budget.ts";
 import { listDayDrops, listDayPins } from "../adapters/plan-state-store.ts";
 import { computeDayRefit, computeSchoolDayInputs } from "./reshuffle.ts";
+import { appendUnplacedRoutines } from "../core/routine-placement.ts";
+import { listRoutinesFromStore } from "../adapters/routine-store.ts";
+import type { Routine } from "../core/routine-commands.ts";
 import { runDataCompletenessGate } from "./data-completeness.ts";
 import {
   ATTENTION,
@@ -445,6 +448,8 @@ export interface MorningRitualDeps {
   readonly timeZone: string;
   /** Slip-Bump levels (Task 17 / FR-11). Threaded through to BOTH the ordering and the reasoning line so they can never disagree. */
   readonly bumpLevels?: Readonly<Record<ExternalId, number>>;
+  /** Declared Routines to place today. Defaults to reading them from `store`. */
+  readonly readRoutines?: () => readonly Routine[];
   /**
    * `adapters/calendar-adapter.ts`'s `writeTodaysPlanToCalendar`, pre-bound
    * to its write client/calendarIdStore/config. Throws on I/O failure — this
@@ -785,6 +790,7 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
     fixedEvents: schoolDay.value.anchors,
     protectedWindows: schoolDay.value.protectedWindows,
     pastBlocks: [],
+    routines: (deps.readRoutines ?? (() => listRoutinesFromStore(deps.store)))(),
     pins: deps.store.withDb((db) => listDayPins(db, today)),
     drops: deps.store.withDb((db) => listDayDrops(db, today)),
     ...(deps.bumpLevels ? { bumpLevels: deps.bumpLevels } : {}),
@@ -796,6 +802,7 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
     return refit;
   }
   const fitted = { value: { blocks: refit.value.blocks, deferredTaskIds: refit.value.deferredTaskIds } };
+  const unplacedRoutineLabels = refit.value.unplacedRoutineLabels ?? [];
 
   // Story 9.1 (AD-11 amended): tag every assembled "work" block with
   // whichever Refining Field(s) its own CompleteTask is missing —
@@ -947,7 +954,8 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
     id: `plan-${today}`,
     date: today,
     blocks: blocksWithMissingRefining,
-    reasoning: reasoning.value,
+    reasoning: appendUnplacedRoutines(reasoning.value, unplacedRoutineLabels),
+    ...(unplacedRoutineLabels.length > 0 ? { unplacedRoutineLabels } : {}),
     version: (existingPlan?.data.version ?? 0) + 1,
     createdAt: existingPlan?.data.createdAt ?? nowIso,
     updatedAt: nowIso,

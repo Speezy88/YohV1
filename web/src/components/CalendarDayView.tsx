@@ -365,6 +365,7 @@ export function CalendarDayView({ blocks, timeZone, now = () => new Date(), isTo
           // a low-emphasis outline, no fill/shadow/bold — so they never
           // compete with Work/fixed events for attention.
           const isBreak = b.kind === "break";
+          const isRoutine = b.kind === "routine";
           const label = displayLabel(b.label);
           // Fix round 2 (review finding 2): "· fixed" (short, always fits
           // one truncated line with the label) instead of " (fixed)" (long
@@ -401,7 +402,9 @@ export function CalendarDayView({ blocks, timeZone, now = () => new Date(), isTo
             ? "border border-rim-structural bg-[repeating-linear-gradient(45deg,var(--color-event-fixed-stripe-a),var(--color-event-fixed-stripe-a)_6px,var(--color-event-fixed-stripe-b)_6px,var(--color-event-fixed-stripe-b)_12px)] text-event-fixed-ink font-semibold"
             : isBreak
               ? "border border-dashed border-rim-structural/60 bg-transparent text-ink-secondary"
-              : "bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end text-on-accent-solid shadow-extruded-sm font-semibold";
+              : isRoutine
+                ? "border border-accent-solid bg-surface-raised text-ink-primary font-semibold"
+                : "bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end text-on-accent-solid shadow-extruded-sm font-semibold";
           return (
             <div
               key={b.id}

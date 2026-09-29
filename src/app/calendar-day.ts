@@ -65,7 +65,7 @@ export async function getCalendarDay(deps: CalendarDayDeps, input: CalendarDayIn
   const stored = getPlan(deps.store, input.date);
   const ownedBlocks: HomeCalendarBlock[] = stored
     ? stored.data.blocks
-        .filter((b): b is PlanBlock & { kind: "work" | "break" } => b.kind === "work" || b.kind === "break")
+        .filter((b): b is PlanBlock & { kind: "work" | "break" | "routine" } => b.kind === "work" || b.kind === "break" || b.kind === "routine")
         .map((b) => toOwnedBlock(b, false, nowMs))
     : [];
 

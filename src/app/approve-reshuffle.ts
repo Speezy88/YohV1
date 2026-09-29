@@ -98,7 +98,7 @@ export async function approveReshuffle(
   }
 
   const nowIso = nowDate.toISOString();
-  const nextPlan = { ...stored.data, blocks: preview.blocks, version: stored.data.version + 1, updatedAt: nowIso };
+  const nextPlan = { ...stored.data, blocks: preview.blocks, unplacedRoutineLabels: preview.unplacedRoutineLabels, version: stored.data.version + 1, updatedAt: nowIso };
   try {
     putPlan(deps.store, nextPlan, (db) => {
       replaceDayPinsAndDropsInTx(db, today, preview.pins, preview.drops);

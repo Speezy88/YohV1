@@ -360,3 +360,21 @@ test("T5: a pinned work block surfaces taskId and pinned on the calendar block a
   assert.deepEqual(result.value.plan?.rows.map((r) => r.pinned), [true, undefined]);
   deps.store.close();
 });
+
+test("routine blocks render on the calendar with their label, and are never checklist rows", async () => {
+  const deps = tempDeps();
+  putPlan(deps.store, makePlan({
+    blocks: [
+      { id: "r1", kind: "routine", start: "2026-09-25T19:00:00.000Z", end: "2026-09-25T19:30:00.000Z", label: "Commute", routineId: "routine-commute" },
+      { id: "b1", kind: "work", start: "2026-09-25T20:00:00.000Z", end: "2026-09-25T21:00:00.000Z", taskId: "t1", label: "Draft the memo" },
+    ],
+  }));
+  const result = await getHomeView(deps, {});
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.deepEqual(result.value.plan?.rows.map((r) => r.taskId), ["t1"]);
+  const routine = result.value.calendar.blocks.find((b) => b.kind === "routine");
+  assert.equal(routine?.label, "Commute");
+  assert.equal(routine?.taskId, undefined);
+  deps.store.close();
+});

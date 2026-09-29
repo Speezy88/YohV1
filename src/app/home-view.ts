@@ -178,7 +178,7 @@ export async function getHomeView(deps: HomeViewDeps, _input: Record<string, nev
   }
 
   const ownedBlocks: HomeCalendarBlock[] = stored.data.blocks
-    .filter((b): b is PlanBlock & { kind: "work" | "break" } => b.kind === "work" || b.kind === "break")
+    .filter((b): b is PlanBlock & { kind: "work" | "break" | "routine" } => b.kind === "work" || b.kind === "break" || b.kind === "routine")
     .map((b) => toOwnedBlock(b, isCompleted(b), nowMs));
 
   const blocks = sortBlocksByStart([...ownedBlocks, ...fixedBlocks]);

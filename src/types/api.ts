@@ -149,7 +149,7 @@ export interface HomePlanRow {
  */
 export interface HomeCalendarBlock {
   readonly id: string;
-  readonly kind: "work" | "break" | "fixed";
+  readonly kind: "work" | "break" | "fixed" | "routine";
   readonly label: string;
   readonly start: string;
   readonly end: string;

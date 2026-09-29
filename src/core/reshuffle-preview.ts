@@ -18,7 +18,7 @@ export interface PlanBlockDiff {
 }
 
 /**
- * Work blocks are matched by Task (the nth block of a Task against the nth
+ * Work blocks (by Task) and routine blocks (by Routine) are matched (the nth block of a Task against the nth
  * block it had before). A proposed work block is unchanged when its match has
  * the same start and end; otherwise, or when it has no match, it moved.
  * Breaks and calendar anchors are never reported.
@@ -27,10 +27,11 @@ export function diffPlanBlocks(old: readonly PlanBlock[], proposed: readonly Pla
   const oldByKey = new Map<string, PlanBlock>();
   const counts = new Map<string, number>();
   const keyFor = (b: PlanBlock, seen: Map<string, number>): string | undefined => {
-    if (b.kind !== "work" || b.taskId === undefined) return undefined;
-    const n = seen.get(b.taskId) ?? 0;
-    seen.set(b.taskId, n + 1);
-    return `${b.taskId}#${n}`;
+    const subject = b.kind === "work" ? b.taskId : b.kind === "routine" ? (b.routineId === undefined ? undefined : `routine:${b.routineId}`) : undefined;
+    if (subject === undefined) return undefined;
+    const n = seen.get(subject) ?? 0;
+    seen.set(subject, n + 1);
+    return `${subject}#${n}`;
   };
   for (const b of [...old].sort((a, c) => Date.parse(a.start) - Date.parse(c.start))) {
     const key = keyFor(b, counts);

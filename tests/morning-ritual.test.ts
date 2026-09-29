@@ -1765,3 +1765,31 @@ test("Polish-5 final fix M2: a plan starting at 12:00 rescues a 40-minute Task f
   assert.equal(work!.end, `${SCHOOL_TODAY}T13:35:00.000Z`);
   assert.ok(!result.value.plan.blocks.some((b) => b.label === "Community time"), "the used protected window's anchor block is replaced by the rescued work block");
 });
+
+test("routines: a declared routine is placed in the Plan, written through writeCalendarPlan, and never affects work minutes", async () => {
+  const calls: (readonly PlanBlock[])[] = [];
+  const tasks = [makeTask("t1", "Draft the memo", { estimatedDurationMinutes: 60 })];
+  const routine = { id: "routine-commute", label: "Commute", days: ["sat" as const], startMinutes: 15 * 60, durationMinutes: 30 };
+  const withR = harness({ tasks });
+  const without = harness({ tasks });
+  const result = await runMorningRitual({ ...withR.deps, readRoutines: () => [routine], writeCalendarPlan: async (b) => { calls.push(b); } });
+  const baseline = await runMorningRitual(without.deps);
+  assert.ok(result.ok && result.value.status === "delivered");
+  assert.ok(baseline.ok && baseline.value.status === "delivered");
+  if (!(result.ok && result.value.status === "delivered" && baseline.ok && baseline.value.status === "delivered")) return;
+  const rb = result.value.plan.blocks.find((b) => b.kind === "routine");
+  assert.equal(rb?.label, "Commute");
+  assert.equal(rb?.start, "2026-08-22T15:00:00.000Z");
+  assert.ok(calls[0]!.some((b) => b.kind === "routine"), "routine is in the calendar write");
+  const workMinutes = (blocks: readonly PlanBlock[]) => blocks.filter((b) => b.kind === "work").length;
+  assert.equal(workMinutes(result.value.plan.blocks), workMinutes(baseline.value.plan.blocks));
+});
+
+test("routines: an unfit routine is listed on the stored Plan as unplaced", async () => {
+  const h = harness({ tasks: [makeTask("t1", "Draft the memo")] });
+  const routine = { id: "routine-huge", label: "Huge", days: ["sat" as const], startMinutes: 15 * 60, durationMinutes: 24 * 60 };
+  const result = await runMorningRitual({ ...h.deps, readRoutines: () => [routine] });
+  assert.ok(result.ok && result.value.status === "delivered");
+  if (!(result.ok && result.value.status === "delivered")) return;
+  assert.deepEqual(result.value.plan.unplacedRoutineLabels, ["Huge"]);
+});

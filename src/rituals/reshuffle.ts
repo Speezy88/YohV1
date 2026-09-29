@@ -8,6 +8,8 @@
 import type { LogEntry } from "../adapters/logger.ts";
 import { orderByDerivedPriority } from "../core/derived-priority.ts";
 import { computeSchoolDay, mergeOverlappingAnchors } from "../core/school-day.ts";
+import { placeRoutines, type DayRoutine } from "../core/routine-placement.ts";
+import type { Routine, RoutineDay } from "../core/routine-commands.ts";
 import { fitWorkBreakBlocks, type FitWorkBreakBlocksOutput } from "../core/work-break-fit.ts";
 import { localIsoDate } from "./ritual-shared.ts";
 import type {
@@ -221,6 +223,8 @@ export interface DayRefitInput {
   readonly requestPinTaskIds?: readonly ExternalId[];
   /** Task ids dropped for the day; removed before ordering. */
   readonly drops?: readonly ExternalId[];
+  /** Declared Routines; those whose days include `date`'s weekday are placed after anchors and pins, before work. They never consume the Time Budget. */
+  readonly routines?: readonly Routine[];
   /** Prefix for every fitted block id, e.g. `v3` gives `v3-work-0`. */
   readonly idPrefix: string;
   readonly log?: (entry: LogEntry) => void;
@@ -232,6 +236,8 @@ export interface DayRefitOutput {
   /** Only the freshly fitted (prefixed) blocks. */
   readonly fittedBlocks: readonly PlanBlock[];
   readonly deferredTaskIds: readonly ExternalId[];
+  /** Labels of Routines that fit nowhere today. */
+  readonly unplacedRoutineLabels?: readonly string[];
   readonly fitMs: number;
   /** Set when a pin could not be honored (it overlaps a fixed event or another pin); the blocks are then the day fitted with no pins at all. */
   readonly rejectedReason?: string;
@@ -240,6 +246,24 @@ export interface DayRefitOutput {
 }
 
 const PIN_ANCHOR_TITLE = "__pin__";
+const ROUTINE_ANCHOR_TITLE = "__routine__";
+const WEEKDAYS: readonly RoutineDay[] = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+
+/** The UTC instant at which `minutes` after local midnight of `date` occurs in `timeZone`. */
+function zonedInstantMs(date: IsoDate, minutes: number, timeZone: string): number {
+  const [y, m, d] = date.split("-").map(Number) as [number, number, number];
+  const wall = Date.UTC(y, m - 1, d, 0, minutes);
+  const offsetAt = (ms: number): number => {
+    const parts = Object.fromEntries(
+      new Intl.DateTimeFormat("en-US", { timeZone, hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric" })
+        .formatToParts(new Date(ms))
+        .map((p) => [p.type, Number(p.value)]),
+    ) as Record<string, number>;
+    return Date.UTC(parts["year"]!, parts["month"]! - 1, parts["day"]!, parts["hour"]!, parts["minute"]!, parts["second"]!) - Math.floor(ms / 1000) * 1000;
+  };
+  const first = wall - offsetAt(wall);
+  return wall - offsetAt(first);
+}
 const MINUTES_TO_MS = 60_000;
 
 /**
@@ -362,6 +386,30 @@ export function computeDayRefit(input: DayRefitInput): Result<DayRefitOutput, Yo
     start: new Date(p.startMs).toISOString(),
     end: new Date(p.endMs).toISOString(),
   }));
+  const pinSpans = placements.map((p) => ({ startMs: p.startMs, endMs: p.endMs }));
+  const dayWeekday = WEEKDAYS[new Date(`${input.date}T12:00:00Z`).getUTCDay()]!;
+  const routinePinStart = new Map<string, number>();
+  for (const pin of input.pins ?? []) {
+    if (pin.date === input.date && pin.subject.kind === "routine") routinePinStart.set(pin.subject.routineId, Date.parse(pin.start));
+  }
+  const dayRoutines: DayRoutine[] = (input.routines ?? [])
+    .filter((r) => r.days.includes(dayWeekday))
+    .map((r) => ({
+      id: r.id,
+      label: r.label,
+      startMs: zonedInstantMs(input.date, r.startMinutes, input.timeZone),
+      durationMinutes: r.durationMinutes,
+      ...(routinePinStart.has(r.id) ? { pinnedStartMs: routinePinStart.get(r.id)! } : {}),
+    }));
+  const dayEndMs = zonedInstantMs(input.date, 24 * 60, input.timeZone);
+  const routinePlacement = placeRoutines({
+    routines: dayRoutines,
+    fixed: [...anchors, ...protectedWindows].map((e) => ({ startMs: Date.parse(e.start), endMs: Date.parse(e.end) })).concat(pinSpans),
+    nowMs,
+    dayEndMs,
+    idPrefix: input.idPrefix,
+  });
+  const routineAnchors: CalendarEvent[] = routinePlacement.blocks.map((b, i) => ({ id: `routine-anchor-${i}`, title: ROUTINE_ANCHOR_TITLE, start: b.start, end: b.end }));
   const pinnedMinutes = pinBlocks.reduce((sum, b) => sum + (Date.parse(b.end) - Date.parse(b.start)) / MINUTES_TO_MS, 0);
   const budget: TimeBudget =
     pinnedMinutes > 0 ? { ...input.budget, totalMinutes: Math.max(1, Math.round(input.budget.totalMinutes - pinnedMinutes)) } : input.budget;
@@ -369,7 +417,7 @@ export function computeDayRefit(input: DayRefitInput): Result<DayRefitOutput, Yo
   const pass1 = fitWorkBreakBlocks({
     tasks: ordered.value,
     budget,
-    calendarEvents: [...anchors, ...protectedWindows, ...pinAnchors],
+    calendarEvents: [...anchors, ...protectedWindows, ...pinAnchors, ...routineAnchors],
     startTime: input.now,
   });
   if (!pass1.ok) return pass1;
@@ -385,8 +433,9 @@ export function computeDayRefit(input: DayRefitInput): Result<DayRefitOutput, Yo
   if (!fitted.ok) return fitted;
 
   const fittedBlocks = [
-    ...fitted.value.blocks.filter((b) => !(b.kind === "calendar-anchor" && b.label === PIN_ANCHOR_TITLE)).map((b) => ({ ...b, id: `${input.idPrefix}-${b.id}` })),
+    ...fitted.value.blocks.filter((b) => !(b.kind === "calendar-anchor" && (b.label === PIN_ANCHOR_TITLE || b.label === ROUTINE_ANCHOR_TITLE))).map((b) => ({ ...b, id: `${input.idPrefix}-${b.id}` })),
     ...pinBlocks,
+    ...routinePlacement.blocks,
   ].sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
   const blocks = [...input.pastBlocks, ...fittedBlocks].sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
   const fitMs = Date.now() - startedMs;
@@ -397,6 +446,13 @@ export function computeDayRefit(input: DayRefitInput): Result<DayRefitOutput, Yo
   });
   return {
     ok: true,
-    value: { blocks, fittedBlocks, deferredTaskIds: fitted.value.deferredTaskIds, fitMs, ...(released.length > 0 ? { releasedPins: released } : {}) },
+    value: {
+      blocks,
+      fittedBlocks,
+      deferredTaskIds: fitted.value.deferredTaskIds,
+      unplacedRoutineLabels: routinePlacement.unplacedLabels,
+      fitMs,
+      ...(released.length > 0 ? { releasedPins: released } : {}),
+    },
   };
 }

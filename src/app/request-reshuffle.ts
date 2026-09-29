@@ -8,6 +8,8 @@
  */
 import { clearInteractionRequest, getCurrentTimeBudget, getPlan, type MemoryStore } from "../adapters/memory-store.ts";
 import { listDayDrops, listDayPins } from "../adapters/plan-state-store.ts";
+import { listRoutinesFromStore } from "../adapters/routine-store.ts";
+import type { Routine } from "../core/routine-commands.ts";
 import { listOpenReshuffleProposals } from "../adapters/reshuffle-proposal-store.ts";
 import { errorCopyForThrown } from "../core/error-copy.ts";
 import type { MissingFieldReport } from "../core/data-completeness-gate.ts";
@@ -39,6 +41,8 @@ export interface RequestReshuffleDeps {
   readonly now: () => Date;
   readonly readTasks: () => Promise<readonly Task[]>;
   readonly readCalendarEvents: () => Promise<readonly CalendarEvent[]>;
+  /** Declared Routines. Defaults to reading them from `store`. */
+  readonly readRoutines?: () => readonly Routine[];
 }
 
 export interface RequestReshuffleInput {
@@ -59,6 +63,7 @@ function clearOpenReshuffleProposals(store: MemoryStore): void {
 }
 
 const taskSubject = (pin: DayPin): ExternalId | undefined => (pin.subject.kind === "task" ? pin.subject.taskId : undefined);
+const isRoutinePin = (pin: DayPin, routineId: string): boolean => pin.subject.kind === "routine" && pin.subject.routineId === routineId;
 
 interface DayChange {
   readonly pins: readonly DayPin[];
@@ -96,6 +101,12 @@ function resolveRequest(
     case "move-block": {
       const block = ctx.plan.blocks.find((b) => b.id === request.planBlockId);
       if (!block) return fail("stale-proposal", "That block has changed. Try dragging it again.");
+      if (block.kind === "routine" && block.routineId !== undefined && Date.parse(block.start) >= ctx.nowMs) {
+        const startMs = Date.parse(request.newStart);
+        if (startMs < ctx.nowMs || localIsoDate(new Date(startMs), ctx.timeZone) !== ctx.today) return fail("validation", "Pick a time later today.");
+        const pin: DayPin = { date: ctx.today, subject: { kind: "routine", routineId: block.routineId }, start: new Date(startMs).toISOString() };
+        return { ok: true, value: { pins: [...current.pins.filter((p) => !isRoutinePin(p, block.routineId!)), pin], drops: current.drops } };
+      }
       if (block.kind !== "work" || block.taskId === undefined || Date.parse(block.start) < ctx.nowMs) {
         return fail("validation", "That block can't be moved.");
       }
@@ -212,6 +223,7 @@ export async function requestReshuffle(
     pins: day.pins,
     drops: day.drops,
     requestPinTaskIds: day.requested ?? [],
+    routines: (deps.readRoutines ?? (() => listRoutinesFromStore(deps.store)))(),
     bumpLevels: computeBumpLevels(deps.store),
     idPrefix: `v${plan.version + 1}`,
   });
@@ -248,7 +260,7 @@ export async function requestReshuffle(
     needsDataTaskIds,
     pins: rejectedReason !== undefined ? currentDay.pins : keptPins,
     drops: rejectedReason !== undefined ? currentDay.drops : day.drops,
-    unplacedRoutineLabels: [],
+    unplacedRoutineLabels: rejectedReason !== undefined ? (plan.unplacedRoutineLabels ?? []) : (refit.value.unplacedRoutineLabels ?? []),
     ...(rejectedReason !== undefined ? { rejectedReason } : {}),
     summary:
       rejectedReason ??
