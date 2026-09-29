@@ -466,6 +466,46 @@ export interface Plan {
   readonly updatedAt: IsoDateTime;
 }
 
+/** A request to reshape the rest of today's Plan. Only `reflow-now` is handled so far. */
+export type ReshuffleRequest =
+  | { readonly kind: "reflow-now" }
+  | { readonly kind: "move-block"; readonly planBlockId: string; readonly newStart: IsoDateTime }
+  | { readonly kind: "pin-task"; readonly taskId: ExternalId; readonly newStart: IsoDateTime }
+  | { readonly kind: "unpin-task"; readonly taskId: ExternalId }
+  | { readonly kind: "drop-task"; readonly taskId: ExternalId }
+  | { readonly kind: "swap"; readonly addTaskId: ExternalId; readonly removeTaskId: ExternalId };
+
+/** A per-day placement Spencer fixed by hand. */
+export interface DayPin {
+  readonly date: IsoDate;
+  readonly subject:
+    | { readonly kind: "task"; readonly taskId: ExternalId }
+    | { readonly kind: "routine"; readonly routineId: string };
+  readonly start: IsoDateTime;
+}
+
+/** The suggested payload of a `reshuffle` Proposal: the full proposed day plus what changed. */
+export interface ReshufflePreview {
+  readonly date: IsoDate;
+  readonly request: ReshuffleRequest;
+  /** Full proposed day (past blocks kept verbatim). */
+  readonly blocks: readonly PlanBlock[];
+  /** Proposed block ids that are newly placed or whose times changed. */
+  readonly movedBlockIds: readonly string[];
+  readonly deferredTaskIds: readonly ExternalId[];
+  readonly needsDataTaskIds: readonly ExternalId[];
+  /** The day's pins and drops after approve. */
+  readonly pins: readonly DayPin[];
+  readonly drops: readonly ExternalId[];
+  readonly unplacedRoutineLabels: readonly string[];
+  /** Set when the request could not be honored; the preview then equals the current plan. */
+  readonly rejectedReason?: string;
+  /** One line naming the moves and deferred Tasks. */
+  readonly summary: string;
+  readonly planVersion: number;
+  readonly calendarVersion: string;
+}
+
 // ============================================================================
 // CalendarEvent (FR-1, AD-10)
 // ============================================================================
