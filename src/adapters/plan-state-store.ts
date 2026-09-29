@@ -74,7 +74,11 @@ export function initPlanStateStoreSchema(db: Database.Database): void {
 // Day pins and drops (Epic 10): per-day placements Spencer fixed by hand.
 // ---------------------------------------------------------------------------
 
+const dayPinTablesReady = new WeakSet<Database.Database>();
+
+/** Creates the tables once per database handle, so callers that never ran `initPlanStateStoreSchema` still work without repeating DDL on every read. */
 function ensureDayPinTables(db: Database.Database): void {
+  if (dayPinTablesReady.has(db)) return;
   db.exec(`
     CREATE TABLE IF NOT EXISTS day_pins (
       date TEXT NOT NULL,
@@ -89,6 +93,7 @@ function ensureDayPinTables(db: Database.Database): void {
       PRIMARY KEY (date, task_id)
     );
   `);
+  dayPinTablesReady.add(db);
 }
 
 /** The day's pins; other dates are never returned. */

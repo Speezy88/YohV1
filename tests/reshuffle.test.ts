@@ -144,7 +144,7 @@ test("a pinned Task is placed exactly once at its pin, split by the normal rule,
 
 test("a pin overlapping a fixed event is rejected with a reason naming the event, and the day is unchanged", () => {
   const plain = computeDayRefit(baseInput());
-  const result = computeDayRefit(baseInput({ pins: [pinOf("a", "2026-08-22T10:15:00.000Z")] }));
+  const result = computeDayRefit(baseInput({ pins: [pinOf("a", "2026-08-22T10:15:00.000Z")], requestPinTaskIds: ["a"] }));
   assert.equal(result.ok && plain.ok, true);
   if (!result.ok || !plain.ok) return;
   assert.match(result.value.rejectedReason ?? "", /Standup/);
@@ -161,13 +161,41 @@ test("drops remove the Task from the day entirely; pins for another date are ign
   assert.ok(b.length > 0 && b.every((x) => x.pinned === undefined));
 });
 
-test("a pin that has already started is ignored (the Task returns to normal ordering)", () => {
-  const result = computeDayRefit(baseInput({ pins: [pinOf("b", "2026-08-22T08:00:00.000Z")] }));
+test("an in-progress pin keeps its open Task going: placed first from now, pinned, ahead of a higher-priority Task", () => {
+  const now = "2026-08-22T14:30:00.000Z";
+  const openTasks = [task("a", 30, "2026-08-22"), task("b", 40, "2026-08-30")];
+  const result = computeDayRefit(baseInput({ now, openTasks, fixedEvents: [], pins: [pinOf("b", "2026-08-22T14:00:00.000Z")] }));
   assert.equal(result.ok, true);
   if (!result.ok) return;
+  assert.equal(result.value.rejectedReason, undefined);
+  const b = result.value.blocks.filter((x) => x.taskId === "b");
+  assert.deepEqual(b.map((x) => [x.start, x.end, x.pinned]), [["2026-08-22T14:30:00.000Z", "2026-08-22T15:10:00.000Z", true]]);
+  const a = result.value.blocks.filter((x) => x.taskId === "a");
+  assert.equal(a[0]!.start, "2026-08-22T15:10:00.000Z");
+});
+
+test("a stored pin whose span would run past the end of the day stops applying", () => {
+  const now = "2026-08-22T23:30:00.000Z";
+  const result = computeDayRefit(baseInput({ now, openTasks: [task("b", 60, "2026-08-30")], fixedEvents: [], pins: [pinOf("b", "2026-08-22T23:00:00.000Z")] }));
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.value.rejectedReason, undefined);
   assert.ok(result.value.blocks.every((x) => x.pinned === undefined));
 });
 
+test("a stored pin that now overlaps a fixed event is released, not rejected; a request pin still rejects", () => {
+  const openTasks = [task("a", 60, "2026-08-25"), task("b", 45, "2026-08-23")];
+  const pins = [pinOf("b", "2026-08-22T10:15:00.000Z")];
+  const stored = computeDayRefit(baseInput({ openTasks, pins }));
+  assert.equal(stored.ok, true);
+  if (!stored.ok) return;
+  assert.equal(stored.value.rejectedReason, undefined);
+  assert.deepEqual(stored.value.releasedPins, [{ taskId: "b", title: "Task b", reason: "it now overlaps Standup" }]);
+  assert.ok(stored.value.blocks.every((x) => x.pinned === undefined));
+  assert.ok(stored.value.blocks.some((x) => x.taskId === "b"));
+  const requested = computeDayRefit(baseInput({ openTasks, pins, requestPinTaskIds: ["b"] }));
+  assert.equal(requested.ok && requested.value.rejectedReason !== undefined, true);
+});
 test("pins never reach derived-priority: it sees only the un-pinned Tasks", () => {
   const openTasks = [task("a", 60, "2026-08-25"), task("b", 45, "2026-08-23")];
   const bump = { b: 5, a: 0 };

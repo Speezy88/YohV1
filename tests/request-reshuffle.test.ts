@@ -235,3 +235,32 @@ test("stored pins for today apply to a plain reflow; pins for another date are i
   assert.deepEqual(drops(store, today), []);
   store.close();
 });
+
+test("a stored pin that now overlaps a new event is released with a summary, and the refit is not rejected", async () => {
+  const ev: CalendarEvent = { id: "e9", title: "Dentist", start: iso(110), end: iso(150) };
+  const { store, today, deps } = setup(T3(), [ev]);
+  store.withDb((db) => replaceDayPinsAndDropsInTx(db, today, [{ date: today, subject: { kind: "task", taskId: "t3" }, start: iso(120) }], []));
+  const r = await requestReshuffle(deps, { request });
+  assert.equal(r.ok, true);
+  if (!r.ok) return;
+  const p = r.value.proposal.suggested;
+  assert.equal(p.rejectedReason, undefined);
+  assert.deepEqual(p.pins, []);
+  assert.match(p.summary, /Unpinned Fresh — it now overlaps Dentist\./);
+  assert.ok(p.blocks.some((b) => b.taskId === "t3"), "the released Task is still placed");
+  // another pin request is not rejected by the stale one either
+  const other = await requestReshuffle(deps, { request: { kind: "pin-task", taskId: "t2", newStart: iso(200) } });
+  assert.equal(other.ok && other.value.proposal.suggested.rejectedReason === undefined, true);
+  store.close();
+});
+
+test("an in-progress stored pin keeps its Task going from now", async () => {
+  const { store, today, deps } = setup(T3());
+  store.withDb((db) => replaceDayPinsAndDropsInTx(db, today, [{ date: today, subject: { kind: "task", taskId: "t2" }, start: iso(-10) }], []));
+  const r = await requestReshuffle(deps, { request });
+  assert.equal(r.ok, true);
+  if (!r.ok) return;
+  const t2 = r.value.proposal.suggested.blocks.filter((b) => b.taskId === "t2" && b.pinned);
+  assert.equal(t2[0]?.start, NOW_ISO);
+  store.close();
+});

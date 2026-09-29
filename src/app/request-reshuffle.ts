@@ -62,6 +62,8 @@ const taskSubject = (pin: DayPin): ExternalId | undefined => (pin.subject.kind =
 interface DayChange {
   readonly pins: readonly DayPin[];
   readonly drops: readonly ExternalId[];
+  /** Tasks whose pin this request itself sets; only these may reject the preview. */
+  readonly requested?: readonly ExternalId[];
 }
 
 /** Resolves a request to the day's pins and drops after it is applied; a failure is the Result to return. */
@@ -78,7 +80,7 @@ function resolveRequest(
       return fail("validation", "Pick a time later today.");
     }
     const pin: DayPin = { date: ctx.today, subject: { kind: "task", taskId }, start: new Date(startMs).toISOString() };
-    return { ok: true, value: { pins: [...without(taskId), pin], drops: current.drops.filter((d) => d !== taskId) } };
+    return { ok: true, value: { pins: [...without(taskId), pin], drops: current.drops.filter((d) => d !== taskId), requested: [taskId] } };
   };
   switch (request.kind) {
     case "reflow-now":
@@ -107,6 +109,7 @@ function resolveRequest(
         value: {
           pins: added.value.pins.filter((p) => taskSubject(p) !== request.removeTaskId),
           drops: added.value.drops.includes(request.removeTaskId) ? added.value.drops : [...added.value.drops, request.removeTaskId],
+          requested: [request.addTaskId],
         },
       };
     }
@@ -201,11 +204,15 @@ export async function requestReshuffle(
     pastBlocks,
     pins: day.pins,
     drops: day.drops,
+    requestPinTaskIds: day.requested ?? [],
     bumpLevels: computeBumpLevels(deps.store),
     idPrefix: `v${plan.version + 1}`,
   });
   if (!refit.ok) return refit;
   const rejectedReason = refit.value.rejectedReason;
+  const released = refit.value.releasedPins ?? [];
+  const releasedIds = new Set(released.map((r) => r.taskId));
+  const keptPins = day.pins.filter((p) => !(p.subject.kind === "task" && releasedIds.has(p.subject.taskId)));
 
   const outstandingById = new Map(outstanding.map((t) => [t.id, t]));
   const fittedTagged = new Map(
@@ -232,11 +239,13 @@ export async function requestReshuffle(
     movedBlockIds: diff.movedBlockIds,
     deferredTaskIds,
     needsDataTaskIds,
-    pins: rejectedReason !== undefined ? currentDay.pins : day.pins,
+    pins: rejectedReason !== undefined ? currentDay.pins : keptPins,
     drops: rejectedReason !== undefined ? currentDay.drops : day.drops,
     unplacedRoutineLabels: [],
     ...(rejectedReason !== undefined ? { rejectedReason } : {}),
-    summary: rejectedReason ?? buildReshuffleSummary({ movedTitles, deferredTitles, needsDataCount: needsDataTaskIds.length }),
+    summary:
+      rejectedReason ??
+      [...released.map((r) => `Unpinned ${r.title} — ${r.reason}.`), buildReshuffleSummary({ movedTitles, deferredTitles, needsDataCount: needsDataTaskIds.length })].join(" "),
     planVersion: plan.version,
     calendarVersion,
   };

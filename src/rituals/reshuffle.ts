@@ -9,6 +9,7 @@ import type { LogEntry } from "../adapters/logger.ts";
 import { orderByDerivedPriority } from "../core/derived-priority.ts";
 import { computeSchoolDay, mergeOverlappingAnchors } from "../core/school-day.ts";
 import { fitWorkBreakBlocks, type FitWorkBreakBlocksOutput } from "../core/work-break-fit.ts";
+import { localIsoDate } from "./ritual-shared.ts";
 import type {
   CalendarEvent,
   CompleteTask,
@@ -211,8 +212,13 @@ export interface DayRefitInput {
   /** Blocks already lived through — kept verbatim in the merged output. */
   readonly pastBlocks: readonly PlanBlock[];
   readonly bumpLevels?: Readonly<Record<ExternalId, number>>;
-  /** The day's hand-fixed placements. Only Task pins dated `date` that start at or after `now` apply; pinned Tasks skip ordering and are placed at their pin. */
+  /**
+   * The day's hand-fixed placements. Task pins dated `date` for still-open Tasks apply; a pin
+   * that started already is placed from `now` (the Task keeps going). Pinned Tasks skip ordering.
+   */
   readonly pins?: readonly DayPin[];
+  /** Task ids whose pin comes from the current request. Only these may reject; a stored pin that now collides is released. */
+  readonly requestPinTaskIds?: readonly ExternalId[];
   /** Task ids dropped for the day; removed before ordering. */
   readonly drops?: readonly ExternalId[];
   /** Prefix for every fitted block id, e.g. `v3` gives `v3-work-0`. */
@@ -229,6 +235,8 @@ export interface DayRefitOutput {
   readonly fitMs: number;
   /** Set when a pin could not be honored (it overlaps a fixed event or another pin); the blocks are then the day fitted with no pins at all. */
   readonly rejectedReason?: string;
+  /** Stored pins let go because they now overlap a fixed event or another pin; the Task is ordered normally. */
+  readonly releasedPins?: readonly { readonly taskId: ExternalId; readonly title: string; readonly reason: string }[];
 }
 
 const PIN_ANCHOR_TITLE = "__pin__";
@@ -275,13 +283,19 @@ function placePinnedTasks(
   return { ok: true, value: placements };
 }
 
-/** The reason a pin cannot be honored, naming what it collides with; `undefined` when every span is clear. */
-function pinConflict(placements: readonly PinPlacement[], fixed: readonly CalendarEvent[]): string | undefined {
+type PinCollision = { readonly release: PinPlacement; readonly reason: string } | { readonly reject: string };
+
+/** The first pin that cannot be honored: a stored pin is released, a request pin rejects the request. */
+function firstPinCollision(placements: readonly PinPlacement[], fixed: readonly CalendarEvent[], requested: ReadonlySet<ExternalId>): PinCollision | undefined {
   for (const [i, p] of placements.entries()) {
     const hit = fixed.find((e) => overlapsMs(p.startMs, p.endMs, Date.parse(e.start), Date.parse(e.end)));
-    if (hit) return `"${p.task.title}" can't go there: it overlaps ${hit.title}.`;
-    const other = placements.slice(i + 1).find((q) => overlapsMs(p.startMs, p.endMs, q.startMs, q.endMs));
-    if (other) return `"${p.task.title}" and "${other.task.title}" can't both go there: their times overlap.`;
+    if (hit) return requested.has(p.task.id) ? { reject: `"${p.task.title}" can't go there: it overlaps ${hit.title}.` } : { release: p, reason: `it now overlaps ${hit.title}` };
+    const q = placements.slice(i + 1).find((o) => overlapsMs(p.startMs, p.endMs, o.startMs, o.endMs));
+    if (q) {
+      if (!requested.has(q.task.id)) return { release: q, reason: `it now overlaps ${p.task.title}` };
+      if (!requested.has(p.task.id)) return { release: p, reason: `it now overlaps ${q.task.title}` };
+      return { reject: `"${p.task.title}" and "${q.task.title}" can't both go there: their times overlap.` };
+    }
   }
   return undefined;
 }
@@ -299,30 +313,50 @@ export function computeDayRefit(input: DayRefitInput): Result<DayRefitOutput, Yo
   const startedMs = Date.now();
   const dropped = new Set(input.drops ?? []);
   const nowMs = Date.parse(input.now);
+  const requested = new Set(input.requestPinTaskIds ?? []);
   const openById = new Map(input.openTasks.map((t) => [t.id, t]));
   const pinned: { task: CompleteTask; start: IsoDateTime }[] = [];
   for (const pin of [...(input.pins ?? [])].sort((a, b) => Date.parse(a.start) - Date.parse(b.start))) {
-    if (pin.date !== input.date || pin.subject.kind !== "task" || Date.parse(pin.start) < nowMs) continue;
+    if (pin.date !== input.date || pin.subject.kind !== "task") continue;
     const task = openById.get(pin.subject.taskId);
-    if (task && !dropped.has(task.id) && !pinned.some((p) => p.task.id === task.id)) pinned.push({ task, start: pin.start });
+    if (!task || dropped.has(task.id) || pinned.some((p) => p.task.id === task.id)) continue;
+    // A pin already under way keeps the Task going from now.
+    pinned.push({ task, start: Date.parse(pin.start) < nowMs ? input.now : pin.start });
   }
-  const pinnedIds = new Set(pinned.map((p) => p.task.id));
-  const population = input.openTasks.filter((t) => !dropped.has(t.id) && !pinnedIds.has(t.id));
-
-  const ordered = orderByDerivedPriority(population, input.date, input.bumpLevels);
-  if (!ordered.ok) return ordered;
 
   const { anchors, protectedWindows } = mergeOverlappingAnchors(input.fixedEvents, input.protectedWindows ?? []);
 
   const placed = placePinnedTasks(pinned, input.budget, input.idPrefix);
   if (!placed.ok) return placed;
-  const conflict = pinConflict(placed.value, [...anchors, ...protectedWindows]);
-  if (conflict !== undefined) {
-    const unpinned = computeDayRefit({ ...input, pins: [] });
-    return unpinned.ok ? { ok: true, value: { ...unpinned.value, rejectedReason: conflict } } : unpinned;
+  let placements = placed.value;
+  // A stored pin running past the end of the day stops applying; a request pin like that is rejected.
+  const runsPastDay = (p: PinPlacement): boolean => localIsoDate(new Date(p.endMs - 1), input.timeZone) !== input.date;
+  const spilled = placements.find((p) => runsPastDay(p) && requested.has(p.task.id));
+  const released: { taskId: ExternalId; title: string; reason: string }[] = [];
+  placements = placements.filter((p) => !runsPastDay(p) || requested.has(p.task.id));
+  let rejection = spilled ? `"${spilled.task.title}" can't go there: it would run past the end of the day.` : undefined;
+  while (rejection === undefined) {
+    const collision = firstPinCollision(placements, [...anchors, ...protectedWindows], requested);
+    if (!collision) break;
+    if ("reject" in collision) {
+      rejection = collision.reject;
+      break;
+    }
+    released.push({ taskId: collision.release.task.id, title: collision.release.task.title, reason: collision.reason });
+    placements = placements.filter((p) => p !== collision.release);
   }
-  const pinBlocks = placed.value.flatMap((p) => p.blocks);
-  const pinAnchors: CalendarEvent[] = placed.value.map((p, i) => ({
+  if (rejection !== undefined) {
+    const unpinned = computeDayRefit({ ...input, pins: [] });
+    return unpinned.ok ? { ok: true, value: { ...unpinned.value, rejectedReason: rejection } } : unpinned;
+  }
+
+  const pinnedIds = new Set(placements.map((p) => p.task.id));
+  const population = input.openTasks.filter((t) => !dropped.has(t.id) && !pinnedIds.has(t.id));
+  const ordered = orderByDerivedPriority(population, input.date, input.bumpLevels);
+  if (!ordered.ok) return ordered;
+
+  const pinBlocks = placements.flatMap((p) => p.blocks);
+  const pinAnchors: CalendarEvent[] = placements.map((p, i) => ({
     id: `pin-anchor-${i}`,
     title: PIN_ANCHOR_TITLE,
     start: new Date(p.startMs).toISOString(),
@@ -361,5 +395,8 @@ export function computeDayRefit(input: DayRefitInput): Result<DayRefitOutput, Yo
     event: "reshuffle.computed",
     detail: { date: input.date, ms: fitMs, blocks: blocks.length, deferred: fitted.value.deferredTaskIds.length },
   });
-  return { ok: true, value: { blocks, fittedBlocks, deferredTaskIds: fitted.value.deferredTaskIds, fitMs } };
+  return {
+    ok: true,
+    value: { blocks, fittedBlocks, deferredTaskIds: fitted.value.deferredTaskIds, fitMs, ...(released.length > 0 ? { releasedPins: released } : {}) },
+  };
 }
