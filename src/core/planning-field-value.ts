@@ -197,6 +197,18 @@ function priorityWordPart(label: string): string {
 }
 
 /**
+ * Rank of a Notion Priority option for ordering: High -1, Medium 0, Low +1;
+ * missing or unrecognized -> 0. Matches on the emoji-stripped lowercase word.
+ */
+export function priorityRank(raw?: string): -1 | 0 | 1 {
+  if (raw === undefined) return 0;
+  const word = priorityWordPart(raw);
+  if (word === "high") return -1;
+  if (word === "low") return 1;
+  return 0;
+}
+
+/**
  * Parses `raw` into one of Priority's LIVE Notion select options (binding
  * ruling: Priority is not a `PlanningFieldNames` case — its value is a
  * string equal to the live option name, like Area, validated against

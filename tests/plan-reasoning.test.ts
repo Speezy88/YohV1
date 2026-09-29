@@ -333,3 +333,15 @@ test("eligibleTaskIds: an id in the set that isn't in the candidate set is simpl
   assert.ok(result.ok);
   assert.match(result.value, /Tidy inbox/);
 });
+
+test("plan reasoning mentions Priority only when it changed the order", () => {
+  const mk = (id: string, dueDate: string, priority?: string): CompleteTask => ({
+    id, title: `T${id}`, estimatedDurationMinutes: id === "b" ? 300 : 60, dueDate, status: "not-started",
+    createdAt: NOW, updatedAt: NOW, area: { kind: "set", value: "Work" }, energy: { kind: "set", value: "medium" },
+    ...(priority ? { priority } : {}),
+  });
+  const changed = generatePlanReasoning({ tasks: [mk("a", "2026-08-24", "🔴 High"), mk("b", "2026-08-23")], today: TODAY });
+  assert.ok(changed.ok && changed.value.includes("Ranked up for High priority"));
+  const unchanged = generatePlanReasoning({ tasks: [mk("a", "2026-08-23", "High"), mk("b", "2026-08-25")], today: TODAY });
+  assert.ok(unchanged.ok && !unchanged.value.includes("priority"));
+});

@@ -145,6 +145,7 @@
  * value); this file only commits to "a higher level makes a Task strictly
  * more urgent, monotonically," which is all a seam needs to guarantee.
  */
+import { priorityRank } from "./planning-field-value.ts";
 import type { CompleteTask, Energy, ExternalId, IsoDate, Result, YohError } from "../types/domain.ts";
 
 // ============================================================================
@@ -171,6 +172,9 @@ export const SECONDARY_FACTOR_WEIGHT = 1 / 3;
 
 /** Floating-point tolerance for "tied on the primary axis" (guards against bump-level fractional rounding; the AC-driven integer cases above never need it). */
 const PRIMARY_SCORE_EPSILON = 1e-6;
+
+/** Minutes of primary score one Notion Priority step is worth (High vs Low = 1.5 days). */
+export const PRIORITY_WEIGHT_MINUTES = 360;
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -332,6 +336,8 @@ interface ScoredTask {
   readonly daysUntilDue: number;
   readonly bumpLevel: number;
   readonly primaryScore: number;
+  readonly priorityRank: -1 | 0 | 1;
+  readonly priorityBoost: number;
   readonly secondaryScore: number;
   readonly areaSub: number;
   readonly energySub: number;
@@ -385,14 +391,36 @@ function computeScored(
 
   const secondaryDetails = computeSecondaryScoreDetails(tasks);
 
+  const rawScores = tasks.map((task) => computePrimaryScore(task, today, bumpLevels?.[task.id] ?? 0));
+  const dueNowScores = tasks
+    .map((task, i) => (daysBetween(today, task.dueDate) <= 0 ? rawScores[i]! : null))
+    .filter((v): v is number => v !== null);
+
   const scored = tasks.map((task, index) => {
     const bumpLevel = bumpLevels?.[task.id] ?? 0;
     const detail = secondaryDetails[index] ?? { areaSub: 0, energySub: 0, difficultySub: 0, secondaryScore: 0 };
+    const daysUntilDue = daysBetween(today, task.dueDate);
+    const rank = priorityRank(task.priority);
+    const raw = rawScores[index]!;
+    let primaryScore = raw;
+    if (daysUntilDue >= 1 && rank !== 0) {
+      primaryScore = raw + rank * PRIORITY_WEIGHT_MINUTES;
+      if (rank < 0) {
+        // A boosted Task never passes a due-today/overdue Task it sorted behind without the boost.
+        const behind = dueNowScores.filter((s) => s < raw);
+        if (behind.length > 0) {
+          const floor = Math.max(...behind) + 2 * PRIMARY_SCORE_EPSILON;
+          primaryScore = Math.min(raw, Math.max(primaryScore, floor));
+        }
+      }
+    }
     return {
       task,
-      daysUntilDue: daysBetween(today, task.dueDate),
+      daysUntilDue,
       bumpLevel,
-      primaryScore: computePrimaryScore(task, today, bumpLevel),
+      primaryScore,
+      priorityRank: rank,
+      priorityBoost: raw - primaryScore,
       secondaryScore: detail.secondaryScore,
       areaSub: detail.areaSub,
       energySub: detail.energySub,
@@ -443,6 +471,10 @@ export interface DerivedPriorityFactors {
   readonly bumpLevel: number;
   /** `daysUntilDue * REFERENCE_MINUTES_PER_DAY + task.estimatedDurationMinutes - bumpLevel * REFERENCE_MINUTES_PER_DAY`. Lower sorts earlier. */
   readonly primaryScore: number;
+  /** Notion Priority rank: High -1, Medium/missing/unknown 0, Low +1. */
+  readonly priorityRank: -1 | 0 | 1;
+  /** Minutes the Priority term moved `primaryScore` earlier (negative = pushed later); 0 when it did not apply. `primaryScore` already includes it. */
+  readonly priorityBoost: number;
   /** The even-split combination of `areaSub`/`energySub`/`difficultySub`, weighted by `SECONDARY_FACTOR_WEIGHT` each. Only ever consulted to break a primary-axis tie. Lower sorts earlier. */
   readonly secondaryScore: number;
   /** This Task's Area, ranked alphabetically among the candidate set's distinct Areas and normalized to [0, 1] (0 = alphabetically first). */

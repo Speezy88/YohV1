@@ -203,15 +203,22 @@ export function generatePlanReasoning(input: GeneratePlanReasoningInput): Result
   const runnerUp = describable[1]!;
   const primaryDiff = lead.primaryScore - runnerUp.primaryScore;
 
+  // Mention Priority only when it changed the order: the lead is boosted and,
+  // without the boost, some other Task would have sorted ahead of it.
+  const priorityNote =
+    lead.priorityBoost > 0 && describable.some((o) => o !== lead && o.primaryScore < lead.primaryScore + lead.priorityBoost - TIE_EPSILON)
+      ? " Ranked up for High priority."
+      : "";
+
   if (Math.abs(primaryDiff) <= TIE_EPSILON) {
-    return { ok: true, value: describeTieBreakWin(lead, runnerUp) };
+    return { ok: true, value: describeTieBreakWin(lead, runnerUp) + priorityNote };
   }
 
   if (lead.daysUntilDue < runnerUp.daysUntilDue) {
-    return { ok: true, value: describeDueDateWin(lead) };
+    return { ok: true, value: describeDueDateWin(lead) + priorityNote };
   }
 
-  return { ok: true, value: describeDurationTradeoffWin(lead, runnerUp) };
+  return { ok: true, value: describeDurationTradeoffWin(lead, runnerUp) + priorityNote };
 }
 
 /**

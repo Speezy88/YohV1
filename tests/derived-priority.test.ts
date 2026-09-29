@@ -10,7 +10,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  computeDerivedPriorityFactors,
   orderByDerivedPriority,
+  PRIORITY_WEIGHT_MINUTES,
   REFERENCE_MINUTES_PER_DAY,
   SECONDARY_FACTOR_WEIGHT,
 } from "../src/core/derived-priority.ts";
@@ -242,6 +244,7 @@ test("AC4: the module's public surface exposes no manual-priority-setting functi
   // for setting one), or a documented, read-only tuning constant -- nothing
   // that lets a caller directly set a Task's position/priority.
   assert.deepEqual(exportedNames, [
+    "PRIORITY_WEIGHT_MINUTES",
     "REFERENCE_MINUTES_PER_DAY",
     "SECONDARY_FACTOR_WEIGHT",
     "computeDerivedPriorityFactors",
@@ -349,4 +352,49 @@ test("never throws, even on wildly invalid input", () => {
   assert.doesNotThrow(() => {
     orderByDerivedPriority([makeCompleteTask("a", { dueDate: "" })], "");
   });
+});
+
+// ============================================================================
+// Notion Priority term (Epic 10 R1)
+// ============================================================================
+
+function ids(r: ReturnType<typeof orderByDerivedPriority>): string[] {
+  assert.ok(r.ok);
+  return r.value.map((t) => t.id);
+}
+
+test("priority: High due in 2 days beats Low due in 1 day", () => {
+  const high = makeCompleteTask("high", { dueDate: "2026-08-24", priority: "🔴 High" });
+  const low = makeCompleteTask("low", { dueDate: "2026-08-23", priority: "🟢 Low" });
+  assert.deepEqual(ids(orderByDerivedPriority([low, high], TODAY)), ["high", "low"]);
+  assert.equal(PRIORITY_WEIGHT_MINUTES, 360);
+});
+
+test("priority: High due tomorrow never beats due-today or overdue, even a long due-today Task", () => {
+  const highTomorrow = makeCompleteTask("ht", { dueDate: "2026-08-23", estimatedDurationMinutes: 15, priority: "High" });
+  const longToday = makeCompleteTask("today", { dueDate: TODAY, estimatedDurationMinutes: 480 });
+  const overdue = makeCompleteTask("over", { dueDate: "2026-08-21", estimatedDurationMinutes: 480 });
+  assert.deepEqual(ids(orderByDerivedPriority([highTomorrow, longToday, overdue], TODAY)), ["over", "today", "ht"]);
+  const f = computeDerivedPriorityFactors([highTomorrow, longToday, overdue], TODAY);
+  assert.ok(f.ok);
+  const ht = f.value.find((x) => x.task.id === "ht")!;
+  assert.equal(ht.priorityRank, -1);
+  assert.ok(ht.priorityBoost >= 0 && ht.priorityBoost <= PRIORITY_WEIGHT_MINUTES);
+});
+
+test("priority: none set gives the same order as before; unknown option is rank 0", () => {
+  const a = makeCompleteTask("a", { dueDate: "2026-08-24" });
+  const b = makeCompleteTask("b", { dueDate: "2026-08-23" });
+  const weird = makeCompleteTask("c", { dueDate: "2026-08-25", priority: "Urgent!!" });
+  assert.deepEqual(ids(orderByDerivedPriority([a, b, weird], TODAY)), ["b", "a", "c"]);
+  const f = computeDerivedPriorityFactors([weird], TODAY);
+  assert.ok(f.ok);
+  assert.equal(f.value[0]!.priorityRank, 0);
+  assert.equal(f.value[0]!.priorityBoost, 0);
+});
+
+test("priority: bumps still work alongside priority", () => {
+  const a = makeCompleteTask("a", { dueDate: "2026-08-25", priority: "Low" });
+  const b = makeCompleteTask("b", { dueDate: "2026-08-25" });
+  assert.deepEqual(ids(orderByDerivedPriority([a, b], TODAY, { a: 2 })), ["a", "b"]);
 });
