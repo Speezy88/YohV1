@@ -48,3 +48,12 @@ if (typeof globalThis.EventSource === "undefined") {
   // @ts-expect-error — a minimal stand-in, not a spec-complete EventSource.
   globalThis.EventSource = InertEventSource;
 }
+
+// jsdom has no ResizeObserver; @dnd-kit/dom constructs one at import time.
+if (typeof globalThis.ResizeObserver === "undefined") {
+  globalThis.ResizeObserver = class {
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+  } as unknown as typeof ResizeObserver;
+}

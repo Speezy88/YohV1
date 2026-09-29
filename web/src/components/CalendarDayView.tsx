@@ -115,8 +115,11 @@
  * one level up, in `CalendarColumn` — this component only ever renders the
  * timeline itself.
  */
-import { useLayoutEffect, useRef } from "react";
+import { useLayoutEffect, useRef, type ReactNode } from "react";
+import { DragDropProvider } from "@dnd-kit/react";
 import type { HomeCalendarBlock } from "../../../src/types/api.ts";
+import { blockDragSensors, movedStartIso, useBlockDrag } from "../hooks/useBlockDrag.ts";
+import { useReducedMotion } from "../hooks/useReducedMotion.ts";
 import { displayLabel } from "../lib/labels.ts";
 import { formatClockTime, localMinutesSinceMidnight } from "../lib/hostTime.ts";
 import { layoutOverlappingIntervals } from "../lib/calendarLayout.ts";
@@ -132,7 +135,7 @@ const WINDOW_MINUTES = (DAY_END_HOUR - DAY_START_HOUR) * 60;
  * that the panel takes the calendar's full column height instead of a
  * fixed 380px card (`Home.tsx`) — there's room for it.
  */
-const HOUR_HEIGHT_PX = 72;
+export const HOUR_HEIGHT_PX = 72;
 const CONTENT_HEIGHT_PX = (DAY_END_HOUR - DAY_START_HOUR) * HOUR_HEIGHT_PX;
 /** The hour-label gutter's width, in px — the approved mockup's own ~52px right-aligned label column. */
 const HOUR_LABEL_WIDTH_PX = 52;
@@ -284,6 +287,47 @@ export interface CalendarDayViewProps {
   readonly isToday?: boolean;
   /** Unpins a pinned Task block. Absent: pinned Task blocks show the glyph only. */
   readonly onUnpin?: (taskId: string) => void;
+  /**
+   * Epic 10 T8b: called when Spencer drops a work or routine block at a new
+   * time (`newStart` snapped to 5 minutes). Absent: nothing is draggable.
+   */
+  readonly onMoveBlock?: (blockId: string, newStart: string) => void;
+  /** True while a reshuffle preview is open: drags are blocked until it is approved or discarded. */
+  readonly dragLocked?: boolean;
+}
+
+interface BlockShellProps {
+  readonly id: string;
+  readonly draggable: boolean;
+  /** The block's own start time, shown as "(dragging, from 2:00)" while lifted. */
+  readonly fromTime: string;
+  readonly reducedMotion: boolean;
+  readonly moved: boolean;
+  readonly className: string;
+  readonly style: React.CSSProperties;
+  readonly attrs: React.HTMLAttributes<HTMLDivElement> & { readonly "data-kind": string; readonly "data-moved"?: string };
+  readonly children: ReactNode;
+}
+
+/** One calendar block's box: a `@dnd-kit` draggable when `draggable`, otherwise a plain div. Lifted = 1.5px accent-solid outline, a "(dragging, from …)" label and a gentle bob (none under reduced motion). */
+function BlockShell({ id, draggable, fromTime, reducedMotion, moved, className, style, attrs, children }: BlockShellProps): React.JSX.Element {
+  const { ref, isDragging } = useBlockDrag({ id, disabled: !draggable });
+  const motion = reducedMotion ? (moved ? "calendar-block--fade" : "") : "calendar-block--glide";
+  const lifted = isDragging ? `outline outline-[1.5px] -outline-offset-1 outline-accent-solid z-20 ${reducedMotion ? "" : "calendar-block--lifted"}` : "";
+  return (
+    <div
+      {...attrs}
+      ref={draggable ? ref : undefined}
+      data-testid="calendar-block"
+      data-draggable={draggable ? "true" : undefined}
+      data-dragging={isDragging ? "true" : undefined}
+      className={`${className} ${motion} ${lifted} ${draggable ? "cursor-grab touch-none" : ""}`}
+      style={style}
+    >
+      {children}
+      {isDragging && <span className="ml-1 whitespace-nowrap">(dragging, from {fromTime})</span>}
+    </div>
+  );
 }
 
 /** 1.8px-stroke pin glyph, aria-hidden (the button or the block's own label carries the name). */
@@ -299,7 +343,8 @@ function PinGlyph(): React.JSX.Element {
 /** 8am, this component's own fallback auto-scroll target for a genuinely empty non-today day (no "now" line to anchor to instead). */
 const EMPTY_DAY_ANCHOR_MINUTES = (8 - DAY_START_HOUR) * 60;
 
-export function CalendarDayView({ blocks, timeZone, now = () => new Date(), isToday = true, onUnpin }: CalendarDayViewProps): React.JSX.Element {
+export function CalendarDayView({ blocks, timeZone, now = () => new Date(), isToday = true, onUnpin, onMoveBlock, dragLocked = false }: CalendarDayViewProps): React.JSX.Element {
+  const reducedMotion = useReducedMotion();
   const hours = Array.from({ length: DAY_END_HOUR - DAY_START_HOUR + 1 }, (_, i) => DAY_START_HOUR + i);
   const scrollRef = useRef<HTMLDivElement>(null);
   const nowValue = now();
@@ -338,7 +383,31 @@ export function CalendarDayView({ blocks, timeZone, now = () => new Date(), isTo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const sensors = blockDragSensors(HOUR_HEIGHT_PX);
+  // Stable per-Task/Routine keys (with an occurrence counter for split work segments) so a block in a
+  // reshuffle preview is the SAME element as in the current Plan and can glide to its proposed slot.
+  const seen = new Map<string, number>();
+  const keyFor = (b: HomeCalendarBlock): string => {
+    const owner = b.taskId ?? (b.kind === "routine" ? `routine:${b.label}` : undefined);
+    if (owner === undefined) return b.id;
+    const n = seen.get(owner) ?? 0;
+    seen.set(owner, n + 1);
+    return `${b.kind}:${owner}:${n}`;
+  };
+
   return (
+    <DragDropProvider
+      sensors={sensors}
+      onDragEnd={(event) => {
+        if (event.canceled || onMoveBlock === undefined) return;
+        const id = event.operation.source?.id;
+        const block = blocks.find((b) => b.id === id);
+        if (!block) return;
+        const dy = event.operation.transform.y;
+        if (Math.abs(dy) < 1) return;
+        onMoveBlock(block.id, movedStartIso(block.start, dy, HOUR_HEIGHT_PX));
+      }}
+    >
     <div ref={scrollRef} data-testid="calendar-day-view" className="relative h-full overflow-y-auto overflow-x-hidden rounded-lg">
       {!isToday && isEmpty && (
         <p data-testid="calendar-day-empty" className="pointer-events-none absolute inset-x-0 top-4 z-10 px-4 text-center font-body text-small text-ink-secondary" style={{ left: HOUR_LABEL_WIDTH_PX }}>
@@ -383,7 +452,7 @@ export function CalendarDayView({ blocks, timeZone, now = () => new Date(), isTo
           // one truncated line with the label) instead of " (fixed)" (long
           // enough that a narrow column could wrap/clip it) — see
           // `blockLabelContent`'s own doc comment.
-          const baseLabel = isFixed ? `${label} · fixed` : label;
+          const baseLabel = isFixed ? `${label} · fixed` : isRoutine ? `${label} · routine` : label;
           const top = isoOffsetPx(b.start, timeZone);
           const bottom = isoOffsetPx(b.end, timeZone);
           // A break never gets bumped up toward `MIN_BLOCK_HEIGHT_PX` the
@@ -420,13 +489,19 @@ export function CalendarDayView({ blocks, timeZone, now = () => new Date(), isTo
           const moved = (b as { moved?: boolean }).moved === true;
           const pinControl = b.pinned === true && b.taskId !== undefined && onUnpin !== undefined;
           return (
-            <div
-              key={b.id}
-              data-testid="calendar-block"
-              data-kind={b.kind}
-              data-moved={moved ? "true" : undefined}
-              aria-disabled={readOnly}
-              aria-label={showLabel ? undefined : content.text}
+            <BlockShell
+              key={keyFor(b)}
+              id={b.id}
+              draggable={onMoveBlock !== undefined && !dragLocked && !readOnly && (b.kind === "work" || isRoutine)}
+              fromTime={formatClockTime(new Date(b.start), timeZone)}
+              reducedMotion={reducedMotion}
+              moved={moved}
+              attrs={{
+                "data-kind": b.kind,
+                ...(moved ? { "data-moved": "true" } : {}),
+                "aria-disabled": readOnly,
+                "aria-label": showLabel ? undefined : content.text,
+              }}
               className={
                 `${kindClasses} absolute right-2 overflow-hidden rounded-sm px-3 ${layoutClasses} font-body text-small ` +
                 `${moved ? "outline outline-[1.5px] -outline-offset-1 outline-accent-solid" : ""} ${readOnly ? "opacity-60" : ""} ${b.completed ? "line-through" : ""} ${content.singleLine ? "truncate whitespace-nowrap" : ""}`
@@ -452,7 +527,7 @@ export function CalendarDayView({ blocks, timeZone, now = () => new Date(), isTo
                   )}
                 </span>
               )}
-            </div>
+            </BlockShell>
           );
         })}
         {nowVisible && (
@@ -463,5 +538,6 @@ export function CalendarDayView({ blocks, timeZone, now = () => new Date(), isTo
         )}
       </div>
     </div>
+    </DragDropProvider>
   );
 }

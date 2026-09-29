@@ -328,7 +328,10 @@ function CalendarColumn({ today, blocks, timeZone, reshuffle }: CalendarColumnPr
       <div className="min-h-0 flex-1">
         {view === "day" ? (
           isTodayShown ? (
-            <CalendarDayView blocks={blocks} timeZone={timeZone} onUnpin={(taskId) => void requestReshuffle({ kind: "unpin-task", taskId })} />
+            <CalendarDayView blocks={blocks} timeZone={timeZone} onUnpin={(taskId) => void requestReshuffle({ kind: "unpin-task", taskId })}
+              onMoveBlock={(planBlockId, newStart) => void requestReshuffle({ kind: "move-block", planBlockId, newStart })}
+              dragLocked={reshuffle.preview !== undefined || reshuffle.busy}
+            />
           ) : (
             <OtherDayPanel shownDate={shownDate} timeZone={timeZone} />
           )

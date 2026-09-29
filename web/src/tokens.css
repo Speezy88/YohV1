@@ -478,3 +478,39 @@ body {
   mix-blend-mode: overlay;
   animation: thinking-shimmer-sweep var(--duration-thinking-shimmer) linear infinite;
 }
+
+/* Epic 10 T8b: Calendar block drag. A lifted block bobs gently; a block glides
+   to its proposed slot in a reshuffle preview (top/height transition), or
+   cross-fades in under reduced motion. */
+:root {
+  --duration-block-glide: 300ms;
+  --duration-block-bob: 1400ms;
+}
+.calendar-block--glide {
+  transition:
+    top var(--duration-block-glide) ease-out,
+    height var(--duration-block-glide) ease-out;
+}
+.calendar-block--fade {
+  animation: calendar-block-fade var(--duration-block-glide) ease-out;
+}
+.calendar-block--lifted {
+  animation: calendar-block-bob var(--duration-block-bob) ease-in-out infinite;
+}
+@keyframes calendar-block-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes calendar-block-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-2px);
+  }
+}

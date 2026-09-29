@@ -1248,6 +1248,7 @@ export function startServer(
     ...(features.homeView ? { homeView: features.homeView } : {}),
     ...(features.calendarDay ? { calendarDay: features.calendarDay } : {}),
     ...(features.checkOff ? { checkOff: features.checkOff } : {}),
+    ...(features.plan ? { plan: features.plan } : {}),
     ...(features.chat ? { chat: features.chat } : {}),
     ...(features.tasks ? { tasks: features.tasks } : {}),
     ...(features.research ? { research: features.research } : {}),

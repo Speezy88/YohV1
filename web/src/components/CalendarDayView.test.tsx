@@ -178,7 +178,7 @@ describe("CalendarDayView", () => {
     expect(el).toHaveClass("border-accent-solid");
     expect(el).not.toHaveClass("bg-gradient-to-br");
     expect(el).not.toHaveClass("text-event-fixed-ink");
-    expect(el.textContent).toBe("Commute");
+    expect(el.textContent).toBe("Commute · routine");
   });
 
   it("an untitled or punctuation-only label shows (No title)", () => {
@@ -536,5 +536,28 @@ describe("CalendarDayView pins and moved blocks", () => {
     render(<CalendarDayView blocks={[{ ...block({ id: "b1", kind: "work", label: "Draft", ...base }), moved: true } as HomeCalendarBlock]} timeZone={UTC} now={NOON_UTC} />);
     expect(screen.getByTestId("calendar-block").dataset["moved"]).toBe("true");
     expect(screen.getByTestId("calendar-block").className).toMatch(/outline-\[1\.5px\]/);
+  });
+});
+
+describe("CalendarDayView drag (T8b)", () => {
+  const base = { past: false, completed: false } as const;
+  const blocks: HomeCalendarBlock[] = [
+    { id: "v1-work-0", kind: "work", label: "Write", start: "2026-09-29T14:00:00.000Z", end: "2026-09-29T15:00:00.000Z", taskId: "t1", ...base },
+    { id: "v1-break-0", kind: "break", label: "Break", start: "2026-09-29T15:00:00.000Z", end: "2026-09-29T15:15:00.000Z", ...base },
+    { id: "fx", kind: "fixed", label: "Standup", start: "2026-09-29T16:00:00.000Z", end: "2026-09-29T16:30:00.000Z", ...base },
+  ];
+  const props = { blocks, timeZone: "UTC", now: () => new Date("2026-09-29T13:00:00.000Z"), isToday: true, onMoveBlock: () => {} };
+
+  it("makes only work and routine blocks draggable", () => {
+    render(<CalendarDayView {...props} />);
+    const els = screen.getAllByTestId("calendar-block");
+    expect(els[0]).toHaveAttribute("data-draggable","true");
+    expect(els[1]).not.toHaveAttribute("data-draggable","true");
+    expect(els[2]).not.toHaveAttribute("data-draggable","true");
+  });
+
+  it("blocks drags while a preview is open", () => {
+    render(<CalendarDayView {...props} dragLocked />);
+    expect(screen.getAllByTestId("calendar-block")[0]).not.toHaveAttribute("data-draggable","true");
   });
 });

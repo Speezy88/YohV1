@@ -9,6 +9,7 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@dnd-kit/react": "0.5.0",
     "@fontsource/figtree": "5.2.5",
     "@fontsource/montserrat": "5.2.5",
     "hono": "4.13.9",

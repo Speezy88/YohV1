@@ -28,10 +28,11 @@ import { join } from "node:path";
 import { serve } from "@hono/node-server";
 import { openSqliteConnection } from "../../src/adapters/sqlite.ts";
 import { initRoutineStoreSchema } from "../../src/adapters/routine-store.ts";
-import { initNotificationStoreSchema } from "../../src/adapters/notification-store.ts";
-import { initPlanStateStoreSchema } from "../../src/adapters/plan-state-store.ts";
+import { appendOutboxInTx, initNotificationStoreSchema } from "../../src/adapters/notification-store.ts";
+import { initPlanStateStoreSchema, replaceDayPinsAndDropsInTx } from "../../src/adapters/plan-state-store.ts";
+import { listOpenReshuffleProposals } from "../../src/adapters/reshuffle-proposal-store.ts";
 import { initCompletionLogSchema, listCompletedTaskIdsOnDate } from "../../src/adapters/completion-log.ts";
-import { createMemoryStore, putPlan } from "../../src/adapters/memory-store.ts";
+import { clearInteractionRequest, createMemoryStore, putPlan, putTimeBudget } from "../../src/adapters/memory-store.ts";
 import {
   bindNotionTaskWrites,
   createPage as notionCreatePage,
@@ -70,32 +71,69 @@ initCompletionLogSchema(connection.db);
 const store = createMemoryStore(connection);
 const startedAt = new Date();
 const today = localIsoDate(startedAt, TIME_ZONE);
-const plan: Plan = {
-  id: `plan-${today}`,
-  date: today,
-  // Both blocks span "now" for the next few hours, so neither row is past (read-only).
-  blocks: FIXTURE_TASKS.map((t, i) => ({
-    id: `block-${t.id}`,
-    kind: "work" as const,
-    start: new Date(startedAt.getTime() - 10 * 60_000 + i * 60_000).toISOString(),
-    end: new Date(startedAt.getTime() + 4 * 3_600_000 + i * 60_000).toISOString(),
-    taskId: t.id,
-    label: t.title,
-  })),
-  reasoning: "",
-  version: 1,
-  createdAt: startedAt.toISOString(),
-  updatedAt: startedAt.toISOString(),
-};
-putPlan(store, plan);
+
+/** The default Plan: both rows span "now" for the next few hours, so neither row is past (read-only). */
+function defaultPlan(version: number): Plan {
+  return {
+    id: `plan-${today}`,
+    date: today,
+    blocks: FIXTURE_TASKS.map((t, i) => ({
+      id: `block-${t.id}`,
+      kind: "work" as const,
+      start: new Date(startedAt.getTime() - 10 * 60_000 + i * 60_000).toISOString(),
+      end: new Date(startedAt.getTime() + 4 * 3_600_000 + i * 60_000).toISOString(),
+      taskId: t.id,
+      label: t.title,
+    })),
+    reasoning: "",
+    version,
+    createdAt: startedAt.toISOString(),
+    updatedAt: startedAt.toISOString(),
+  };
+}
+putPlan(store, defaultPlan(1));
+// Reshuffle (like the morning ritual) needs a declared Time Budget; 6 h of work + 1 h of breaks covers every fixture Plan.
+putTimeBudget(store, { date: today, totalMinutes: 420, workMinutes: 360, breakMinutes: 60 });
+
+/**
+ * Reshuffle isolation (web/e2e/reshuffle.spec.ts): a fixture-only scenario, switched on and off
+ * by `POST /__fixture/reshuffle-scenario` and `POST /__fixture/reset`. While on, the Plan clock is
+ * pinned to today 06:00 UTC (so 9:00-10:30 blocks are future and draggable whatever time the suite
+ * runs) and the Tasks and Plan are two fresh Tasks. Reset restores the default Plan, real clock and
+ * Tasks, clears the day's pins/drops and any open reshuffle proposal.
+ */
+export const FIXTURE_RESHUFFLE_TASKS = [
+  { id: "e2e-reshuffle-alpha", title: "Reshuffle Alpha" },
+  { id: "e2e-reshuffle-beta", title: "Reshuffle Beta" },
+] as const;
+let reshuffleScenario = false;
+const fixtureNow = (): Date => (reshuffleScenario ? new Date(`${today}T06:00:00.000Z`) : new Date());
+function scenarioPlan(version: number): Plan {
+  const at = (h: number, m: number): string => new Date(`${today}T${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:00.000Z`).toISOString();
+  return {
+    ...defaultPlan(version),
+    blocks: [
+      { id: `v${version}-work-0`, kind: "work", start: at(9, 0), end: at(9, 30), taskId: FIXTURE_RESHUFFLE_TASKS[0].id, label: FIXTURE_RESHUFFLE_TASKS[0].title },
+      { id: `v${version}-work-1`, kind: "work", start: at(9, 30), end: at(10, 0), taskId: FIXTURE_RESHUFFLE_TASKS[1].id, label: FIXTURE_RESHUFFLE_TASKS[1].title },
+    ],
+  };
+}
+function resetFixturePlan(scenario: boolean): void {
+  reshuffleScenario = scenario;
+  for (const open of listOpenReshuffleProposals(store)) clearInteractionRequest(store, open.requestId, open.requestVersion);
+  connection.db.transaction(() => replaceDayPinsAndDropsInTx(connection.db, today, [], []))();
+  const version = (store.getRecord<Plan>("plan", today)?.version ?? 0) + 1;
+  putPlan(store, scenario ? scenarioPlan(version) : defaultPlan(version), (db) => appendOutboxInTx(db, { topic: "plan", entityId: today }));
+}
 
 const notion = createFakeNotionStatusClient();
 const tasks = (): Task[] =>
-  FIXTURE_TASKS.map((t) => ({
+  (reshuffleScenario ? FIXTURE_RESHUFFLE_TASKS : FIXTURE_TASKS).map((t) => ({
     id: t.id,
     title: t.title,
     area: "Personal",
     estimatedDurationMinutes: 30,
+    dueDate: today,
     status: notion.writes.some((w) => w.taskId === t.id && w.status === "Completed") ? ("completed" as const) : ("not-started" as const),
     createdAt: startedAt.toISOString(),
     updatedAt: startedAt.toISOString(),
@@ -106,6 +144,7 @@ const homeView: NonNullable<ServerDeps["homeView"]> = {
   readCalendarEvents: async () => [],
   readTasks: async () => ({ tasks: tasks() }),
   timeZone: TIME_ZONE,
+  now: fixtureNow,
 };
 
 /**
@@ -145,7 +184,7 @@ const reshufflePlanDeps: NonNullable<ServerDeps["plan"]> = {
   store,
   connection,
   timeZone: TIME_ZONE,
-  now: () => new Date(),
+  now: fixtureNow,
   readTasks: async () => tasks(),
   readCalendarEvents: async () => [],
   writeCalendarPlan: async (blocks) => {
@@ -358,6 +397,10 @@ const handle = startServer(
       ...options,
       fetch: (request: Request) => {
         const url = new URL(request.url);
+        if (request.method === "POST" && (url.pathname === "/__fixture/reshuffle-scenario" || url.pathname === "/__fixture/reset")) {
+          resetFixturePlan(url.pathname === "/__fixture/reshuffle-scenario");
+          return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
+        }
         return url.pathname === "/__fixture/state" ? fixtureState(url) : options.fetch(request);
       },
     }),
