@@ -522,6 +522,17 @@ export interface ReshufflePreview {
 // ============================================================================
 
 /** An event on the "Yoh Plan" calendar. `blockId` is set when Yoh wrote it; absent means Spencer added it. */
+/** One calendar event Yoh wrote for a plan block, as last recorded for a local date. */
+export interface PlanCalendarSnapshotEntry {
+  readonly eventId: string;
+  readonly blockId: string;
+  readonly kind: PlanBlock["kind"];
+  readonly taskId?: string;
+  readonly routineId?: string;
+  readonly start: IsoDateTime;
+  readonly end: IsoDateTime;
+}
+
 export interface YohPlanEvent {
   readonly eventId: string;
   readonly blockId?: string;

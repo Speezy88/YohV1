@@ -73,6 +73,7 @@ export type NotificationKind =
   | "sandbox-failed"
   | "needs-data"
   | "reshuffle-apply-failed"
+  | "plan-calendar-synced"
   | "operational";
 
 /**

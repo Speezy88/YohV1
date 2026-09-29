@@ -4,18 +4,10 @@
  * read tell Yoh's own events from ones Spencer moved or added.
  */
 import type Database from "better-sqlite3";
-import type { PlanBlock } from "../types/domain.ts";
+import type { PlanBlock, PlanCalendarSnapshotEntry } from "../types/domain.ts";
 import type { SqliteConnection } from "./sqlite.ts";
 
-export type PlanCalendarSnapshotEntry = {
-  eventId: string;
-  blockId: string;
-  kind: PlanBlock["kind"];
-  taskId?: string;
-  routineId?: string;
-  start: string;
-  end: string;
-};
+export type { PlanCalendarSnapshotEntry };
 
 const tablesReady = new WeakSet<Database.Database>();
 
