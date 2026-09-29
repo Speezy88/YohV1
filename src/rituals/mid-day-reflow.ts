@@ -202,12 +202,11 @@
  * `idSequence` starting at 0 each call, so calling it again for just the
  * remaining portion would, unprefixed, reproduce ids already used by the
  * untouched past blocks (e.g. a second "work-0"). Every re-fit block's id
- * is therefore rewritten as `reflow-v<newPlanVersion>-<originalId>` before
+ * is therefore rewritten as `v<newPlanVersion>-<originalId>` before
  * merging — `newPlanVersion` (`existingPlan.version + 1`) strictly
  * increases on every successive re-flow of the same day's Plan, so two
  * different re-flow runs can never collide with each other's ids either,
- * not just with the original morning-generated ids (which never carry a
- * "reflow-" prefix at all).
+ * and the morning Plan uses the same `v<N>-` scheme for its own version.
  *
  * ============================================================================
  * Rendering — "one short block" (UX-DR11), reusing `renderPlan`
@@ -234,15 +233,14 @@
  * or any timer calls it — see `tests/mid-day-reflow.test.ts`'s "no
  * proactive trigger path" structural check for how that's verified.
  */
-import { getCurrentTimeBudget, getPlan, putPlan, type MemoryStore } from "../adapters/memory-store.ts";
+import { getCurrentTimeBudget, getPlan, PLAN_TOPIC, putPlan, type MemoryStore } from "../adapters/memory-store.ts";
 import { appendOutboxInTx } from "../adapters/notification-store.ts";
 import type { LogEntry } from "../adapters/logger.ts";
 import type { DataCompletenessGateResult } from "../core/data-completeness-gate.ts";
-import { orderByDerivedPriority } from "../core/derived-priority.ts";
 import { isOpenTask } from "../core/planning-field-value.ts";
-import { fitWorkBreakBlocks } from "../core/work-break-fit.ts";
+import { computeDayRefit } from "./reshuffle.ts";
 import { runDataCompletenessGate } from "./data-completeness.ts";
-import { localIsoDate, missingRefiningFor, renderPlan } from "./ritual-shared.ts";
+import { describeError, failure, localIsoDate, missingRefiningFor, renderPlan } from "./ritual-shared.ts";
 import type {
   CalendarEvent,
   CompleteTask,
@@ -325,14 +323,6 @@ export type MidDayReflowOutcome =
       /** How many distinct Tasks were re-fit into the remainder — same count `buildReflowReasoning` embeds in `plan.reasoning`, exposed here so `buildBlockerConfirmationLine` (Task 16) can build its own, differently-worded single line without re-deriving it from `plan.blocks`' id-prefix convention. */
       readonly refitTaskCount: number;
     };
-
-function failure(kind: YohError["kind"], message: string, detail?: unknown): Result<never, YohError> {
-  return { ok: false, error: detail === undefined ? { kind, message } : { kind, message, detail } };
-}
-
-function describeError(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
 
 /**
  * Whether `block` has been fully lived through as of `nowMs` — used ONLY to
@@ -605,42 +595,44 @@ export async function runMidDayReflow(deps: MidDayReflowDeps): Promise<Result<Mi
     .filter((b) => b.kind === "calendar-anchor")
     .map((b) => ({ id: b.id, title: b.label, start: b.start, end: b.end }));
 
-  // --- Order + fit, the exact same pure functions the Morning Ritual uses ----
-  const ordered = orderByDerivedPriority(outstanding, today, deps.bumpLevels);
-  if (!ordered.ok) {
-    log({ level: "error", event: "mid-day-reflow.ordering-rejected", detail: ordered.error });
-    return ordered;
-  }
-
-  const fitted = fitWorkBreakBlocks({
-    tasks: ordered.value,
+  // --- Order + fit, via the ONE shared pipeline (`rituals/reshuffle.ts`) ------
+  // Anchors (including any protected windows the stored Plan carries) come
+  // verbatim from the stored Plan.
+  const nextVersion = existingPlan.data.version + 1;
+  // See the file docstring's "Merging past and re-fit blocks" section: the
+  // version-keyed prefix guarantees no id collision across successive re-flows.
+  const refit = computeDayRefit({
+    date: today,
+    timeZone: deps.timeZone,
+    now: nowIso,
+    openTasks: outstanding,
     budget: {
       date: today,
       totalMinutes: remainingBudgetMinutes,
       workMinutes: storedBudget.data.workMinutes,
       breakMinutes: storedBudget.data.breakMinutes,
     },
-    calendarEvents: remainingAnchorEvents,
-    startTime: nowIso,
+    fixedEvents: remainingAnchorEvents,
+    pastBlocks,
+    ...(deps.bumpLevels ? { bumpLevels: deps.bumpLevels } : {}),
+    idPrefix: `v${nextVersion}`,
+    log,
   });
-  if (!fitted.ok) {
-    log({ level: "error", event: "mid-day-reflow.fitting-rejected", detail: fitted.error });
-    return fitted;
+  if (!refit.ok) {
+    log({ level: "error", event: "mid-day-reflow.fitting-rejected", detail: refit.error });
+    return refit;
   }
+  const fitted = { value: { deferredTaskIds: refit.value.deferredTaskIds } };
 
-  const nextVersion = existingPlan.data.version + 1;
-  // See the file docstring's "Merging past and re-fit blocks" section for
-  // why this prefix (keyed by the strictly-increasing new Plan version)
-  // guarantees no collision with a past block's id, across any number of
-  // successive re-flows of the same day.
   const outstandingById = new Map<ExternalId, CompleteTask>(outstanding.map((t) => [t.id, t]));
-  const reflowIdPrefix = `reflow-v${nextVersion}`;
-  const refitBlocks: readonly PlanBlock[] = fitted.value.blocks.map((b) => {
+  const refitBlocks: readonly PlanBlock[] = refit.value.fittedBlocks.map((b) => {
     const missing = b.kind === "work" && b.taskId !== undefined ? missingRefiningFor(outstandingById.get(b.taskId)!) : undefined;
-    return { ...b, id: `${reflowIdPrefix}-${b.id}`, ...(missing ? { missingRefining: missing } : {}) };
+    return missing ? { ...b, missingRefining: missing } : b;
   });
 
-  const mergedBlocks = [...pastBlocks, ...refitBlocks].sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
+  const refitById = new Map(refitBlocks.map((b) => [b.id, b]));
+  const mergedBlocks = refit.value.blocks.map((b) => refitById.get(b.id) ?? b);
+
 
   const refitTaskIds = new Set<ExternalId>(
     refitBlocks.flatMap((b) => (b.kind === "work" && b.taskId !== undefined ? [b.taskId] : [])),
@@ -668,7 +660,7 @@ export async function runMidDayReflow(deps: MidDayReflowDeps): Promise<Result<Mi
   try {
     // Story 7.8, Ruling R4: same atomic Plan-change outbox hint as
     // morning-ritual.ts's own putPlan call — see that call site's comment.
-    putPlan(deps.store, plan, (db) => appendOutboxInTx(db, { topic: "plan", entityId: plan.date }));
+    putPlan(deps.store, plan, (db) => appendOutboxInTx(db, { topic: PLAN_TOPIC, entityId: plan.date }));
   } catch (err) {
     log({ level: "error", event: "mid-day-reflow.persist-failed", detail: describeError(err) });
     return failure("conflict", `mid-day-reflow: could not persist the updated Plan — ${describeError(err)}`, err);

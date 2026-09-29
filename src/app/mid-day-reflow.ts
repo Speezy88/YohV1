@@ -15,6 +15,7 @@
  */
 import { errorCopy } from "../core/error-copy.ts";
 import { runMidDayReflow, type MidDayReflowOutcome } from "../rituals/mid-day-reflow.ts";
+import { computeBumpLevels } from "../rituals/ritual-shared.ts";
 import type { MemoryStore } from "../adapters/memory-store.ts";
 import type { ChatTurnResponse } from "../types/api.ts";
 import type { Result, Task, YohError } from "../types/domain.ts";
@@ -45,6 +46,7 @@ export async function runReflow(
     now: deps.now,
     timeZone: deps.timeZone,
     color: false,
+    bumpLevels: computeBumpLevels(deps.store),
     ...(input.blockerReported !== undefined ? { blockerReported: input.blockerReported } : {}),
   });
 }

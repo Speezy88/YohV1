@@ -38,7 +38,7 @@
  */
 import type { LogEntry } from "../adapters/logger.ts";
 import type { SqliteConnection } from "../adapters/sqlite.ts";
-import { getPlan, type MemoryStore } from "../adapters/memory-store.ts";
+import { getPlan, PLAN_TOPIC, type MemoryStore } from "../adapters/memory-store.ts";
 import {
   claimDueCheckOffInTx,
   createPendingCheckOffInTx,
@@ -74,9 +74,6 @@ export const CHECK_OFF_COMMIT_TICK_MS = 1000;
  * limit for as long as it's down.
  */
 export const CHECK_OFF_NOTION_RETRY_MS = 60_000;
-
-/** The outbox topic Home's store re-fetches on (Story 7.8) — a commit changes what Home shows as done. */
-const PLAN_TOPIC = "plan";
 
 export interface CheckOffDeps {
   readonly connection: SqliteConnection;

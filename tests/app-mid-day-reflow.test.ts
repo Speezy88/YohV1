@@ -8,7 +8,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
-import { createMemoryStore, getPlan, putPlan, putTimeBudget, type MemoryStore } from "../src/adapters/memory-store.ts";
+import { createMemoryStore, getPlan, putPlan, putTimeBudget, recordSlip, type MemoryStore } from "../src/adapters/memory-store.ts";
 import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
 import { localIsoDate } from "../src/rituals/ritual-shared.ts";
 import { reflowDay } from "../src/app/mid-day-reflow.ts";
@@ -97,4 +97,25 @@ test("reflowDay says so plainly when no Plan exists yet for today", async () => 
   if (!result.ok) return;
   assert.match(result.value.reply, /no plan/i);
   store.close();
+});
+
+test("reflowDay orders with the stored slip bump levels (same bridge as planDay)", async () => {
+  const store = tempStore();
+  const REFLOW_NOW = new Date("2026-08-22T18:00:00.000Z");
+  const today = localIsoDate(REFLOW_NOW, TEST_TIME_ZONE);
+  putTimeBudget(store, { date: today, totalMinutes: 480, workMinutes: 70, breakMinutes: 15 });
+  putPlan(store, { ...reflowSamplePlan(today, REFLOW_NOW.toISOString()), blocks: [] });
+  const tasks: Task[] = [
+    makeTask("ta", "Task A", { dueDate: "2026-08-25" }),
+    makeTask("tb", "Task B", { dueDate: "2026-08-24" }),
+  ];
+  const firstWork = async (): Promise<string | undefined> => {
+    putPlan(store, { ...getPlan(store, today)!.data, blocks: [] });
+    const r = await reflowDay({ store, timeZone: TEST_TIME_ZONE, now: () => REFLOW_NOW, readTasks: async () => tasks }, {});
+    assert.equal(r.ok, true);
+    return getPlan(store, today)!.data.blocks.find((b) => b.kind === "work")?.taskId;
+  };
+  assert.equal(await firstWork(), "tb");
+  for (const d of ["2026-08-18", "2026-08-19", "2026-08-20", "2026-08-21"]) recordSlip(store, "ta", d);
+  assert.equal(await firstWork(), "ta");
 });

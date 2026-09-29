@@ -641,6 +641,9 @@ const PLAN_KIND = "plan";
 
 export type { Plan };
 
+/** The outbox topic a Plan write announces on (the shared EventSource `plan` hint). */
+export const PLAN_TOPIC = "plan";
+
 /** Reads the stored `Plan` for `date`, or `undefined` if none has been generated for that day. */
 export function getPlan(store: MemoryStore, date: IsoDate): StoredRecord<Plan> | undefined {
   return store.getRecord<Plan>(PLAN_KIND, date);

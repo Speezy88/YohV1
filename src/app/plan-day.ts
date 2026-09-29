@@ -49,12 +49,11 @@
  * dead-man's-switch keeps measuring only whether the REAL cron trigger is
  * still firing, exactly as before this file existed.
  */
-import { getPlan, listSlipHistories, type MemoryStore } from "../adapters/memory-store.ts";
+import { getPlan, type MemoryStore } from "../adapters/memory-store.ts";
 import type { LogEntry } from "../adapters/logger.ts";
 import { runMorningRitual } from "../rituals/morning-ritual.ts";
-import { localIsoDate } from "../rituals/ritual-shared.ts";
+import { computeBumpLevels, localIsoDate } from "../rituals/ritual-shared.ts";
 import { errorCopy } from "../core/error-copy.ts";
-import { computeSlipBumpLevels } from "../core/slip-bump.ts";
 import { surfaceOpenItems, type SurfaceOpenItemsDeps } from "./surface-open-items.ts";
 import type { ChatTurnResponse, OpenItem } from "../types/api.ts";
 import type { CalendarEvent, ExternalId, Plan, PlanBlock, Result, Task, YohError } from "../types/domain.ts";
@@ -70,30 +69,6 @@ export interface PlanDayDeps extends SurfaceOpenItemsDeps {
   /** `adapters/calendar-adapter.ts`'s `writeTodaysPlanToCalendar`, pre-bound. Optional — a test that doesn't care about the Yoh-Plan Calendar sync need not stub it. */
   readonly writeCalendarPlan?: (blocks: readonly PlanBlock[]) => Promise<void>;
   readonly log?: (entry: LogEntry) => void;
-}
-
-/**
- * The `bumpLevels` bridge (Task 19; `shell/ritual-cli/morning-deps.ts`'s own
- * doc comment has the full history): every currently-stored `SlipHistory`
- * row turned into a `taskId -> consecutiveSlipCount` map, then the REAL
- * `core/slip-bump.ts` computation over it. Deliberately NOT threaded through
- * `PlanDayDeps` (unlike `readTasks`/`readCalendarEvents`/`writeCalendarPlan`,
- * which need real credentials only `shell/` can bind): this is pure
- * computation over `store` alone, so `planDay` computes it itself, fresh,
- * every call — a `shell/server.ts` process runs for days, and a Task marked
- * "slipped" through `/night` earlier the SAME process run must still show up
- * bumped in a LATER on-demand `/plan`, not just after the next restart. A
- * small, deliberate duplication of `shell/ritual-cli/morning-deps.ts`'s own
- * identical loop (AD-1 forbids `app/` importing `shell/`, so sharing it
- * outright isn't an option) — mirrors this codebase's established
- * "`localIsoDate`/`currentIsoDate`" precedent for the same layering reason.
- */
-function computeBumpLevels(store: MemoryStore): Readonly<Record<ExternalId, number>> {
-  const slipCounts: Record<ExternalId, number> = {};
-  for (const record of listSlipHistories(store)) {
-    slipCounts[record.id] = record.data.consecutiveSlipCount;
-  }
-  return computeSlipBumpLevels(slipCounts);
 }
 
 /** A one-line, deterministic summary of an already-built Plan — no times, no colors, just enough to confirm "yes, this exists" (UX: the full Plan is one `/morning` or a Home glance away). */

@@ -9,7 +9,7 @@
  * behavior change. `ritual-cli.ts`'s `main()` is this file's sole caller;
  * per AD-1 this file, like `ritual-cli.ts` itself, never imports `app/`.
  */
-import { listSlipHistories, type MemoryStore } from "../../adapters/memory-store.ts";
+import type { MemoryStore } from "../../adapters/memory-store.ts";
 import {
   createCalendarReadClient,
   createCalendarWriteClient,
@@ -21,10 +21,9 @@ import { writeStructuredLog } from "../../adapters/logger.ts";
 import { loadTaskPropertyNamesFromEnv, readNotionTasks } from "../../adapters/notion-adapter.ts";
 import { createTokenStore, loadGoogleOAuthConfigFromEnv } from "../../adapters/token-store.ts";
 import type { SqliteConnection } from "../../adapters/sqlite.ts";
-import { computeSlipBumpLevels } from "../../core/slip-bump.ts";
+import { computeBumpLevels } from "../../rituals/ritual-shared.ts";
 import type { MorningRitualDeps } from "../../rituals/morning-ritual.ts";
 import { Client } from "@notionhq/client";
-import type { ExternalId } from "../../types/domain.ts";
 
 /**
  * Binds the real Notion, Google Calendar, and Pushover adapters (plus the
@@ -114,11 +113,7 @@ export function createMorningRitualDeps(
   // deps builder needs the identical bridge but AD-1 forbids it importing
   // this `shell/` file, so it keeps its own small copy of this same loop
   // (see that file's own doc comment).
-  const slipCounts: Record<ExternalId, number> = {};
-  for (const record of listSlipHistories(store)) {
-    slipCounts[record.id] = record.data.consecutiveSlipCount;
-  }
-  const bumpLevels = computeSlipBumpLevels(slipCounts);
+  const bumpLevels = computeBumpLevels(store);
 
   return {
     store,

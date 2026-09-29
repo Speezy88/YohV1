@@ -35,6 +35,7 @@ import {
   mergeTaskFieldOverride,
   putTimeBudget,
   type MemoryStore,
+  PLAN_TOPIC,
 } from "../adapters/memory-store.ts";
 import { appendOutboxInTx } from "../adapters/notification-store.ts";
 import type { SqliteConnection } from "../adapters/sqlite.ts";
@@ -57,8 +58,6 @@ import type {
 import type { ConfirmProposalResponse } from "../types/api.ts";
 
 /** The outbox topic the Calendar Day View and Home's own Plan block re-fetch on (`app/check-off.ts`, `rituals/morning-ritual.ts`, `rituals/mid-day-reflow.ts` all already write it). */
-const PLAN_TOPIC = "plan";
-
 /**
  * Task 8: the local calendar date `PLAN_TOPIC`'s hint should carry after a
  * confirmed `"calendar-edit"`, so `web/src/lib/calendarDay.ts`'s per-date

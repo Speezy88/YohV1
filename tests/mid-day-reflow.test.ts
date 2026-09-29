@@ -688,3 +688,21 @@ test("Story 9.1 (Review Focus #3): a re-flowed block for a Task missing only Ene
   assert.ok(refitBlock, "the Refining-only-missing Task is placed by the re-flow");
   assert.deepEqual(refitBlock?.missingRefining, ["energy"]);
 });
+
+// ============================================================================
+// T2: shared pipeline (computeDayRefit)
+// ============================================================================
+
+test("re-flow blocks carry v<version>-<kind>-<n> ids, keep past blocks and stored anchors, and log reshuffle.computed", async () => {
+  const entries: { event: string }[] = [];
+  const { deps, store } = harness({ tasks: DEFAULT_TASKS });
+  const result = await runMidDayReflow({ ...deps, log: (e) => entries.push(e) });
+  assert.equal(result.ok, true);
+  if (!result.ok || result.value.status !== "reflowed") return;
+  const stored = getPlan(store, TODAY)!.data;
+  assert.equal(stored.version, 2);
+  assert.ok(stored.blocks.some((b) => b.id === "calendar-anchor-4"), "past anchor kept verbatim");
+  assert.ok(stored.blocks.some((b) => /^v2-work-\d+$/.test(b.id)));
+  assert.equal(new Set(stored.blocks.map((b) => b.id)).size, stored.blocks.length);
+  assert.ok(entries.some((e) => e.event === "reshuffle.computed"));
+});

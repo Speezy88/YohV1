@@ -27,7 +27,31 @@
  * applied within `rituals/*.ts` itself: this is deliberately the leaf every
  * sibling ritual file depends on, never the reverse).
  */
-import type { CompleteTask, IsoDate, IsoDateTime, Plan, PlanBlock, RefiningFieldNames } from "../types/domain.ts";
+import { listSlipHistories, type MemoryStore } from "../adapters/memory-store.ts";
+import { computeSlipBumpLevels } from "../core/slip-bump.ts";
+import type { CompleteTask, ExternalId, IsoDate, IsoDateTime, Plan, PlanBlock, RefiningFieldNames, Result, YohError } from "../types/domain.ts";
+
+/** Builds a failed `Result` (optionally carrying the underlying cause as `detail`). */
+export function failure(kind: YohError["kind"], message: string, detail?: unknown): Result<never, YohError> {
+  return { ok: false, error: detail === undefined ? { kind, message } : { kind, message, detail } };
+}
+
+export function describeError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * The `taskId -> bump level` map every planning path (morning, /plan, reflow)
+ * feeds `orderByDerivedPriority`: each stored SlipHistory's consecutive slip
+ * count through the real `core/slip-bump.ts` computation.
+ */
+export function computeBumpLevels(store: MemoryStore): Readonly<Record<ExternalId, number>> {
+  const slipCounts: Record<ExternalId, number> = {};
+  for (const record of listSlipHistories(store)) {
+    slipCounts[record.id] = record.data.consecutiveSlipCount;
+  }
+  return computeSlipBumpLevels(slipCounts);
+}
 
 // ============================================================================
 // missingRefiningFor — the one CompleteTask -> missingRefining tagging rule
