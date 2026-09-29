@@ -52,6 +52,8 @@ import { PlanChecklist } from "../components/PlanChecklist.tsx";
 import { TimeBudgetWidget } from "../components/TimeBudgetWidget.tsx";
 import { MiniMonth } from "../components/MiniMonth.tsx";
 import { loadCalendarView, saveCalendarView, type CalendarView } from "../lib/calendarView.ts";
+import { ReshufflePreviewCard } from "../components/ReshufflePreviewCard.tsx";
+import { approveReshuffle, discardReshuffle, requestReshuffle, useReshuffle, type ReshuffleView } from "../lib/reshuffle.ts";
 import type { HomeCalendarBlock } from "../../../src/types/api.ts";
 
 /** Weekday + month + day, e.g. "SUNDAY, SEPTEMBER 27" — the server's own host-timezone `today` (AD-17), never `new Date()`. */
@@ -132,6 +134,7 @@ function CalendarViewToggle({ view, onChange }: { readonly view: CalendarView; r
 export default function HomePage(): React.JSX.Element {
   useEffect(() => startHomeViewStream(), []);
   const state = useHomeView();
+  const reshuffle = useReshuffle(state.status === "loaded" ? state.value.reshuffle : undefined);
   // Ruling R16: registered every render (including "loading"), so this gate
   // exists from Home's very first render — no later-registering gate can
   // trip the splash's one-way latch before Home has had its own say.
@@ -190,7 +193,7 @@ export default function HomePage(): React.JSX.Element {
             )}
           </div>
         </section>
-        <CalendarColumn today={today} blocks={calendar.blocks} timeZone={timeZone} />
+        <CalendarColumn today={today} blocks={reshuffle.preview ? reshuffle.preview.blocks : calendar.blocks} timeZone={timeZone} reshuffle={reshuffle} />
       </div>
     </div>
   );
@@ -200,6 +203,7 @@ interface CalendarColumnProps {
   readonly today: string;
   readonly blocks: readonly HomeCalendarBlock[];
   readonly timeZone: string;
+  readonly reshuffle: ReshuffleView;
 }
 
 /**
@@ -294,7 +298,7 @@ function OtherDayPanel({ shownDate, timeZone }: { readonly shownDate: string; re
  * unlike the Day/Month mode) is this column's own state; a Month day click
  * sets it and switches to Day.
  */
-function CalendarColumn({ today, blocks, timeZone }: CalendarColumnProps): React.JSX.Element {
+function CalendarColumn({ today, blocks, timeZone, reshuffle }: CalendarColumnProps): React.JSX.Element {
   const [view, setView] = useState<CalendarView>(loadCalendarView);
   const [shownDate, setShownDate] = useState<string>(today);
   const isTodayShown = shownDate === today;
@@ -324,7 +328,7 @@ function CalendarColumn({ today, blocks, timeZone }: CalendarColumnProps): React
       <div className="min-h-0 flex-1">
         {view === "day" ? (
           isTodayShown ? (
-            <CalendarDayView blocks={blocks} timeZone={timeZone} />
+            <CalendarDayView blocks={blocks} timeZone={timeZone} onUnpin={(taskId) => void requestReshuffle({ kind: "unpin-task", taskId })} />
           ) : (
             <OtherDayPanel shownDate={shownDate} timeZone={timeZone} />
           )
@@ -338,6 +342,23 @@ function CalendarColumn({ today, blocks, timeZone }: CalendarColumnProps): React
           />
         )}
       </div>
+      {reshuffle.preview && (
+        <div className="shrink-0 pt-3">
+          <ReshufflePreviewCard
+            preview={reshuffle.preview}
+            busy={reshuffle.busy}
+            error={reshuffle.error}
+            notice={reshuffle.notice}
+            onApprove={(id) => void approveReshuffle(id)}
+            onDiscard={(id) => void discardReshuffle(id)}
+          />
+        </div>
+      )}
+      {!reshuffle.preview && reshuffle.error && (
+        <p role="alert" className="m-0 shrink-0 pt-3 font-body text-small font-bold text-ink-primary">
+          {reshuffle.error}
+        </p>
+      )}
     </aside>
   );
 }

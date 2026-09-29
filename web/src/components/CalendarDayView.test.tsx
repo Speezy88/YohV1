@@ -7,8 +7,8 @@
  * fix: a 22:00Z event must render at the 3pm row in America/Los_Angeles,
  * not the 10pm row UTC would put it at.
  */
-import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, it, expect, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { CalendarDayView } from "./CalendarDayView.tsx";
 import type { HomeCalendarBlock } from "../../../src/types/api.ts";
 
@@ -513,5 +513,28 @@ describe("CalendarDayView", () => {
       render(<CalendarDayView blocks={[]} timeZone={UTC} now={NOON_UTC} />);
       expect(screen.queryByTestId("calendar-day-empty")).not.toBeInTheDocument();
     });
+  });
+});
+
+describe("CalendarDayView pins and moved blocks", () => {
+  const base = { start: "2026-09-25T15:00:00.000Z", end: "2026-09-25T16:00:00.000Z", completed: false, past: false };
+
+  it("a pinned Task block has an 'Unpin <label>' button that calls onUnpin", () => {
+    const onUnpin = vi.fn();
+    render(<CalendarDayView blocks={[block({ id: "b1", kind: "work", label: "Draft the memo", taskId: "t1", pinned: true, ...base })]} timeZone={UTC} now={NOON_UTC} onUnpin={onUnpin} />);
+    fireEvent.click(screen.getByRole("button", { name: "Unpin Draft the memo" }));
+    expect(onUnpin).toHaveBeenCalledWith("t1");
+  });
+
+  it("a pinned routine block shows a glyph but no button", () => {
+    render(<CalendarDayView blocks={[block({ id: "r1", kind: "routine", label: "Stretch", pinned: true, ...base })]} timeZone={UTC} now={NOON_UTC} onUnpin={() => {}} />);
+    expect(screen.queryByRole("button", { name: /Unpin/ })).toBeNull();
+    expect(screen.getByTestId("calendar-block-pinned-glyph")).toBeInTheDocument();
+  });
+
+  it("a moved block gets the moved marker", () => {
+    render(<CalendarDayView blocks={[{ ...block({ id: "b1", kind: "work", label: "Draft", ...base }), moved: true } as HomeCalendarBlock]} timeZone={UTC} now={NOON_UTC} />);
+    expect(screen.getByTestId("calendar-block").dataset["moved"]).toBe("true");
+    expect(screen.getByTestId("calendar-block").className).toMatch(/outline-\[1\.5px\]/);
   });
 });

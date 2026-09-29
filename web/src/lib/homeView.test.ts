@@ -44,6 +44,13 @@ describe("homeView store", () => {
     await waitFor(() => expect(apiClient.api.home.$get).toHaveBeenCalledTimes(2));
   });
 
+  it("re-fetches on an 'open-items' hint", async () => {
+    startHomeViewStream();
+    await waitFor(() => expect(apiClient.api.home.$get).toHaveBeenCalledTimes(1));
+    act(() => hintCb({ seq: 3, topic: "open-items", entityId: "proposal:p1" }));
+    await waitFor(() => expect(apiClient.api.home.$get).toHaveBeenCalledTimes(2));
+  });
+
   it("useHomeView exposes loading, then loaded", async () => {
     const { result } = renderHook(() => useHomeView());
     expect(result.current.status).toBe("loading");

@@ -54,6 +54,16 @@ function IncompleteGlyph(): React.JSX.Element {
   );
 }
 
+/** aria-hidden — the badge's own "pinned" text carries the meaning. */
+function PinGlyph(): React.JSX.Element {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" width={12} height={12} fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 4h6l-1 6 3 3H7l3-3-1-6z" />
+      <line x1="12" y1="13" x2="12" y2="20" />
+    </svg>
+  );
+}
+
 /** A locally checked row: still fading out, or gone. */
 type LocalCheck = "dissolving" | "gone";
 
@@ -128,6 +138,12 @@ export function PlanChecklist({ rows, timeZone }: PlanChecklistProps): React.JSX
               <span data-testid="plan-row-incomplete-marker" className="flex shrink-0 items-center gap-1 whitespace-nowrap font-body text-label font-bold text-ink-secondary">
                 <IncompleteGlyph />
                 {missingRefiningText(row.missingRefining)}
+              </span>
+            )}
+            {row.pinned && (
+              <span data-testid="plan-row-pinned-badge" className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full bg-surface-sunken px-2 py-0.5 font-body text-label font-bold text-ink-secondary">
+                <PinGlyph />
+                pinned
               </span>
             )}
             <span className="font-body text-small text-ink-secondary">

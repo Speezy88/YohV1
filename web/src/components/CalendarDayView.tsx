@@ -282,12 +282,24 @@ export interface CalendarDayViewProps {
   readonly now?: () => Date;
   /** Task 4: whether the shown date is today — governs the now-line and the mount-time auto-scroll target (see this file's doc comment). Defaults to `true`, the pre-Task-4 behavior every existing caller relies on. */
   readonly isToday?: boolean;
+  /** Unpins a pinned Task block. Absent: pinned Task blocks show the glyph only. */
+  readonly onUnpin?: (taskId: string) => void;
+}
+
+/** 1.8px-stroke pin glyph, aria-hidden (the button or the block's own label carries the name). */
+function PinGlyph(): React.JSX.Element {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" width={12} height={12} fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 4h6l-1 6 3 3H7l3-3-1-6z" />
+      <line x1="12" y1="13" x2="12" y2="20" />
+    </svg>
+  );
 }
 
 /** 8am, this component's own fallback auto-scroll target for a genuinely empty non-today day (no "now" line to anchor to instead). */
 const EMPTY_DAY_ANCHOR_MINUTES = (8 - DAY_START_HOUR) * 60;
 
-export function CalendarDayView({ blocks, timeZone, now = () => new Date(), isToday = true }: CalendarDayViewProps): React.JSX.Element {
+export function CalendarDayView({ blocks, timeZone, now = () => new Date(), isToday = true, onUnpin }: CalendarDayViewProps): React.JSX.Element {
   const hours = Array.from({ length: DAY_END_HOUR - DAY_START_HOUR + 1 }, (_, i) => DAY_START_HOUR + i);
   const scrollRef = useRef<HTMLDivElement>(null);
   const nowValue = now();
@@ -405,20 +417,41 @@ export function CalendarDayView({ blocks, timeZone, now = () => new Date(), isTo
               : isRoutine
                 ? "border border-accent-solid bg-surface-raised text-ink-primary font-semibold"
                 : "bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end text-on-accent-solid shadow-extruded-sm font-semibold";
+          const moved = (b as { moved?: boolean }).moved === true;
+          const pinControl = b.pinned === true && b.taskId !== undefined && onUnpin !== undefined;
           return (
             <div
               key={b.id}
               data-testid="calendar-block"
               data-kind={b.kind}
+              data-moved={moved ? "true" : undefined}
               aria-disabled={readOnly}
               aria-label={showLabel ? undefined : content.text}
               className={
                 `${kindClasses} absolute right-2 overflow-hidden rounded-sm px-3 ${layoutClasses} font-body text-small ` +
-                `${readOnly ? "opacity-60" : ""} ${b.completed ? "line-through" : ""} ${content.singleLine ? "truncate whitespace-nowrap" : ""}`
+                `${moved ? "outline outline-[1.5px] -outline-offset-1 outline-accent-solid" : ""} ${readOnly ? "opacity-60" : ""} ${b.completed ? "line-through" : ""} ${content.singleLine ? "truncate whitespace-nowrap" : ""}`
               }
               style={{ top, height, left, ...(width !== undefined ? { width } : {}) }}
             >
               {showLabel ? content.text : null}
+              {b.pinned === true && (
+                <span className="absolute right-1 top-1 flex items-center rounded-full bg-surface-sunken text-ink-secondary">
+                  {pinControl ? (
+                    <button
+                      type="button"
+                      aria-label={`Unpin ${label}`}
+                      onClick={() => onUnpin(b.taskId!)}
+                      className="flex size-5 items-center justify-center rounded-full focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid"
+                    >
+                      <PinGlyph />
+                    </button>
+                  ) : (
+                    <span data-testid="calendar-block-pinned-glyph" role="img" aria-label="Pinned" className="flex size-5 items-center justify-center">
+                      <PinGlyph />
+                    </span>
+                  )}
+                </span>
+              )}
             </div>
           );
         })}

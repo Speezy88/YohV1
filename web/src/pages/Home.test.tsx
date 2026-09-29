@@ -329,4 +329,33 @@ describe("HomePage", () => {
     expect(screen.getByText("Sun, Sep 27")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Today" })).not.toBeInTheDocument();
   });
+
+  it("renders the reshuffle preview card, and proposed blocks replace the calendar, only while a preview is open", () => {
+    mockState(
+      loaded({
+        calendar: { blocks: [{ id: "cur", kind: "work", label: "Current block", start: "2026-09-25T13:00:00.000Z", end: "2026-09-25T14:00:00.000Z", completed: false, past: false }] },
+        reshuffle: {
+          proposalId: "p1",
+          requestId: "proposal:p1",
+          date: "2026-09-25",
+          summary: "Moves Draft to 2 PM.",
+          blocks: [{ id: "new", kind: "work", label: "Proposed block", start: "2026-09-25T14:00:00.000Z", end: "2026-09-25T15:00:00.000Z", completed: false, past: false, moved: true }],
+          deferredTaskIds: [],
+          needsDataTaskIds: [],
+          unplacedRoutineLabels: [],
+          expiresAt: "2026-09-25T18:10:00.000Z",
+        },
+      }),
+    );
+    render(<HomePage />);
+    expect(screen.getByText("Moves Draft to 2 PM.")).toBeInTheDocument();
+    expect(screen.getByText(/Proposed block/)).toBeInTheDocument();
+    expect(screen.queryByText(/Current block/)).toBeNull();
+  });
+
+  it("shows no preview card without an open preview", () => {
+    mockState(loaded());
+    render(<HomePage />);
+    expect(screen.queryByTestId("reshuffle-preview-card")).toBeNull();
+  });
 });

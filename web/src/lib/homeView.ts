@@ -64,7 +64,7 @@ export function refetchHomeView(): Promise<void> {
 export function startHomeViewStream(): () => void {
   void refetch();
   return onHint((hint) => {
-    if (hint.topic === "plan") void refetch();
+    if (hint.topic === "plan" || hint.topic === "open-items") void refetch();
   });
 }
 

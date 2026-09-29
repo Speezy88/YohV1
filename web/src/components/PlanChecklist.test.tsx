@@ -338,3 +338,14 @@ describe("PlanChecklist — Story 9.1 incomplete marker", () => {
     expect(screen.queryByTestId("plan-row-incomplete-marker")).not.toBeInTheDocument();
   });
 });
+
+describe("PlanChecklist pinned badge", () => {
+  it("shows an indicator-only pinned badge on a pinned row", () => {
+    renderChecklist([{ ...rows[0]!, pinned: true }, rows[1]!]);
+    const badges = screen.getAllByTestId("plan-row-pinned-badge");
+    expect(badges).toHaveLength(1);
+    expect(badges[0]).toHaveTextContent("pinned");
+    expect(badges[0]!.closest("button")).toBeNull();
+    expect(badges[0]!.tagName).not.toBe("BUTTON");
+  });
+});
