@@ -5,7 +5,9 @@
  * proposed one, the calendar-version hash, the one-line summary, and the
  * proposal's time-to-live.
  */
-import type { IsoDateTime, PlanBlock } from "../types/domain.ts";
+import { toOwnedBlock } from "./calendar-blocks.ts";
+import type { HomeCalendarBlock, ReshufflePreviewView } from "../types/api.ts";
+import type { IsoDateTime, PlanBlock, Proposal, ReshufflePreview, ReshuffleRequest } from "../types/domain.ts";
 
 /** How long an open reshuffle preview stays approvable. */
 export const RESHUFFLE_PROPOSAL_TTL_MINUTES = 10;
@@ -98,4 +100,64 @@ export function buildReshuffleSummary(input: ReshuffleSummaryInput): string {
 /** True once a preview created at `createdAt` is older than its TTL as of `now`. */
 export function isProposalExpired(createdAt: IsoDateTime, now: Date): boolean {
   return now.getTime() - Date.parse(createdAt) >= RESHUFFLE_PROPOSAL_TTL_MINUTES * 60_000;
+}
+
+/** The request id `openProposal` gives a proposal's interaction request. */
+export function reshuffleRequestId(proposalId: string): string {
+  return `proposal:${proposalId}`;
+}
+
+/**
+ * The wire view of an open reshuffle proposal: the proposed Yoh-owned blocks
+ * (flagged `moved`) layered with the live fixed events, in start order.
+ */
+export function toReshufflePreviewView(
+  proposal: Proposal<ReshufflePreview>,
+  fixedBlocks: readonly HomeCalendarBlock[],
+  nowMs: number,
+): ReshufflePreviewView {
+  const preview = proposal.suggested;
+  const moved = new Set(preview.movedBlockIds);
+  const owned = preview.blocks
+    .filter((b): b is PlanBlock & { kind: "work" | "break" } => b.kind === "work" || b.kind === "break")
+    .map((b) => ({ ...toOwnedBlock(b, false, nowMs), moved: moved.has(b.id) }));
+  const fixed = fixedBlocks.map((b) => ({ ...b, moved: false }));
+  const blocks = [...owned, ...fixed].sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
+  return {
+    proposalId: proposal.id,
+    requestId: reshuffleRequestId(proposal.id),
+    date: preview.date,
+    summary: preview.summary,
+    blocks,
+    deferredTaskIds: preview.deferredTaskIds,
+    needsDataTaskIds: preview.needsDataTaskIds,
+    unplacedRoutineLabels: preview.unplacedRoutineLabels,
+    ...(preview.rejectedReason !== undefined ? { rejectedReason: preview.rejectedReason } : {}),
+    expiresAt: new Date(Date.parse(proposal.createdAt) + RESHUFFLE_PROPOSAL_TTL_MINUTES * 60_000).toISOString(),
+  };
+}
+
+const nonEmpty = (v: unknown): v is string => typeof v === "string" && v.length > 0;
+const isIsoInstant = (v: unknown): v is string => typeof v === "string" && /^\d{4}-\d{2}-\d{2}T/.test(v) && !Number.isNaN(Date.parse(v));
+
+/** Validates an untrusted JSON body as a `ReshuffleRequest`; `undefined` when it isn't one. */
+export function parseReshuffleRequest(value: unknown): ReshuffleRequest | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const v = value as Record<string, unknown>;
+  switch (v["kind"]) {
+    case "reflow-now":
+      return { kind: "reflow-now" };
+    case "move-block":
+      return nonEmpty(v["planBlockId"]) && isIsoInstant(v["newStart"]) ? { kind: "move-block", planBlockId: v["planBlockId"], newStart: v["newStart"] } : undefined;
+    case "pin-task":
+      return nonEmpty(v["taskId"]) && isIsoInstant(v["newStart"]) ? { kind: "pin-task", taskId: v["taskId"], newStart: v["newStart"] } : undefined;
+    case "unpin-task":
+      return nonEmpty(v["taskId"]) ? { kind: "unpin-task", taskId: v["taskId"] } : undefined;
+    case "drop-task":
+      return nonEmpty(v["taskId"]) ? { kind: "drop-task", taskId: v["taskId"] } : undefined;
+    case "swap":
+      return nonEmpty(v["addTaskId"]) && nonEmpty(v["removeTaskId"]) ? { kind: "swap", addTaskId: v["addTaskId"], removeTaskId: v["removeTaskId"] } : undefined;
+    default:
+      return undefined;
+  }
 }

@@ -42,7 +42,7 @@
  * (`runChatStream`). The process holds ONE `ChatSession`, built in
  * `startServer` and shared by every chat route (contract C3).
  */
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import { validator } from "hono/validator";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
@@ -116,6 +116,9 @@ import {
 } from "../app/check-off.ts";
 import { surfaceOpenItems } from "../app/surface-open-items.ts";
 import { answerOpenItem, type AnswerOpenItemDeps } from "../app/answer-open-item.ts";
+import { approveReshuffleById, discardReshuffleById, requestReshuffleView } from "../app/decide-reshuffle.ts";
+import type { ApproveReshuffleDeps } from "../app/approve-reshuffle.ts";
+import { parseReshuffleRequest } from "../core/reshuffle-preview.ts";
 import { listTasks, type TasksViewDeps } from "../app/tasks-view.ts";
 import { createTask, previewQuickAdd, type CreateTaskDeps } from "../app/create-task.ts";
 import { renameTask, updateTask, type UpdateTaskDeps } from "../app/update-task.ts";
@@ -144,6 +147,7 @@ import type {
   TasksGroupBy,
   TasksListRequest,
   TimeBudgetRequest,
+  ReshuffleDecisionRequest,
   UpdateTaskFieldRequest,
 } from "../types/api.ts";
 import type { CalendarEvent, ChatTurn, EditableTaskField, ExternalId, IsoDate, Result, Task, TaskFieldOptions, YohError, YohErrorKind } from "../types/domain.ts";
@@ -477,6 +481,11 @@ export interface ServerDeps {
    */
   readonly calendarDay?: Omit<CalendarDayDeps, "now" | "log"> & { readonly now?: () => Date };
   /**
+   * `POST /api/plan/reshuffle` (+ `/approve`, `/discard`)'s dependencies —
+   * absent, the routes report a clear `unreachable` error.
+   */
+  readonly plan?: ApproveReshuffleDeps;
+  /**
    * Story 7.10: the check-off routes' dependencies (`connection` comes from
    * this object's own). Optional for the same reason as `homeView` —
    * absent, the routes report a clear `unreachable` error.
@@ -545,6 +554,20 @@ const ISO_DATE_ONLY_SHAPE_RE = /^\d{4}-\d{2}-\d{2}$/;
 // their call sites below, never through `wire()` — so each maps its own
 // `message` through `errorCopyForWire` right here, once, at module load,
 // rather than leaking "server: ... not configured" verbatim.
+const PLAN_NOT_CONFIGURED: ApiFailure = {
+  ok: false,
+  error: { kind: "unreachable", message: errorCopyForWire({ kind: "unreachable", message: "server: plan dependencies not configured" }) },
+};
+
+function validateReshuffleDecision(value: unknown, c: Context): ReshuffleDecisionRequest | Response {
+  const proposalId = (value as { proposalId?: unknown } | null)?.proposalId;
+  if (typeof proposalId !== "string" || proposalId.length === 0) {
+    const invalid: ApiFailure = { ok: false, error: { kind: "validation", message: "plan/reshuffle: missing proposalId" } };
+    return c.json(invalid, httpStatus(invalid));
+  }
+  return { proposalId };
+}
+
 const CHECK_OFF_NOT_CONFIGURED: ApiFailure = {
   ok: false,
   error: { kind: "unreachable", message: errorCopyForWire({ kind: "unreachable", message: "server: check-off dependencies not configured" }) },
@@ -780,6 +803,34 @@ export function createApp(deps: ServerDeps) {
           return c.json(result, httpStatus(result));
         },
       )
+      // Reshuffle: request a preview of the re-fitted day, then approve or
+      // discard it. Each route validates in the shell and calls ONE app fn.
+      .post(
+        "/api/plan/reshuffle",
+        validator("json", (value, c) => {
+          const request = parseReshuffleRequest(value);
+          if (request === undefined) {
+            const invalid: ApiFailure = { ok: false, error: { kind: "validation", message: "plan/reshuffle: missing or invalid request" } };
+            return c.json(invalid, httpStatus(invalid));
+          }
+          return request;
+        }),
+        async (c) => {
+          if (!deps.plan) return c.json(PLAN_NOT_CONFIGURED, httpStatus(PLAN_NOT_CONFIGURED));
+          const result = wire(await requestReshuffleView(deps.plan, c.req.valid("json")));
+          return c.json(result, httpStatus(result));
+        },
+      )
+      .post("/api/plan/reshuffle/approve", validator("json", validateReshuffleDecision), async (c) => {
+        if (!deps.plan) return c.json(PLAN_NOT_CONFIGURED, httpStatus(PLAN_NOT_CONFIGURED));
+        const result = wire(await approveReshuffleById(deps.plan, c.req.valid("json")));
+        return c.json(result, httpStatus(result));
+      })
+      .post("/api/plan/reshuffle/discard", validator("json", validateReshuffleDecision), async (c) => {
+        if (!deps.plan) return c.json(PLAN_NOT_CONFIGURED, httpStatus(PLAN_NOT_CONFIGURED));
+        const result = wire(await discardReshuffleById(deps.plan, c.req.valid("json")));
+        return c.json(result, httpStatus(result));
+      })
       // Task 6A: Home's Time Budget widget, click-to-edit in place, over
       // the existing `app/time-budget.ts` `declareTimeBudget` — the same
       // store/timeZone `GET /api/home` already uses (`deps.homeView`), so
@@ -1186,7 +1237,7 @@ export function startServer(
   env: Readonly<Record<string, string | undefined>> = process.env,
   serveFn: ServeFn = (options) => serve({ ...options }),
   /** Story 7.8's `homeView`, Story 7.10's `checkOff`, Story 8.5's `chat`, Task 6C's `research`, Task 4's `calendarDay`, and Story 9.2's `sandbox`, threaded through the same way `connection` already is. */
-  features: Pick<ServerDeps, "homeView" | "calendarDay" | "checkOff" | "chat" | "tasks" | "research" | "sandbox"> = {},
+  features: Pick<ServerDeps, "homeView" | "calendarDay" | "checkOff" | "plan" | "chat" | "tasks" | "research" | "sandbox"> = {},
 ): ServerHandle {
   const port = parsePort(env["YOH_SERVER_PORT"]);
   // Contract C3: one ChatSession per server process, shared by every chat route.
@@ -1425,6 +1476,12 @@ function buildCheckOffDeps(notion: NotionFeatureConfig): ServerDeps["checkOff"] 
  * Missing either required value returns `undefined` (logged once), and the
  * route streams its not-configured `error` event.
  */
+/** `POST /api/plan/reshuffle*`'s deps: the reshuffle binding `buildChatDeps` already built, so both entry points share one set. */
+function buildPlanDeps(chat: ServerDeps["chat"]): ServerDeps["plan"] {
+  if (!chat?.reshuffle) return undefined;
+  return { ...chat.reshuffle, store: chat.store };
+}
+
 function buildChatDeps(
   connection: SqliteConnection,
   notion: NotionFeatureConfig | undefined,
@@ -1647,6 +1704,16 @@ function buildChatDeps(
     // fresh `SlipHistory` rows written hours later, e.g. via `/night`).
     writeCalendarPlan: (blocks) => writeTodaysPlanToCalendar(getCalendarWriteClient(), getTokenStore(), blocks, { timeZone }),
     log: (entry) => writeStructuredLog(entry),
+    // Reshuffle approval (chat "Approve" answers via `answerOpenItem`) — the
+    // same narrow Yoh-Plan-calendar writer `/plan` uses, never the broad client.
+    reshuffle: {
+      connection,
+      timeZone,
+      now: () => new Date(),
+      readTasks,
+      readCalendarEvents: readCalendarEventsFn,
+      writeCalendarPlan: (blocks) => writeTodaysPlanToCalendar(getCalendarWriteClient(), getTokenStore(), blocks, { timeZone }),
+    },
     // Story 8.6 (Task 7): `AnswerOpenItemDeps`'s own fields — spread in via
     // each write function's adapter-owned binder (never named directly
     // here, AD-16), so `GET /api/open-items`/`POST /api/open-items/answer`
@@ -1689,7 +1756,9 @@ if (import.meta.main) {
   const tasks = notion ? buildTasksDeps(notion, process.env, chat?.llmClient) : undefined;
   const research = buildResearchDeps(notion, process.env);
   const sandbox = notion ? buildSandboxDeps(notion) : undefined;
+  const plan = buildPlanDeps(chat);
   const handle = startServer(connection, process.env, undefined, {
+    ...(plan ? { plan } : {}),
     ...(homeView ? { homeView } : {}),
     ...(calendarDay ? { calendarDay } : {}),
     ...(checkOff ? { checkOff } : {}),

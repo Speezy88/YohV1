@@ -14,13 +14,15 @@ import { PROPOSAL_QUESTION_ID } from "../core/open-item-questions.ts";
 import { answerDataCompleteness, type AnswerDataCompletenessDeps } from "./answer-data-completeness.ts";
 import { answerNightCloseOut, type AnswerNightCloseOutDeps } from "./answer-night-close-out.ts";
 import { answerSelfCheck, type AnswerSelfCheckDeps } from "./answer-self-check.ts";
-import { confirmProposal } from "./confirm-proposal.ts";
+import { confirmProposal, type ConfirmProposalDeps } from "./confirm-proposal.ts";
 import { buildOpenItemQuestion } from "./surface-open-items.ts";
 import type { CalendarEditChange, NotionDatabaseTarget, Proposal, Result, YohError } from "../types/domain.ts";
 import type { AnswerOpenItemRequest, AnswerOpenItemResponse } from "../types/api.ts";
 
 export interface AnswerOpenItemDeps extends AnswerDataCompletenessDeps, AnswerNightCloseOutDeps, AnswerSelfCheckDeps {
   readonly store: MemoryStore;
+  /** Needed only to approve an open `"reshuffle"` proposal: everything `approveReshuffle` needs besides `store`. */
+  readonly reshuffle?: NonNullable<ConfirmProposalDeps["reshuffle"]>;
   /** `notion-adapter.ts`'s `createPage`, pre-bound — needed only if an open `"proposal"` item is a `"notion-page-draft"` kind (Story 8.4's first real user of this path). Widens this deps object so it also structurally satisfies `confirm-proposal.ts`'s `ConfirmProposalDeps`. */
   readonly createPage?: (
     database: NotionDatabaseTarget,
@@ -90,9 +92,9 @@ async function answerProposalOpenItem(
   return {
     ok: true,
     value: {
-      ...(result.value.applied ? {} : { message: "Okay — I won't make that change." }),
+      ...(result.value.applied || result.value.question ? {} : { message: "Okay — I won't make that change." }),
       receipts: result.value.receipts,
-      next: "done",
+      next: result.value.question ?? "done",
     },
   };
 }

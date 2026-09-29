@@ -139,6 +139,21 @@ const checkOff: NonNullable<ServerDeps["checkOff"]> = {
   lookupTask: async (taskId) => tasks().find((t) => t.id === taskId),
 };
 
+/** Reshuffle routes over the fixture Plan/Tasks; the Yoh Plan calendar write is a fake that always succeeds. */
+export const fixturePlanCalendarWrites: string[][] = [];
+const reshufflePlanDeps: NonNullable<ServerDeps["plan"]> = {
+  store,
+  connection,
+  timeZone: TIME_ZONE,
+  now: () => new Date(),
+  readTasks: async () => tasks(),
+  readCalendarEvents: async () => [],
+  writeCalendarPlan: async (blocks) => {
+    fixturePlanCalendarWrites.push(blocks.map((b) => b.id));
+    return { written: blocks.map((b) => b.id), failed: [] };
+  },
+};
+
 /** `web/e2e/chat.spec.ts` asserts on this exact text. */
 export const FIXTURE_CHAT_REPLY = "Hello, Spencer. This is a fixture reply, streamed in three chunks.";
 const FIXTURE_CHAT_CHUNKS = ["Hello, Spencer. ", "This is a fixture reply, ", "streamed in three chunks."];
@@ -346,7 +361,7 @@ const handle = startServer(
         return url.pathname === "/__fixture/state" ? fixtureState(url) : options.fetch(request);
       },
     }),
-  { homeView, calendarDay, checkOff, chat, tasks: tasksPage, research, sandbox },
+  { homeView, calendarDay, checkOff, plan: reshufflePlanDeps, chat, tasks: tasksPage, research, sandbox },
 );
 const sweep = startCheckOffCommitSweep({ connection, ...checkOff, now: () => new Date() }, { log: quiet });
 

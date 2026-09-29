@@ -50,13 +50,15 @@
 import { getCurrentTimeBudget, getPlan } from "../adapters/memory-store.ts";
 import { listCompletedTaskIdsOnDate } from "../adapters/completion-log.ts";
 import { resolveTodayTimeBudget } from "../core/time-budget.ts";
-import { sortBlocksByStart, toFixedBlock, toOwnedBlock } from "../core/calendar-blocks.ts";
+import { sortBlocksByStart, toFixedBlocks, toOwnedBlock } from "../core/calendar-blocks.ts";
+import { listOpenReshuffleProposals } from "../adapters/reshuffle-proposal-store.ts";
+import { isProposalExpired, toReshufflePreviewView } from "../core/reshuffle-preview.ts";
 import type { SqliteConnection } from "../adapters/sqlite.ts";
 import type { MemoryStore } from "../adapters/memory-store.ts";
 import { localIsoDate } from "../rituals/ritual-shared.ts";
 import type { LogEntry } from "../adapters/logger.ts";
 import type { CalendarEvent, ExternalId, PlanBlock, Result, Task, YohError } from "../types/domain.ts";
-import type { HomeCalendarBlock, HomePlanRow, HomeTimeBudget, HomeViewResponse } from "../types/api.ts";
+import type { HomeCalendarBlock, HomePlanRow, HomeTimeBudget, HomeViewResponse, ReshufflePreviewView } from "../types/api.ts";
 
 export interface HomeViewDeps {
   /** The process's one connection — read for today's Completion Log entries (Story 7.10). */
@@ -97,6 +99,19 @@ function buildTimeBudget(store: MemoryStore, today: string, rows: readonly HomeP
   return { totalMinutes: resolved.budget.totalMinutes, plannedMinutes, doneMinutes, carriedForward: resolved.carriedForward };
 }
 
+/** Today's open, unexpired reshuffle preview, if any (an expired one is treated as absent). */
+function openReshufflePreview(
+  store: MemoryStore,
+  today: string,
+  now: Date,
+  fixedBlocks: readonly HomeCalendarBlock[],
+): ReshufflePreviewView | undefined {
+  const open = listOpenReshuffleProposals(store).find(
+    (o) => o.proposal.suggested.date === today && !isProposalExpired(o.proposal.createdAt, now),
+  );
+  return open ? toReshufflePreviewView(open.proposal, fixedBlocks, now.getTime()) : undefined;
+}
+
 /** Home's one server-computed view (AD-17): every order and placement below is decided here, never re-sorted or re-derived client-side. */
 export async function getHomeView(deps: HomeViewDeps, _input: Record<string, never>): Promise<Result<HomeViewResponse, YohError>> {
   const log = deps.log ?? ((): void => {});
@@ -118,10 +133,9 @@ export async function getHomeView(deps: HomeViewDeps, _input: Record<string, nev
   // calendar's "Day 3"/"Spirit Week") is never real busy time — it must not
   // render as a whole-day "fixed" block on Home. A PRIMARY all-day event
   // keeps today's behavior (unchanged).
-  const fixedBlocks = calendarEvents
-    .filter((e) => !(e.calendarId !== undefined && e.allDay === true))
-    .map((e) => toFixedBlock(e, nowMs));
+  const fixedBlocks = toFixedBlocks(calendarEvents, nowMs);
 
+  const reshuffle = openReshufflePreview(deps.store, today, now, fixedBlocks);
   const stored = getPlan(deps.store, today);
   if (!stored) {
     return {
@@ -170,6 +184,6 @@ export async function getHomeView(deps: HomeViewDeps, _input: Record<string, nev
 
   return {
     ok: true,
-    value: { today, plan: { rows }, calendar: { blocks }, timeBudget: buildTimeBudget(deps.store, today, rows), timeZone: deps.timeZone },
+    value: { today, plan: { rows }, calendar: { blocks }, timeBudget: buildTimeBudget(deps.store, today, rows), timeZone: deps.timeZone, ...(reshuffle ? { reshuffle } : {}) },
   };
 }

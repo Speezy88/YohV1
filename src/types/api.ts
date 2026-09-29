@@ -172,6 +172,28 @@ export interface HomeTimeBudget {
   readonly carriedForward: boolean;
 }
 
+/** One block of a reshuffle preview: a Home calendar block plus whether the reshuffle moves (or newly places) it. */
+export interface ReshufflePreviewBlock extends HomeCalendarBlock {
+  readonly moved: boolean;
+}
+
+/** The open, unexpired reshuffle preview as Home shows it (`HomeViewResponse.reshuffle`) and `POST /api/plan/reshuffle` returns it. */
+export interface ReshufflePreviewView {
+  readonly proposalId: string;
+  /** The open interaction request that carries the Approve / Discard question. */
+  readonly requestId: string;
+  readonly date: string;
+  readonly summary: string;
+  /** The full proposed day: Yoh-owned blocks (with `moved`) plus the live fixed events. */
+  readonly blocks: readonly ReshufflePreviewBlock[];
+  readonly deferredTaskIds: readonly string[];
+  readonly needsDataTaskIds: readonly string[];
+  readonly unplacedRoutineLabels: readonly string[];
+  readonly rejectedReason?: string;
+  /** ISO timestamp after which the preview is treated as absent. */
+  readonly expiresAt: string;
+}
+
 export interface HomeViewResponse {
   /** The host-timezone date this response is "today" for (Consistency Conventions: never the browser's date) — also what the client's Feb-19 confetti check reads, never `new Date()`. */
   readonly today: string;
@@ -188,6 +210,29 @@ export interface HomeViewResponse {
    * string (unaffected); this is for wall-clock positioning within the day.
    */
   readonly timeZone: string;
+  /** The open, unexpired reshuffle preview for today, if any. */
+  readonly reshuffle?: ReshufflePreviewView;
+}
+
+/** `POST /api/plan/reshuffle`'s value (body is a `ReshuffleRequest`). */
+export interface ReshuffleResponse {
+  readonly preview: ReshufflePreviewView;
+  readonly question: OpenItemQuestion;
+}
+
+/** `POST /api/plan/reshuffle/approve` and `/discard`'s body. */
+export interface ReshuffleDecisionRequest {
+  readonly proposalId: string;
+}
+
+/** `POST /api/plan/reshuffle/approve`'s value: applied, or the Plan/calendar moved on and a fresh preview was made. */
+export type ReshuffleApproveResponse =
+  | { readonly status: "applied"; readonly calendarFailedBlockIds: readonly string[] }
+  | { readonly status: "recomputed"; readonly preview: ReshufflePreviewView; readonly question: OpenItemQuestion };
+
+/** `POST /api/plan/reshuffle/discard`'s value. */
+export interface ReshuffleDiscardResponse {
+  readonly discarded: true;
 }
 
 /** `POST /api/time-budget`'s body (Task 6A): click-to-edit on Home's Time Budget widget, over the existing `app/time-budget.ts` `declareTimeBudget`. */

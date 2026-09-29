@@ -1260,3 +1260,43 @@ test("a plan-change request gets the honest can't-swap reply, with zero LLM call
   assert.equal(result.value.reply, PLAN_EDIT_NOT_SUPPORTED_REPLY);
   assert.equal(result.value.question, undefined);
 });
+
+// ============================================================================
+// Epic 10 (T4b): "I'm behind" previews before applying; a blocker still
+// re-flows immediately.
+// ============================================================================
+
+function reshuffleFixture() {
+  const now = new Date("2026-08-22T18:00:00.000Z");
+  const iso = (mins: number): string => new Date(now.getTime() + mins * 60_000).toISOString();
+  const store = tempStore();
+  putTimeBudget(store, { date: "2026-08-22", totalMinutes: 480, workMinutes: 70, breakMinutes: 15 });
+  const plan: Plan = {
+    id: "plan-2026-08-22", date: "2026-08-22", version: 1, reasoning: "x", createdAt: iso(-60), updatedAt: iso(-60),
+    blocks: [{ id: "v1-work-1", kind: "work", start: iso(30), end: iso(60), label: "Future", taskId: "t2" }],
+  };
+  putPlan(store, plan);
+  const tasks = ["t2", "t3"].map((id) => ({
+    id, title: id, createdAt: iso(-60), updatedAt: iso(-60), estimatedDurationMinutes: 30, area: "Work",
+    dueDate: "2026-08-22", status: "not-started", energy: "medium",
+  })) as Task[];
+  return { store, plan, deps: baseDeps({ store, now: () => now, readTasks: async () => tasks, readCalendarEventsFn: async () => [] }) };
+}
+
+test("chatTurn: \"I'm behind\" returns an Approve/Discard question and writes no Plan", async () => {
+  const { store, plan, deps } = reshuffleFixture();
+  const result = await chatTurn(deps, { message: "I'm behind", history: [] });
+  assert.ok(result.ok);
+  if (!result.ok) return;
+  assert.deepEqual(result.value.question?.options.map((o) => o.label), ["Approve", "Discard"]);
+  assert.equal(result.value.question?.proposal?.kind, "reshuffle");
+  assert.deepEqual(getPlan(store, "2026-08-22")?.data, plan);
+});
+
+test("chatTurn: a blocker report still re-flows immediately, with no preview", async () => {
+  const { store, deps } = reshuffleFixture();
+  const result = await chatTurn(deps, { message: "something came up", history: [] });
+  assert.ok(result.ok);
+  if (!result.ok) return;
+  assert.equal(result.value.question, undefined);
+});

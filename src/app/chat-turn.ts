@@ -62,7 +62,7 @@ import { draftItem, type CreateItemDeps } from "./create-item.ts";
 import { dayView } from "./day-view.ts";
 import { answerQuestion } from "./general-question.ts";
 import { manageRoutine } from "./routines.ts";
-import { reflowDay } from "./mid-day-reflow.ts";
+import { requestReshuffle } from "./request-reshuffle.ts";
 import { morningView } from "./morning-view.ts";
 import { startNightCloseOut } from "./night-close-out.ts";
 import { planDay, type PlanDayDeps } from "./plan-day.ts";
@@ -291,7 +291,19 @@ export async function chatTurn(deps: ChatTurnDeps, input: ChatTurnRequest): Prom
 
   if (isMidDayReflowCommand(input.message)) {
     emitStatus(deps, STATUS_CHECKING_TASKS);
-    return reflowDay({ store: deps.store, timeZone: deps.timeZone, now: deps.now, readTasks: deps.readTasks }, {});
+    const requested = await requestReshuffle(
+      { store: deps.store, timeZone: deps.timeZone, now: deps.now, readTasks: deps.readTasks, readCalendarEvents: deps.readCalendarEventsFn },
+      { request: { kind: "reflow-now" } },
+    );
+    if (!requested.ok) return requested;
+    return {
+      ok: true,
+      value: {
+        reply: `${requested.value.proposal.suggested.summary} Approve to apply it, or discard to keep today's Plan as it is.`,
+        receipts: [],
+        question: requested.value.question,
+      },
+    };
   }
 
   if (isBlockerReportCommand(input.message)) {

@@ -29,3 +29,8 @@ export function toOwnedBlock(block: PlanBlock & { kind: "work" | "break" }, comp
 export function sortBlocksByStart(blocks: readonly HomeCalendarBlock[]): HomeCalendarBlock[] {
   return [...blocks].sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
 }
+
+/** Live events as "fixed" blocks; an all-day EXTRA-calendar event (a school calendar's "Day 3") is never real busy time and is dropped. */
+export function toFixedBlocks(events: readonly CalendarEvent[], nowMs: number): HomeCalendarBlock[] {
+  return events.filter((e) => !(e.calendarId !== undefined && e.allDay === true)).map((e) => toFixedBlock(e, nowMs));
+}
