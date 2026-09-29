@@ -9,7 +9,7 @@ import { openSqliteConnection, type SqliteConnection } from "../src/adapters/sql
 import { createMemoryStore, getPlan, listOpenInteractionRequests, putPlan, putTimeBudget } from "../src/adapters/memory-store.ts";
 import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
 import { initCompletionLogSchema } from "../src/adapters/completion-log.ts";
-import { createApp, type ServerDeps } from "../src/shell/server.ts";
+import { createApp, startServer, type ServerDeps } from "../src/shell/server.ts";
 import { getHomeView } from "../src/app/home-view.ts";
 import { answerOpenItem } from "../src/app/answer-open-item.ts";
 import { RESHUFFLE_PROPOSAL_TTL_MINUTES } from "../src/core/reshuffle-preview.ts";
@@ -166,4 +166,28 @@ test("answering approve to the open reshuffle question through answerOpenItem ap
   if (!applied.ok) return;
   assert.equal(applied.value.next, "done");
   assert.equal(getPlan(s.store, "2026-08-22")!.data.version, 2);
+});
+
+test("startServer forwards features.plan, so /api/plan/reshuffle is configured", async () => {
+  const { connection, planDeps } = setup();
+  let fetchFn: ((request: Request) => Response | Promise<Response>) | undefined;
+  const serveFn = (options: { fetch: (request: Request) => Response | Promise<Response> }) => {
+    fetchFn = options.fetch;
+    return { close: () => {} };
+  };
+  startServer(connection, {}, serveFn, { plan: planDeps });
+  const res = await fetchFn!(new Request("http://127.0.0.1/api/plan/reshuffle", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind: "reflow-now" }) }));
+  const body = (await res.json()) as Env;
+  assert.equal(body.ok, true, JSON.stringify(body));
+});
+
+test("a rejected request is a 400 with the reason and opens no proposal", async () => {
+  const { app, store, planDeps } = setup();
+  const busy = [{ id: "e1", title: "Dentist", start: iso(T0, 0), end: iso(T0, 600) }];
+  const r = await post(createApp({ connection: (planDeps as any).connection, log: () => {}, plan: { ...planDeps, readCalendarEvents: async () => busy } }), "/api/plan/reshuffle", { kind: "move-block", planBlockId: "v1-work-1", newStart: iso(T0, 200) });
+  void app;
+  assert.equal(r.status, 400);
+  assert.equal(r.body.error?.kind, "validation");
+  assert.match(r.body.error?.message ?? "", /Dentist/);
+  assert.equal(listOpenInteractionRequests(store).length, 0);
 });

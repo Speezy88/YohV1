@@ -170,3 +170,14 @@ test("buildOpenItemQuestion returns 'done' when the request no longer exists", a
   if (result.ok) assert.equal(result.value, "done");
   store.close();
 });
+
+test("surfaceOpenItems drops an expired reshuffle proposal but keeps a fresh one", async () => {
+  const store = tempStore();
+  const proposal = (id: string, createdAt: string) => ({ id, kind: "reshuffle", entityId: "2026-09-28", entityVersion: "1:h", suggested: {}, reason: "r", createdAt });
+  putOpenInteractionRequest(store, "proposal:old", { requestKind: "proposal", promptText: "old", detail: { proposal: proposal("old", "2026-09-28T10:00:00.000Z") }, createdAt: "2026-09-28T10:00:00.000Z" });
+  putOpenInteractionRequest(store, "proposal:new", { requestKind: "proposal", promptText: "new", detail: { proposal: proposal("new", "2026-09-28T10:25:00.000Z") }, createdAt: "2026-09-28T10:25:00.000Z" });
+  const result = await surfaceOpenItems({ store, session: makeSession(), now: () => new Date("2026-09-28T10:30:00.000Z") }, {});
+  assert.equal(result.ok, true);
+  if (result.ok) assert.deepEqual(result.value.items.map((i) => i.requestId), ["proposal:new"]);
+  store.close();
+});

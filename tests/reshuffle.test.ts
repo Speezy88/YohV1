@@ -214,8 +214,9 @@ const dayMs = (hhmm: string): number => Date.parse(`2026-08-22T${hhmm}:00.000Z`)
 
 test("routines: placed at declared time, work routes around them, budget is unaffected", () => {
   const routines = [{ id: "r1", label: "Commute", days: ["sat"] as const, startMinutes: 11 * 60, durationMinutes: 30 }];
-  const withR = computeDayRefit(baseInput({ fixedEvents: [], routines }));
-  const without = computeDayRefit(baseInput({ fixedEvents: [] }));
+  const binding = { ...BUDGET, totalMinutes: 120 }; // tight: 30 fewer minutes would defer a Task
+  const withR = computeDayRefit(baseInput({ fixedEvents: [], routines, budget: binding }));
+  const without = computeDayRefit(baseInput({ fixedEvents: [], budget: binding }));
   assert.equal(withR.ok && without.ok, true);
   if (!withR.ok || !without.ok) return;
   const rb = withR.value.blocks.filter((b) => b.kind === "routine");
@@ -226,6 +227,7 @@ test("routines: placed at declared time, work routes around them, budget is unaf
     assert.ok(!(dayMs("11:00") < Date.parse(b.end) && Date.parse(b.start) < dayMs("11:30")), `${b.id} overlaps routine`);
   }
   const minutes = (blocks: readonly PlanBlock[]) => blocks.filter((b) => b.kind === "work").reduce((s, b) => s + (Date.parse(b.end) - Date.parse(b.start)) / 60000, 0);
+  assert.equal(minutes(without.value.blocks), 105, "the budget just fits both Tasks");
   assert.equal(minutes(withR.value.blocks), minutes(without.value.blocks), "same work minutes with or without the routine");
   assert.deepEqual(withR.value.unplacedRoutineLabels ?? [], []);
 });
@@ -308,4 +310,20 @@ test("routines: a routine whose stored block already elapsed is not placed again
   assert.equal(r.ok, true);
   if (!r.ok) return;
   assert.deepEqual(r.value.blocks.filter((b) => b.kind === "routine"), [past]);
+});
+
+test("a request pin into an under-way routine is rejected naming the routine; a stored pin is released", () => {
+  const stored = storedRoutine("08:15", "08:45");
+  const now = "2026-08-22T08:30:00.000Z";
+  const openTasks = [task("a", 60, "2026-08-25"), task("b", 45, "2026-08-23")];
+  const pins = [pinOf("b", "2026-08-22T08:35:00.000Z")];
+  const req = computeDayRefit(baseInput({ now, fixedEvents: [], routines: [R1], storedRoutineBlocks: [stored], openTasks, pins, requestPinTaskIds: ["b"] }));
+  assert.equal(req.ok, true);
+  if (!req.ok) return;
+  assert.match(req.value.rejectedReason ?? "", new RegExp(`overlaps ${R1.label}`));
+  const held = computeDayRefit(baseInput({ now, fixedEvents: [], routines: [R1], storedRoutineBlocks: [stored], openTasks, pins }));
+  assert.equal(held.ok, true);
+  if (!held.ok) return;
+  assert.equal(held.value.rejectedReason, undefined);
+  assert.equal(held.value.releasedPins?.[0]?.taskId, "b");
 });

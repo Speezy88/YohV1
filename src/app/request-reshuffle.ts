@@ -236,6 +236,8 @@ export async function requestReshuffle(
   });
   if (!refit.ok) return refit;
   const rejectedReason = refit.value.rejectedReason;
+  // A request that cannot be honored is a plain failure, not a proposal to approve.
+  if (rejectedReason !== undefined) return { ok: false, error: { kind: "validation", message: rejectedReason } };
   const released = refit.value.releasedPins ?? [];
   const releasedIds = new Set(released.map((r) => r.taskId));
   const keptPins = day.pins.filter((p) => !(p.subject.kind === "task" && releasedIds.has(p.subject.taskId)));
@@ -271,7 +273,7 @@ export async function requestReshuffle(
     ...(rejectedReason !== undefined ? { rejectedReason } : {}),
     summary:
       rejectedReason ??
-      [...released.map((r) => `Unpinned ${r.title} — ${r.reason}.`), buildReshuffleSummary({ movedTitles, deferredTitles, needsDataCount: needsDataTaskIds.length })].join(" "),
+      [...released.map((r) => `Unpinned ${r.title} — ${r.reason}.`), buildReshuffleSummary({ movedTitles, deferredTitles, needsDataCount: needsDataTaskIds.length, unplacedRoutineLabels: refit.value.unplacedRoutineLabels ?? [] })].join(" "),
     planVersion: plan.version,
     calendarVersion,
   };

@@ -8,6 +8,7 @@
  * Bare times follow R8: 1–7 -> PM, 8–11 -> AM, 12 -> noon.
  */
 
+import { resolveClockMinutes } from "./local-time.ts";
 export type RoutineDay = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
 
 export const ROUTINE_DAYS: readonly RoutineDay[] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
@@ -110,13 +111,7 @@ function toTime(h: string | undefined, m: string | undefined, mer: string | unde
 }
 
 function resolveMinutes(t: ParsedTime, inherited?: "am" | "pm"): number {
-  const meridiem = t.meridiem ?? inherited;
-  if (meridiem === "am") return (t.hour % 12) * 60 + t.minute;
-  if (meridiem === "pm") return ((t.hour % 12) + 12) * 60 + t.minute;
-  if (t.hour >= 13 || t.hour === 0) return t.hour * 60 + t.minute;
-  if (t.hour === 12) return 12 * 60 + t.minute;
-  if (t.hour >= 8) return t.hour * 60 + t.minute; // 8–11 -> AM
-  return (t.hour + 12) * 60 + t.minute; // 1–7 -> PM
+  return resolveClockMinutes(t.hour, t.minute, t.meridiem ?? inherited);
 }
 
 function resolveRange(start: ParsedTime, end: ParsedTime): { startMinutes: number; durationMinutes: number } | undefined {

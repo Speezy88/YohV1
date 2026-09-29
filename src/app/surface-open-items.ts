@@ -12,6 +12,7 @@
 import { getOpenInteractionRequest, getTaskFieldOverride, listOpenInteractionRequests, type MemoryStore, type StoredRecord } from "../adapters/memory-store.ts";
 import { suggestFieldValue, type AnthropicMessagesClient } from "../adapters/llm-adapter.ts";
 import type { SqliteConnection } from "../adapters/sqlite.ts";
+import { isProposalExpired } from "../core/reshuffle-preview.ts";
 import { parsePlanningFieldValue } from "../core/planning-field-value.ts";
 import {
   buildDataCompletenessQuestion,
@@ -36,6 +37,8 @@ export interface SurfaceOpenItemsDeps {
   readonly llmClient?: AnthropicMessagesClient;
   /** Real-use fixes plan, Task 9: passed straight through to `suggestFieldValue`'s own trailing `connection` argument so its usage gets recorded. */
   readonly connection?: SqliteConnection;
+  /** Clock seam for hiding expired reshuffle previews; defaults to the real time. */
+  readonly now?: () => Date;
 }
 
 export interface BuildOpenItemQuestionInput {
@@ -125,7 +128,10 @@ export async function buildOpenItemQuestion(deps: SurfaceOpenItemsDeps, input: B
 export async function surfaceOpenItems(deps: SurfaceOpenItemsDeps, _input: Record<string, never>): Promise<Result<OpenItemsResponse, YohError>> {
   const open = listOpenInteractionRequests(deps.store);
   const items: OpenItem[] = [];
+  const now = (deps.now ?? (() => new Date()))();
   for (const record of open) {
+    const proposal = (record.data.detail as { readonly proposal?: Proposal<unknown> } | undefined)?.proposal;
+    if (record.data.requestKind === "proposal" && proposal?.kind === "reshuffle" && isProposalExpired(proposal.createdAt, now)) continue;
     const question = await buildForRecord(deps, record);
     items.push({
       requestId: record.id,

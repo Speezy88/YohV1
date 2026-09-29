@@ -6,6 +6,7 @@ import {
   calendarVersionHash,
   diffPlanBlocks,
   isProposalExpired,
+  toReshufflePreviewView,
 } from "../src/core/reshuffle-preview.ts";
 import type { PlanBlock } from "../src/types/domain.ts";
 
@@ -65,4 +66,28 @@ test("parseReshuffleRequest accepts each pin/move/drop/swap shape and rejects ma
   ]) {
     assert.equal(parseRequestT5(bad), undefined);
   }
+});
+
+test("buildReshuffleSummary names Routines that found no slot", () => {
+  const s = buildReshuffleSummary({ movedTitles: [], deferredTitles: [], needsDataCount: 0, unplacedRoutineLabels: ["Lunch"] });
+  assert.match(s, /Couldn't fit Lunch today\./);
+});
+
+test("toReshufflePreviewView keeps Routine blocks and flags them moved", () => {
+  const routine: PlanBlock = { id: "v2-routine-r1", kind: "routine", routineId: "r1", label: "Lunch", start: "2026-09-28T19:00:00Z", end: "2026-09-28T19:30:00Z" };
+  const w = work("v2-a", "t1", "2026-09-28T15:00:00Z", "2026-09-28T15:30:00Z");
+  const view = toReshufflePreviewView(
+    {
+      id: "p1", kind: "reshuffle", entityId: "2026-09-28", entityVersion: "1", reason: "", createdAt: "2026-09-28T14:00:00Z",
+      suggested: {
+        date: "2026-09-28", request: { kind: "drop-task", taskId: "x" }, blocks: [w, routine], movedBlockIds: [routine.id], deferredTaskIds: [], needsDataTaskIds: [],
+        pins: [], drops: [], unplacedRoutineLabels: [], summary: "s", planVersion: 1, calendarVersion: "h",
+      },
+    } as never,
+    [],
+    Date.parse("2026-09-28T14:00:00Z"),
+  );
+  const r = view.blocks.find((b) => b.id === routine.id);
+  assert.equal(r?.kind, "routine");
+  assert.equal(r?.moved, true);
 });

@@ -7,6 +7,7 @@
  */
 import type { LogEntry } from "../adapters/logger.ts";
 import { orderByDerivedPriority } from "../core/derived-priority.ts";
+import { localMinutesToMs } from "../core/local-time.ts";
 import { computeSchoolDay, mergeOverlappingAnchors } from "../core/school-day.ts";
 import { placeRoutines, type DayRoutine } from "../core/routine-placement.ts";
 import type { Routine, RoutineDay } from "../core/routine-commands.ts";
@@ -254,21 +255,6 @@ const PIN_ANCHOR_TITLE = "__pin__";
 const ROUTINE_ANCHOR_TITLE = "__routine__";
 const WEEKDAYS: readonly RoutineDay[] = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 
-/** The UTC instant at which `minutes` after local midnight of `date` occurs in `timeZone`. */
-function zonedInstantMs(date: IsoDate, minutes: number, timeZone: string): number {
-  const [y, m, d] = date.split("-").map(Number) as [number, number, number];
-  const wall = Date.UTC(y, m - 1, d, 0, minutes);
-  const offsetAt = (ms: number): number => {
-    const parts = Object.fromEntries(
-      new Intl.DateTimeFormat("en-US", { timeZone, hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric" })
-        .formatToParts(new Date(ms))
-        .map((p) => [p.type, Number(p.value)]),
-    ) as Record<string, number>;
-    return Date.UTC(parts["year"]!, parts["month"]! - 1, parts["day"]!, parts["hour"]!, parts["minute"]!, parts["second"]!) - Math.floor(ms / 1000) * 1000;
-  };
-  const first = wall - offsetAt(wall);
-  return wall - offsetAt(first);
-}
 const MINUTES_TO_MS = 60_000;
 
 /**
@@ -355,6 +341,35 @@ export function computeDayRefit(input: DayRefitInput): Result<DayRefitOutput, Yo
 
   const { anchors, protectedWindows } = mergeOverlappingAnchors(input.fixedEvents, input.protectedWindows ?? []);
 
+  const dayWeekday = WEEKDAYS[new Date(`${input.date}T12:00:00Z`).getUTCDay()]!;
+  const routinePinStart = new Map<string, number>();
+  for (const pin of input.pins ?? []) {
+    if (pin.date === input.date && pin.subject.kind === "routine") routinePinStart.set(pin.subject.routineId, Date.parse(pin.start));
+  }
+  const storedByRoutine = new Map<string, PlanBlock>();
+  for (const b of input.storedRoutineBlocks ?? []) if (b.routineId !== undefined) storedByRoutine.set(b.routineId, b);
+  const keptRoutineBlocks: PlanBlock[] = [];
+  const dayRoutines: DayRoutine[] = (input.routines ?? [])
+    .filter((r) => r.days.includes(dayWeekday))
+    .filter((r) => {
+      const stored = storedByRoutine.get(r.id);
+      if (!stored || routinePinStart.has(r.id)) return true;
+      const endMs = Date.parse(stored.end);
+      if (endMs <= nowMs) return false; // already lived; it is in pastBlocks
+      if (Date.parse(stored.start) < nowMs) {
+        keptRoutineBlocks.push(stored); // under way: kept verbatim
+        return false;
+      }
+      return true;
+    })
+    .map((r) => ({
+      id: r.id,
+      label: r.label,
+      startMs: localMinutesToMs(input.date, r.startMinutes, input.timeZone),
+      durationMinutes: r.durationMinutes,
+      ...(storedByRoutine.has(r.id) && Date.parse(storedByRoutine.get(r.id)!.start) >= nowMs ? { storedStartMs: Date.parse(storedByRoutine.get(r.id)!.start) } : {}),
+      ...(routinePinStart.has(r.id) ? { pinnedStartMs: routinePinStart.get(r.id)! } : {}),
+    }));
   const placed = placePinnedTasks(pinned, input.budget, input.idPrefix);
   if (!placed.ok) return placed;
   let placements = placed.value;
@@ -365,7 +380,8 @@ export function computeDayRefit(input: DayRefitInput): Result<DayRefitOutput, Yo
   placements = placements.filter((p) => !runsPastDay(p) || requested.has(p.task.id));
   let rejection = spilled ? `"${spilled.task.title}" can't go there: it would run past the end of the day.` : undefined;
   while (rejection === undefined) {
-    const collision = firstPinCollision(placements, [...anchors, ...protectedWindows], requested);
+    const routineFixed: CalendarEvent[] = keptRoutineBlocks.map((b, i) => ({ id: `kept-routine-${i}`, title: b.label, start: b.start, end: b.end }));
+    const collision = firstPinCollision(placements, [...anchors, ...protectedWindows, ...routineFixed], requested);
     if (!collision) break;
     if ("reject" in collision) {
       rejection = collision.reject;
@@ -392,36 +408,7 @@ export function computeDayRefit(input: DayRefitInput): Result<DayRefitOutput, Yo
     end: new Date(p.endMs).toISOString(),
   }));
   const pinSpans = placements.map((p) => ({ startMs: p.startMs, endMs: p.endMs }));
-  const dayWeekday = WEEKDAYS[new Date(`${input.date}T12:00:00Z`).getUTCDay()]!;
-  const routinePinStart = new Map<string, number>();
-  for (const pin of input.pins ?? []) {
-    if (pin.date === input.date && pin.subject.kind === "routine") routinePinStart.set(pin.subject.routineId, Date.parse(pin.start));
-  }
-  const storedByRoutine = new Map<string, PlanBlock>();
-  for (const b of input.storedRoutineBlocks ?? []) if (b.routineId !== undefined) storedByRoutine.set(b.routineId, b);
-  const keptRoutineBlocks: PlanBlock[] = [];
-  const dayRoutines: DayRoutine[] = (input.routines ?? [])
-    .filter((r) => r.days.includes(dayWeekday))
-    .filter((r) => {
-      const stored = storedByRoutine.get(r.id);
-      if (!stored || routinePinStart.has(r.id)) return true;
-      const endMs = Date.parse(stored.end);
-      if (endMs <= nowMs) return false; // already lived; it is in pastBlocks
-      if (Date.parse(stored.start) < nowMs) {
-        keptRoutineBlocks.push(stored); // under way: kept verbatim
-        return false;
-      }
-      return true;
-    })
-    .map((r) => ({
-      id: r.id,
-      label: r.label,
-      startMs: zonedInstantMs(input.date, r.startMinutes, input.timeZone),
-      durationMinutes: r.durationMinutes,
-      ...(storedByRoutine.has(r.id) && Date.parse(storedByRoutine.get(r.id)!.start) >= nowMs ? { storedStartMs: Date.parse(storedByRoutine.get(r.id)!.start) } : {}),
-      ...(routinePinStart.has(r.id) ? { pinnedStartMs: routinePinStart.get(r.id)! } : {}),
-    }));
-  const dayEndMs = zonedInstantMs(input.date, 24 * 60, input.timeZone);
+  const dayEndMs = localMinutesToMs(input.date, 24 * 60, input.timeZone);
   const routinePlacement = placeRoutines({
     routines: dayRoutines,
     fixed: [...anchors, ...protectedWindows].map((e) => ({ startMs: Date.parse(e.start), endMs: Date.parse(e.end) })).concat(pinSpans, keptRoutineBlocks.map((b) => ({ startMs: Date.parse(b.start), endMs: Date.parse(b.end) }))),

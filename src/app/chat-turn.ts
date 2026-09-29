@@ -115,6 +115,11 @@ export const STATUS_CHECKING_TASKS = "Checking your Tasks…";
  */
 export const CALENDAR_DELETE_NOT_SUPPORTED_REPLY = "I can't delete or cancel calendar events for you — you'll need to do that directly in Google Calendar.";
 
+/** A reshuffle request that can't be honored carries its plain reason as a validation failure; chat says it as a reply. */
+function rejectedRequestReply(error: YohError): Result<ChatTurnResponse, YohError> | undefined {
+  return error.kind === "validation" ? { ok: true, value: { reply: error.message, receipts: [] } } : undefined;
+}
+
 const NO_PLAN_TODAY_REPLY = "There's no Plan for today yet. Say \"plan my day\" to make one.";
 
 export interface ChatTurnDeps extends CreateItemDeps, CalendarEditDeps, WebSearchDeps, SaveSearchResultDeps {
@@ -301,7 +306,7 @@ export async function chatTurn(deps: ChatTurnDeps, input: ChatTurnRequest): Prom
       { store: deps.store, timeZone: deps.timeZone, now: deps.now, readTasks: deps.readTasks, readCalendarEvents: deps.readCalendarEventsFn },
       { request: { kind: "reflow-now" } },
     );
-    if (!requested.ok) return requested;
+    if (!requested.ok) return rejectedRequestReply(requested.error) ?? requested;
     return {
       ok: true,
       value: {
@@ -421,7 +426,7 @@ export async function chatTurn(deps: ChatTurnDeps, input: ChatTurnRequest): Prom
           { store: deps.store, timeZone: deps.timeZone, now: deps.now, readTasks: deps.readTasks, readCalendarEvents: deps.readCalendarEventsFn },
           { request: resolved.request },
         );
-        if (!requested.ok) return requested;
+        if (!requested.ok) return rejectedRequestReply(requested.error) ?? requested;
         return {
           ok: true,
           value: {

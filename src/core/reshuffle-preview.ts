@@ -72,6 +72,8 @@ export interface ReshuffleSummaryInput {
   readonly deferredTitles: readonly string[];
   readonly needsDataCount: number;
   readonly rejectedReason?: string;
+  /** Routines that fit nowhere today. */
+  readonly unplacedRoutineLabels?: readonly string[];
 }
 
 function plural(n: number, word: string): string {
@@ -95,7 +97,8 @@ export function buildReshuffleSummary(input: ReshuffleSummaryInput): string {
   if (input.needsDataCount > 0) {
     parts.push(`${plural(input.needsDataCount, "Task")} left out until they have a duration or due date`);
   }
-  return `${parts.join("; ")}.`;
+  const unplaced = (input.unplacedRoutineLabels ?? []).map((label) => `Couldn't fit ${label} today.`);
+  return [`${parts.join("; ")}.`, ...unplaced].join(" ");
 }
 
 /** True once a preview created at `createdAt` is older than its TTL as of `now`. */
@@ -120,7 +123,7 @@ export function toReshufflePreviewView(
   const preview = proposal.suggested;
   const moved = new Set(preview.movedBlockIds);
   const owned = preview.blocks
-    .filter((b): b is PlanBlock & { kind: "work" | "break" } => b.kind === "work" || b.kind === "break")
+    .filter((b): b is PlanBlock & { kind: "work" | "break" | "routine" } => b.kind === "work" || b.kind === "break" || b.kind === "routine")
     .map((b) => ({ ...toOwnedBlock(b, false, nowMs), moved: moved.has(b.id) }));
   const fixed = fixedBlocks.map((b) => ({ ...b, moved: false }));
   const blocks = [...owned, ...fixed].sort((a, b) => Date.parse(a.start) - Date.parse(b.start));

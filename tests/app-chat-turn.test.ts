@@ -1403,3 +1403,14 @@ test("chatTurn: a routine line still routes to routines, not plan edits", async 
   assert.ok(listed.ok);
   if (listed.ok) assert.match(listed.value.reply, /study block/i);
 });
+
+test("chatTurn: a plan edit the refit rejects replies with the reason, opens no proposal, and is not an error", async () => {
+  const { store, deps } = planEditFixture();
+  const busy = [{ id: "e1", title: "Dentist", start: "2026-08-22T00:00:00.000Z", end: "2026-08-23T12:00:00.000Z" }];
+  const result = await chatTurn({ ...deps, readCalendarEventsFn: async () => busy }, { message: "move the labs to 8pm", history: [] });
+  assert.ok(result.ok);
+  if (!result.ok) return;
+  assert.equal(result.value.question, undefined);
+  assert.match(result.value.reply, /Dentist/);
+  assert.equal(getPlan(store, "2026-08-22")?.data.version, 1);
+});

@@ -6,6 +6,7 @@
  * "drop X today", "unpin X"). Names resolve by case-insensitive substring
  * against today's Plan blocks, then open Tasks; never a guess, never an LLM.
  */
+import { localMinutesToIso, resolveClockMinutes } from "./local-time.ts";
 import type { ExternalId, IsoDate, IsoDateTime, PlanBlock, ReshuffleRequest } from "../types/domain.ts";
 
 export type PlanEditWhen = { readonly kind: "after-lunch" } | { readonly kind: "time"; readonly minutes: number };
@@ -27,20 +28,14 @@ const clean = (s: string): string => {
   return t.trim();
 };
 
-/** R8 bare times: 1-7 -> PM, 8-11 -> AM, 12 -> noon. */
 function parseClock(text: string): number | undefined {
   const m = /^(\d{1,2})(?::(\d{2}))?\s*([ap])?\.?m?\.?$/i.exec(text.trim());
   if (!m) return undefined;
   const hour = Number(m[1]);
   const minute = m[2] === undefined ? 0 : Number(m[2]);
   if (minute > 59 || hour > 23) return undefined;
-  if (m[3]) {
-    if (hour < 1 || hour > 12) return undefined;
-    return (hour % 12) * 60 + (m[3].toLowerCase() === "p" ? 720 : 0) + minute;
-  }
-  if (hour === 0 || hour >= 13) return hour * 60 + minute;
-  if (hour === 12) return 720 + minute;
-  return hour >= 8 ? hour * 60 + minute : (hour + 12) * 60 + minute;
+  if (m[3] && (hour < 1 || hour > 12)) return undefined;
+  return resolveClockMinutes(hour, minute, m[3] ? (m[3].toLowerCase() === "a" ? "am" : "pm") : undefined);
 }
 
 function parseWhen(text: string): PlanEditWhen | undefined {
@@ -135,45 +130,27 @@ function lookup(ctx: PlanEditContext, text: string, includeOpenTasks: boolean): 
   return { ok: true, id: found[0]!.id };
 }
 
-const zoneOffsetMinutes = (ms: number, timeZone: string): number => {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit",
-  }).formatToParts(new Date(ms));
-  const g = (t: string): number => Number(parts.find((p) => p.type === t)?.value);
-  return (Date.UTC(g("year"), g("month") - 1, g("day"), g("hour"), g("minute"), g("second")) - Math.floor(ms / 1000) * 1000) / 60_000;
-};
-
-/** The instant at `minutes` past local midnight on `date` in `timeZone` (DST-safe fixed-point). */
-export function localMinutesToIso(date: IsoDate, minutes: number, timeZone: string): IsoDateTime {
-  const [y, mo, d] = date.split("-").map(Number) as [number, number, number];
-  const wall = Date.UTC(y, mo - 1, d, 0, 0, 0) + minutes * 60_000;
-  let offset = zoneOffsetMinutes(wall, timeZone);
-  for (let i = 0; i < 4; i++) {
-    const next = zoneOffsetMinutes(wall - offset * 60_000, timeZone);
-    if (next === offset) break;
-    offset = next;
-  }
-  return new Date(wall - offset * 60_000).toISOString();
-}
-
 export function resolvePlanEdit(command: PlanEditCommand, ctx: PlanEditContext): PlanEditResolution {
   switch (command.kind) {
     case "move": {
-      // Work blocks only: a calendar event or routine of that name is a calendar edit, not a Plan edit.
+      // Work blocks and upcoming routine blocks: a calendar event of that name is a calendar edit, not a Plan edit.
       const found = planCandidates(ctx, command.targetText);
-      if (found.length === 0) return { kind: "pass" };
-      if (found.length > 1) {
-        const r = lookup(ctx, command.targetText, false);
-        if (!r.ok) return { kind: "reply", reply: r.reply };
+      const routineBlocks = ctx.blocks.filter((b) => b.kind === "routine" && b.routineId !== undefined && Date.parse(b.start) >= ctx.nowMs && matches(b.label, command.targetText));
+      const routineIds = new Set(routineBlocks.map((b) => b.routineId));
+      if (found.length === 0 && routineIds.size === 0) return { kind: "pass" };
+      if (found.length + routineIds.size > 1) {
+        const titles = [...found.map((c) => c.title), ...routineBlocks.map((b) => b.label)].slice(0, 3).map((t) => `"${t}"`).join(", ");
+        return { kind: "reply", reply: `Which one do you mean: ${titles}? Say the fuller name.` };
       }
-      const taskId = found[0]!.id;
-      const own = ctx.blocks.filter((b) => b.kind === "work" && b.taskId === taskId);
-      const block = own.find((b) => Date.parse(b.start) >= ctx.nowMs) ?? own[0]!;
       const when = command.when!;
       const newStart =
         when.kind === "time"
           ? localMinutesToIso(ctx.date, when.minutes, ctx.timeZone)
           : ctx.lunchEnd ?? localMinutesToIso(ctx.date, 13 * 60, ctx.timeZone);
+      if (routineBlocks.length > 0) return { kind: "request", request: { kind: "move-block", planBlockId: routineBlocks[0]!.id, newStart } };
+      const taskId = found[0]!.id;
+      const own = ctx.blocks.filter((b) => b.kind === "work" && b.taskId === taskId);
+      const block = own.find((b) => Date.parse(b.start) >= ctx.nowMs) ?? own[0]!;
       return { kind: "request", request: { kind: "move-block", planBlockId: block.id, newStart } };
     }
     case "drop": {

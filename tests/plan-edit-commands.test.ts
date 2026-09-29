@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { localMinutesToIso, parsePlanEditCommand, resolvePlanEdit, type PlanEditContext, type PlanEditWhen } from "../src/core/plan-edit-commands.ts";
+import { localMinutesToIso } from "../src/core/local-time.ts";
+import { parsePlanEditCommand, resolvePlanEdit, type PlanEditContext, type PlanEditWhen } from "../src/core/plan-edit-commands.ts";
 import type { PlanBlock } from "../src/types/domain.ts";
 
 test("parsePlanEditCommand: each phrase becomes the right command", () => {
@@ -57,4 +58,12 @@ test("PLAN_EDIT_NOT_SUPPORTED_REPLY is gone", async () => {
   let out = "";
   try { out = execFileSync("grep", ["-rn", "PLAN_EDIT_NOT_SUPPORTED_REPLY", "src", "tests/app-chat-turn.test.ts", "web/src"], { encoding: "utf8" }); } catch { /* no match */ }
   assert.equal(out, "");
+});
+
+test("resolvePlanEdit: move also resolves a future routine block by label; a past routine block passes", () => {
+  const routine = (id: string, h: number): PlanBlock => ({ id, kind: "routine", routineId: "r-study", label: "Study block", start: at(h), end: at(h, 30) });
+  const future = resolvePlanEdit({ kind: "move", targetText: "study block", when: { kind: "time", minutes: 16 * 60 } }, ctx({ blocks: [routine("v1-routine-r-study", 15)] }));
+  assert.deepEqual(future, { kind: "request", request: { kind: "move-block", planBlockId: "v1-routine-r-study", newStart: at(16) } });
+  const past = resolvePlanEdit({ kind: "move", targetText: "study block", when: { kind: "time", minutes: 16 * 60 } }, ctx({ blocks: [routine("v1-routine-r-study", 7)] }));
+  assert.deepEqual(past, { kind: "pass" });
 });

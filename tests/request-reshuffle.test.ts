@@ -178,17 +178,15 @@ test("move-block: an unknown block id is stale-proposal; a past block is not dra
   store.close();
 });
 
-test("pin-task overlapping a fixed event is rejected: the preview equals the current plan and names the event", async () => {
+test("pin-task overlapping a fixed event is a validation failure naming the event and opens no proposal", async () => {
   const ev: CalendarEvent = { id: "e1", title: "Dentist", start: iso(100), end: iso(140) };
-  const { store, plan, deps } = setup(T3(), [ev]);
+  const { store, deps } = setup(T3(), [ev]);
   const r = await requestReshuffle(deps, { request: { kind: "pin-task", taskId: "t3", newStart: iso(110) } });
-  assert.equal(r.ok, true);
-  if (!r.ok) return;
-  const p = r.value.proposal.suggested;
-  assert.match(p.rejectedReason ?? "", /Dentist/);
-  assert.deepEqual(p.blocks, plan.blocks);
-  assert.deepEqual(p.pins, []);
-  assert.deepEqual(p.movedBlockIds, []);
+  assert.equal(r.ok, false);
+  if (r.ok) return;
+  assert.equal(r.error.kind, "validation");
+  assert.match(r.error.message, /Dentist/);
+  assert.equal(listOpenInteractionRequests(store).length, 0);
   store.close();
 });
 
