@@ -338,3 +338,25 @@ test("Story 9.1: a stored block's missingRefining passes through to its HomePlan
   assert.equal(rows.find((r) => r.taskId === "t2")?.missingRefining, undefined);
   deps.store.close();
 });
+
+test("T5: a pinned work block surfaces taskId and pinned on the calendar block and the plan row; unpinned ones carry no pinned flag", async () => {
+  const deps = tempDeps();
+  putPlan(deps.store, makePlan({
+    blocks: [
+      { id: "b1", kind: "work", start: "2026-09-25T17:00:00.000Z", end: "2026-09-25T18:00:00.000Z", taskId: "t1", label: "Draft", pinned: true },
+      { id: "b2", kind: "work", start: "2026-09-25T18:00:00.000Z", end: "2026-09-25T18:30:00.000Z", taskId: "t2", label: "Call" },
+      { id: "b3", kind: "break", start: "2026-09-25T18:30:00.000Z", end: "2026-09-25T18:45:00.000Z", label: "Break" },
+    ],
+  }));
+  const result = await getHomeView(deps, {});
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  const byId = new Map(result.value.calendar.blocks.map((b) => [b.id, b]));
+  assert.equal(byId.get("b1")!.taskId, "t1");
+  assert.equal(byId.get("b1")!.pinned, true);
+  assert.equal(byId.get("b2")!.taskId, "t2");
+  assert.equal("pinned" in byId.get("b2")!, false);
+  assert.equal("taskId" in byId.get("b3")!, false);
+  assert.deepEqual(result.value.plan?.rows.map((r) => r.pinned), [true, undefined]);
+  deps.store.close();
+});

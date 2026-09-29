@@ -446,6 +446,8 @@ export interface PlanBlock {
    * missing.
    */
   readonly missingRefining?: readonly RefiningFieldNames[];
+  /** Set on a block placed at a time Spencer fixed by hand (a pinned Task's work and break blocks). Absent otherwise. */
+  readonly pinned?: true;
 }
 
 /**
@@ -466,7 +468,7 @@ export interface Plan {
   readonly updatedAt: IsoDateTime;
 }
 
-/** A request to reshape the rest of today's Plan. Only `reflow-now` is handled so far. */
+/** A request to reshape the rest of today's Plan. */
 export type ReshuffleRequest =
   | { readonly kind: "reflow-now" }
   | { readonly kind: "move-block"; readonly planBlockId: string; readonly newStart: IsoDateTime }

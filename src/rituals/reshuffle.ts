@@ -12,6 +12,7 @@ import { fitWorkBreakBlocks, type FitWorkBreakBlocksOutput } from "../core/work-
 import type {
   CalendarEvent,
   CompleteTask,
+  DayPin,
   ExternalId,
   IsoDate,
   IsoDateTime,
@@ -210,6 +211,10 @@ export interface DayRefitInput {
   /** Blocks already lived through — kept verbatim in the merged output. */
   readonly pastBlocks: readonly PlanBlock[];
   readonly bumpLevels?: Readonly<Record<ExternalId, number>>;
+  /** The day's hand-fixed placements. Only Task pins dated `date` that start at or after `now` apply; pinned Tasks skip ordering and are placed at their pin. */
+  readonly pins?: readonly DayPin[];
+  /** Task ids dropped for the day; removed before ordering. */
+  readonly drops?: readonly ExternalId[];
   /** Prefix for every fitted block id, e.g. `v3` gives `v3-work-0`. */
   readonly idPrefix: string;
   readonly log?: (entry: LogEntry) => void;
@@ -222,6 +227,63 @@ export interface DayRefitOutput {
   readonly fittedBlocks: readonly PlanBlock[];
   readonly deferredTaskIds: readonly ExternalId[];
   readonly fitMs: number;
+  /** Set when a pin could not be honored (it overlaps a fixed event or another pin); the blocks are then the day fitted with no pins at all. */
+  readonly rejectedReason?: string;
+}
+
+const PIN_ANCHOR_TITLE = "__pin__";
+const MINUTES_TO_MS = 60_000;
+
+/**
+ * How many of `block`'s minutes have elapsed as of `nowMs`: the whole block if it
+ * has ended, none if it has not started, and `now - start` while it is running.
+ * Callers credit these against a Task's duration and the day's Time Budget.
+ */
+export function elapsedMinutesWithinBlock(block: PlanBlock, nowMs: number): number {
+  const startMs = Date.parse(block.start);
+  const endMs = Date.parse(block.end);
+  if (endMs <= nowMs) return (endMs - startMs) / MINUTES_TO_MS;
+  if (startMs >= nowMs) return 0;
+  return (nowMs - startMs) / MINUTES_TO_MS;
+}
+
+interface PinPlacement {
+  readonly task: CompleteTask;
+  readonly blocks: readonly PlanBlock[];
+  readonly startMs: number;
+  readonly endMs: number;
+}
+
+/** Places each pinned Task contiguously from its pin start, split into work and break blocks by the normal rule. */
+function placePinnedTasks(
+  pinned: readonly { readonly task: CompleteTask; readonly start: IsoDateTime }[],
+  budget: TimeBudget,
+  idPrefix: string,
+): Result<PinPlacement[], YohError> {
+  const placements: PinPlacement[] = [];
+  for (const [index, { task, start }] of pinned.entries()) {
+    const fit = fitWorkBreakBlocks({ tasks: [task], budget: { ...budget, totalMinutes: 1_000_000 }, calendarEvents: [], startTime: start });
+    if (!fit.ok) return fit;
+    const blocks = fit.value.blocks.map((b): PlanBlock => ({ ...b, id: `${idPrefix}-p${index}-${b.id}`, pinned: true }));
+    placements.push({
+      task,
+      blocks,
+      startMs: Math.min(...blocks.map((b) => Date.parse(b.start))),
+      endMs: Math.max(...blocks.map((b) => Date.parse(b.end))),
+    });
+  }
+  return { ok: true, value: placements };
+}
+
+/** The reason a pin cannot be honored, naming what it collides with; `undefined` when every span is clear. */
+function pinConflict(placements: readonly PinPlacement[], fixed: readonly CalendarEvent[]): string | undefined {
+  for (const [i, p] of placements.entries()) {
+    const hit = fixed.find((e) => overlapsMs(p.startMs, p.endMs, Date.parse(e.start), Date.parse(e.end)));
+    if (hit) return `"${p.task.title}" can't go there: it overlaps ${hit.title}.`;
+    const other = placements.slice(i + 1).find((q) => overlapsMs(p.startMs, p.endMs, q.startMs, q.endMs));
+    if (other) return `"${p.task.title}" and "${other.task.title}" can't both go there: their times overlap.`;
+  }
+  return undefined;
 }
 
 /** `computeSchoolDay` for the morning path: the raw calendar events split into anchors and protected windows. */
@@ -235,15 +297,45 @@ export function computeSchoolDayInputs(
 
 export function computeDayRefit(input: DayRefitInput): Result<DayRefitOutput, YohError> {
   const startedMs = Date.now();
-  const ordered = orderByDerivedPriority(input.openTasks, input.date, input.bumpLevels);
+  const dropped = new Set(input.drops ?? []);
+  const nowMs = Date.parse(input.now);
+  const openById = new Map(input.openTasks.map((t) => [t.id, t]));
+  const pinned: { task: CompleteTask; start: IsoDateTime }[] = [];
+  for (const pin of [...(input.pins ?? [])].sort((a, b) => Date.parse(a.start) - Date.parse(b.start))) {
+    if (pin.date !== input.date || pin.subject.kind !== "task" || Date.parse(pin.start) < nowMs) continue;
+    const task = openById.get(pin.subject.taskId);
+    if (task && !dropped.has(task.id) && !pinned.some((p) => p.task.id === task.id)) pinned.push({ task, start: pin.start });
+  }
+  const pinnedIds = new Set(pinned.map((p) => p.task.id));
+  const population = input.openTasks.filter((t) => !dropped.has(t.id) && !pinnedIds.has(t.id));
+
+  const ordered = orderByDerivedPriority(population, input.date, input.bumpLevels);
   if (!ordered.ok) return ordered;
 
   const { anchors, protectedWindows } = mergeOverlappingAnchors(input.fixedEvents, input.protectedWindows ?? []);
 
+  const placed = placePinnedTasks(pinned, input.budget, input.idPrefix);
+  if (!placed.ok) return placed;
+  const conflict = pinConflict(placed.value, [...anchors, ...protectedWindows]);
+  if (conflict !== undefined) {
+    const unpinned = computeDayRefit({ ...input, pins: [] });
+    return unpinned.ok ? { ok: true, value: { ...unpinned.value, rejectedReason: conflict } } : unpinned;
+  }
+  const pinBlocks = placed.value.flatMap((p) => p.blocks);
+  const pinAnchors: CalendarEvent[] = placed.value.map((p, i) => ({
+    id: `pin-anchor-${i}`,
+    title: PIN_ANCHOR_TITLE,
+    start: new Date(p.startMs).toISOString(),
+    end: new Date(p.endMs).toISOString(),
+  }));
+  const pinnedMinutes = pinBlocks.reduce((sum, b) => sum + (Date.parse(b.end) - Date.parse(b.start)) / MINUTES_TO_MS, 0);
+  const budget: TimeBudget =
+    pinnedMinutes > 0 ? { ...input.budget, totalMinutes: Math.max(1, Math.round(input.budget.totalMinutes - pinnedMinutes)) } : input.budget;
+
   const pass1 = fitWorkBreakBlocks({
     tasks: ordered.value,
-    budget: input.budget,
-    calendarEvents: [...anchors, ...protectedWindows],
+    budget,
+    calendarEvents: [...anchors, ...protectedWindows, ...pinAnchors],
     startTime: input.now,
   });
   if (!pass1.ok) return pass1;
@@ -252,13 +344,16 @@ export function computeDayRefit(input: DayRefitInput): Result<DayRefitOutput, Yo
     pass1: pass1.value,
     tasks: ordered.value,
     protectedWindows,
-    budget: input.budget,
+    budget,
     startTime: input.now,
     today: input.date,
   });
   if (!fitted.ok) return fitted;
 
-  const fittedBlocks = fitted.value.blocks.map((b) => ({ ...b, id: `${input.idPrefix}-${b.id}` }));
+  const fittedBlocks = [
+    ...fitted.value.blocks.filter((b) => !(b.kind === "calendar-anchor" && b.label === PIN_ANCHOR_TITLE)).map((b) => ({ ...b, id: `${input.idPrefix}-${b.id}` })),
+    ...pinBlocks,
+  ].sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
   const blocks = [...input.pastBlocks, ...fittedBlocks].sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
   const fitMs = Date.now() - startedMs;
   input.log?.({

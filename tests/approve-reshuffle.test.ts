@@ -158,3 +158,37 @@ test("confirmProposal routes reshuffle accept/decline to approve/discard", async
   assert.equal(getPlan(store, s.today)!.data.version, 2);
   store.close();
 });
+
+// ---------------------------------------------------------------------------
+// T5: pins and drops persist with the Plan, in one transaction
+// ---------------------------------------------------------------------------
+import { listDayDrops, listDayPins } from "../src/adapters/plan-state-store.ts";
+
+async function pinSetup() {
+  const s = await setup();
+  const req = await requestReshuffle(s.deps, { request: { kind: "swap", addTaskId: "t3", removeTaskId: "t2" } });
+  assert.ok(req.ok);
+  if (!req.ok) throw new Error("unreachable");
+  return { ...s, proposal: req.value.proposal };
+}
+
+test("approve persists the day's pins and drops with the Plan", async () => {
+  const s = await pinSetup();
+  const result = await approveReshuffle(s.deps, { proposal: s.proposal });
+  assert.ok(result.ok);
+  assert.equal(getPlan(s.store, s.today)!.data.version, 2);
+  assert.deepEqual(listDayPins(s.connection.db, s.today).map((p) => p.subject), [{ kind: "task", taskId: "t3" }]);
+  assert.deepEqual(listDayDrops(s.connection.db, s.today), ["t2"]);
+  s.store.close();
+});
+
+test("approve rolls the pins and drops back with the Plan when the transaction fails", async () => {
+  const s = await pinSetup();
+  s.connection.db.exec("CREATE TRIGGER boom BEFORE INSERT ON outbox BEGIN SELECT RAISE(ABORT, 'boom'); END");
+  const result = await approveReshuffle(s.deps, { proposal: s.proposal });
+  assert.equal(result.ok, false);
+  assert.equal(getPlan(s.store, s.today)!.data.version, 1);
+  assert.deepEqual(listDayPins(s.connection.db, s.today), []);
+  assert.deepEqual(listDayDrops(s.connection.db, s.today), []);
+  s.store.close();
+});

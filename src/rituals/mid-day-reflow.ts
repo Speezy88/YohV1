@@ -238,7 +238,8 @@ import { appendOutboxInTx } from "../adapters/notification-store.ts";
 import type { LogEntry } from "../adapters/logger.ts";
 import type { DataCompletenessGateResult } from "../core/data-completeness-gate.ts";
 import { isOpenTask } from "../core/planning-field-value.ts";
-import { computeDayRefit } from "./reshuffle.ts";
+import { listDayDrops, listDayPins } from "../adapters/plan-state-store.ts";
+import { computeDayRefit, elapsedMinutesWithinBlock } from "./reshuffle.ts";
 import { runDataCompletenessGate } from "./data-completeness.ts";
 import { describeError, failure, localIsoDate, missingRefiningFor, renderPlan } from "./ritual-shared.ts";
 import type {
@@ -344,30 +345,6 @@ export type MidDayReflowOutcome =
  */
 function isElapsed(block: PlanBlock, nowMs: number): boolean {
   return Date.parse(block.end) <= nowMs;
-}
-
-/**
- * How many of `block`'s minutes have ACTUALLY elapsed as of `nowMs` — the
- * fix for a Critical bug a review caught by direct execution: a block still
- * running at trigger time (`start < now < end`) is genuinely "remaining"
- * (see `isElapsed` above — it does NOT survive verbatim, it gets re-fit),
- * but that does not mean ZERO of its minutes have happened. A 30-minute
- * block running 11:00-11:30, re-flowed at 11:15, has genuinely used 15
- * minutes of both the Task's own duration and the day's Time Budget — credit
- * exactly that, not the full 30 (which would let the Task consume 45
- * minutes of real time: 15 already lived + 30 freshly re-scheduled) and not
- * 0 (which would silently overstate the remaining Time Budget by the same
- * 15 minutes). Three cases, uniformly:
- *   - fully elapsed (`end <= now`): the whole block's duration.
- *   - not yet started (`start >= now`): zero.
- *   - genuinely in progress (`start < now < end`): `now - start`.
- */
-function elapsedMinutesWithinBlock(block: PlanBlock, nowMs: number): number {
-  const startMs = Date.parse(block.start);
-  const endMs = Date.parse(block.end);
-  if (endMs <= nowMs) return (endMs - startMs) / MINUTES_TO_MS;
-  if (startMs >= nowMs) return 0;
-  return (nowMs - startMs) / MINUTES_TO_MS;
 }
 
 /** Short, change-only reasoning line — UX-DR11: never re-explains or re-justifies the whole day, only names what the re-flow did. */
@@ -614,6 +591,8 @@ export async function runMidDayReflow(deps: MidDayReflowDeps): Promise<Result<Mi
     },
     fixedEvents: remainingAnchorEvents,
     pastBlocks,
+    pins: deps.store.withDb((db) => listDayPins(db, today)),
+    drops: deps.store.withDb((db) => listDayDrops(db, today)),
     ...(deps.bumpLevels ? { bumpLevels: deps.bumpLevels } : {}),
     idPrefix: `v${nextVersion}`,
     log,

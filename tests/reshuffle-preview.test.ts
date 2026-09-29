@@ -45,3 +45,24 @@ test("buildReshuffleSummary names moves and deferred Tasks in one line", () => {
   assert.match(s, /Laundry/);
   assert.equal(s.includes("\n"), false);
 });
+
+import { parseReshuffleRequest as parseRequestT5 } from "../src/core/reshuffle-preview.ts";
+
+test("parseReshuffleRequest accepts each pin/move/drop/swap shape and rejects malformed ones", () => {
+  const at = "2026-09-25T17:00:00.000Z";
+  assert.deepEqual(parseRequestT5({ kind: "pin-task", taskId: "t1", newStart: at }), { kind: "pin-task", taskId: "t1", newStart: at });
+  assert.deepEqual(parseRequestT5({ kind: "move-block", planBlockId: "v2-work-0", newStart: at }), { kind: "move-block", planBlockId: "v2-work-0", newStart: at });
+  assert.deepEqual(parseRequestT5({ kind: "unpin-task", taskId: "t1" }), { kind: "unpin-task", taskId: "t1" });
+  assert.deepEqual(parseRequestT5({ kind: "drop-task", taskId: "t1" }), { kind: "drop-task", taskId: "t1" });
+  assert.deepEqual(parseRequestT5({ kind: "swap", addTaskId: "a", removeTaskId: "b" }), { kind: "swap", addTaskId: "a", removeTaskId: "b" });
+  for (const bad of [
+    { kind: "pin-task", taskId: "t1", newStart: "soon" },
+    { kind: "pin-task", newStart: at },
+    { kind: "move-block", planBlockId: "", newStart: at },
+    { kind: "drop-task" },
+    { kind: "swap", addTaskId: "a" },
+    { kind: "nope" },
+  ]) {
+    assert.equal(parseRequestT5(bad), undefined);
+  }
+});

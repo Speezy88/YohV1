@@ -6,25 +6,23 @@
  * proposal. Writes nothing to Calendar or to the stored Plan; applying the
  * proposal is `confirm-proposal`'s job.
  */
-import {
-  clearInteractionRequest,
-  getCurrentTimeBudget,
-  getPlan,
-  listOpenInteractionRequests,
-  type MemoryStore,
-} from "../adapters/memory-store.ts";
+import { clearInteractionRequest, getCurrentTimeBudget, getPlan, type MemoryStore } from "../adapters/memory-store.ts";
+import { listDayDrops, listDayPins } from "../adapters/plan-state-store.ts";
+import { listOpenReshuffleProposals } from "../adapters/reshuffle-proposal-store.ts";
 import { errorCopyForThrown } from "../core/error-copy.ts";
 import { isOpenTask } from "../core/planning-field-value.ts";
 import { buildReshuffleSummary, calendarVersionHash, diffPlanBlocks } from "../core/reshuffle-preview.ts";
 import { runDataCompletenessGate } from "../rituals/data-completeness.ts";
-import { computeDayRefit, computeSchoolDayInputs } from "../rituals/reshuffle.ts";
+import { computeDayRefit, computeSchoolDayInputs, elapsedMinutesWithinBlock } from "../rituals/reshuffle.ts";
 import { computeBumpLevels, localIsoDate, missingRefiningFor } from "../rituals/ritual-shared.ts";
 import { openProposal } from "./open-proposal.ts";
 import type { OpenItemQuestion } from "../types/api.ts";
 import type {
   CalendarEvent,
   CompleteTask,
+  DayPin,
   ExternalId,
+  IsoDate,
   PlanBlock,
   Proposal,
   ReshufflePreview,
@@ -51,17 +49,67 @@ export interface RequestReshuffleOutput {
   readonly question: OpenItemQuestion;
 }
 
-const MINUTE_MS = 60_000;
-
 function fail(kind: YohError["kind"], message: string, detail?: unknown): Result<never, YohError> {
   return { ok: false, error: { kind, message, ...(detail !== undefined ? { detail } : {}) } };
 }
 
 function clearOpenReshuffleProposals(store: MemoryStore): void {
-  for (const record of listOpenInteractionRequests(store)) {
-    if (record.data.requestKind !== "proposal") continue;
-    const stored = (record.data.detail as { readonly proposal?: Proposal<unknown> } | undefined)?.proposal;
-    if (stored?.kind === "reshuffle") clearInteractionRequest(store, record.id, record.version);
+  for (const open of listOpenReshuffleProposals(store)) clearInteractionRequest(store, open.requestId, open.requestVersion);
+}
+
+const taskSubject = (pin: DayPin): ExternalId | undefined => (pin.subject.kind === "task" ? pin.subject.taskId : undefined);
+
+interface DayChange {
+  readonly pins: readonly DayPin[];
+  readonly drops: readonly ExternalId[];
+}
+
+/** Resolves a request to the day's pins and drops after it is applied; a failure is the Result to return. */
+function resolveRequest(
+  request: ReshuffleRequest,
+  current: DayChange,
+  ctx: { readonly today: IsoDate; readonly nowMs: number; readonly timeZone: string; readonly plan: { readonly blocks: readonly PlanBlock[] }; readonly openIds: ReadonlySet<ExternalId> },
+): Result<DayChange, YohError> {
+  const without = (taskId: ExternalId): DayPin[] => current.pins.filter((p) => taskSubject(p) !== taskId);
+  const pinAt = (taskId: ExternalId, start: string): Result<DayChange, YohError> => {
+    const startMs = Date.parse(start);
+    if (!ctx.openIds.has(taskId)) return fail("validation", "That Task isn't open for today, so I can't place it.");
+    if (startMs < ctx.nowMs || localIsoDate(new Date(startMs), ctx.timeZone) !== ctx.today) {
+      return fail("validation", "Pick a time later today.");
+    }
+    const pin: DayPin = { date: ctx.today, subject: { kind: "task", taskId }, start: new Date(startMs).toISOString() };
+    return { ok: true, value: { pins: [...without(taskId), pin], drops: current.drops.filter((d) => d !== taskId) } };
+  };
+  switch (request.kind) {
+    case "reflow-now":
+      return { ok: true, value: current };
+    case "pin-task":
+      return pinAt(request.taskId, request.newStart);
+    case "move-block": {
+      const block = ctx.plan.blocks.find((b) => b.id === request.planBlockId);
+      if (!block) return fail("stale-proposal", "That block has changed. Try dragging it again.");
+      if (block.kind !== "work" || block.taskId === undefined || Date.parse(block.start) < ctx.nowMs) {
+        return fail("validation", "That block can't be moved.");
+      }
+      return pinAt(block.taskId, request.newStart);
+    }
+    case "unpin-task":
+      return { ok: true, value: { pins: without(request.taskId), drops: current.drops.filter((d) => d !== request.taskId) } };
+    case "drop-task":
+      return { ok: true, value: { pins: without(request.taskId), drops: current.drops.includes(request.taskId) ? current.drops : [...current.drops, request.taskId] } };
+    case "swap": {
+      const removed = ctx.plan.blocks.find((b) => b.kind === "work" && b.taskId === request.removeTaskId && Date.parse(b.start) >= ctx.nowMs);
+      const start = removed?.start ?? new Date(ctx.nowMs).toISOString();
+      const added = pinAt(request.addTaskId, start);
+      if (!added.ok) return added;
+      return {
+        ok: true,
+        value: {
+          pins: added.value.pins.filter((p) => taskSubject(p) !== request.removeTaskId),
+          drops: added.value.drops.includes(request.removeTaskId) ? added.value.drops : [...added.value.drops, request.removeTaskId],
+        },
+      };
+    }
   }
 }
 
@@ -69,9 +117,6 @@ export async function requestReshuffle(
   deps: RequestReshuffleDeps,
   input: RequestReshuffleInput,
 ): Promise<Result<RequestReshuffleOutput, YohError>> {
-  if (input.request.kind !== "reflow-now") {
-    return fail("validation", "That kind of change isn't available yet.");
-  }
   const nowDate = deps.now();
   const nowMs = nowDate.getTime();
   const today = localIsoDate(nowDate, deps.timeZone);
@@ -102,17 +147,11 @@ export async function requestReshuffle(
 
   // Credit what has already happened, as the mid-day reflow does.
   const pastBlocks = plan.blocks.filter((b) => Date.parse(b.end) <= nowMs);
-  const elapsedMinutes = (b: PlanBlock): number => {
-    const start = Date.parse(b.start);
-    const end = Date.parse(b.end);
-    if (end <= nowMs) return (end - start) / MINUTE_MS;
-    return start >= nowMs ? 0 : (nowMs - start) / MINUTE_MS;
-  };
   const elapsedByTask = new Map<ExternalId, number>();
   const scheduledTaskIds = new Set<ExternalId>();
   let elapsedBudget = 0;
   for (const b of plan.blocks) {
-    const e = elapsedMinutes(b);
+    const e = elapsedMinutesWithinBlock(b, nowMs);
     if (b.kind === "work" || b.kind === "break") elapsedBudget += e;
     if (b.kind === "work" && b.taskId !== undefined) {
       scheduledTaskIds.add(b.taskId);
@@ -132,6 +171,20 @@ export async function requestReshuffle(
   const school = computeSchoolDayInputs(events, today, deps.timeZone);
   if (!school.ok) return school;
 
+  const currentDay: DayChange = {
+    pins: deps.store.withDb((db) => listDayPins(db, today)),
+    drops: deps.store.withDb((db) => listDayDrops(db, today)),
+  };
+  const resolved = resolveRequest(input.request, currentDay, {
+    today,
+    nowMs,
+    timeZone: deps.timeZone,
+    plan,
+    openIds: new Set(outstanding.map((t) => t.id)),
+  });
+  if (!resolved.ok) return resolved;
+  const day = resolved.value;
+
   const refit = computeDayRefit({
     date: today,
     timeZone: deps.timeZone,
@@ -146,10 +199,13 @@ export async function requestReshuffle(
     fixedEvents: school.value.anchors,
     protectedWindows: school.value.protectedWindows,
     pastBlocks,
+    pins: day.pins,
+    drops: day.drops,
     bumpLevels: computeBumpLevels(deps.store),
     idPrefix: `v${plan.version + 1}`,
   });
   if (!refit.ok) return refit;
+  const rejectedReason = refit.value.rejectedReason;
 
   const outstandingById = new Map(outstanding.map((t) => [t.id, t]));
   const fittedTagged = new Map(
@@ -158,13 +214,15 @@ export async function requestReshuffle(
       return [b.id, missing ? { ...b, missingRefining: missing } : b] as const;
     }),
   );
-  const blocks = refit.value.blocks.map((b) => fittedTagged.get(b.id) ?? b);
+  // A rejected request leaves the day exactly as stored.
+  const blocks = rejectedReason !== undefined ? plan.blocks : refit.value.blocks.map((b) => fittedTagged.get(b.id) ?? b);
 
   const diff = diffPlanBlocks(plan.blocks, blocks);
   const titleOf = new Map(rawTasks.map((t) => [t.id, t.title]));
   const blockById = new Map(blocks.map((b) => [b.id, b]));
   const movedTitles = diff.movedBlockIds.map((id) => blockById.get(id)?.label ?? id);
-  const deferredTitles = refit.value.deferredTaskIds.map((id) => titleOf.get(id) ?? id);
+  const deferredTaskIds = rejectedReason !== undefined ? [] : refit.value.deferredTaskIds;
+  const deferredTitles = deferredTaskIds.map((id) => titleOf.get(id) ?? id);
 
   const calendarVersion = calendarVersionHash(events);
   const preview: ReshufflePreview = {
@@ -172,12 +230,13 @@ export async function requestReshuffle(
     request: input.request,
     blocks,
     movedBlockIds: diff.movedBlockIds,
-    deferredTaskIds: refit.value.deferredTaskIds,
+    deferredTaskIds,
     needsDataTaskIds,
-    pins: [],
-    drops: [],
+    pins: rejectedReason !== undefined ? currentDay.pins : day.pins,
+    drops: rejectedReason !== undefined ? currentDay.drops : day.drops,
     unplacedRoutineLabels: [],
-    summary: buildReshuffleSummary({ movedTitles, deferredTitles, needsDataCount: needsDataTaskIds.length }),
+    ...(rejectedReason !== undefined ? { rejectedReason } : {}),
+    summary: rejectedReason ?? buildReshuffleSummary({ movedTitles, deferredTitles, needsDataCount: needsDataTaskIds.length }),
     planVersion: plan.version,
     calendarVersion,
   };

@@ -26,6 +26,7 @@
 import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
 import type { SqliteConnection } from "./sqlite.ts";
+import type { DayPin, ExternalId } from "../types/domain.ts";
 
 /** How often `shell/server.ts` writes a heartbeat (Shared tuning constants convention — the one defining export). */
 export const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -66,6 +67,65 @@ export function initPlanStateStoreSchema(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_pending_check_offs_commit_at ON pending_check_offs (committed_at, commit_at);
   `);
+  ensureDayPinTables(db);
+}
+
+// ---------------------------------------------------------------------------
+// Day pins and drops (Epic 10): per-day placements Spencer fixed by hand.
+// ---------------------------------------------------------------------------
+
+function ensureDayPinTables(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS day_pins (
+      date TEXT NOT NULL,
+      subject_kind TEXT NOT NULL,
+      subject_id TEXT NOT NULL,
+      start TEXT NOT NULL,
+      PRIMARY KEY (date, subject_kind, subject_id)
+    );
+    CREATE TABLE IF NOT EXISTS day_drops (
+      date TEXT NOT NULL,
+      task_id TEXT NOT NULL,
+      PRIMARY KEY (date, task_id)
+    );
+  `);
+}
+
+/** The day's pins; other dates are never returned. */
+export function listDayPins(db: Database.Database, date: string): DayPin[] {
+  ensureDayPinTables(db);
+  const rows = db
+    .prepare("SELECT subject_kind, subject_id, start FROM day_pins WHERE date = ? ORDER BY start, subject_id")
+    .all(date) as { subject_kind: string; subject_id: string; start: string }[];
+  return rows.map((r) => ({
+    date,
+    subject: r.subject_kind === "routine" ? { kind: "routine" as const, routineId: r.subject_id } : { kind: "task" as const, taskId: r.subject_id },
+    start: r.start,
+  }));
+}
+
+/** The Task ids dropped for the day. */
+export function listDayDrops(db: Database.Database, date: string): ExternalId[] {
+  ensureDayPinTables(db);
+  return (db.prepare("SELECT task_id FROM day_drops WHERE date = ? ORDER BY task_id").all(date) as { task_id: string }[]).map((r) => r.task_id);
+}
+
+/** Replaces one date's pins and drops. Runs inside the caller's transaction; other dates are untouched. */
+export function replaceDayPinsAndDropsInTx(
+  db: Database.Database,
+  date: string,
+  pins: readonly DayPin[],
+  drops: readonly ExternalId[],
+): void {
+  ensureDayPinTables(db);
+  db.prepare("DELETE FROM day_pins WHERE date = ?").run(date);
+  db.prepare("DELETE FROM day_drops WHERE date = ?").run(date);
+  const insertPin = db.prepare("INSERT INTO day_pins (date, subject_kind, subject_id, start) VALUES (?, ?, ?, ?)");
+  for (const pin of pins) {
+    insertPin.run(date, pin.subject.kind, pin.subject.kind === "task" ? pin.subject.taskId : pin.subject.routineId, pin.start);
+  }
+  const insertDrop = db.prepare("INSERT OR IGNORE INTO day_drops (date, task_id) VALUES (?, ?)");
+  for (const taskId of drops) insertDrop.run(date, taskId);
 }
 
 /** Upserts the singleton heartbeat row — the latest write replaces, never appends. */

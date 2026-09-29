@@ -123,3 +123,115 @@ test("the calendar version changes when an event start moves, not on a title edi
   assert.notEqual(r1.value.proposal.entityVersion, r3.value.proposal.entityVersion);
   a.store.close(); b.store.close(); c.store.close();
 });
+
+// ---------------------------------------------------------------------------
+// T5: pin, move, drop, swap, unpin
+// ---------------------------------------------------------------------------
+import { listDayDrops, listDayPins, replaceDayPinsAndDropsInTx } from "../src/adapters/plan-state-store.ts";
+
+const T3 = () => [task("t1", "Past"), task("t2", "Future"), task("t3", "Fresh")];
+const pins = (s: MemoryStore, date: string) => s.withDb((db) => listDayPins(db, date));
+const drops = (s: MemoryStore, date: string) => s.withDb((db) => listDayDrops(db, date));
+
+test("pin-task: previews the Task placed at its pin, marks it pinned, writes no pin yet", async () => {
+  const { store, today, deps } = setup(T3());
+  const r = await requestReshuffle(deps, { request: { kind: "pin-task", taskId: "t3", newStart: iso(120) } });
+  assert.equal(r.ok, true);
+  if (!r.ok) return;
+  const p = r.value.proposal.suggested;
+  assert.deepEqual(p.pins, [{ date: today, subject: { kind: "task", taskId: "t3" }, start: iso(120) }]);
+  const t3 = p.blocks.filter((b) => b.taskId === "t3");
+  assert.equal(t3.length, 1);
+  assert.equal(t3[0]!.start, iso(120));
+  assert.equal(t3[0]!.pinned, true);
+  assert.equal(p.rejectedReason, undefined);
+  assert.deepEqual(pins(store, today), [], "request persists nothing");
+  store.close();
+});
+
+test("move-block of a work block is the same as pin-task for its Task", async () => {
+  const a = setup(T3());
+  const b = setup(T3());
+  const moved = await requestReshuffle(a.deps, { request: { kind: "move-block", planBlockId: "v1-work-1", newStart: iso(180) } });
+  const pinned = await requestReshuffle(b.deps, { request: { kind: "pin-task", taskId: "t2", newStart: iso(180) } });
+  assert.equal(moved.ok && pinned.ok, true);
+  if (!moved.ok || !pinned.ok) return;
+  assert.deepEqual(moved.value.proposal.suggested.blocks, pinned.value.proposal.suggested.blocks);
+  assert.deepEqual(moved.value.proposal.suggested.pins, pinned.value.proposal.suggested.pins);
+  a.store.close();
+  b.store.close();
+});
+
+test("move-block: an unknown block id is stale-proposal; a past block is not draggable", async () => {
+  const { store, deps } = setup(T3());
+  const unknown = await requestReshuffle(deps, { request: { kind: "move-block", planBlockId: "v0-work-9", newStart: iso(180) } });
+  assert.equal(!unknown.ok && unknown.error.kind, "stale-proposal");
+  const past = await requestReshuffle(deps, { request: { kind: "move-block", planBlockId: "v1-work-0", newStart: iso(180) } });
+  assert.equal(!past.ok && past.error.kind, "validation");
+  assert.equal(listOpenInteractionRequests(store).length, 0);
+  store.close();
+});
+
+test("pin-task overlapping a fixed event is rejected: the preview equals the current plan and names the event", async () => {
+  const ev: CalendarEvent = { id: "e1", title: "Dentist", start: iso(100), end: iso(140) };
+  const { store, plan, deps } = setup(T3(), [ev]);
+  const r = await requestReshuffle(deps, { request: { kind: "pin-task", taskId: "t3", newStart: iso(110) } });
+  assert.equal(r.ok, true);
+  if (!r.ok) return;
+  const p = r.value.proposal.suggested;
+  assert.match(p.rejectedReason ?? "", /Dentist/);
+  assert.deepEqual(p.blocks, plan.blocks);
+  assert.deepEqual(p.pins, []);
+  assert.deepEqual(p.movedBlockIds, []);
+  store.close();
+});
+
+test("drop-task removes the Task for today; unpin-task clears both a pin and a drop", async () => {
+  const { store, today, deps } = setup(T3());
+  const r = await requestReshuffle(deps, { request: { kind: "drop-task", taskId: "t2" } });
+  assert.equal(r.ok, true);
+  if (!r.ok) return;
+  assert.deepEqual(r.value.proposal.suggested.drops, ["t2"]);
+  assert.ok(!r.value.proposal.suggested.blocks.some((b) => b.taskId === "t2" && Date.parse(b.end) > NOW.getTime()));
+  assert.ok(!r.value.proposal.suggested.deferredTaskIds.includes("t2"));
+
+  store.withDb((db) => replaceDayPinsAndDropsInTx(db, today, [{ date: today, subject: { kind: "task", taskId: "t3" }, start: iso(120) }], ["t2"]));
+  const u2 = await requestReshuffle(deps, { request: { kind: "unpin-task", taskId: "t2" } });
+  const u3 = await requestReshuffle(deps, { request: { kind: "unpin-task", taskId: "t3" } });
+  assert.equal(u2.ok && u3.ok, true);
+  if (!u2.ok || !u3.ok) return;
+  assert.deepEqual(u2.value.proposal.suggested.drops, []);
+  assert.equal(u2.value.proposal.suggested.pins.length, 1);
+  assert.deepEqual(u3.value.proposal.suggested.pins, []);
+  assert.deepEqual(u3.value.proposal.suggested.drops, ["t2"]);
+  store.close();
+});
+
+test("swap is a drop plus a pin", async () => {
+  const { store, today, deps } = setup(T3());
+  const r = await requestReshuffle(deps, { request: { kind: "swap", addTaskId: "t3", removeTaskId: "t2" } });
+  assert.equal(r.ok, true);
+  if (!r.ok) return;
+  const p = r.value.proposal.suggested;
+  assert.deepEqual(p.drops, ["t2"]);
+  assert.deepEqual(p.pins, [{ date: today, subject: { kind: "task", taskId: "t3" }, start: iso(30) }]);
+  assert.equal(p.blocks.filter((b) => b.taskId === "t3")[0]!.start, iso(30));
+  store.close();
+});
+
+test("stored pins for today apply to a plain reflow; pins for another date are ignored", async () => {
+  const { store, today, deps } = setup(T3());
+  store.withDb((db) => {
+    replaceDayPinsAndDropsInTx(db, today, [{ date: today, subject: { kind: "task", taskId: "t3" }, start: iso(200) }], []);
+    replaceDayPinsAndDropsInTx(db, "2020-01-01", [{ date: "2020-01-01", subject: { kind: "task", taskId: "t2" }, start: iso(200) }], []);
+  });
+  const r = await requestReshuffle(deps, { request });
+  assert.equal(r.ok, true);
+  if (!r.ok) return;
+  const p = r.value.proposal.suggested;
+  assert.equal(p.blocks.filter((b) => b.pinned).length, 1);
+  assert.equal(p.blocks.find((b) => b.pinned)!.taskId, "t3");
+  assert.equal(p.pins.length, 1);
+  assert.deepEqual(drops(store, today), []);
+  store.close();
+});

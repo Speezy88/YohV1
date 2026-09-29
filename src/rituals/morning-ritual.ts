@@ -208,6 +208,7 @@ import type { DataCompletenessGateResult } from "../core/data-completeness-gate.
 import { generatePlanReasoning } from "../core/plan-reasoning.ts";
 import { isOpenTask } from "../core/planning-field-value.ts";
 import { buildTimeBudgetChangeProposal, nextTimeBudgetDeferralStreak, resolveTodayTimeBudget } from "../core/time-budget.ts";
+import { listDayDrops, listDayPins } from "../adapters/plan-state-store.ts";
 import { computeDayRefit, computeSchoolDayInputs } from "./reshuffle.ts";
 import { runDataCompletenessGate } from "./data-completeness.ts";
 import {
@@ -784,6 +785,8 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
     fixedEvents: schoolDay.value.anchors,
     protectedWindows: schoolDay.value.protectedWindows,
     pastBlocks: [],
+    pins: deps.store.withDb((db) => listDayPins(db, today)),
+    drops: deps.store.withDb((db) => listDayDrops(db, today)),
     ...(deps.bumpLevels ? { bumpLevels: deps.bumpLevels } : {}),
     idPrefix: `v${(getPlan(deps.store, today)?.data.version ?? 0) + 1}`,
     log,

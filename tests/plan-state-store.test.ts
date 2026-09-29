@@ -242,3 +242,20 @@ test("leaseNotionRetryInTx lets exactly one sweep take a due retry", () => {
   assert.equal(getPendingCheckOff(connection, row.id)?.notionRetryAt, at(66_000));
   connection.close();
 });
+
+// T5: day pins and drops
+import { listDayDrops, listDayPins, replaceDayPinsAndDropsInTx } from "../src/adapters/plan-state-store.ts";
+
+test("day pins and drops: replace per date, read by date, other dates untouched, init idempotent", () => {
+  const connection = tempStore();
+  initPlanStateStoreSchema(connection.db);
+  const pin = (date: string, taskId: string, start: string) => ({ date, subject: { kind: "task" as const, taskId }, start });
+  connection.writeTx((db) => replaceDayPinsAndDropsInTx(db, "2026-08-22", [pin("2026-08-22", "a", "2026-08-22T11:00:00.000Z")], ["x"]));
+  connection.writeTx((db) => replaceDayPinsAndDropsInTx(db, "2026-08-23", [pin("2026-08-23", "b", "2026-08-23T11:00:00.000Z")], []));
+  assert.deepEqual(listDayPins(connection.db, "2026-08-22").map((p) => p.subject), [{ kind: "task", taskId: "a" }]);
+  assert.deepEqual(listDayDrops(connection.db, "2026-08-22"), ["x"]);
+  connection.writeTx((db) => replaceDayPinsAndDropsInTx(db, "2026-08-22", [], []));
+  assert.deepEqual(listDayPins(connection.db, "2026-08-22"), []);
+  assert.deepEqual(listDayDrops(connection.db, "2026-08-22"), []);
+  assert.equal(listDayPins(connection.db, "2026-08-23").length, 1);
+});

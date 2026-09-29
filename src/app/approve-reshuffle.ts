@@ -19,6 +19,7 @@ import {
   type MemoryStore,
 } from "../adapters/memory-store.ts";
 import { appendOutboxInTx, createNotificationInTx } from "../adapters/notification-store.ts";
+import { replaceDayPinsAndDropsInTx } from "../adapters/plan-state-store.ts";
 import type { SqliteConnection } from "../adapters/sqlite.ts";
 import { errorCopyForThrown } from "../core/error-copy.ts";
 import { calendarVersionHash, isProposalExpired } from "../core/reshuffle-preview.ts";
@@ -92,10 +93,15 @@ export async function approveReshuffle(
     calendarVersionHash(events) !== preview.calendarVersion;
   if (stale || !stored) return recompute(deps, proposal, requestId);
 
+  if (preview.rejectedReason !== undefined) {
+    return { ok: false, error: { kind: "validation", message: preview.rejectedReason } };
+  }
+
   const nowIso = nowDate.toISOString();
   const nextPlan = { ...stored.data, blocks: preview.blocks, version: stored.data.version + 1, updatedAt: nowIso };
   try {
     putPlan(deps.store, nextPlan, (db) => {
+      replaceDayPinsAndDropsInTx(db, today, preview.pins, preview.drops);
       appendOutboxInTx(db, { topic: PLAN_TOPIC, entityId: today });
       clearInteractionRequestInTx(db, requestId);
     });

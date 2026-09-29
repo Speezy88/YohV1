@@ -22,7 +22,17 @@ export function toFixedBlock(event: CalendarEvent, nowMs: number): HomeCalendarB
 
 /** A stored Plan's own `"work"`/`"break"` block, Yoh-owned — `completed` is the caller's own live-status lookup (today's Home view has one; a read of another day currently doesn't, and passes a constant `false`). */
 export function toOwnedBlock(block: PlanBlock & { kind: "work" | "break" }, completed: boolean, nowMs: number): HomeCalendarBlock {
-  return { id: block.id, kind: block.kind, label: block.label, start: block.start, end: block.end, completed, past: Date.parse(block.end) < nowMs };
+  return {
+    id: block.id,
+    kind: block.kind,
+    label: block.label,
+    start: block.start,
+    end: block.end,
+    completed,
+    past: Date.parse(block.end) < nowMs,
+    ...(block.kind === "work" && block.taskId !== undefined ? { taskId: block.taskId } : {}),
+    ...(block.pinned ? { pinned: true as const } : {}),
+  };
 }
 
 /** Every calendar block, Yoh-owned and fixed alike, in start-time order — the one order `CalendarDayView` ever renders (AD-17: decided server-side, never re-sorted client-side). */

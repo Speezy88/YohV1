@@ -126,6 +126,11 @@ export class MemoryStore {
     return this.connection.db;
   }
 
+  /** Runs `fn` against the underlying database, for another store's own tables (e.g. day pins). Reads only; writes go through a `*InTx` inside `writeTx`/`onCommit`. */
+  withDb<T>(fn: (db: Database.Database) => T): T {
+    return fn(this.db);
+  }
+
   /**
    * Initializes the SQLite schema on first run. `CREATE TABLE IF NOT
    * EXISTS` makes this idempotent — safe to run every time a `MemoryStore`

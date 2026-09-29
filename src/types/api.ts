@@ -137,6 +137,8 @@ export interface HomePlanRow {
   readonly past: boolean;
   /** Story 9.1 (additive, C2-style: added, never widened): mirrors the stored Plan block's own `PlanBlock.missingRefining`, passed through by `app/home-view.ts` untouched. Absent when nothing is missing. */
   readonly missingRefining?: readonly RefiningFieldNames[];
+  /** `true` when Spencer fixed this Task's time by hand (a pin). Absent otherwise. */
+  readonly pinned?: true;
 }
 
 /**
@@ -153,6 +155,10 @@ export interface HomeCalendarBlock {
   readonly end: string;
   readonly completed: boolean;
   readonly past: boolean;
+  /** The Task a `"work"` block is for; absent on breaks and fixed events. */
+  readonly taskId?: string;
+  /** `true` when the block sits at a time Spencer fixed by hand. Absent otherwise. */
+  readonly pinned?: true;
 }
 
 /**
