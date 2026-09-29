@@ -27,6 +27,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { serve } from "@hono/node-server";
 import { openSqliteConnection } from "../../src/adapters/sqlite.ts";
+import { initRoutineStoreSchema } from "../../src/adapters/routine-store.ts";
 import { initNotificationStoreSchema } from "../../src/adapters/notification-store.ts";
 import { initPlanStateStoreSchema } from "../../src/adapters/plan-state-store.ts";
 import { initCompletionLogSchema, listCompletedTaskIdsOnDate } from "../../src/adapters/completion-log.ts";
@@ -63,6 +64,7 @@ const dir = mkdtempSync(join(tmpdir(), "yoh-e2e-"));
 const connection = openSqliteConnection({ databasePath: join(dir, "yoh.db") });
 initNotificationStoreSchema(connection.db);
 initPlanStateStoreSchema(connection.db);
+initRoutineStoreSchema(connection.db);
 initCompletionLogSchema(connection.db);
 
 const store = createMemoryStore(connection);

@@ -57,6 +57,7 @@ import {
   OUTBOX_POLL_INTERVAL_MS,
   tailOutboxSince,
 } from "../adapters/notification-store.ts";
+import { initRoutineStoreSchema } from "../adapters/routine-store.ts";
 import { HEARTBEAT_INTERVAL_MS, initPlanStateStoreSchema, writeHeartbeat } from "../adapters/plan-state-store.ts";
 import { createMemoryStore, type MemoryStore } from "../adapters/memory-store.ts";
 import {
@@ -1670,6 +1671,7 @@ if (import.meta.main) {
   // AD-10: each owner creates its dedicated tables idempotently on startup.
   initNotificationStoreSchema(connection.db);
   initPlanStateStoreSchema(connection.db);
+  initRoutineStoreSchema(connection.db);
   initCompletionLogSchema(connection.db);
   // Real-use fixes plan, Task 9: `server.ts` is the ONE shell that makes
   // real Claude calls (POST /api/chat's `buildChatDeps` below) —

@@ -49,6 +49,7 @@ import {
   parseTimeBudgetCommand,
   parseWhyPrioritizedCommand,
 } from "../core/chat-commands.ts";
+import { parseRoutineCommand } from "../core/routine-commands.ts";
 import { resolveRelativeDate } from "../core/relative-date.ts";
 import { firstCardView } from "../core/sandbox-card-view.ts";
 import { parseSearchIntent } from "../core/search-intent.ts";
@@ -60,6 +61,7 @@ import { COMMANDS } from "./commands.ts";
 import { draftItem, type CreateItemDeps } from "./create-item.ts";
 import { dayView } from "./day-view.ts";
 import { answerQuestion } from "./general-question.ts";
+import { manageRoutine } from "./routines.ts";
 import { reflowDay } from "./mid-day-reflow.ts";
 import { morningView } from "./morning-view.ts";
 import { startNightCloseOut } from "./night-close-out.ts";
@@ -353,6 +355,17 @@ export async function chatTurn(deps: ChatTurnDeps, input: ChatTurnRequest): Prom
   // CREATE against a request that was never asking for one.
   if (isCalendarDeleteRequestCommand(input.message)) {
     return { ok: true, value: { reply: CALENDAR_DELETE_NOT_SUPPORTED_REPLY, receipts: [] } };
+  }
+
+  // Epic 10 (10.3, R8): routine declarations — before the plan-edit reply.
+  const routineCommand = parseRoutineCommand(input.message);
+  if (routineCommand) {
+    if (!deps.connection) {
+      return { ok: true, value: { reply: "I can't save routines right now.", receipts: [] } };
+    }
+    const routineResult = await manageRoutine({ connection: deps.connection }, routineCommand);
+    if (!routineResult.ok) return routineResult;
+    if (routineResult.value.handled) return { ok: true, value: { reply: routineResult.value.reply, receipts: [] } };
   }
 
   if (isPlanEditRequest(input.message)) {
