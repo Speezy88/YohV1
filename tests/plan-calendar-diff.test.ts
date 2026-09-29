@@ -135,3 +135,10 @@ test("durations round to whole minutes", () => {
   const e: YohPlanEvent = { eventId: "e1", blockId: "b-e1", title: "T", start: iso(30), end: new Date(NOW.getTime() + 60 * 60_000 + 40_000).toISOString() };
   assert.equal(run([work("e1", "t1", 30, 45)], [e]).taskPins[0]!.durationMinutes, 31);
 });
+
+test("a deleted block whose id left the Plan falls back to the Task title, else \"a block\", never the raw id", () => {
+  const snap = [{ eventId: "e1", blockId: "gone", kind: "work" as const, taskId: "raw-notion-id", start: "2026-08-22T19:00:00.000Z", end: "2026-08-22T19:30:00.000Z" }];
+  const base = { snapshot: snap, events: [], planBlocks: [], now: "2026-08-22T18:00:00.000Z", date: "2026-08-22" };
+  assert.deepEqual(diffPlanCalendar({ ...base, taskTitles: new Map([["raw-notion-id", "Write"]]) }).changedTitles, ["Write"]);
+  assert.deepEqual(diffPlanCalendar(base).changedTitles, ["a block"]);
+});

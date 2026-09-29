@@ -335,9 +335,15 @@ export function computeDayRefit(input: DayRefitInput): Result<DayRefitOutput, Yo
     if (pin.date !== input.date || pin.subject.kind !== "task") continue;
     const task = openById.get(pin.subject.taskId);
     if (!task || dropped.has(task.id) || pinned.some((p) => p.task.id === task.id)) continue;
-    // A pin already under way keeps the Task going from now.
-    const placedTask = pin.durationMinutes !== undefined ? { ...task, estimatedDurationMinutes: pin.durationMinutes } : task;
-    pinned.push({ task: placedTask, start: Date.parse(pin.start) < nowMs ? input.now : pin.start });
+    // A pin already under way keeps the Task going from now, for what is left of its length.
+    const underWay = Date.parse(pin.start) < nowMs;
+    let durationMinutes = pin.durationMinutes;
+    if (durationMinutes !== undefined && underWay) {
+      durationMinutes = Math.round(durationMinutes - (nowMs - Date.parse(pin.start)) / 60_000);
+      if (durationMinutes <= 0) continue;
+    }
+    const placedTask = durationMinutes !== undefined ? { ...task, estimatedDurationMinutes: durationMinutes } : task;
+    pinned.push({ task: placedTask, start: underWay ? input.now : pin.start });
   }
 
   const { anchors, protectedWindows } = mergeOverlappingAnchors(input.fixedEvents, input.protectedWindows ?? []);

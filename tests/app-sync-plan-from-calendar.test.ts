@@ -31,10 +31,11 @@ function setup() {
   const blocks: PlanBlock[] = [
     { id: "v1-work-0", kind: "work", start: iso(-30), end: iso(0), label: "Past", taskId: "t1" },
     { id: "v1-work-1", kind: "work", start: iso(30), end: iso(60), label: "Future", taskId: "t2" },
+    { id: "v1-work-2", kind: "work", start: iso(200), end: iso(230), label: "Later", taskId: "t4" },
   ];
   const plan: Plan = { id: `plan-${today}`, date: today, version: 1, reasoning: "x", createdAt: iso(-60), updatedAt: iso(-60), blocks };
   putPlan(store, plan);
-  const tasks = [task("t1", "Past"), task("t2", "Future"), task("t3", "Fresh")];
+  const tasks = [task("t1", "Past"), task("t2", "Future"), task("t3", "Fresh"), task("t4", "Later")];
 
   // A fake Yoh Plan calendar that reflects Yoh's writes and can be edited by "Spencer".
   let yohEvents: YohPlanEvent[] = [];
@@ -43,7 +44,7 @@ function setup() {
   const writeFake = (bs: readonly PlanBlock[], keepStale = false): void => {
     yohEvents = [...yohEvents.filter((e) => e.blockId === undefined), ...bs.map((b) => ({ eventId: `ev-${b.id}`, blockId: b.id, title: b.label, start: b.start, end: b.end }))];
     const fresh = bs.map(asEntry);
-    const old = keepStale ? listPlanCalendarSnapshot(connection.db, today).filter((e) => !fresh.some((f) => f.eventId === e.eventId)) : [];
+    const old = keepStale ? listPlanCalendarSnapshot(connection.db, today).filter((e) => e.taskId === "t2" && !fresh.some((f) => f.eventId === e.eventId)) : [];
     connection.writeTx((db) => replacePlanCalendarSnapshotInTx(db, today, [...old, ...fresh]));
   };
   writeFake(blocks.filter((b) => Date.parse(b.end) > NOW.getTime()));
@@ -55,14 +56,18 @@ function setup() {
   let eventReads = 0;
   let keepStale = false;
   let failWrites = false;
+  const logs: { event: string }[] = [];
+  let noCalendar = false;
   const deps: SyncPlanFromCalendarDeps = {
     store, connection, timeZone: TZ, now: () => NOW,
+    log: (e) => { logs.push(e); },
     readTasks: async () => tasks,
     readCalendarEvents: async () => busy,
     readYohPlanEvents: async () => {
       eventReads += 1;
       beforeRead();
       if (readFails) throw new Error("calendar down");
+      if (noCalendar) return undefined;
       return yohEvents;
     },
     readPlanCalendarSnapshot: (d) => listPlanCalendarSnapshot(connection.db, d),
@@ -78,7 +83,8 @@ function setup() {
     },
   };
   return {
-    store, connection, today, plan, deps, written,
+    store, connection, today, plan, deps, written, logs,
+    setNoCalendar: () => { noCalendar = true; },
     setEvents: (e: YohPlanEvent[]) => { yohEvents = e; },
     getEvents: () => yohEvents,
     setBusy: (e: CalendarEvent[]) => { busy = e; },
@@ -95,6 +101,7 @@ function setup() {
 const notifications = (c: SqliteConnection) => c.db.prepare("SELECT kind, title, body, deep_link FROM notifications").all() as { kind: string; title: string; body: string; deep_link: string }[];
 const planHints = (c: SqliteConnection) => tailOutboxSince(c, 0).filter((h) => h.topic === "plan").length;
 const t2Blocks = (s: ReturnType<typeof setup>) => getPlan(s.store, s.today)!.data.blocks.filter((b) => b.kind === "work" && b.taskId === "t2");
+const laterEv = (): YohPlanEvent => ({ eventId: "ev-v1-work-2", blockId: "v1-work-2", title: "Later", start: iso(200), end: iso(230) });
 const evOf = (s: ReturnType<typeof setup>, s0: number, e0: number, title = "Future"): YohPlanEvent => ({ eventId: "ev-v1-work-1", blockId: "v1-work-1", title, start: iso(s0), end: iso(e0) });
 
 test("no stored Plan: no-plan", async () => {
@@ -130,7 +137,7 @@ test("moved event: Task pinned at the new time, rest re-fitted, one plan hint an
   const n = notifications(s.connection);
   assert.equal(n.length, 1);
   assert.equal(n[0]!.kind, "plan-calendar-synced");
-  assert.equal(n[0]!.title, "Re-fit your day around your calendar change");
+  assert.equal(n[0]!.title, "Your day is re-fit around your calendar change");
   assert.equal(n[0]!.deep_link, "home");
   assert.match(n[0]!.body, /Future/);
   assert.equal(s.written.length, 1);
@@ -151,7 +158,7 @@ test("resized event: the new length is honored", async () => {
 
 test("deleted event: the Task is dropped for today and nothing is written to Notion", async () => {
   const s = setup();
-  s.setEvents([]);
+  s.setEvents([laterEv()]);
   const r = await syncPlanFromCalendar(s.deps, {});
   assert.ok(r.ok && r.value.status === "applied");
   assert.deepEqual(t2Blocks(s), []);
@@ -221,7 +228,7 @@ test("idempotent: a second sync right after applied is unchanged", async () => {
 test("delete then sync twice: the second sync is unchanged even when the snapshot kept a stale entry", async () => {
   const s = setup();
   s.keepStale();
-  s.setEvents([]);
+  s.setEvents([laterEv()]);
   assert.equal((await syncPlanFromCalendar(s.deps, {}) as { ok: true; value: { status: string } }).value.status, "applied");
   const second = await syncPlanFromCalendar(s.deps, {});
   assert.deepEqual(second, { ok: true, value: { status: "unchanged" } });
@@ -259,7 +266,7 @@ test("an overlap re-fit twice: the second sync is unchanged", async () => {
 test("a dropped Task's stored pin is removed too", async () => {
   const s = setup();
   s.connection.writeTx((db) => replaceDayPinsAndDropsInTx(db, s.today, [{ date: s.today, subject: { kind: "task", taskId: "t2" }, start: iso(30) }], []));
-  s.setEvents([]);
+  s.setEvents([laterEv()]);
   const r = await syncPlanFromCalendar(s.deps, {});
   assert.ok(r.ok && r.value.status === "applied");
   assert.deepEqual(listDayPins(s.connection.db, s.today), []);
@@ -277,12 +284,69 @@ test("a write in flight (fresh writing_since): unchanged, and the calendar is no
   s.store.close();
 });
 
-test("a stale writing_since (over 5 minutes) does not block the sync", async () => {
+test("a stale writing_since (over 5 minutes): no diff, the calendar is rewritten from the stored Plan, unchanged", async () => {
   const s = setup();
-  s.setEvents([evOf(s, 120, 150)]);
+  s.setEvents([evOf(s, 120, 150)]); // a half-written calendar: must not read as Spencer's move
   s.setWriteState({ writingSince: new Date(NOW.getTime() - 6 * 60_000).toISOString() });
+  assert.deepEqual(await syncPlanFromCalendar(s.deps, {}), { ok: true, value: { status: "unchanged" } });
+  assert.equal(s.written.length, 1);
+  assert.deepEqual(s.written[0]!.map((b) => b.id).sort(), ["v1-work-0", "v1-work-1", "v1-work-2"]);
+  assert.equal(getPlan(s.store, s.today)!.data.version, 1);
+  assert.deepEqual(listDayPins(s.connection.db, s.today), []);
+  assert.deepEqual(listDayDrops(s.connection.db, s.today), []);
+  assert.equal(planHints(s.connection), 0);
+  assert.equal(notifications(s.connection).length, 0);
+  // The rewrite re-recorded the snapshot and cleared the marker, so the next sync is quiet.
+  s.setWriteState({});
+  assert.deepEqual(await syncPlanFromCalendar(s.deps, {}), { ok: true, value: { status: "unchanged" } });
+  assert.equal(s.written.length, 1);
+  s.store.close();
+});
+
+test("no Yoh Plan calendar id (reader returns undefined): unchanged, nothing dropped or written", async () => {
+  const s = setup();
+  s.setNoCalendar();
+  assert.deepEqual(await syncPlanFromCalendar(s.deps, {}), { ok: true, value: { status: "unchanged" } });
+  assert.deepEqual(listDayDrops(s.connection.db, s.today), []);
+  assert.equal(getPlan(s.store, s.today)!.data.version, 1);
+  assert.deepEqual(s.written, []);
+  assert.equal(notifications(s.connection).length, 0);
+  s.store.close();
+});
+
+test("zero tagged events while the snapshot has future entries: unchanged, one warn log, nothing dropped", async () => {
+  const s = setup();
+  s.setEvents([]);
+  assert.deepEqual(await syncPlanFromCalendar(s.deps, {}), { ok: true, value: { status: "unchanged" } });
+  assert.deepEqual(s.logs.map((l) => l.event), ["plan-sync.no-tagged-events"]);
+  assert.deepEqual(listDayDrops(s.connection.db, s.today), []);
+  assert.deepEqual(s.written, []);
+  s.store.close();
+});
+
+test("an in-progress pin whose end matches the stored pin is unchanged even though its start is clamped to now", async () => {
+  const s = setup();
+  // Snapshot keeps the old entry (failed calendar update); Spencer moved the block to start 10 min ago, end +20.
+  s.connection.writeTx((db) => replaceDayPinsAndDropsInTx(db, s.today, [{ date: s.today, subject: { kind: "task", taskId: "t2" }, start: iso(-10), durationMinutes: 30 }], []));
+  s.setEvents([evOf(s, -10, 20), laterEv()]);
+  assert.deepEqual(await syncPlanFromCalendar(s.deps, {}), { ok: true, value: { status: "unchanged" } });
+  assert.equal(getPlan(s.store, s.today)!.data.version, 1);
+  s.store.close();
+});
+
+test("a deleted block whose id left the Plan shows its Task title, never a raw id", async () => {
+  const s = setup();
+  // Mid-day re-flow renamed the block ids: the snapshot's blockId is no longer in the Plan.
+  s.connection.writeTx((db) => replacePlanCalendarSnapshotInTx(db, s.today, [
+    { eventId: "ev-old", blockId: "gone-1", kind: "work", taskId: "t2", start: iso(30), end: iso(60) },
+    { eventId: "ev-v1-work-2", blockId: "v1-work-2", kind: "work", taskId: "t4", start: iso(200), end: iso(230) },
+  ]));
+  s.setEvents([{ eventId: "ev-v1-work-2", blockId: "v1-work-2", title: "Later", start: iso(200), end: iso(230) }]);
   const r = await syncPlanFromCalendar(s.deps, {});
   assert.ok(r.ok && r.value.status === "applied");
+  const body = notifications(s.connection)[0]!.body;
+  assert.match(body, /You changed Future/);
+  assert.ok(!body.includes("t2"));
   s.store.close();
 });
 

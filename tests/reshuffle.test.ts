@@ -358,3 +358,26 @@ test("a pin with durationMinutes shorter than the estimate places the shorter le
   const bWork = result.value.blocks.filter((x) => x.kind === "work" && x.taskId === "b");
   assert.deepEqual(bWork.map((x) => [x.start, x.end]), [["2026-08-22T11:00:00.000Z", "2026-08-22T11:20:00.000Z"]]);
 });
+
+test("an in-progress pin with durationMinutes is placed from now for the remaining length; re-fitting again does not stretch it", () => {
+  const openTasks = [task("b", 30, "2026-08-23")];
+  const nowMs = Date.parse(NOW);
+  const at = (mins: number) => new Date(nowMs + mins * 60_000).toISOString();
+  const pin: DayPin = { ...pinOf("b", at(-30)), durationMinutes: 50 };
+  const result = computeDayRefit(baseInput({ openTasks, pins: [pin] }));
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  const bWork = result.value.blocks.filter((x) => x.kind === "work" && x.taskId === "b");
+  assert.deepEqual(bWork.map((x) => [x.start, x.end]), [[NOW, at(20)]]);
+});
+
+test("an in-progress pin whose length has fully elapsed is skipped", () => {
+  const openTasks = [task("b", 30, "2026-08-23")];
+  const nowMs = Date.parse(NOW);
+  const pin: DayPin = { ...pinOf("b", new Date(nowMs - 60 * 60_000).toISOString()), durationMinutes: 50 };
+  const result = computeDayRefit(baseInput({ openTasks, pins: [pin] }));
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  const bWork = result.value.blocks.filter((x) => x.kind === "work" && x.taskId === "b");
+  assert.ok(bWork.length > 0 && bWork.every((x) => x.pinned !== true), "the elapsed pin no longer pins the Task");
+});

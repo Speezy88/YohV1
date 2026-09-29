@@ -12,6 +12,7 @@ import { appendOutboxInTx, createNotificationInTx } from "../adapters/notificati
 import { PLAN_CALENDAR_WRITE_FRESH_MS, type PlanCalendarWriteState } from "../adapters/plan-calendar-snapshot-store.ts";
 import { listDayDrops, listDayPins, replaceDayPinsAndDropsInTx } from "../adapters/plan-state-store.ts";
 import type { SqliteConnection } from "../adapters/sqlite.ts";
+import type { LogEntry } from "../adapters/logger.ts";
 import { errorCopyForThrown } from "../core/error-copy.ts";
 import { diffPlanCalendar } from "../core/plan-calendar-diff.ts";
 import { buildReshuffleSummary, diffPlanBlocks } from "../core/reshuffle-preview.ts";
@@ -24,8 +25,9 @@ export interface SyncPlanFromCalendarDeps extends RequestReshuffleDeps {
   readonly connection: SqliteConnection;
   /** `writeTodaysPlanToCalendar`, pre-bound. Receives only non-anchor blocks; returns per-block outcome. */
   readonly writeCalendarPlan?: (blocks: readonly PlanBlock[]) => Promise<{ readonly written: readonly string[]; readonly failed: readonly string[] }>;
-  /** Events on the Yoh Plan calendar for today, with the plan block each was written from. */
-  readonly readYohPlanEvents: () => Promise<readonly YohPlanEvent[]>;
+  /** Events on the Yoh Plan calendar for today, with the plan block each was written from; `undefined` when there is no Yoh Plan calendar id yet (never read as "everything deleted"). */
+  readonly readYohPlanEvents: () => Promise<readonly YohPlanEvent[] | undefined>;
+  readonly log?: (entry: LogEntry) => void;
   /** What Yoh last wrote to the Yoh Plan calendar for `date`. */
   readonly readPlanCalendarSnapshot: (date: string) => readonly PlanCalendarSnapshotEntry[];
   /** Whether Yoh is (or just was) writing the calendar for `date`; omitted means no guard. */
@@ -39,12 +41,30 @@ export type SyncPlanFromCalendarOutput = {
   readonly calendarFailedBlockIds?: readonly string[];
 };
 
-const pinKey = (p: DayPin): string =>
-  `${p.subject.kind === "task" ? `t:${p.subject.taskId}` : `r:${p.subject.routineId}`}@${Date.parse(p.start)}+${p.durationMinutes ?? ""}`;
-const samePins = (a: readonly DayPin[], b: readonly DayPin[]): boolean => a.length === b.length && sameIds(a.map(pinKey), b.map(pinKey));
+const MINUTE_MS = 60_000;
+const subjectKey = (p: DayPin): string => (p.subject.kind === "task" ? `t:${p.subject.taskId}` : `r:${p.subject.routineId}`);
+/** The pin's end when it has a length; an in-progress pin's start is clamped to now, so its end is the stable part. */
+const pinEndMs = (p: DayPin): number | undefined => (p.durationMinutes === undefined ? undefined : Date.parse(p.start) + p.durationMinutes * MINUTE_MS);
+const samePin = (a: DayPin, b: DayPin, nowMs: number): boolean => {
+  if (subjectKey(a) !== subjectKey(b)) return false;
+  if (Date.parse(a.start) === Date.parse(b.start) && a.durationMinutes === b.durationMinutes) return true;
+  const [ea, eb] = [pinEndMs(a), pinEndMs(b)];
+  const underWay = Math.min(Date.parse(a.start), Date.parse(b.start)) <= nowMs;
+  return underWay && ea !== undefined && eb !== undefined && Math.abs(ea - eb) <= MINUTE_MS;
+};
+const samePins = (a: readonly DayPin[], b: readonly DayPin[], nowMs: number): boolean => {
+  if (a.length !== b.length) return false;
+  const rest = [...b];
+  for (const p of a) {
+    const i = rest.findIndex((q) => samePin(p, q, nowMs));
+    if (i < 0) return false;
+    rest.splice(i, 1);
+  }
+  return true;
+};
 const sameIds = (a: readonly string[], b: readonly string[]): boolean => a.length === b.length && [...a].sort().join("\n") === [...b].sort().join("\n");
 
-const NOTIFICATION_TITLE = "Re-fit your day around your calendar change";
+const NOTIFICATION_TITLE = "Your day is re-fit around your calendar change";
 
 export async function syncPlanFromCalendar(
   deps: SyncPlanFromCalendarDeps,
@@ -60,17 +80,35 @@ export async function syncPlanFromCalendar(
   // Yoh's own in-flight calendar write must not read as Spencer's edit.
   const nowMs = nowDate.getTime();
   const writing = (w: PlanCalendarWriteState): boolean => w.writingSince !== undefined && nowMs - Date.parse(w.writingSince) < PLAN_CALENDAR_WRITE_FRESH_MS;
-  let events: readonly YohPlanEvent[];
+  let events: readonly YohPlanEvent[] | undefined;
   let snapshot: readonly PlanCalendarSnapshotEntry[];
   try {
     const before = deps.readPlanCalendarWriteState?.(today) ?? {};
     if (writing(before)) return { ok: true, value: { status: "unchanged" } };
+    if (before.writingSince !== undefined) {
+      // A writer that died mid-write left the snapshot untrustworthy: don't diff, rewrite the calendar from the stored Plan.
+      if (deps.writeCalendarPlan) {
+        try {
+          await deps.writeCalendarPlan(plan.blocks.filter((b) => b.kind !== "calendar-anchor"));
+        } catch {
+          // The marker stays stale; the next sync retries the rewrite.
+        }
+      }
+      return { ok: true, value: { status: "unchanged" } };
+    }
     events = await deps.readYohPlanEvents();
     snapshot = deps.readPlanCalendarSnapshot(today);
     const after = deps.readPlanCalendarWriteState?.(today) ?? {};
     if (writing(after) || after.writtenAt !== before.writtenAt) return { ok: true, value: { status: "unchanged" } };
   } catch (err) {
     return { ok: false, error: { kind: "unreachable", message: errorCopyForThrown(err), detail: err } };
+  }
+  // No Yoh Plan calendar yet: there is nothing to compare against.
+  if (events === undefined) return { ok: true, value: { status: "unchanged" } };
+  // Snapshot has future work but the calendar has no Yoh events at all: a read anomaly, not a mass deletion.
+  if (!events.some((e) => e.blockId !== undefined) && snapshot.some((s) => Date.parse(s.end) > nowMs)) {
+    deps.log?.({ level: "warn", event: "plan-sync.no-tagged-events", detail: { date: today, snapshotEntries: snapshot.length } });
+    return { ok: true, value: { status: "unchanged" } };
   }
 
   const diff = diffPlanCalendar({ snapshot, events, planBlocks: plan.blocks, now: nowDate.toISOString(), date: today });
@@ -90,7 +128,7 @@ export async function syncPlanFromCalendar(
     ...diff.routinePins.map((p): DayPin => ({ date: today, subject: { kind: "routine", routineId: p.routineId }, start: p.start })),
   ];
   // Nothing new to apply (e.g. the calendar write failed or the snapshot lags): stay quiet.
-  if (!diff.addedOverlap && samePins(mergedPins, storedPins) && sameIds(mergedDrops, storedDrops)) return { ok: true, value: { status: "unchanged" } };
+  if (!diff.addedOverlap && samePins(mergedPins, storedPins, nowMs) && sameIds(mergedDrops, storedDrops)) return { ok: true, value: { status: "unchanged" } };
 
   // A colliding pin from a sync is released by the refit, never a rejection.
   const result = await refitToday(deps, { plan, now: nowDate, resolveDay: () => ({ ok: true, value: { pins: mergedPins, drops: mergedDrops, requested: [] } }) });
@@ -106,8 +144,9 @@ export async function syncPlanFromCalendar(
   const blockById = new Map(blocks.map((b) => [b.id, b]));
   const movedTitles = blockDiff.movedBlockIds.map((id) => blockById.get(id)?.label ?? id);
   const deferredTitles = refit.deferredTaskIds.map((id) => titleOf.get(id) ?? id);
+  const changedTitles = diffPlanCalendar({ snapshot, events, planBlocks: plan.blocks, now: nowDate.toISOString(), date: today, taskTitles: titleOf }).changedTitles;
   const summary = [
-    ...(diff.changedTitles.length > 0 ? [`You changed ${diff.changedTitles.slice(0, 3).join(", ")}${diff.changedTitles.length > 3 ? `, +${diff.changedTitles.length - 3} more` : ""}.`] : []),
+    ...(changedTitles.length > 0 ? [`You changed ${changedTitles.slice(0, 3).join(", ")}${changedTitles.length > 3 ? `, +${changedTitles.length - 3} more` : ""}.`] : []),
     ...released.map((r) => `Unpinned ${r.title} — ${r.reason}.`),
     buildReshuffleSummary({ movedTitles, deferredTitles, needsDataCount: result.value.needsDataTaskIds.length, unplacedRoutineLabels: refit.unplacedRoutineLabels ?? [] }),
   ].join(" ");

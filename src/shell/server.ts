@@ -318,7 +318,7 @@ function getPlanSyncRunner(deps: SyncPlanFromCalendarDeps, log: (entry: LogEntry
     if (inFlight) return inFlight;
     inFlight = (async (): Promise<PlanSyncResult> => {
       try {
-        const result = await syncPlanFromCalendar(deps, {});
+        const result = await syncPlanFromCalendar({ ...deps, log: deps.log ?? log }, {});
         if (!result.ok) {
           log({ level: "error", event: "server.plan-sync-failed", detail: { message: result.error.message } });
         } else if (result.value.status === "applied") {
@@ -1811,7 +1811,7 @@ function buildChatDeps(
     planSyncReads: {
       readYohPlanEvents: async () => {
         const calendarId = getTokenStore().getCalendarId();
-        if (!calendarId) return [];
+        if (!calendarId) return undefined;
         return readYohPlanEvents(createCalendarReadClient(getTokenStore().getOAuth2Client() as unknown as Parameters<typeof createCalendarReadClient>[0]), calendarId, { timeZone, now: new Date() });
       },
       readPlanCalendarSnapshot: (date) => createPlanCalendarSnapshotStore(connection).list(date),

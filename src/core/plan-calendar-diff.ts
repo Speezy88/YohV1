@@ -13,6 +13,8 @@ export interface PlanCalendarDiffInput {
   readonly planBlocks: readonly PlanBlock[];
   readonly now: IsoDateTime;
   readonly date: IsoDate;
+  /** Task titles, for a deleted block whose id is no longer in `planBlocks`. */
+  readonly taskTitles?: ReadonlyMap<ExternalId, string>;
 }
 
 export interface PlanCalendarDiff {
@@ -54,7 +56,7 @@ export function diffPlanCalendar(input: PlanCalendarDiffInput): PlanCalendarDiff
       const e = eventById.get(s.eventId);
       if (e === undefined) {
         changed = true;
-        noteTitle(labelByBlock.get(s.blockId) ?? taskId);
+        noteTitle(labelByBlock.get(s.blockId) ?? input.taskTitles?.get(taskId) ?? "a block");
       } else {
         remaining.push(e);
         if (moved(s, e)) {

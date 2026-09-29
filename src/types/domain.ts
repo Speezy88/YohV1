@@ -521,7 +521,6 @@ export interface ReshufflePreview {
 // CalendarEvent (FR-1, AD-10)
 // ============================================================================
 
-/** An event on the "Yoh Plan" calendar. `blockId` is set when Yoh wrote it; absent means Spencer added it. */
 /** One calendar event Yoh wrote for a plan block, as last recorded for a local date. */
 export interface PlanCalendarSnapshotEntry {
   readonly eventId: string;
@@ -533,6 +532,7 @@ export interface PlanCalendarSnapshotEntry {
   readonly end: IsoDateTime;
 }
 
+/** An event on the "Yoh Plan" calendar. `blockId` is set when Yoh wrote it; absent means Spencer added it. */
 export interface YohPlanEvent {
   readonly eventId: string;
   readonly blockId?: string;
