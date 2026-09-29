@@ -779,6 +779,14 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
     return schoolDay;
   }
 
+  let routines: readonly Routine[];
+  try {
+    routines = (deps.readRoutines ?? (() => listRoutinesFromStore(deps.store)))();
+  } catch (err) {
+    log({ level: "error", event: "morning-ritual.read-routines-failed", detail: describeError(err) });
+    return failure("conflict", `morning-ritual: could not read routines — ${describeError(err)}`, err);
+  }
+
   // ONE shared pipeline (`rituals/reshuffle.ts`): order -> coalesce anchors
   // -> fit -> school-day last resort. A no-op past pass 1 on a non-school day.
   const refit = computeDayRefit({
@@ -790,7 +798,7 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
     fixedEvents: schoolDay.value.anchors,
     protectedWindows: schoolDay.value.protectedWindows,
     pastBlocks: [],
-    routines: (deps.readRoutines ?? (() => listRoutinesFromStore(deps.store)))(),
+    routines,
     pins: deps.store.withDb((db) => listDayPins(db, today)),
     drops: deps.store.withDb((db) => listDayDrops(db, today)),
     ...(deps.bumpLevels ? { bumpLevels: deps.bumpLevels } : {}),

@@ -272,3 +272,40 @@ test("routines: a routine goes around a pinned Task", () => {
   const pinnedEnd = Math.max(...r.value.blocks.filter((x) => x.taskId === "a").map((x) => Date.parse(x.end)));
   assert.ok(Date.parse(b.start) >= pinnedEnd || Date.parse(b.end) <= dayMs("11:00"));
 });
+
+// ---- Routines: stored blocks (fix round 1) ----
+
+const R1 = { id: "r1", label: "Commute", days: ["sat"] as const, startMinutes: 8 * 60, durationMinutes: 30 };
+const storedRoutine = (start: string, end: string): PlanBlock => ({ id: "v1-routine-r1", kind: "routine", routineId: "r1", label: "Commute", start: `2026-08-22T${start}:00.000Z`, end: `2026-08-22T${end}:00.000Z` });
+
+test("routines: a routine stored at a shifted future time stays there when the declared time has passed", () => {
+  const r = computeDayRefit(baseInput({ now: "2026-08-22T08:30:00.000Z", fixedEvents: [], routines: [R1], storedRoutineBlocks: [storedRoutine("09:00", "09:30")] }));
+  assert.equal(r.ok, true);
+  if (!r.ok) return;
+  const rb = r.value.blocks.filter((b) => b.kind === "routine");
+  assert.equal(rb.length, 1);
+  assert.equal(rb[0]!.start, "2026-08-22T09:00:00.000Z");
+});
+
+test("routines: a routine in progress is kept verbatim, not re-placed", () => {
+  const stored = storedRoutine("08:15", "08:45");
+  const r = computeDayRefit(baseInput({ now: "2026-08-22T08:30:00.000Z", fixedEvents: [], routines: [R1], storedRoutineBlocks: [stored] }));
+  assert.equal(r.ok, true);
+  if (!r.ok) return;
+  const rb = r.value.blocks.filter((b) => b.kind === "routine");
+  assert.deepEqual(rb, [stored]);
+  for (const b of r.value.blocks.filter((x) => x.kind !== "routine")) {
+    assert.ok(!(Date.parse(b.start) < Date.parse(stored.end) && Date.parse(stored.start) < Date.parse(b.end)), "work avoids the routine");
+  }
+});
+
+test("routines: a routine whose stored block already elapsed is not placed again", () => {
+  const past = storedRoutine("08:00", "08:30");
+  const r = computeDayRefit(baseInput({
+    now: "2026-08-22T08:45:00.000Z", fixedEvents: [], pastBlocks: [past], storedRoutineBlocks: [past],
+    routines: [{ ...R1, startMinutes: 9 * 60 }],
+  }));
+  assert.equal(r.ok, true);
+  if (!r.ok) return;
+  assert.deepEqual(r.value.blocks.filter((b) => b.kind === "routine"), [past]);
+});

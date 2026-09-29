@@ -225,6 +225,11 @@ export interface DayRefitInput {
   readonly drops?: readonly ExternalId[];
   /** Declared Routines; those whose days include `date`'s weekday are placed after anchors and pins, before work. They never consume the Time Budget. */
   readonly routines?: readonly Routine[];
+  /**
+   * Routine blocks already in the stored Plan, by `routineId`. One that is under way is kept verbatim;
+   * a future one keeps its start (the declared time is only the fallback); one already over is not placed again.
+   */
+  readonly storedRoutineBlocks?: readonly PlanBlock[];
   /** Prefix for every fitted block id, e.g. `v3` gives `v3-work-0`. */
   readonly idPrefix: string;
   readonly log?: (entry: LogEntry) => void;
@@ -392,24 +397,39 @@ export function computeDayRefit(input: DayRefitInput): Result<DayRefitOutput, Yo
   for (const pin of input.pins ?? []) {
     if (pin.date === input.date && pin.subject.kind === "routine") routinePinStart.set(pin.subject.routineId, Date.parse(pin.start));
   }
+  const storedByRoutine = new Map<string, PlanBlock>();
+  for (const b of input.storedRoutineBlocks ?? []) if (b.routineId !== undefined) storedByRoutine.set(b.routineId, b);
+  const keptRoutineBlocks: PlanBlock[] = [];
   const dayRoutines: DayRoutine[] = (input.routines ?? [])
     .filter((r) => r.days.includes(dayWeekday))
+    .filter((r) => {
+      const stored = storedByRoutine.get(r.id);
+      if (!stored || routinePinStart.has(r.id)) return true;
+      const endMs = Date.parse(stored.end);
+      if (endMs <= nowMs) return false; // already lived; it is in pastBlocks
+      if (Date.parse(stored.start) < nowMs) {
+        keptRoutineBlocks.push(stored); // under way: kept verbatim
+        return false;
+      }
+      return true;
+    })
     .map((r) => ({
       id: r.id,
       label: r.label,
       startMs: zonedInstantMs(input.date, r.startMinutes, input.timeZone),
       durationMinutes: r.durationMinutes,
+      ...(storedByRoutine.has(r.id) && Date.parse(storedByRoutine.get(r.id)!.start) >= nowMs ? { storedStartMs: Date.parse(storedByRoutine.get(r.id)!.start) } : {}),
       ...(routinePinStart.has(r.id) ? { pinnedStartMs: routinePinStart.get(r.id)! } : {}),
     }));
   const dayEndMs = zonedInstantMs(input.date, 24 * 60, input.timeZone);
   const routinePlacement = placeRoutines({
     routines: dayRoutines,
-    fixed: [...anchors, ...protectedWindows].map((e) => ({ startMs: Date.parse(e.start), endMs: Date.parse(e.end) })).concat(pinSpans),
+    fixed: [...anchors, ...protectedWindows].map((e) => ({ startMs: Date.parse(e.start), endMs: Date.parse(e.end) })).concat(pinSpans, keptRoutineBlocks.map((b) => ({ startMs: Date.parse(b.start), endMs: Date.parse(b.end) }))),
     nowMs,
     dayEndMs,
     idPrefix: input.idPrefix,
   });
-  const routineAnchors: CalendarEvent[] = routinePlacement.blocks.map((b, i) => ({ id: `routine-anchor-${i}`, title: ROUTINE_ANCHOR_TITLE, start: b.start, end: b.end }));
+  const routineAnchors: CalendarEvent[] = [...keptRoutineBlocks, ...routinePlacement.blocks].map((b, i) => ({ id: `routine-anchor-${i}`, title: ROUTINE_ANCHOR_TITLE, start: b.start, end: b.end }));
   const pinnedMinutes = pinBlocks.reduce((sum, b) => sum + (Date.parse(b.end) - Date.parse(b.start)) / MINUTES_TO_MS, 0);
   const budget: TimeBudget =
     pinnedMinutes > 0 ? { ...input.budget, totalMinutes: Math.max(1, Math.round(input.budget.totalMinutes - pinnedMinutes)) } : input.budget;
@@ -436,6 +456,7 @@ export function computeDayRefit(input: DayRefitInput): Result<DayRefitOutput, Yo
     ...fitted.value.blocks.filter((b) => !(b.kind === "calendar-anchor" && (b.label === PIN_ANCHOR_TITLE || b.label === ROUTINE_ANCHOR_TITLE))).map((b) => ({ ...b, id: `${input.idPrefix}-${b.id}` })),
     ...pinBlocks,
     ...routinePlacement.blocks,
+    ...keptRoutineBlocks,
   ].sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
   const blocks = [...input.pastBlocks, ...fittedBlocks].sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
   const fitMs = Date.now() - startedMs;

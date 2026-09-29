@@ -737,3 +737,21 @@ test("runMidDayReflow: a Blocker on a pinned Task is not re-placed at its pin, a
   assert.ok(stored.blocks.every((b) => b.pinned === undefined), "nothing is re-placed as pinned");
   assert.deepEqual(store.withDb((db) => listDayPins(db, TODAY)), []);
 });
+
+test("routines: a routine stored at a shifted future time survives a reflow after its declared time", async () => {
+  const base = morningPlan();
+  const stored: PlanBlock = { id: "v1-routine-r1", kind: "routine", routineId: "r1", label: "Commute", start: "2026-08-22T20:00:00.000Z", end: "2026-08-22T20:30:00.000Z" };
+  const { deps } = harness({ tasks: DEFAULT_TASKS, storedPlan: { ...base, blocks: [...base.blocks, stored] } });
+  const result = await runMidDayReflow({ ...deps, readRoutines: () => [{ id: "r1", label: "Commute", days: ["sat"], startMinutes: 10 * 60, durationMinutes: 30 }] });
+  assert.equal(result.ok, true);
+  if (!result.ok || result.value.status !== "reflowed") return;
+  const rb = result.value.plan.blocks.filter((b) => b.kind === "routine");
+  assert.equal(rb.length, 1);
+  assert.equal(rb[0]!.start, stored.start);
+});
+
+test("routines: a throwing routine read becomes a failure Result", async () => {
+  const { deps } = harness({ tasks: DEFAULT_TASKS });
+  const result = await runMidDayReflow({ ...deps, readRoutines: () => { throw new Error("database is locked"); } });
+  assert.equal(result.ok, false);
+});

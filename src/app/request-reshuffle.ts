@@ -206,6 +206,12 @@ export async function requestReshuffle(
   if (!resolved.ok) return resolved;
   const day = resolved.value;
 
+  let routines: readonly Routine[];
+  try {
+    routines = (deps.readRoutines ?? (() => listRoutinesFromStore(deps.store)))();
+  } catch (err) {
+    return fail("conflict", errorCopyForThrown(err), err);
+  }
   const refit = computeDayRefit({
     date: today,
     timeZone: deps.timeZone,
@@ -223,7 +229,8 @@ export async function requestReshuffle(
     pins: day.pins,
     drops: day.drops,
     requestPinTaskIds: day.requested ?? [],
-    routines: (deps.readRoutines ?? (() => listRoutinesFromStore(deps.store)))(),
+    routines,
+    storedRoutineBlocks: plan.blocks.filter((b) => b.kind === "routine"),
     bumpLevels: computeBumpLevels(deps.store),
     idPrefix: `v${plan.version + 1}`,
   });

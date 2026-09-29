@@ -19,7 +19,9 @@ export interface DayRoutine {
   readonly label: string;
   readonly startMs: number;
   readonly durationMinutes: number;
-  /** Set when Spencer pinned this Routine for today; overrides `startMs`. */
+  /** Where the stored Plan already had this Routine (still in the future); wanted over `startMs`, under a pin. */
+  readonly storedStartMs?: number;
+  /** Set when Spencer pinned this Routine for today; overrides everything. */
   readonly pinnedStartMs?: number;
 }
 
@@ -54,9 +56,9 @@ export function placeRoutines(input: PlaceRoutinesInput): PlaceRoutinesOutput {
     (a, b) => Number(b.pinnedStartMs !== undefined) - Number(a.pinnedStartMs !== undefined) || a.startMs - b.startMs,
   );
   for (const r of ordered) {
-    const wantedMs = r.pinnedStartMs ?? r.startMs;
+    const wantedMs = r.pinnedStartMs ?? r.storedStartMs ?? r.startMs;
     const lengthMs = r.durationMinutes * MINUTE_MS;
-    // Already over, or begun and not free where it was declared: skip silently.
+    // Wanted time already over: skip silently.
     if (wantedMs + lengthMs <= input.nowMs) continue;
     const free = (startMs: number): boolean => {
       const span = { startMs, endMs: startMs + lengthMs };
@@ -64,7 +66,7 @@ export function placeRoutines(input: PlaceRoutinesInput): PlaceRoutinesOutput {
     };
     let chosen: number | undefined;
     if (wantedMs < input.nowMs) {
-      // Under way: it stays where it was declared, or is skipped.
+      // Wanted start already passed but not the end: it stays there if that span is free, else it is skipped.
       if (free(wantedMs)) chosen = wantedMs;
     } else {
       for (let delta = 0; delta <= input.dayEndMs - input.nowMs; delta += STEP_MS) {

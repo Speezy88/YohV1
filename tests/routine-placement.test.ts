@@ -59,3 +59,11 @@ test("renderBlockLine marks a routine block as a routine", () => {
   const [line] = renderBlockLine({ id: "r", kind: "routine", routineId: "x", label: "Commute", start: "2026-08-22T15:00:00.000Z", end: "2026-08-22T15:30:00.000Z" }, "UTC", 80);
   assert.equal(line, "15:00-15:30  Commute (routine)");
 });
+
+import { listRoutinesFromStore } from "../src/adapters/routine-store.ts";
+
+test("listRoutinesFromStore: a missing routines table is empty; any other error is rethrown", () => {
+  const fake = (message: string) => ({ withDb: <T>(fn: (db: never) => T): T => fn({ prepare: () => { throw new Error(message); } } as never) });
+  assert.deepEqual(listRoutinesFromStore(fake("no such table: routines")), []);
+  assert.throws(() => listRoutinesFromStore(fake("database is locked")), /locked/);
+});

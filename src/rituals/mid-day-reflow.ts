@@ -586,6 +586,13 @@ export async function runMidDayReflow(deps: MidDayReflowDeps): Promise<Result<Mi
   // --- Order + fit, via the ONE shared pipeline (`rituals/reshuffle.ts`) ------
   // Anchors (including any protected windows the stored Plan carries) come
   // verbatim from the stored Plan.
+  let routines: readonly Routine[];
+  try {
+    routines = (deps.readRoutines ?? (() => listRoutinesFromStore(deps.store)))();
+  } catch (err) {
+    log({ level: "error", event: "mid-day-reflow.read-routines-failed", detail: describeError(err) });
+    return failure("conflict", `mid-day-reflow: could not read routines — ${describeError(err)}`, err);
+  }
   const nextVersion = existingPlan.data.version + 1;
   // See the file docstring's "Merging past and re-fit blocks" section: the
   // version-keyed prefix guarantees no id collision across successive re-flows.
@@ -604,7 +611,8 @@ export async function runMidDayReflow(deps: MidDayReflowDeps): Promise<Result<Mi
     pastBlocks,
     pins: activePins,
     drops: storedDrops,
-    routines: (deps.readRoutines ?? (() => listRoutinesFromStore(deps.store)))(),
+    routines,
+    storedRoutineBlocks: existingPlan.data.blocks.filter((b) => b.kind === "routine"),
     ...(deps.bumpLevels ? { bumpLevels: deps.bumpLevels } : {}),
     idPrefix: `v${nextVersion}`,
     log,

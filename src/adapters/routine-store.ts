@@ -75,8 +75,9 @@ export function listRoutinesFromStore(store: { withDb<T>(fn: (db: Database.Datab
     try {
       const rows = db.prepare(`SELECT id, label, days, start, duration_minutes FROM routines ORDER BY start, label`).all() as RoutineRow[];
       return rows.map(rowToRoutine);
-    } catch {
-      return [];
+    } catch (err) {
+      if (err instanceof Error && /no such table: routines/.test(err.message)) return [];
+      throw err;
     }
   });
 }

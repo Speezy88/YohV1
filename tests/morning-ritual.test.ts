@@ -1793,3 +1793,9 @@ test("routines: an unfit routine is listed on the stored Plan as unplaced", asyn
   if (!(result.ok && result.value.status === "delivered")) return;
   assert.deepEqual(result.value.plan.unplacedRoutineLabels, ["Huge"]);
 });
+
+test("routines: a throwing routine read becomes a failure Result, not an exception", async () => {
+  const h = harness({ tasks: [makeTask("t1", "Draft the memo")] });
+  const result = await runMorningRitual({ ...h.deps, readRoutines: () => { throw new Error("database is locked"); } });
+  assert.equal(result.ok, false);
+});
