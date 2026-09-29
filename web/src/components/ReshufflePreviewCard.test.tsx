@@ -32,9 +32,10 @@ describe("ReshufflePreviewCard", () => {
     expect(screen.getByText(/Stretch/)).toBeInTheDocument();
   });
 
-  it("announces the summary in a status live region", () => {
+  it("shows the summary but leaves announcing to Home's always-mounted live region", () => {
     render(<ReshufflePreviewCard preview={preview} onApprove={() => {}} onDiscard={() => {}} />);
-    expect(screen.getByRole("status")).toHaveTextContent(preview.summary);
+    expect(screen.getByText(preview.summary)).toBeInTheDocument();
+    expect(screen.queryByRole("status")).toBeNull();
   });
 
   it("a rejected preview shows the reason once and has no Approve", () => {

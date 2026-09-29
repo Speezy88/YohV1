@@ -345,6 +345,10 @@ function CalendarColumn({ today, blocks, timeZone, reshuffle }: CalendarColumnPr
           />
         )}
       </div>
+      {/* Always mounted so screen readers announce a preview when it appears. */}
+      <span data-testid="reshuffle-announcer" className="sr-only" role="status" aria-live="polite">
+        {reshuffle.preview ? (reshuffle.preview.rejectedReason ?? reshuffle.preview.summary) : ""}
+      </span>
       {reshuffle.preview && (
         <div className="shrink-0 pt-3">
           <ReshufflePreviewCard

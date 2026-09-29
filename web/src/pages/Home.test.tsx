@@ -15,7 +15,7 @@
  * Budget widget and the date/greeting header this task introduces.
  */
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
 import HomePage from "./Home.tsx";
 import * as homeViewModule from "../lib/homeView.ts";
 import * as calendarDayModule from "../lib/calendarDay.ts";
@@ -348,7 +348,8 @@ describe("HomePage", () => {
       }),
     );
     render(<HomePage />);
-    expect(screen.getByText("Moves Draft to 2 PM.")).toBeInTheDocument();
+    expect(within(screen.getByTestId("reshuffle-preview-card")).getByText("Moves Draft to 2 PM.")).toBeInTheDocument();
+    expect(screen.getByTestId("reshuffle-announcer")).toHaveTextContent("Moves Draft to 2 PM.");
     expect(screen.getByText(/Proposed block/)).toBeInTheDocument();
     expect(screen.queryByText(/Current block/)).toBeNull();
   });
@@ -357,5 +358,9 @@ describe("HomePage", () => {
     mockState(loaded());
     render(<HomePage />);
     expect(screen.queryByTestId("reshuffle-preview-card")).toBeNull();
+    // The live region stays mounted (empty) so a preview that appears later is announced.
+    const announcer = screen.getByTestId("reshuffle-announcer");
+    expect(announcer).toHaveAttribute("role", "status");
+    expect(announcer).toHaveTextContent("");
   });
 });
