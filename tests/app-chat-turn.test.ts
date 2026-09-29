@@ -14,10 +14,12 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { initRoutineStoreSchema } from "../src/adapters/routine-store.ts";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { createMemoryStore, getCurrentTimeBudget, getPlan, putOpenInteractionRequest, putPlan, putTimeBudget, type MemoryStore } from "../src/adapters/memory-store.ts";
 import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
-import { CALENDAR_DELETE_NOT_SUPPORTED_REPLY, chatTurn, PLAN_EDIT_NOT_SUPPORTED_REPLY, MAX_CHAT_HISTORY_TURNS, STATUS_THINKING, type ChatTurnDeps } from "../src/app/chat-turn.ts";
+import { PLAN_EDIT_HOW_TO_REPLY } from "../src/core/plan-edit-commands.ts";
+import { CALENDAR_DELETE_NOT_SUPPORTED_REPLY, chatTurn, MAX_CHAT_HISTORY_TURNS, STATUS_THINKING, type ChatTurnDeps } from "../src/app/chat-turn.ts";
 import { COMMANDS } from "../src/app/commands.ts";
 import type { AnthropicMessagesClient } from "../src/adapters/llm-adapter.ts";
 import type { ChatSession } from "../src/app/chat-session.ts";
@@ -1252,12 +1254,12 @@ test("/sandbox is case-insensitive and ignores a trailing word, matching every o
   assert.ok(result.value.sandboxCard);
 });
 
-test("a plan-change request gets the honest can't-swap reply, with zero LLM calls and no Task draft (real-use bug 2026-09-28)", async () => {
+test("an unparseable plan-change request gets the how-to reply, with zero LLM calls and no Task draft", async () => {
   const deps = baseDeps({ llmClient: throwingLlmClient() });
-  const result = await chatTurn(deps, { message: "change the plan to work in the indigenous tradition poster instead of the labs", history: [] });
+  const result = await chatTurn(deps, { message: "can you update my plan", history: [] });
   assert.equal(result.ok, true);
   if (!result.ok) return;
-  assert.equal(result.value.reply, PLAN_EDIT_NOT_SUPPORTED_REPLY);
+  assert.equal(result.value.reply, PLAN_EDIT_HOW_TO_REPLY);
   assert.equal(result.value.question, undefined);
 });
 
@@ -1299,4 +1301,105 @@ test("chatTurn: a blocker report still re-flows immediately, with no preview", a
   assert.ok(result.ok);
   if (!result.ok) return;
   assert.equal(result.value.question, undefined);
+});
+
+// ============================================================================
+// Epic 10 (T7): chat plan edits preview before applying
+// ============================================================================
+
+function planEditFixture(opts: { withPlan?: boolean } = {}) {
+  const now = new Date("2026-08-22T18:00:00.000Z");
+  const iso = (mins: number): string => new Date(now.getTime() + mins * 60_000).toISOString();
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db);
+  initRoutineStoreSchema(connection.db);
+  const store = createMemoryStore(connection);
+  putTimeBudget(store, { date: "2026-08-22", totalMinutes: 480, workMinutes: 70, breakMinutes: 15 });
+  if (opts.withPlan !== false) {
+    putPlan(store, {
+      id: "plan-2026-08-22", date: "2026-08-22", version: 1, reasoning: "x", createdAt: iso(-60), updatedAt: iso(-60),
+      blocks: [
+        { id: "v1-work-0", kind: "work", start: iso(30), end: iso(60), label: "History labs", taskId: "t-labs" },
+        { id: "v1-work-1", kind: "work", start: iso(90), end: iso(120), label: "Math set", taskId: "t-math" },
+        { id: "v1-work-2", kind: "work", start: iso(150), end: iso(180), label: "Math quiz prep", taskId: "t-quiz" },
+      ],
+    });
+  }
+  const titles: Record<string, string> = { "t-labs": "History labs", "t-math": "Math set", "t-quiz": "Math quiz prep", "t-poster": "Indigenous poster" };
+  const tasks = Object.entries(titles).map(([id, title]) => ({
+    id, title, createdAt: iso(-60), updatedAt: iso(-60), estimatedDurationMinutes: 30, area: "Work",
+    dueDate: "2026-08-22", status: "not-started", energy: "medium",
+  })) as Task[];
+  return { store, deps: baseDeps({ store, connection, now: () => now, readTasks: async () => tasks, readCalendarEventsFn: async () => [], llmClient: throwingLlmClient() }) };
+}
+
+test("chatTurn: \"work on X instead of Y\" previews a swap as Approve/Discard", async () => {
+  const { store, deps } = planEditFixture();
+  const result = await chatTurn(deps, { message: "work on the poster instead of the labs", history: [] });
+  assert.ok(result.ok);
+  if (!result.ok) return;
+  assert.deepEqual(result.value.question?.options.map((o) => o.label), ["Approve", "Discard"]);
+  assert.deepEqual((result.value.question?.proposal?.suggested as { request: unknown })?.request, { kind: "swap", addTaskId: "t-poster", removeTaskId: "t-labs" });
+  assert.equal(getPlan(store, "2026-08-22")?.data.version, 1);
+});
+
+test("chatTurn: \"drop X today\" and \"unpin X\" preview; \"move X after lunch\" previews a move", async () => {
+  const cases: [string, unknown][] = [
+    ["drop the labs today", { kind: "drop-task", taskId: "t-labs" }],
+    ["unpin history labs", { kind: "unpin-task", taskId: "t-labs" }],
+  ];
+  for (const [message, request] of cases) {
+    const { deps } = planEditFixture();
+    const result = await chatTurn(deps, { message, history: [] });
+    assert.ok(result.ok, message);
+    if (!result.ok) return;
+    assert.deepEqual((result.value.question?.proposal?.suggested as { request: unknown })?.request, request, message);
+  }
+  const { deps } = planEditFixture();
+  const moved = await chatTurn(deps, { message: "move the labs to 8pm", history: [] });
+  assert.ok(moved.ok);
+  if (!moved.ok) return;
+  assert.ok(moved.value.question, moved.value.reply);
+  assert.equal(((moved.value.question?.proposal?.suggested as { request: { kind: string } })).request.kind, "move-block");
+});
+
+test("chatTurn: an ambiguous plan-edit name asks which, listing up to three titles", async () => {
+  const { deps } = planEditFixture();
+  const result = await chatTurn(deps, { message: "drop math today", history: [] });
+  assert.ok(result.ok);
+  if (!result.ok) return;
+  assert.equal(result.value.question, undefined);
+  assert.match(result.value.reply, /Math set/);
+  assert.match(result.value.reply, /Math quiz prep/);
+});
+
+test("chatTurn: an unknown plan-edit name says it couldn't find it", async () => {
+  const { deps } = planEditFixture();
+  const result = await chatTurn(deps, { message: "drop the unicorn today", history: [] });
+  assert.ok(result.ok);
+  if (!result.ok) return;
+  assert.equal(result.value.reply, "I couldn't find unicorn in today's Plan.");
+});
+
+test("chatTurn: plan edits and re-flow with no Plan today reply plainly instead of erroring", async () => {
+  for (const message of ["drop the labs today", "I'm behind"]) {
+    const { deps } = planEditFixture({ withPlan: false });
+    const result = await chatTurn(deps, { message, history: [] });
+    assert.ok(result.ok, message);
+    if (!result.ok) return;
+    assert.equal(result.value.reply, "There's no Plan for today yet. Say \"plan my day\" to make one.", message);
+  }
+});
+
+test("chatTurn: a routine line still routes to routines, not plan edits", async () => {
+  const { deps } = planEditFixture();
+  const result = await chatTurn(deps, { message: "my study block is 3-3:30 on weekdays", history: [] });
+  assert.ok(result.ok);
+  if (!result.ok) return;
+  assert.equal(result.value.question, undefined);
+  assert.notEqual(result.value.reply, PLAN_EDIT_HOW_TO_REPLY);
+  assert.match(result.value.reply, /study block/i);
+  const listed = await chatTurn(deps, { message: "what are my routines", history: [] });
+  assert.ok(listed.ok);
+  if (listed.ok) assert.match(listed.value.reply, /study block/i);
 });

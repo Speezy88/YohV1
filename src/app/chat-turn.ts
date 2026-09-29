@@ -63,6 +63,9 @@ import { dayView } from "./day-view.ts";
 import { answerQuestion } from "./general-question.ts";
 import { manageRoutine } from "./routines.ts";
 import { requestReshuffle } from "./request-reshuffle.ts";
+import { PLAN_EDIT_HOW_TO_REPLY, parsePlanEditCommand, resolvePlanEdit } from "../core/plan-edit-commands.ts";
+import { isOpenTask } from "../core/planning-field-value.ts";
+import { computeSchoolDayInputs } from "../rituals/reshuffle.ts";
 import { morningView } from "./morning-view.ts";
 import { startNightCloseOut } from "./night-close-out.ts";
 import { planDay, type PlanDayDeps } from "./plan-day.ts";
@@ -75,7 +78,8 @@ import { explainPriority } from "./why-prioritized.ts";
 import { localIsoDate } from "../rituals/ritual-shared.ts";
 import type { LogEntry } from "../adapters/logger.ts";
 import type { AnthropicMessagesClient } from "../adapters/llm-adapter.ts";
-import type { MemoryStore } from "../adapters/memory-store.ts";
+import { getPlan, type MemoryStore } from "../adapters/memory-store.ts";
+import { errorCopyForThrown } from "../core/error-copy.ts";
 import type { ChatStreamEvent, ChatTurnRequest, ChatTurnResponse, MorningViewResponse } from "../types/api.ts";
 import type { CalendarEvent, ChatIntent, ChatTurn, ExternalId, IsoDate, PlanBlock, Result, Task, YohError } from "../types/domain.ts";
 
@@ -111,8 +115,7 @@ export const STATUS_CHECKING_TASKS = "Checking your Tasks…";
  */
 export const CALENDAR_DELETE_NOT_SUPPORTED_REPLY = "I can't delete or cancel calendar events for you — you'll need to do that directly in Google Calendar.";
 
-/** The plain, honest reply for a request to change which Tasks are in today's Plan (`isPlanEditRequest`) — not supported yet; only a re-fit is. */
-export const PLAN_EDIT_NOT_SUPPORTED_REPLY = "I can't swap or pick which Tasks are in today's Plan yet — I can only re-fit it. Say \"I'm behind\" and I'll re-fit the rest of the day from now.";
+const NO_PLAN_TODAY_REPLY = "There's no Plan for today yet. Say \"plan my day\" to make one.";
 
 export interface ChatTurnDeps extends CreateItemDeps, CalendarEditDeps, WebSearchDeps, SaveSearchResultDeps {
   readonly store: MemoryStore;
@@ -291,6 +294,9 @@ export async function chatTurn(deps: ChatTurnDeps, input: ChatTurnRequest): Prom
 
   if (isMidDayReflowCommand(input.message)) {
     emitStatus(deps, STATUS_CHECKING_TASKS);
+    if (!getPlan(deps.store, localIsoDate(deps.now(), deps.timeZone))) {
+      return { ok: true, value: { reply: NO_PLAN_TODAY_REPLY, receipts: [] } };
+    }
     const requested = await requestReshuffle(
       { store: deps.store, timeZone: deps.timeZone, now: deps.now, readTasks: deps.readTasks, readCalendarEvents: deps.readCalendarEventsFn },
       { request: { kind: "reflow-now" } },
@@ -380,8 +386,56 @@ export async function chatTurn(deps: ChatTurnDeps, input: ChatTurnRequest): Prom
     if (routineResult.value.handled) return { ok: true, value: { reply: routineResult.value.reply, receipts: [] } };
   }
 
+  // Epic 10 (T7, R9): plan edits resolve deterministically, then preview as Approve/Discard.
+  const planEdit = parsePlanEditCommand(input.message);
+  if (planEdit) {
+    const today = localIsoDate(deps.now(), deps.timeZone);
+    const stored = getPlan(deps.store, today);
+    if (!stored) {
+      // "move my 3pm to 4" is a calendar edit when there's no Plan to move within.
+      if (planEdit.kind !== "move") return { ok: true, value: { reply: NO_PLAN_TODAY_REPLY, receipts: [] } };
+    } else {
+      let tasks: readonly Task[] = [];
+      let lunchEnd: string | undefined;
+      try {
+        if (planEdit.kind !== "move") tasks = (await deps.readTasks()).filter(isOpenTask);
+        if (planEdit.when?.kind === "after-lunch") {
+          const school = computeSchoolDayInputs(await deps.readCalendarEventsFn(), today, deps.timeZone);
+          if (school.ok) lunchEnd = school.value.protectedWindows.find((w) => w.title === "Lunch")?.end;
+        }
+      } catch (err) {
+        return { ok: false, error: { kind: "unreachable", message: errorCopyForThrown(err), detail: err } };
+      }
+      const resolved = resolvePlanEdit(planEdit, {
+        date: today,
+        timeZone: deps.timeZone,
+        nowMs: deps.now().getTime(),
+        blocks: stored.data.blocks,
+        tasks: tasks.map((t) => ({ id: t.id, title: t.title })),
+        ...(lunchEnd !== undefined ? { lunchEnd } : {}),
+      });
+      if (resolved.kind === "reply") return { ok: true, value: { reply: resolved.reply, receipts: [] } };
+      if (resolved.kind === "request") {
+        emitStatus(deps, STATUS_CHECKING_TASKS);
+        const requested = await requestReshuffle(
+          { store: deps.store, timeZone: deps.timeZone, now: deps.now, readTasks: deps.readTasks, readCalendarEvents: deps.readCalendarEventsFn },
+          { request: resolved.request },
+        );
+        if (!requested.ok) return requested;
+        return {
+          ok: true,
+          value: {
+            reply: `${requested.value.proposal.suggested.summary} Approve to apply it, or discard to keep today's Plan as it is.`,
+            receipts: [],
+            question: requested.value.question,
+          },
+        };
+      }
+    }
+  }
+
   if (isPlanEditRequest(input.message)) {
-    return { ok: true, value: { reply: PLAN_EDIT_NOT_SUPPORTED_REPLY, receipts: [] } };
+    return { ok: true, value: { reply: PLAN_EDIT_HOW_TO_REPLY, receipts: [] } };
   }
 
   if (isCalendarEditCommand(input.message)) {
