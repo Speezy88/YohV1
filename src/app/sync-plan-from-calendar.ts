@@ -9,7 +9,8 @@
  */
 import { getPlan, PLAN_TOPIC, putPlan, ConflictError, type MemoryStore } from "../adapters/memory-store.ts";
 import { appendOutboxInTx, createNotificationInTx } from "../adapters/notification-store.ts";
-import { replaceDayPinsAndDropsInTx } from "../adapters/plan-state-store.ts";
+import { PLAN_CALENDAR_WRITE_FRESH_MS, type PlanCalendarWriteState } from "../adapters/plan-calendar-snapshot-store.ts";
+import { listDayDrops, listDayPins, replaceDayPinsAndDropsInTx } from "../adapters/plan-state-store.ts";
 import type { SqliteConnection } from "../adapters/sqlite.ts";
 import { errorCopyForThrown } from "../core/error-copy.ts";
 import { diffPlanCalendar } from "../core/plan-calendar-diff.ts";
@@ -27,6 +28,8 @@ export interface SyncPlanFromCalendarDeps extends RequestReshuffleDeps {
   readonly readYohPlanEvents: () => Promise<readonly YohPlanEvent[]>;
   /** What Yoh last wrote to the Yoh Plan calendar for `date`. */
   readonly readPlanCalendarSnapshot: (date: string) => readonly PlanCalendarSnapshotEntry[];
+  /** Whether Yoh is (or just was) writing the calendar for `date`; omitted means no guard. */
+  readonly readPlanCalendarWriteState?: (date: string) => PlanCalendarWriteState;
 }
 
 export type SyncPlanFromCalendarInput = Record<string, never>;
@@ -35,6 +38,11 @@ export type SyncPlanFromCalendarOutput = {
   readonly status: "no-plan" | "unchanged" | "applied" | "skipped-conflict";
   readonly calendarFailedBlockIds?: readonly string[];
 };
+
+const pinKey = (p: DayPin): string =>
+  `${p.subject.kind === "task" ? `t:${p.subject.taskId}` : `r:${p.subject.routineId}`}@${Date.parse(p.start)}+${p.durationMinutes ?? ""}`;
+const samePins = (a: readonly DayPin[], b: readonly DayPin[]): boolean => a.length === b.length && sameIds(a.map(pinKey), b.map(pinKey));
+const sameIds = (a: readonly string[], b: readonly string[]): boolean => a.length === b.length && [...a].sort().join("\n") === [...b].sort().join("\n");
 
 const NOTIFICATION_TITLE = "Re-fit your day around your calendar change";
 
@@ -49,11 +57,18 @@ export async function syncPlanFromCalendar(
   if (!stored) return { ok: true, value: { status: "no-plan" } };
   const plan = stored.data;
 
+  // Yoh's own in-flight calendar write must not read as Spencer's edit.
+  const nowMs = nowDate.getTime();
+  const writing = (w: PlanCalendarWriteState): boolean => w.writingSince !== undefined && nowMs - Date.parse(w.writingSince) < PLAN_CALENDAR_WRITE_FRESH_MS;
   let events: readonly YohPlanEvent[];
   let snapshot: readonly PlanCalendarSnapshotEntry[];
   try {
+    const before = deps.readPlanCalendarWriteState?.(today) ?? {};
+    if (writing(before)) return { ok: true, value: { status: "unchanged" } };
     events = await deps.readYohPlanEvents();
     snapshot = deps.readPlanCalendarSnapshot(today);
+    const after = deps.readPlanCalendarWriteState?.(today) ?? {};
+    if (writing(after) || after.writtenAt !== before.writtenAt) return { ok: true, value: { status: "unchanged" } };
   } catch (err) {
     return { ok: false, error: { kind: "unreachable", message: errorCopyForThrown(err), detail: err } };
   }
@@ -61,23 +76,24 @@ export async function syncPlanFromCalendar(
   const diff = diffPlanCalendar({ snapshot, events, planBlocks: plan.blocks, now: nowDate.toISOString(), date: today });
   if (!diff.changed) return { ok: true, value: { status: "unchanged" } };
 
+  // Merge the new pins and drops into the day's stored ones.
+  const storedPins = deps.store.withDb((db) => listDayPins(db, today));
+  const storedDrops = deps.store.withDb((db) => listDayDrops(db, today));
   const pinnedTaskIds = new Set<ExternalId>(diff.taskPins.map((p) => p.taskId));
   const pinnedRoutineIds = new Set(diff.routinePins.map((p) => p.routineId));
-  const result = await refitToday(deps, {
-    plan,
-    resolveDay: ({ currentDay }) => {
-      const kept = currentDay.pins.filter((p) =>
-        p.subject.kind === "task" ? !pinnedTaskIds.has(p.subject.taskId) : !pinnedRoutineIds.has(p.subject.routineId),
-      );
-      const fresh: DayPin[] = [
-        ...diff.taskPins.map((p): DayPin => ({ date: today, subject: { kind: "task", taskId: p.taskId }, start: p.start, durationMinutes: p.durationMinutes })),
-        ...diff.routinePins.map((p): DayPin => ({ date: today, subject: { kind: "routine", routineId: p.routineId }, start: p.start })),
-      ];
-      const drops = [...new Set([...currentDay.drops.filter((d) => !pinnedTaskIds.has(d)), ...diff.drops])];
-      // A colliding pin from a sync is released by the refit, never a rejection.
-      return { ok: true, value: { pins: [...kept, ...fresh], drops, requested: [] } };
-    },
-  });
+  const mergedDrops = [...new Set([...storedDrops.filter((d) => !pinnedTaskIds.has(d)), ...diff.drops])];
+  const mergedPins: DayPin[] = [
+    ...storedPins.filter((p) =>
+      p.subject.kind === "task" ? !pinnedTaskIds.has(p.subject.taskId) && !mergedDrops.includes(p.subject.taskId) : !pinnedRoutineIds.has(p.subject.routineId),
+    ),
+    ...diff.taskPins.map((p): DayPin => ({ date: today, subject: { kind: "task", taskId: p.taskId }, start: p.start, durationMinutes: p.durationMinutes })),
+    ...diff.routinePins.map((p): DayPin => ({ date: today, subject: { kind: "routine", routineId: p.routineId }, start: p.start })),
+  ];
+  // Nothing new to apply (e.g. the calendar write failed or the snapshot lags): stay quiet.
+  if (!diff.addedOverlap && samePins(mergedPins, storedPins) && sameIds(mergedDrops, storedDrops)) return { ok: true, value: { status: "unchanged" } };
+
+  // A colliding pin from a sync is released by the refit, never a rejection.
+  const result = await refitToday(deps, { plan, now: nowDate, resolveDay: () => ({ ok: true, value: { pins: mergedPins, drops: mergedDrops, requested: [] } }) });
   if (!result.ok) return result;
   const { blocks, day, refit, rawTasks } = result.value;
 

@@ -1316,7 +1316,7 @@ test("writeTodaysPlanToCalendar records inserted and updated events in the snaps
   ];
   await writeTodaysPlanToCalendar(client, store, blocks, { now: WRITE_FIXED_NOW, timeZone: "UTC", snapshot });
   const got = snapshot.list(SNAP_DATE);
-  // ev-old reused (updated) for b1; b2 inserted; ev-gone (not listed today) keeps its prior entry.
+  // ev-old reused (updated) for b1; b2 inserted; ev-gone (not listed today) is pruned.
   const byEvent = new Map(got.map((e) => [e.eventId, e]));
   assert.equal(byEvent.get("ev-old")?.blockId, "b1");
   assert.equal(byEvent.get("ev-old")?.taskId, "t1");
@@ -1324,7 +1324,7 @@ test("writeTodaysPlanToCalendar records inserted and updated events in the snaps
   assert.equal(byEvent.get("generated-event-1")?.routineId, "r1");
   assert.equal(byEvent.get("generated-event-1")?.kind, "routine");
   assert.equal(byEvent.get("generated-event-1")?.start, "2026-08-22T15:00:00.000Z");
-  assert.ok(byEvent.has("ev-gone"));
+  assert.equal(byEvent.has("ev-gone"), false);
 });
 
 test("writeTodaysPlanToCalendar removes a successfully deleted event from the snapshot", async () => {
@@ -1433,4 +1433,34 @@ test("readCalendarEvents does not re-read the Yoh Plan calendar when its id equa
   const c2 = new FakeCalendarReadClient([{ items: [] }]);
   await readCalendarEvents(c2, { now: FIXED_NOW, timeZone: "UTC", yohPlanCalendarId: "primary" });
   assert.equal(c2.calls.length, 1);
+});
+
+test("writeTodaysPlanToCalendar prunes the entry of an event Spencer deleted", async () => {
+  const client = new FakeCalendarWriteClient({ listResponses: [{ items: [taggedEvent("ev-a", "a")] }] });
+  const snapshot = new FakeSnapshot();
+  snapshot.replace(SNAP_DATE, [snapEntry("ev-a", "a"), snapEntry("ev-b", "b")]);
+  const blocks: PlanBlock[] = [
+    { id: "a", kind: "work", start: "2026-08-22T09:00:00.000Z", end: "2026-08-22T10:00:00.000Z", label: "A", taskId: "t" },
+  ];
+  await writeTodaysPlanToCalendar(client, new FakeCalendarIdStore("cal"), blocks, { now: WRITE_FIXED_NOW, timeZone: "UTC", snapshot });
+  assert.deepEqual(snapshot.list(SNAP_DATE).map((e) => e.eventId), ["ev-a"]);
+});
+
+test("writeTodaysPlanToCalendar marks the write in flight and always finishes it, even when recording throws", async () => {
+  const calls: string[] = [];
+  const snapshot = {
+    list: () => [],
+    replace: () => {
+      calls.push("replace");
+      throw new Error("db down");
+    },
+    beginWrite: (d: string) => void calls.push(`begin:${d}`),
+    finishWrite: (d: string) => void calls.push(`finish:${d}`),
+  };
+  const client = new FakeCalendarWriteClient({ listResponses: [{ items: [] }] });
+  const blocks: PlanBlock[] = [
+    { id: "a", kind: "work", start: "2026-08-22T09:00:00.000Z", end: "2026-08-22T10:00:00.000Z", label: "A", taskId: "t" },
+  ];
+  await assert.rejects(writeTodaysPlanToCalendar(client, new FakeCalendarIdStore("cal"), blocks, { now: WRITE_FIXED_NOW, timeZone: "UTC", snapshot }), /db down/);
+  assert.deepEqual(calls, [`begin:${SNAP_DATE}`, "replace", `finish:${SNAP_DATE}`]);
 });

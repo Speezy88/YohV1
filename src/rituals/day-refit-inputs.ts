@@ -69,10 +69,10 @@ function fail(kind: YohError["kind"], message: string, detail?: unknown): Result
  */
 export async function refitToday(
   deps: DayRefitDeps,
-  input: { readonly plan: Plan; readonly resolveDay: (ctx: RefitContext) => Result<DayChange, YohError> },
+  input: { readonly plan: Plan; /** The caller's clock reading, so its own math and the fit agree on `now`. */ readonly now?: Date; readonly resolveDay: (ctx: RefitContext) => Result<DayChange, YohError> },
 ): Promise<Result<DayRefitResult, YohError>> {
   const { plan } = input;
-  const nowDate = deps.now();
+  const nowDate = input.now ?? deps.now();
   const nowMs = nowDate.getTime();
   const today = localIsoDate(nowDate, deps.timeZone);
 

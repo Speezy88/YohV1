@@ -125,6 +125,7 @@ export async function requestReshuffle(
 
   const result = await refitToday(deps, {
     plan,
+    now: nowDate,
     resolveDay: (ctx) =>
       resolveRequest(input.request, ctx.currentDay, {
         today,

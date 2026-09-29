@@ -379,6 +379,10 @@ export interface CalendarWriteConfig {
   readonly snapshot?: {
     list(date: string): readonly PlanCalendarSnapshotEntry[];
     replace(date: string, entries: PlanCalendarSnapshotEntry[]): void;
+    /** Marks a write as in flight for `date` (before the first event write). */
+    beginWrite?(date: string, at: string): void;
+    /** Clears the in-flight mark and stamps the write time (after the snapshot is replaced), even when the write threw. */
+    finishWrite?(date: string, at: string): void;
   };
 }
 
@@ -698,7 +702,9 @@ export async function writeTodaysPlanToCalendar(
   const failed: string[] = [];
   const recorded = new Map<string, PlanCalendarSnapshotEntry>();
   const snapshotDate = config.snapshot ? localDateString(now, config.timeZone) : "";
-  for (const entry of config.snapshot?.list(snapshotDate) ?? []) recorded.set(entry.eventId, entry);
+  // Only entries whose event still exists today: one Spencer deleted or dragged off the day is gone for good.
+  const listedIds = new Set((existingResponse.data.items ?? []).map((item) => item.id).filter((id): id is string => !!id));
+  for (const entry of config.snapshot?.list(snapshotDate) ?? []) if (listedIds.has(entry.eventId)) recorded.set(entry.eventId, entry);
   const entryFor = (block: PlanBlock, eventId: string): PlanCalendarSnapshotEntry => ({
     eventId,
     blockId: block.id,
@@ -708,33 +714,41 @@ export async function writeTodaysPlanToCalendar(
     start: block.start,
     end: block.end,
   });
-  for (const block of blocks) {
-    const requestBody = toEventRequestBody(block);
-    const existingEventId = eventForBlock.get(block.id);
-    try {
-      if (existingEventId !== undefined) {
-        await client.events.update({ calendarId, eventId: existingEventId, requestBody });
-        recorded.set(existingEventId, entryFor(block, existingEventId));
-      } else {
-        const inserted = await client.events.insert({ calendarId, requestBody });
-        const newEventId = inserted?.data?.id;
-        if (newEventId) recorded.set(newEventId, entryFor(block, newEventId));
+  config.snapshot?.beginWrite?.(snapshotDate, now.toISOString());
+  try {
+    for (const block of blocks) {
+      const requestBody = toEventRequestBody(block);
+      const existingEventId = eventForBlock.get(block.id);
+      try {
+        if (existingEventId !== undefined) {
+          await client.events.update({ calendarId, eventId: existingEventId, requestBody });
+          recorded.set(existingEventId, entryFor(block, existingEventId));
+        } else {
+          const inserted = await client.events.insert({ calendarId, requestBody });
+          const newEventId = inserted?.data?.id;
+          if (newEventId) recorded.set(newEventId, entryFor(block, newEventId));
+        }
+        written.push(block.id);
+      } catch {
+        failed.push(block.id);
       }
-      written.push(block.id);
-    } catch {
-      failed.push(block.id);
     }
-  }
 
-  for (const ev of leftoverEvents) {
+    for (const ev of leftoverEvents) {
+      try {
+        await client.events.delete({ calendarId, eventId: ev.eventId });
+        recorded.delete(ev.eventId);
+      } catch {
+        failed.push(ev.blockId);
+      }
+    }
+  } finally {
     try {
-      await client.events.delete({ calendarId, eventId: ev.eventId });
-      recorded.delete(ev.eventId);
-    } catch {
-      failed.push(ev.blockId);
+      config.snapshot?.replace(snapshotDate, [...recorded.values()]);
+    } finally {
+      config.snapshot?.finishWrite?.(snapshotDate, (config.now ?? (() => new Date()))().toISOString());
     }
   }
-  config.snapshot?.replace(snapshotDate, [...recorded.values()]);
   return { written, failed };
 }
 

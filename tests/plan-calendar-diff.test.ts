@@ -108,3 +108,30 @@ test("an untagged event that overlaps nothing, or only a past or anchor block, d
   assert.equal(run([], [ev("u", -50, -40)], [blk("p1", "work", -60, -30)]).addedOverlap, false);
   assert.equal(run([], [ev("u", 30, 60)], [blk("p1", "calendar-anchor", 30, 60)]).addedOverlap, false);
 });
+
+test("an event dragged to another day (absent from today's events) drops the Task", () => {
+  const r = run([work("e1", "t1", 30, 60)], []);
+  assert.deepEqual(r.drops, ["t1"]);
+});
+
+test("a snapshot work entry with no taskId is ignored", () => {
+  const entry: PlanCalendarSnapshotEntry = { eventId: "e1", blockId: "b-e1", kind: "work", start: iso(30), end: iso(60) };
+  assert.equal(run([entry], []).changed, false);
+  assert.equal(run([entry], [ev("e1", 90, 120, "b-e1")]).changed, false);
+});
+
+test("a Task split across two blocks with the first half moved pins at the earliest start with both lengths", () => {
+  const snap = [work("e1", "t1", 30, 60), work("e2", "t1", 90, 120)];
+  const r = run(snap, [ev("e1", 200, 230, "b-e1"), ev("e2", 90, 120, "b-e2")]);
+  assert.deepEqual(r.taskPins, [{ taskId: "t1", start: iso(90), durationMinutes: 60 }]);
+});
+
+test("an in-progress entry that is extended pins at now for the rest of the event", () => {
+  const r = run([work("e1", "t1", -10, 20)], [ev("e1", -10, 50, "b-e1")]);
+  assert.deepEqual(r.taskPins, [{ taskId: "t1", start: NOW.toISOString(), durationMinutes: 50 }]);
+});
+
+test("durations round to whole minutes", () => {
+  const e: YohPlanEvent = { eventId: "e1", blockId: "b-e1", title: "T", start: iso(30), end: new Date(NOW.getTime() + 60 * 60_000 + 40_000).toISOString() };
+  assert.equal(run([work("e1", "t1", 30, 45)], [e]).taskPins[0]!.durationMinutes, 31);
+});

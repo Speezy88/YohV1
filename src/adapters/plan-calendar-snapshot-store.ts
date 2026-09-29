@@ -9,6 +9,15 @@ import type { SqliteConnection } from "./sqlite.ts";
 
 export type { PlanCalendarSnapshotEntry };
 
+/** A write that began less than this long ago is treated as still in flight (a crashed writer's marker goes stale). */
+export const PLAN_CALENDAR_WRITE_FRESH_MS = 5 * 60_000;
+
+/** Whether Yoh is writing the Yoh Plan calendar for a date: `writingSince` is set and younger than the freshness window. */
+export interface PlanCalendarWriteState {
+  readonly writingSince?: string;
+  readonly writtenAt?: string;
+}
+
 const tablesReady = new WeakSet<Database.Database>();
 
 function ensureSnapshotTable(db: Database.Database): void {
@@ -24,6 +33,11 @@ function ensureSnapshotTable(db: Database.Database): void {
       start TEXT NOT NULL,
       end TEXT NOT NULL,
       PRIMARY KEY (date, event_id)
+    );
+    CREATE TABLE IF NOT EXISTS plan_calendar_write_state (
+      date TEXT PRIMARY KEY,
+      writing_since TEXT,
+      written_at TEXT
     );
   `);
   tablesReady.add(db);
@@ -70,11 +84,40 @@ export function replacePlanCalendarSnapshotInTx(
   }
 }
 
+/** The write state for one date (empty when nothing was ever written). */
+export function getPlanCalendarWriteState(db: Database.Database, date: string): PlanCalendarWriteState {
+  ensureSnapshotTable(db);
+  const row = db.prepare("SELECT writing_since, written_at FROM plan_calendar_write_state WHERE date = ?").get(date) as
+    | { writing_since: string | null; written_at: string | null }
+    | undefined;
+  return {
+    ...(row?.writing_since ? { writingSince: row.writing_since } : {}),
+    ...(row?.written_at ? { writtenAt: row.written_at } : {}),
+  };
+}
+
+export function beginPlanCalendarWrite(db: Database.Database, date: string, at: string): void {
+  ensureSnapshotTable(db);
+  db.prepare(
+    "INSERT INTO plan_calendar_write_state (date, writing_since) VALUES (?, ?) ON CONFLICT(date) DO UPDATE SET writing_since = excluded.writing_since",
+  ).run(date, at);
+}
+
+export function finishPlanCalendarWrite(db: Database.Database, date: string, at: string): void {
+  ensureSnapshotTable(db);
+  db.prepare(
+    "INSERT INTO plan_calendar_write_state (date, writing_since, written_at) VALUES (?, NULL, ?) ON CONFLICT(date) DO UPDATE SET writing_since = NULL, written_at = excluded.written_at",
+  ).run(date, at);
+}
+
 export function createPlanCalendarSnapshotStore(connection: SqliteConnection) {
   return {
     list: (date: string): PlanCalendarSnapshotEntry[] => listPlanCalendarSnapshot(connection.db, date),
     replace: (date: string, entries: readonly PlanCalendarSnapshotEntry[]): void => {
       connection.writeTx((db) => replacePlanCalendarSnapshotInTx(db, date, entries));
     },
+    writeState: (date: string): PlanCalendarWriteState => getPlanCalendarWriteState(connection.db, date),
+    beginWrite: (date: string, at: string): void => connection.writeTx((db) => beginPlanCalendarWrite(db, date, at)),
+    finishWrite: (date: string, at: string): void => connection.writeTx((db) => finishPlanCalendarWrite(db, date, at)),
   };
 }
