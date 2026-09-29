@@ -346,7 +346,7 @@ export function computeDayRefit(input: DayRefitInput): Result<DayRefitOutput, Yo
     placements = placements.filter((p) => p !== collision.release);
   }
   if (rejection !== undefined) {
-    const unpinned = computeDayRefit({ ...input, pins: [] });
+    const unpinned = computeDayRefit({ ...input, pins: [], requestPinTaskIds: [] });
     return unpinned.ok ? { ok: true, value: { ...unpinned.value, rejectedReason: rejection } } : unpinned;
   }
 

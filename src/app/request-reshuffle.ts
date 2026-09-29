@@ -10,7 +10,8 @@ import { clearInteractionRequest, getCurrentTimeBudget, getPlan, type MemoryStor
 import { listDayDrops, listDayPins } from "../adapters/plan-state-store.ts";
 import { listOpenReshuffleProposals } from "../adapters/reshuffle-proposal-store.ts";
 import { errorCopyForThrown } from "../core/error-copy.ts";
-import { isOpenTask } from "../core/planning-field-value.ts";
+import type { MissingFieldReport } from "../core/data-completeness-gate.ts";
+import { isOpenTask, PLANNING_FIELD_LABELS } from "../core/planning-field-value.ts";
 import { buildReshuffleSummary, calendarVersionHash, diffPlanBlocks } from "../core/reshuffle-preview.ts";
 import { runDataCompletenessGate } from "../rituals/data-completeness.ts";
 import { computeDayRefit, computeSchoolDayInputs, elapsedMinutesWithinBlock } from "../rituals/reshuffle.ts";
@@ -70,11 +71,16 @@ interface DayChange {
 function resolveRequest(
   request: ReshuffleRequest,
   current: DayChange,
-  ctx: { readonly today: IsoDate; readonly nowMs: number; readonly timeZone: string; readonly plan: { readonly blocks: readonly PlanBlock[] }; readonly openIds: ReadonlySet<ExternalId> },
+  ctx: { readonly today: IsoDate; readonly nowMs: number; readonly timeZone: string; readonly plan: { readonly blocks: readonly PlanBlock[] }; readonly openIds: ReadonlySet<ExternalId>; readonly incomplete: ReadonlyMap<ExternalId, MissingFieldReport> },
 ): Result<DayChange, YohError> {
   const without = (taskId: ExternalId): DayPin[] => current.pins.filter((p) => taskSubject(p) !== taskId);
   const pinAt = (taskId: ExternalId, start: string): Result<DayChange, YohError> => {
     const startMs = Date.parse(start);
+    const missing = ctx.incomplete.get(taskId);
+    if (missing) {
+      const labels = missing.missingFields.map((f) => PLANNING_FIELD_LABELS[f]).join(" and ");
+      return fail("validation", `${missing.taskTitle} needs ${labels} before I can place it.`);
+    }
     if (!ctx.openIds.has(taskId)) return fail("validation", "That Task isn't open for today, so I can't place it.");
     if (startMs < ctx.nowMs || localIsoDate(new Date(startMs), ctx.timeZone) !== ctx.today) {
       return fail("validation", "Pick a time later today.");
@@ -184,6 +190,7 @@ export async function requestReshuffle(
     timeZone: deps.timeZone,
     plan,
     openIds: new Set(outstanding.map((t) => t.id)),
+    incomplete: new Map(gate.value.incomplete.map((r) => [r.taskId, r])),
   });
   if (!resolved.ok) return resolved;
   const day = resolved.value;

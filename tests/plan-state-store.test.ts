@@ -259,3 +259,16 @@ test("day pins and drops: replace per date, read by date, other dates untouched,
   assert.deepEqual(listDayDrops(connection.db, "2026-08-22"), []);
   assert.equal(listDayPins(connection.db, "2026-08-23").length, 1);
 });
+
+test("T5: a rolled-back first write does not leave the day-pin tables marked ready without existing", () => {
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  assert.throws(() =>
+    connection.writeTx((db) => {
+      replaceDayPinsAndDropsInTx(db, "2026-08-22", [], ["x"]);
+      throw new Error("boom");
+    }),
+  );
+  assert.deepEqual(listDayDrops(connection.db, "2026-08-22"), []);
+  connection.writeTx((db) => replaceDayPinsAndDropsInTx(db, "2026-08-22", [], ["y"]));
+  assert.deepEqual(listDayDrops(connection.db, "2026-08-22"), ["y"]);
+});

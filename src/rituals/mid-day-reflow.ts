@@ -238,7 +238,7 @@ import { appendOutboxInTx } from "../adapters/notification-store.ts";
 import type { LogEntry } from "../adapters/logger.ts";
 import type { DataCompletenessGateResult } from "../core/data-completeness-gate.ts";
 import { isOpenTask } from "../core/planning-field-value.ts";
-import { listDayDrops, listDayPins } from "../adapters/plan-state-store.ts";
+import { listDayDrops, listDayPins, replaceDayPinsAndDropsInTx } from "../adapters/plan-state-store.ts";
 import { computeDayRefit, elapsedMinutesWithinBlock } from "./reshuffle.ts";
 import { runDataCompletenessGate } from "./data-completeness.ts";
 import { describeError, failure, localIsoDate, missingRefiningFor, renderPlan } from "./ritual-shared.ts";
@@ -461,6 +461,12 @@ export async function runMidDayReflow(deps: MidDayReflowDeps): Promise<Result<Mi
     ? findBlockerOverrideBlockId(existingPlan.data.blocks, nowMs)
     : undefined;
 
+  // A Task Spencer just reported blocked on must not be re-placed at its pin.
+  const blockedTaskId = existingPlan.data.blocks.find((b) => b.id === overrideBlockId)?.taskId;
+  const storedPins = deps.store.withDb((db) => listDayPins(db, today));
+  const storedDrops = deps.store.withDb((db) => listDayDrops(db, today));
+  const activePins = blockedTaskId === undefined ? storedPins : storedPins.filter((p) => !(p.subject.kind === "task" && p.subject.taskId === blockedTaskId));
+
   const pastBlocks = existingPlan.data.blocks.filter((b) => isElapsed(b, nowMs) && b.id !== overrideBlockId);
   const remainingBlocks = existingPlan.data.blocks.filter((b) => !isElapsed(b, nowMs) || b.id === overrideBlockId);
 
@@ -591,8 +597,8 @@ export async function runMidDayReflow(deps: MidDayReflowDeps): Promise<Result<Mi
     },
     fixedEvents: remainingAnchorEvents,
     pastBlocks,
-    pins: deps.store.withDb((db) => listDayPins(db, today)),
-    drops: deps.store.withDb((db) => listDayDrops(db, today)),
+    pins: activePins,
+    drops: storedDrops,
     ...(deps.bumpLevels ? { bumpLevels: deps.bumpLevels } : {}),
     idPrefix: `v${nextVersion}`,
     log,
@@ -639,7 +645,11 @@ export async function runMidDayReflow(deps: MidDayReflowDeps): Promise<Result<Mi
   try {
     // Story 7.8, Ruling R4: same atomic Plan-change outbox hint as
     // morning-ritual.ts's own putPlan call — see that call site's comment.
-    putPlan(deps.store, plan, (db) => appendOutboxInTx(db, { topic: PLAN_TOPIC, entityId: plan.date }));
+    putPlan(deps.store, plan, (db) => {
+      // The blocked Task's pin goes in the same transaction as the Plan write.
+      if (activePins.length !== storedPins.length) replaceDayPinsAndDropsInTx(db, today, activePins, storedDrops);
+      appendOutboxInTx(db, { topic: PLAN_TOPIC, entityId: plan.date });
+    });
   } catch (err) {
     log({ level: "error", event: "mid-day-reflow.persist-failed", detail: describeError(err) });
     return failure("conflict", `mid-day-reflow: could not persist the updated Plan — ${describeError(err)}`, err);

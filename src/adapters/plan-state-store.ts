@@ -93,7 +93,8 @@ function ensureDayPinTables(db: Database.Database): void {
       PRIMARY KEY (date, task_id)
     );
   `);
-  dayPinTablesReady.add(db);
+  // DDL inside a transaction rolls back with it, so only remember the tables outside one.
+  if (!db.inTransaction) dayPinTablesReady.add(db);
 }
 
 /** The day's pins; other dates are never returned. */

@@ -706,3 +706,34 @@ test("re-flow blocks carry v<version>-<kind>-<n> ids, keep past blocks and store
   assert.equal(new Set(stored.blocks.map((b) => b.id)).size, stored.blocks.length);
   assert.ok(entries.some((e) => e.event === "reshuffle.computed"));
 });
+
+// T5 fix round 2: a reported blocker releases the blocked Task's pin
+import { listDayPins, replaceDayPinsAndDropsInTx } from "../src/adapters/plan-state-store.ts";
+
+test("runMidDayReflow: a Blocker on a pinned Task is not re-placed at its pin, and the pin row is deleted with the Plan write", async () => {
+  const plan: Plan = {
+    id: `plan-${TODAY}`,
+    date: TODAY,
+    blocks: [
+      block({ id: "work-0", kind: "work", start: "2026-08-22T14:00:00.000Z", end: "2026-08-22T14:30:00.000Z", label: "Blocked Task", taskId: "t-blocked", pinned: true }),
+    ],
+    reasoning: "x",
+    version: 1,
+    createdAt: "2026-08-22T09:00:00.000Z",
+    updatedAt: "2026-08-22T09:00:00.000Z",
+  };
+  const { deps, store } = harness({
+    tasks: [makeTask("t-blocked", "Blocked Task"), makeTask("t-other", "Other Task")],
+    storedPlan: plan,
+    nowIso: "2026-08-22T14:10:00.000Z",
+  });
+  store.withDb((db) =>
+    replaceDayPinsAndDropsInTx(db, TODAY, [{ date: TODAY, subject: { kind: "task", taskId: "t-blocked" }, start: "2026-08-22T14:00:00.000Z" }], []),
+  );
+  const result = await runMidDayReflow({ ...deps, blockerReported: true });
+  assert.equal(result.ok, true);
+  const stored = getPlan(store, TODAY)!.data;
+  assert.ok(stored.blocks.some((b) => b.taskId === "t-blocked"), "the blocked Task is still re-fit");
+  assert.ok(stored.blocks.every((b) => b.pinned === undefined), "nothing is re-placed as pinned");
+  assert.deepEqual(store.withDb((db) => listDayPins(db, TODAY)), []);
+});

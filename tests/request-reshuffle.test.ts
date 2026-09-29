@@ -264,3 +264,11 @@ test("an in-progress stored pin keeps its Task going from now", async () => {
   assert.equal(t2[0]?.start, NOW_ISO);
   store.close();
 });
+
+test("pin-task on an open Task missing required data names the fields it needs", async () => {
+  const { store, deps } = setup([task("t1", "Past"), task("t2", "Future"), task("t3", "Fresh", { estimatedDurationMinutes: undefined, dueDate: undefined } as unknown as Partial<Task>)]);
+  const r = await requestReshuffle(deps, { request: { kind: "pin-task", taskId: "t3", newStart: iso(120) } });
+  assert.equal(!r.ok && r.error.kind, "validation");
+  assert.equal(!r.ok && r.error.message, "Fresh needs Estimated Duration and Due Date before I can place it.");
+  store.close();
+});
