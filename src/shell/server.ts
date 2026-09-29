@@ -82,6 +82,7 @@ import {
   type CalendarBroadClient,
   type CalendarWriteClient,
 } from "../adapters/calendar-adapter.ts";
+import { createPlanCalendarSnapshotStore } from "../adapters/plan-calendar-snapshot-store.ts";
 import {
   bindNotionCreatePage,
   bindNotionTaskWrites,
@@ -1334,6 +1335,7 @@ function buildHomeViewDeps(notion: NotionFeatureConfig, env: Readonly<Record<str
         readCalendarEvents(calendarClient, {
           timeZone: notion.timeZone,
           extraCalendarIds: parseExtraCalendarIds(env["YOH_EXTRA_CALENDAR_IDS"]),
+          yohPlanCalendarId: tokenStore.getCalendarId(),
           log: writeStructuredLog,
         }),
       readTasks: readTasksWith(notion),
@@ -1372,6 +1374,7 @@ function buildCalendarDayDeps(notion: NotionFeatureConfig, env: Readonly<Record<
           timeZone: notion.timeZone,
           date,
           extraCalendarIds: parseExtraCalendarIds(env["YOH_EXTRA_CALENDAR_IDS"]),
+          yohPlanCalendarId: tokenStore.getCalendarId(),
           log: writeStructuredLog,
         }),
     };
@@ -1611,6 +1614,7 @@ function buildChatDeps(
     readCalendarEvents(createCalendarReadClient(getTokenStore().getOAuth2Client() as unknown as Parameters<typeof createCalendarReadClient>[0]), {
       timeZone,
       extraCalendarIds: parseExtraCalendarIds(env["YOH_EXTRA_CALENDAR_IDS"]),
+      yohPlanCalendarId: getTokenStore().getCalendarId(),
       log: writeStructuredLog,
     });
   // Real-use fixes plan, Task 5 ("what's happening tomorrow"): the same
@@ -1622,6 +1626,7 @@ function buildChatDeps(
       timeZone,
       date,
       extraCalendarIds: parseExtraCalendarIds(env["YOH_EXTRA_CALENDAR_IDS"]),
+      yohPlanCalendarId: getTokenStore().getCalendarId(),
       log: writeStructuredLog,
     });
   // Real-use fixes plan, Task 1 ("plan my day on demand"): `/plan`'s own
@@ -1703,7 +1708,7 @@ function buildChatDeps(
     // `/plan` — see that file's own doc comment for why (this object is
     // built once at server startup, but a long-running process can see
     // fresh `SlipHistory` rows written hours later, e.g. via `/night`).
-    writeCalendarPlan: (blocks) => writeTodaysPlanToCalendar(getCalendarWriteClient(), getTokenStore(), blocks, { timeZone }),
+    writeCalendarPlan: (blocks) => writeTodaysPlanToCalendar(getCalendarWriteClient(), getTokenStore(), blocks, { timeZone, snapshot: createPlanCalendarSnapshotStore(connection) }),
     log: (entry) => writeStructuredLog(entry),
     // Reshuffle approval (chat "Approve" answers via `answerOpenItem`) — the
     // same narrow Yoh-Plan-calendar writer `/plan` uses, never the broad client.
@@ -1713,7 +1718,7 @@ function buildChatDeps(
       now: () => new Date(),
       readTasks,
       readCalendarEvents: readCalendarEventsFn,
-      writeCalendarPlan: (blocks) => writeTodaysPlanToCalendar(getCalendarWriteClient(), getTokenStore(), blocks, { timeZone }),
+      writeCalendarPlan: (blocks) => writeTodaysPlanToCalendar(getCalendarWriteClient(), getTokenStore(), blocks, { timeZone, snapshot: createPlanCalendarSnapshotStore(connection) }),
     },
     // Story 8.6 (Task 7): `AnswerOpenItemDeps`'s own fields — spread in via
     // each write function's adapter-owned binder (never named directly

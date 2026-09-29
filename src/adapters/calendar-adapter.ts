@@ -158,6 +158,7 @@
 import { calendar, type calendar_v3, type GlobalOptions } from "@googleapis/calendar";
 import { isValidIsoDateTime, normalizeIsoDateTime as toUtcIsoDateTime } from "./iso-datetime.ts";
 import type { LogEntry } from "./logger.ts";
+import type { PlanCalendarSnapshotEntry } from "./plan-calendar-snapshot-store.ts";
 import type {
   CalendarEditChange,
   CalendarEvent,
@@ -168,6 +169,7 @@ import type {
   Proposal,
   Result,
   YohError,
+  YohPlanEvent,
 } from "../types/domain.ts";
 
 // ============================================================================
@@ -347,6 +349,13 @@ export interface CalendarAdapterConfig {
    */
   readonly extraCalendarIds?: readonly string[];
   /**
+   * The "Yoh Plan" calendar's id, when one exists. Events Spencer added there
+   * (no `PLAN_BLOCK_ID_EXTENDED_PROPERTY` tag) are read as fixed commitments;
+   * Yoh's own tagged events are never returned. A failed read is logged as
+   * `calendar.yoh-plan-read-failed` and skipped.
+   */
+  readonly yohPlanCalendarId?: string | undefined;
+  /**
    * Injected structured-log seam (same `LogEntry` shape every `rituals/*.ts`
    * ritual's own `log?` seam uses), called with a `"warn"` event when an
    * extra calendar's read fails. Optional and a no-op when omitted — tests
@@ -366,6 +375,11 @@ export interface CalendarWriteConfig {
   readonly timeZone: string;
   /** Injectable clock defining "now", defaults to `() => new Date()`. */
   readonly now?: () => Date;
+  /** Where to record what this write left on the calendar. Optional; omitted means nothing is recorded. */
+  readonly snapshot?: {
+    list(date: string): readonly PlanCalendarSnapshotEntry[];
+    replace(date: string, entries: PlanCalendarSnapshotEntry[]): void;
+  };
 }
 
 // ============================================================================
@@ -473,11 +487,62 @@ export async function readCalendarEvents(
     }
   }
 
+  const yohPlanId = config.yohPlanCalendarId;
+  if (yohPlanId && yohPlanId !== (config.calendarId ?? PRIMARY_CALENDAR_ID) && !(config.extraCalendarIds ?? []).includes(yohPlanId)) {
+    try {
+      const response = await listWindow(yohPlanId);
+      for (const item of response.data.items ?? []) {
+        if (item.status === "cancelled" || isAllDayEvent(item)) continue;
+        if (item.extendedProperties?.private?.[PLAN_BLOCK_ID_EXTENDED_PROPERTY]) continue;
+        events.push({ ...toCalendarEvent(item), calendarId: yohPlanId });
+      }
+    } catch (err) {
+      config.log?.({
+        level: "warn",
+        event: "calendar.yoh-plan-read-failed",
+        detail: { calendarId: yohPlanId, message: err instanceof Error ? err.message : String(err) },
+      });
+    }
+  }
+
   // Merges the primary + extra-calendar events back into one chronological list;
   // plain string comparison is correct here only because `a.start`/`b.start` are
   // already normalized-UTC `IsoDateTime` strings (`toCalendarEvent`), whose
   // lexical order matches chronological order.
   return events.sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0));
+}
+
+/**
+ * Today's timed events on the "Yoh Plan" calendar, tagged (Yoh-written) and
+ * untagged (added by Spencer) alike. All-day and cancelled events are skipped.
+ */
+export async function readYohPlanEvents(
+  client: CalendarReadClient,
+  calendarId: string,
+  config: { timeZone: string; now: Date },
+): Promise<YohPlanEvent[]> {
+  const { start, end } = localDayWindowUtc(config.now, config.timeZone);
+  const response = await client.events.list({
+    calendarId,
+    timeMin: start.toISOString(),
+    timeMax: end.toISOString(),
+    singleEvents: true,
+    orderBy: "startTime",
+  });
+  const out: YohPlanEvent[] = [];
+  for (const item of response.data.items ?? []) {
+    if (item.status === "cancelled" || isAllDayEvent(item) || !item.id) continue;
+    if (!item.start?.dateTime || !item.end?.dateTime) continue;
+    const blockId = item.extendedProperties?.private?.[PLAN_BLOCK_ID_EXTENDED_PROPERTY];
+    out.push({
+      eventId: item.id,
+      ...(blockId ? { blockId } : {}),
+      title: item.summary ?? "",
+      start: toIsoDateTime(item.start),
+      end: toIsoDateTime(item.end),
+    });
+  }
+  return out.sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0));
 }
 
 // ============================================================================
@@ -631,14 +696,29 @@ export async function writeTodaysPlanToCalendar(
 
   const written: string[] = [];
   const failed: string[] = [];
+  const recorded = new Map<string, PlanCalendarSnapshotEntry>();
+  const snapshotDate = config.snapshot ? localDateString(now, config.timeZone) : "";
+  for (const entry of config.snapshot?.list(snapshotDate) ?? []) recorded.set(entry.eventId, entry);
+  const entryFor = (block: PlanBlock, eventId: string): PlanCalendarSnapshotEntry => ({
+    eventId,
+    blockId: block.id,
+    kind: block.kind,
+    ...(block.taskId !== undefined ? { taskId: block.taskId } : {}),
+    ...(block.routineId !== undefined ? { routineId: block.routineId } : {}),
+    start: block.start,
+    end: block.end,
+  });
   for (const block of blocks) {
     const requestBody = toEventRequestBody(block);
     const existingEventId = eventForBlock.get(block.id);
     try {
       if (existingEventId !== undefined) {
         await client.events.update({ calendarId, eventId: existingEventId, requestBody });
+        recorded.set(existingEventId, entryFor(block, existingEventId));
       } else {
-        await client.events.insert({ calendarId, requestBody });
+        const inserted = await client.events.insert({ calendarId, requestBody });
+        const newEventId = inserted?.data?.id;
+        if (newEventId) recorded.set(newEventId, entryFor(block, newEventId));
       }
       written.push(block.id);
     } catch {
@@ -649,10 +729,12 @@ export async function writeTodaysPlanToCalendar(
   for (const ev of leftoverEvents) {
     try {
       await client.events.delete({ calendarId, eventId: ev.eventId });
+      recorded.delete(ev.eventId);
     } catch {
       failed.push(ev.blockId);
     }
   }
+  config.snapshot?.replace(snapshotDate, [...recorded.values()]);
   return { written, failed };
 }
 
@@ -1160,6 +1242,12 @@ function localDayWindowUtcForYmd(year: number, month: number, day: number, timeZ
   );
 
   return { start, end };
+}
+
+/** `date`'s local calendar date in `timeZone`, as `YYYY-MM-DD`. */
+function localDateString(date: Date, timeZone: string): string {
+  const { year, month, day } = localDatePartsInZone(date, timeZone);
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
 /** `timeZone`'s local calendar day containing `date`, as a `[start, end)` pair of UTC instants (`end` exclusive, the following local midnight). */

@@ -1274,3 +1274,163 @@ test("writeTodaysPlanToCalendar: reports failed block ids per block instead of t
   const result = await writeTodaysPlanToCalendar(client, new FakeCalendarIdStore(), blocks, { now: WRITE_FIXED_NOW, timeZone: "UTC" });
   assert.deepEqual(result, { written: ["b2"], failed: ["b1"] });
 });
+
+// ---- Yoh Plan snapshot, reader, added events (calendar-sync T2) -------------
+
+import { readYohPlanEvents } from "../src/adapters/calendar-adapter.ts";
+import type { PlanCalendarSnapshotEntry } from "../src/adapters/plan-calendar-snapshot-store.ts";
+
+class FakeSnapshot {
+  data = new Map<string, PlanCalendarSnapshotEntry[]>();
+  list = (date: string) => this.data.get(date) ?? [];
+  replace = (date: string, entries: PlanCalendarSnapshotEntry[]) => {
+    this.data.set(date, [...entries]);
+  };
+}
+
+const SNAP_DATE = "2026-08-22";
+const snapEntry = (eventId: string, blockId: string): PlanCalendarSnapshotEntry => ({
+  eventId,
+  blockId,
+  kind: "work",
+  taskId: `task-${blockId}`,
+  start: "2026-08-22T09:00:00.000Z",
+  end: "2026-08-22T10:00:00.000Z",
+});
+const taggedEvent = (id: string, blockId: string, start = "2026-08-22T09:00:00.000Z"): calendar_v3.Schema$Event => ({
+  id,
+  summary: "x",
+  start: { dateTime: start },
+  end: { dateTime: "2026-08-22T10:00:00.000Z" },
+  extendedProperties: { private: { [PLAN_BLOCK_ID_EXTENDED_PROPERTY]: blockId } },
+});
+
+test("writeTodaysPlanToCalendar records inserted and updated events in the snapshot, drops deleted ones", async () => {
+  const client = new FakeCalendarWriteClient({ listResponses: [{ items: [taggedEvent("ev-old", "old")] }] });
+  const store = new FakeCalendarIdStore("cal");
+  const snapshot = new FakeSnapshot();
+  snapshot.replace(SNAP_DATE, [snapEntry("ev-old", "old"), snapEntry("ev-gone", "gone")]);
+  const blocks: PlanBlock[] = [
+    { id: "b1", kind: "work", start: "2026-08-22T13:00:00.000Z", end: "2026-08-22T14:00:00.000Z", label: "A", taskId: "t1" },
+    { id: "b2", kind: "routine", start: "2026-08-22T15:00:00.000Z", end: "2026-08-22T16:00:00.000Z", label: "R", routineId: "r1" },
+  ];
+  await writeTodaysPlanToCalendar(client, store, blocks, { now: WRITE_FIXED_NOW, timeZone: "UTC", snapshot });
+  const got = snapshot.list(SNAP_DATE);
+  // ev-old reused (updated) for b1; b2 inserted; ev-gone (not listed today) keeps its prior entry.
+  const byEvent = new Map(got.map((e) => [e.eventId, e]));
+  assert.equal(byEvent.get("ev-old")?.blockId, "b1");
+  assert.equal(byEvent.get("ev-old")?.taskId, "t1");
+  assert.equal(byEvent.get("generated-event-1")?.blockId, "b2");
+  assert.equal(byEvent.get("generated-event-1")?.routineId, "r1");
+  assert.equal(byEvent.get("generated-event-1")?.kind, "routine");
+  assert.equal(byEvent.get("generated-event-1")?.start, "2026-08-22T15:00:00.000Z");
+  assert.ok(byEvent.has("ev-gone"));
+});
+
+test("writeTodaysPlanToCalendar removes a successfully deleted event from the snapshot", async () => {
+  const client = new FakeCalendarWriteClient({
+    listResponses: [{ items: [taggedEvent("ev-a", "a"), taggedEvent("ev-b", "b", "2026-08-22T11:00:00.000Z")] }],
+  });
+  const snapshot = new FakeSnapshot();
+  snapshot.replace(SNAP_DATE, [snapEntry("ev-a", "a"), snapEntry("ev-b", "b")]);
+  const blocks: PlanBlock[] = [
+    { id: "a", kind: "work", start: "2026-08-22T09:00:00.000Z", end: "2026-08-22T10:00:00.000Z", label: "A", taskId: "t" },
+  ];
+  await writeTodaysPlanToCalendar(client, new FakeCalendarIdStore("cal"), blocks, { now: WRITE_FIXED_NOW, timeZone: "UTC", snapshot });
+  assert.deepEqual(snapshot.list(SNAP_DATE).map((e) => e.eventId), ["ev-a"]);
+});
+
+test("writeTodaysPlanToCalendar: a failed insert adds nothing, a failed update and a failed delete keep the prior entry", async () => {
+  const client = new FakeCalendarWriteClient({
+    listResponses: [{ items: [taggedEvent("ev-a", "a"), taggedEvent("ev-b", "b", "2026-08-22T11:00:00.000Z")] }],
+  });
+  client.events.insert = async () => { throw new Error("boom"); };
+  client.events.update = async () => { throw new Error("boom"); };
+  client.events.delete = async () => { throw new Error("boom"); };
+  const snapshot = new FakeSnapshot();
+  snapshot.replace(SNAP_DATE, [snapEntry("ev-a", "a"), snapEntry("ev-b", "b")]);
+  const blocks: PlanBlock[] = [
+    { id: "a", kind: "work", start: "2026-08-22T12:00:00.000Z", end: "2026-08-22T13:00:00.000Z", label: "A", taskId: "t" },
+    { id: "new", kind: "work", start: "2026-08-22T14:00:00.000Z", end: "2026-08-22T15:00:00.000Z", label: "N", taskId: "t2" },
+  ];
+  // ev-a updated in place for "a" (fails), "new" gets ev-b as a reuse (update fails)... use only one leftover-free case:
+  const result = await writeTodaysPlanToCalendar(client, new FakeCalendarIdStore("cal"), blocks, { now: WRITE_FIXED_NOW, timeZone: "UTC", snapshot });
+  assert.equal(result.failed.length, 2);
+  assert.deepEqual(snapshot.list(SNAP_DATE).map((e) => e.eventId).sort(), ["ev-a", "ev-b"]);
+  assert.equal(snapshot.list(SNAP_DATE).find((e) => e.eventId === "ev-a")?.start, "2026-08-22T09:00:00.000Z");
+
+  // failed insert: no listed events, insert throws
+  const client2 = new FakeCalendarWriteClient({ listResponses: [{ items: [] }] });
+  client2.events.insert = async () => { throw new Error("boom"); };
+  const snap2 = new FakeSnapshot();
+  await writeTodaysPlanToCalendar(client2, new FakeCalendarIdStore("cal"), blocks, { now: WRITE_FIXED_NOW, timeZone: "UTC", snapshot: snap2 });
+  assert.deepEqual(snap2.list(SNAP_DATE), []);
+
+  // failed delete: leftover event can't be deleted, keeps its entry
+  const client3 = new FakeCalendarWriteClient({ listResponses: [{ items: [taggedEvent("ev-z", "z")] }] });
+  client3.events.delete = async () => { throw new Error("boom"); };
+  const snap3 = new FakeSnapshot();
+  snap3.replace(SNAP_DATE, [snapEntry("ev-z", "z")]);
+  await writeTodaysPlanToCalendar(client3, new FakeCalendarIdStore("cal"), [], { now: WRITE_FIXED_NOW, timeZone: "UTC", snapshot: snap3 });
+  assert.deepEqual(snap3.list(SNAP_DATE).map((e) => e.eventId), ["ev-z"]);
+});
+
+test("readYohPlanEvents returns tagged and untagged timed events, skipping all-day and cancelled", async () => {
+  const client = new FakeCalendarReadClient([
+    {
+      items: [
+        taggedEvent("t1", "blk"),
+        { id: "u1", summary: "Added", start: { dateTime: "2026-08-22T12:00:00Z" }, end: { dateTime: "2026-08-22T13:00:00Z" } },
+        { id: "ad", summary: "All day", start: { date: "2026-08-22" }, end: { date: "2026-08-23" } },
+        { ...taggedEvent("c1", "x"), status: "cancelled" },
+      ],
+    },
+  ]);
+  const events = await readYohPlanEvents(client, "yoh-cal", { timeZone: "UTC", now: FIXED_NOW() });
+  assert.equal(client.calls[0]?.calendarId, "yoh-cal");
+  assert.deepEqual(events.map((e) => [e.eventId, e.blockId, e.title]), [["t1", "blk", "x"], ["u1", undefined, "Added"]]);
+  assert.equal(events[1]?.start, "2026-08-22T12:00:00.000Z");
+});
+
+test("readCalendarEvents includes untagged Yoh Plan events (with calendarId) and never tagged ones", async () => {
+  const client = new FakeCalendarReadClient([
+    { items: [makeEvent({ id: "p1", summary: "Primary", startDateTime: "2026-08-22T08:00:00Z", endDateTime: "2026-08-22T09:00:00Z" })] },
+    {
+      items: [
+        taggedEvent("t1", "blk"),
+        { id: "u1", summary: "Added", start: { dateTime: "2026-08-22T12:00:00Z" }, end: { dateTime: "2026-08-22T13:00:00Z" } },
+        { id: "ad", summary: "All day", start: { date: "2026-08-22" }, end: { date: "2026-08-23" } },
+      ],
+    },
+  ]);
+  const events = await readCalendarEvents(client, { now: FIXED_NOW, timeZone: "UTC", yohPlanCalendarId: "yoh-cal" });
+  assert.deepEqual(events.map((e) => e.id), ["p1", "u1"]);
+  assert.equal(events[1]?.calendarId, "yoh-cal");
+  assert.equal(client.calls[1]?.calendarId, "yoh-cal");
+});
+
+test("readCalendarEvents: a Yoh Plan read failure is logged and the other events still return", async () => {
+  const logs: LogEntry[] = [];
+  let n = 0;
+  const client: CalendarReadClient = {
+    events: {
+      list: async () => {
+        if (n++ === 0) return { data: { items: [makeEvent({ id: "p1", summary: "P", startDateTime: "2026-08-22T08:00:00Z", endDateTime: "2026-08-22T09:00:00Z" })] } };
+        throw new Error("nope");
+      },
+    },
+  };
+  const events = await readCalendarEvents(client, { now: FIXED_NOW, timeZone: "UTC", yohPlanCalendarId: "yoh-cal", log: (e) => logs.push(e) });
+  assert.deepEqual(events.map((e) => e.id), ["p1"]);
+  assert.equal(logs[0]?.event, "calendar.yoh-plan-read-failed");
+  assert.equal(logs[0]?.level, "warn");
+});
+
+test("readCalendarEvents does not re-read the Yoh Plan calendar when its id equals primary or an extra id", async () => {
+  const client = new FakeCalendarReadClient([{ items: [] }, { items: [] }]);
+  await readCalendarEvents(client, { now: FIXED_NOW, timeZone: "UTC", extraCalendarIds: ["x"], yohPlanCalendarId: "x" });
+  assert.equal(client.calls.length, 2);
+  const c2 = new FakeCalendarReadClient([{ items: [] }]);
+  await readCalendarEvents(c2, { now: FIXED_NOW, timeZone: "UTC", yohPlanCalendarId: "primary" });
+  assert.equal(c2.calls.length, 1);
+});

@@ -521,6 +521,15 @@ export interface ReshufflePreview {
 // CalendarEvent (FR-1, AD-10)
 // ============================================================================
 
+/** An event on the "Yoh Plan" calendar. `blockId` is set when Yoh wrote it; absent means Spencer added it. */
+export interface YohPlanEvent {
+  readonly eventId: string;
+  readonly blockId?: string;
+  readonly title: string;
+  readonly start: IsoDateTime;
+  readonly end: IsoDateTime;
+}
+
 /**
  * CalendarEvent — a single event read from Spencer's primary Google
  * Calendar (`calendar-adapter.ts`, Task 4/Story 1.4), used to build a Plan's

@@ -17,6 +17,7 @@ import {
   readCalendarEvents,
   writeTodaysPlanToCalendar,
 } from "../../adapters/calendar-adapter.ts";
+import { createPlanCalendarSnapshotStore } from "../../adapters/plan-calendar-snapshot-store.ts";
 import { writeStructuredLog } from "../../adapters/logger.ts";
 import { loadTaskPropertyNamesFromEnv, readNotionTasks } from "../../adapters/notion-adapter.ts";
 import { createTokenStore, loadGoogleOAuthConfigFromEnv } from "../../adapters/token-store.ts";
@@ -123,13 +124,17 @@ export function createMorningRitualDeps(
       readCalendarEvents(calendarClient, {
         timeZone,
         extraCalendarIds: parseExtraCalendarIds(env["YOH_EXTRA_CALENDAR_IDS"]),
+        yohPlanCalendarId: tokenStore.getCalendarId(),
         log: writeStructuredLog,
       }),
     // Final whole-branch review, Finding 1: mirrors `readCalendarEvents`
     // above — bound to the same `tokenStore`, which structurally satisfies
     // `CalendarIdStore`. `blocks` is already `"calendar-anchor"`-filtered by
     // the caller (`runMorningRitual`'s step 12a.5) before this is invoked.
-    writeCalendarPlan: (blocks) => writeTodaysPlanToCalendar(calendarWriteClient, tokenStore, blocks, { timeZone }),
+    writeCalendarPlan: (blocks) => writeTodaysPlanToCalendar(calendarWriteClient, tokenStore, blocks, {
+        timeZone,
+        ...(connection ? { snapshot: createPlanCalendarSnapshotStore(connection) } : {}),
+      }),
     // Spencer, 2026-09-27: the morning Plan reaches him in the app only
     // (Home + `/morning`), never as a phone push. The stored Plan IS the
     // delivery, so this seam just records that the Plan is ready. Pushover
