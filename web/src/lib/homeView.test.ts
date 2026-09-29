@@ -6,7 +6,7 @@
  * hint from the shared event bus (`eventBus.ts`), ignoring every other
  * topic (e.g. `"notification"`, which `notifications.ts` owns).
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import * as eventBus from "./eventBus.ts";
 import { apiClient } from "./apiClient.ts";
@@ -18,6 +18,11 @@ vi.mock("./apiClient.ts", () => ({
 
 describe("homeView store", () => {
   let hintCb: (hint: eventBus.EventBusHint) => void;
+  const stops: Array<() => void> = [];
+
+  afterEach(() => {
+    stops.splice(0).forEach((stop) => stop());
+  });
 
   beforeEach(() => {
     __resetHomeViewForTests();
@@ -31,12 +36,12 @@ describe("homeView store", () => {
   });
 
   it("fetches once on start", async () => {
-    startHomeViewStream();
+    stops.push(startHomeViewStream());
     await waitFor(() => expect(apiClient.api.home.$get).toHaveBeenCalledTimes(1));
   });
 
   it("re-fetches on a topic:'plan' hint, ignores other topics", async () => {
-    startHomeViewStream();
+    stops.push(startHomeViewStream());
     await waitFor(() => expect(apiClient.api.home.$get).toHaveBeenCalledTimes(1));
     act(() => hintCb({ seq: 1, topic: "notification", entityId: "x" }));
     expect(apiClient.api.home.$get).toHaveBeenCalledTimes(1);
@@ -45,7 +50,7 @@ describe("homeView store", () => {
   });
 
   it("re-fetches on an 'open-items' hint", async () => {
-    startHomeViewStream();
+    stops.push(startHomeViewStream());
     await waitFor(() => expect(apiClient.api.home.$get).toHaveBeenCalledTimes(1));
     act(() => hintCb({ seq: 3, topic: "open-items", entityId: "proposal:p1" }));
     await waitFor(() => expect(apiClient.api.home.$get).toHaveBeenCalledTimes(2));
@@ -54,7 +59,7 @@ describe("homeView store", () => {
   it("useHomeView exposes loading, then loaded", async () => {
     const { result } = renderHook(() => useHomeView());
     expect(result.current.status).toBe("loading");
-    startHomeViewStream();
+    stops.push(startHomeViewStream());
     await waitFor(() => expect(result.current.status).toBe("loaded"));
     if (result.current.status === "loaded") {
       expect(result.current.value.today).toBe("2026-09-25");
@@ -66,7 +71,7 @@ describe("homeView store", () => {
       json: async () => ({ ok: false, error: { kind: "unreachable", message: "server: home-view dependencies not configured" } }),
     });
     const { result } = renderHook(() => useHomeView());
-    startHomeViewStream();
+    stops.push(startHomeViewStream());
     await waitFor(() => expect(result.current.status).toBe("error"));
     if (result.current.status === "error") {
       expect(result.current.message).toMatch(/not configured/);
@@ -76,7 +81,17 @@ describe("homeView store", () => {
   it("a rejected fetch request also surfaces as an error state, never an unhandled rejection", async () => {
     (apiClient.api.home.$get as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("network down"));
     const { result } = renderHook(() => useHomeView());
-    startHomeViewStream();
+    stops.push(startHomeViewStream());
     await waitFor(() => expect(result.current.status).toBe("error"));
+  });
+
+  it("re-fetches when the tab regains focus, and stops after the stream stops", async () => {
+    const stop = startHomeViewStream();
+    await waitFor(() => expect(apiClient.api.home.$get).toHaveBeenCalledTimes(1));
+    act(() => void window.dispatchEvent(new Event("focus")));
+    await waitFor(() => expect(apiClient.api.home.$get).toHaveBeenCalledTimes(2));
+    stop();
+    act(() => void window.dispatchEvent(new Event("focus")));
+    expect(apiClient.api.home.$get).toHaveBeenCalledTimes(2);
   });
 });

@@ -25,6 +25,7 @@
 import { useEffect, useState } from "react";
 import { onHint } from "./eventBus.ts";
 import { apiClient } from "./apiClient.ts";
+import { onVisibleRefresh } from "./visibleRefresh.ts";
 import type { CalendarDayResponse } from "../../../src/types/api.ts";
 
 export type CalendarDayState =
@@ -107,6 +108,13 @@ export function useCalendarDay(date: string | undefined): CalendarDayState {
       // cached date" rather than a specific one.
       if (hint.topic === "plan" && (hint.entityId === date || hint.entityId === "")) void fetchDay(date);
     });
+  }, [date]);
+
+  // Hotfix: edits made directly in Google Calendar send no hint — refresh
+  // the shown date in the background on tab focus and while visible.
+  useEffect(() => {
+    if (date === undefined) return;
+    return onVisibleRefresh(() => void fetchDay(date, { background: true }));
   }, [date]);
 
   if (date === undefined) return { status: "loading" };

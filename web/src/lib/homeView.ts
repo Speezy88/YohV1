@@ -4,11 +4,14 @@
  * Story 7.8: Home's own small store, the same `useSyncExternalStore` shape
  * as `notifications.ts`. Fetches `GET /api/home` once on start, then
  * re-fetches on a `topic: "plan"` hint from the shared event bus
- * (`eventBus.ts`) — no polling, no separate SSE connection (AD-18).
+ * (`eventBus.ts`) — no separate SSE connection (AD-18) — and on tab focus /
+ * visible-only polling (`visibleRefresh.ts`) for edits made directly in
+ * Google Calendar, which send no hint.
  */
 import { useSyncExternalStore } from "react";
 import { onHint } from "./eventBus.ts";
 import { apiClient } from "./apiClient.ts";
+import { onVisibleRefresh } from "./visibleRefresh.ts";
 import type { HomeViewResponse } from "../../../src/types/api.ts";
 
 export type HomeViewState =
@@ -63,9 +66,14 @@ export function refetchHomeView(): Promise<void> {
  */
 export function startHomeViewStream(): () => void {
   void refetch();
-  return onHint((hint) => {
+  const stopHints = onHint((hint) => {
     if (hint.topic === "plan" || hint.topic === "open-items") void refetch();
   });
+  const stopVisible = onVisibleRefresh(() => void refetch());
+  return () => {
+    stopHints();
+    stopVisible();
+  };
 }
 
 /** Test-only: clears module-level singleton state between tests. Never called from production code. */

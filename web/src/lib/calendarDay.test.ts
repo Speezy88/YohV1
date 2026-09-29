@@ -132,4 +132,17 @@ describe("calendarDay store", () => {
     act(() => retryCalendarDay("2026-09-29"));
     await waitFor(() => expect(result.current.status).toBe("loaded"));
   });
+
+  it("refetches a shown date in the background when the tab regains focus, and not after unmount", async () => {
+    const { result, unmount } = renderHook(() => useCalendarDay("2026-09-29"));
+    await waitFor(() => expect(result.current.status).toBe("loaded"));
+    expect(mockGet()).toHaveBeenCalledTimes(1);
+    act(() => void window.dispatchEvent(new Event("focus")));
+    // Background: the cached value stays visible while the refresh runs.
+    expect(result.current.status).toBe("loaded");
+    await waitFor(() => expect(mockGet()).toHaveBeenCalledTimes(2));
+    unmount();
+    act(() => void window.dispatchEvent(new Event("focus")));
+    expect(mockGet()).toHaveBeenCalledTimes(2);
+  });
 });
