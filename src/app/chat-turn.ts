@@ -138,7 +138,7 @@ export interface ChatTurnDeps extends CreateItemDeps, CalendarEditDeps, WebSearc
    * doc comment for why a long-running server process can't just capture
    * it once).
    */
-  readonly writeCalendarPlan?: (blocks: readonly PlanBlock[]) => Promise<void>;
+  readonly writeCalendarPlan?: (blocks: readonly PlanBlock[]) => Promise<unknown>;
   readonly log?: (entry: LogEntry) => void;
   /**
    * Real-use fixes plan, Task 5 ("what's happening tomorrow"):

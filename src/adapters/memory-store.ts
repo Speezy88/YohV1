@@ -402,6 +402,16 @@ export function clearInteractionRequest(store: MemoryStore, id: string, expected
 }
 
 /**
+ * Removes the interaction request at `id` from inside a caller's `writeTx`
+ * (e.g. `putPlan`'s `onCommit`), appending the `open-items` hint. No version
+ * check — the caller's own write in the same transaction is the guard.
+ */
+export function clearInteractionRequestInTx(db: Database.Database, id: string): void {
+  db.prepare("DELETE FROM records WHERE kind = @kind AND id = @id").run({ kind: INTERACTION_REQUEST_KIND, id });
+  appendOutboxInTx(db, { topic: OPEN_ITEMS_TOPIC, entityId: id });
+}
+
+/**
  * Rewrites ONLY the `detail` payload of the interaction request at `id`,
  * keeping `requestKind`/`promptText`/`createdAt` untouched — the versioned
  * primitive Story 8.1 uses to persist a per-request pending-question cursor

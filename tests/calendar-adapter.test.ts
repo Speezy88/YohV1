@@ -1234,3 +1234,43 @@ test("applyCalendarEdit's 412 detection doesn't itself throw when the patch call
   assert.equal(result.ok, false);
   if (!result.ok) assert.equal(result.error.kind, "unreachable");
 });
+
+test("writeTodaysPlanToCalendar: a re-plan with the same block count and new ids updates in place — 0 inserts, 0 deletes, ids restamped", async () => {
+  const tag = (blockId: string) => ({ private: { [PLAN_BLOCK_ID_EXTENDED_PROPERTY]: blockId } });
+  const client = new FakeCalendarWriteClient({
+    listResponses: [
+      {
+        items: [
+          { id: "e2", start: { dateTime: "2026-08-22T15:00:00.000Z" }, extendedProperties: tag("v1-work-1") },
+          { id: "e1", start: { dateTime: "2026-08-22T13:00:00.000Z" }, extendedProperties: tag("v1-work-0") },
+          { id: "untagged", start: { dateTime: "2026-08-22T14:00:00.000Z" } },
+        ],
+      },
+    ],
+  });
+  const blocks = [
+    planBlock({ id: "v2-work-0", start: "2026-08-22T13:30:00.000Z", end: "2026-08-22T14:00:00.000Z", label: "A" }),
+    planBlock({ id: "v2-work-1", start: "2026-08-22T15:30:00.000Z", end: "2026-08-22T16:00:00.000Z", label: "B" }),
+  ];
+  const result = await writeTodaysPlanToCalendar(client, new FakeCalendarIdStore(), blocks, { now: WRITE_FIXED_NOW, timeZone: "UTC" });
+  assert.equal(client.eventsInsertCalls.length, 0);
+  assert.equal(client.eventsDeleteCalls.length, 0);
+  assert.deepEqual(client.eventsUpdateCalls.map((c) => c.eventId), ["e1", "e2"]);
+  assert.equal(client.eventsUpdateCalls[0]?.requestBody?.extendedProperties?.private?.[PLAN_BLOCK_ID_EXTENDED_PROPERTY], "v2-work-0");
+  assert.deepEqual(result, { written: ["v2-work-0", "v2-work-1"], failed: [] });
+});
+
+test("writeTodaysPlanToCalendar: reports failed block ids per block instead of throwing", async () => {
+  const client = new FakeCalendarWriteClient({ listResponses: [{ items: [] }] });
+  let n = 0;
+  client.events.insert = async (params) => {
+    if (n++ === 0) throw new Error("boom");
+    return { data: { ...params.requestBody, id: "x" } };
+  };
+  const blocks = [
+    planBlock({ id: "b1", start: "2026-08-22T13:00:00.000Z", end: "2026-08-22T14:00:00.000Z", label: "A" }),
+    planBlock({ id: "b2", start: "2026-08-22T15:00:00.000Z", end: "2026-08-22T16:00:00.000Z", label: "B" }),
+  ];
+  const result = await writeTodaysPlanToCalendar(client, new FakeCalendarIdStore(), blocks, { now: WRITE_FIXED_NOW, timeZone: "UTC" });
+  assert.deepEqual(result, { written: ["b2"], failed: ["b1"] });
+});

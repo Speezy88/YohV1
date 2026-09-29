@@ -581,7 +581,7 @@ export async function writeTodaysPlanToCalendar(
   calendarIdStore: CalendarIdStore,
   blocks: readonly PlanBlock[],
   config: CalendarWriteConfig,
-): Promise<void> {
+): Promise<CalendarPlanWriteResult> {
   const calendarId = await ensureYohPlanCalendar(client, calendarIdStore);
 
   const now = (config.now ?? (() => new Date()))();
@@ -594,31 +594,72 @@ export async function writeTodaysPlanToCalendar(
     singleEvents: true,
   });
 
-  const existingEventIdByBlockId = new Map<string, string>();
+  // Only events carrying the plan-block tag are ever considered.
+  const tagged: { eventId: string; blockId: string; startMs: number }[] = [];
   for (const item of existingResponse.data.items ?? []) {
     const blockId = item.extendedProperties?.private?.[PLAN_BLOCK_ID_EXTENDED_PROPERTY];
     const eventId = item.id;
     if (blockId && eventId) {
-      existingEventIdByBlockId.set(blockId, eventId);
+      const startMs = Date.parse(item.start?.dateTime ?? "");
+      tagged.push({ eventId, blockId, startMs: Number.isNaN(startMs) ? Number.MAX_SAFE_INTEGER : startMs });
     }
   }
 
+  // 1. Exact block-id matches. 2. Remaining events, in start order, are
+  // reused (updated in place, restamped) for the remaining blocks — block ids
+  // change on every re-plan, and delete-and-reinsert would churn the calendar.
+  const currentBlockIds = new Set(blocks.map((block) => block.id));
+  const eventForBlock = new Map<string, string>();
+  const leftoverEvents: typeof tagged = [];
+  const claimed = new Set<string>();
+  for (const ev of tagged) {
+    if (currentBlockIds.has(ev.blockId) && !claimed.has(ev.blockId)) {
+      claimed.add(ev.blockId);
+      eventForBlock.set(ev.blockId, ev.eventId);
+    } else {
+      leftoverEvents.push(ev);
+    }
+  }
+  leftoverEvents.sort((x, y) => x.startMs - y.startMs);
+  const unmatchedBlocks = blocks
+    .filter((block) => !eventForBlock.has(block.id))
+    .sort((x, y) => Date.parse(x.start) - Date.parse(y.start));
+  for (const block of unmatchedBlocks) {
+    const reuse = leftoverEvents.shift();
+    if (reuse) eventForBlock.set(block.id, reuse.eventId);
+  }
+
+  const written: string[] = [];
+  const failed: string[] = [];
   for (const block of blocks) {
     const requestBody = toEventRequestBody(block);
-    const existingEventId = existingEventIdByBlockId.get(block.id);
-    if (existingEventId !== undefined) {
-      await client.events.update({ calendarId, eventId: existingEventId, requestBody });
-    } else {
-      await client.events.insert({ calendarId, requestBody });
+    const existingEventId = eventForBlock.get(block.id);
+    try {
+      if (existingEventId !== undefined) {
+        await client.events.update({ calendarId, eventId: existingEventId, requestBody });
+      } else {
+        await client.events.insert({ calendarId, requestBody });
+      }
+      written.push(block.id);
+    } catch {
+      failed.push(block.id);
     }
   }
 
-  const currentBlockIds = new Set(blocks.map((block) => block.id));
-  for (const [blockId, eventId] of existingEventIdByBlockId) {
-    if (!currentBlockIds.has(blockId)) {
-      await client.events.delete({ calendarId, eventId });
+  for (const ev of leftoverEvents) {
+    try {
+      await client.events.delete({ calendarId, eventId: ev.eventId });
+    } catch {
+      failed.push(ev.blockId);
     }
   }
+  return { written, failed };
+}
+
+/** What `writeTodaysPlanToCalendar` reports: the block ids synced, and the ids whose insert/update/delete failed. */
+export interface CalendarPlanWriteResult {
+  readonly written: string[];
+  readonly failed: string[];
 }
 
 // ============================================================================

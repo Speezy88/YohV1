@@ -127,3 +127,8 @@ test("parseProposalAnswer recognizes common yes/no variants and rejects anything
     assert.equal(parseProposalAnswer(unclear), undefined, `expected "${unclear}" to be unrecognized`);
   }
 });
+
+test("parseProposalAnswer accepts approve and discard", () => {
+  assert.equal(parseProposalAnswer("approve"), true);
+  assert.equal(parseProposalAnswer("Discard"), false);
+});

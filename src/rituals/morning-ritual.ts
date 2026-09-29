@@ -458,7 +458,7 @@ export interface MorningRitualDeps {
    * blocks before calling this (see the call site) — see
    * `writeTodaysPlanToCalendar`'s own doc comment for why.
    */
-  readonly writeCalendarPlan?: (blocks: readonly PlanBlock[]) => Promise<void>;
+  readonly writeCalendarPlan?: (blocks: readonly PlanBlock[]) => Promise<unknown>;
   /**
    * Story 9.4 (FR-34, AD-5): the process's shared SQLite connection,
    * threaded through ONLY so this ritual can raise its own `needs-data`

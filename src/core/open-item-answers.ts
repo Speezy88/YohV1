@@ -147,7 +147,7 @@ export function parseSelfCheckAnswer(raw: string): SelfCheckAnswer | undefined {
  */
 export function parseProposalAnswer(raw: string): boolean | undefined {
   const normalized = raw.trim().toLowerCase();
-  if (/^(y|yes|yeah|yep|confirm|apply)$/.test(normalized)) return true;
-  if (/^(n|no|nope|dismiss|decline)$/.test(normalized)) return false;
+  if (/^(y|yes|yeah|yep|confirm|apply|approve)$/.test(normalized)) return true;
+  if (/^(n|no|nope|dismiss|decline|discard)$/.test(normalized)) return false;
   return undefined;
 }

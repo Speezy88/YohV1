@@ -41,6 +41,7 @@ import { appendOutboxInTx } from "../adapters/notification-store.ts";
 import type { SqliteConnection } from "../adapters/sqlite.ts";
 import { parsePlanningFieldValue, PLANNING_FIELD_LABELS } from "../core/planning-field-value.ts";
 import { localIsoDate } from "../rituals/ritual-shared.ts";
+import { approveReshuffle, discardReshuffle, type ApproveReshuffleDeps } from "./approve-reshuffle.ts";
 import type { CalendarEditProposal } from "./calendar-edit.ts";
 import type {
   CalendarEditChange,
@@ -49,6 +50,7 @@ import type {
   NotionPageDraft,
   PlanningFieldNames,
   Proposal,
+  ReshufflePreview,
   Result,
   Task,
   TaskFieldOverride,
@@ -220,6 +222,8 @@ export interface ConfirmProposalDeps {
   readonly connection?: SqliteConnection;
   /** Task 8: Spencer's host timezone, so the hint's `entityId` is the edited event's LOCAL calendar date, not its UTC one. Required only alongside `connection` for a `"calendar-edit"` proposal — absent, the hint still fires but with no entityId (calendarDay.ts then refetches every cached date). */
   readonly timeZone?: string;
+  /** Required only for the `"reshuffle"` kind: everything `approveReshuffle` needs besides `store`. */
+  readonly reshuffle?: Omit<ApproveReshuffleDeps, "store">;
 }
 
 export interface ConfirmProposalInput {
@@ -266,6 +270,46 @@ export async function confirmProposal(
       value: {
         applied: result.value === "applied",
         receipts: result.value === "applied" ? ["Done — I've updated your Time Budget."] : [],
+      },
+    };
+  }
+
+  if (proposal.kind === "reshuffle") {
+    const reshuffleProposal = proposal as Proposal<ReshufflePreview>;
+    if (!accept) {
+      const discarded = await discardReshuffle({ store: deps.store }, { proposal: reshuffleProposal, ...(requestId ? { requestId } : {}) });
+      if (!discarded.ok) return discarded;
+      return { ok: true, value: { applied: false, receipts: [] } };
+    }
+    if (!deps.reshuffle) {
+      clearRequestIfGiven(deps.store, requestId);
+      return missingDependency(proposal.kind, "reshuffle");
+    }
+    const approved = await approveReshuffle(
+      { ...deps.reshuffle, store: deps.store },
+      { proposal: reshuffleProposal, ...(requestId ? { requestId } : {}) },
+    );
+    if (!approved.ok) return approved;
+    if (approved.value.status === "recomputed") {
+      return {
+        ok: true,
+        value: {
+          applied: false,
+          receipts: ["Your Plan or calendar changed since that preview, so I made a fresh one. Approve it to apply."],
+          question: approved.value.question,
+        },
+      };
+    }
+    const failed = approved.value.calendarFailedBlockIds.length;
+    return {
+      ok: true,
+      value: {
+        applied: true,
+        receipts: [
+          failed > 0
+            ? "Your Plan is updated, but I couldn't update your calendar for some blocks."
+            : "Done — I've updated today's Plan and your calendar.",
+        ],
       },
     };
   }

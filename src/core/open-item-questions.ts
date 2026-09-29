@@ -205,6 +205,11 @@ const CREATE_CANCEL_OPTIONS = [
   { label: "Create", value: "yes" },
   { label: "Cancel", value: "no" },
 ] as const;
+/** Reshuffle previews read Approve / Discard; "approve"/"discard" parse like yes/no (`parseProposalAnswer`). */
+const APPROVE_DISCARD_OPTIONS = [
+  { label: "Approve", value: "approve" },
+  { label: "Discard", value: "discard" },
+] as const;
 const YES_NO_OPTIONS = [
   { label: "Yes", value: "yes" },
   { label: "No", value: "no" },
@@ -236,7 +241,12 @@ export function buildProposalQuestion(requestId: string, promptText: string, pro
     requestId,
     questionId: PROPOSAL_QUESTION_ID,
     text: promptText,
-    options: proposal.kind === "notion-page-draft" ? CREATE_CANCEL_OPTIONS : YES_NO_OPTIONS,
+    options:
+      proposal.kind === "notion-page-draft"
+        ? CREATE_CANCEL_OPTIONS
+        : proposal.kind === "reshuffle"
+          ? APPROVE_DISCARD_OPTIONS
+          : YES_NO_OPTIONS,
     allowsFreeText: true,
     proposal,
   };

@@ -185,3 +185,15 @@ test("final-review fix (Important #2): every OTHER proposal kind keeps the gener
   assert.deepEqual(q.options.map((o) => o.value), ["yes", "no"]);
   assert.deepEqual(q.options.map((o) => o.label), ["Yes", "No"]);
 });
+
+test("buildProposalQuestion: a reshuffle proposal's chips read Approve / Discard", () => {
+  const proposal: Proposal<unknown> = {
+    id: "reshuffle-1", kind: "reshuffle", entityId: "2026-09-29", entityVersion: "1:abc",
+    suggested: {}, reason: "Moves 1 block.", createdAt: "2026-09-29T18:00:00.000Z",
+  };
+  const q = buildProposalQuestion("proposal:reshuffle-1", proposal.reason, proposal);
+  assert.deepEqual(q.options, [
+    { label: "Approve", value: "approve" },
+    { label: "Discard", value: "discard" },
+  ]);
+});

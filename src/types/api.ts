@@ -319,6 +319,8 @@ export interface AnswerOpenItemResponse {
 export interface ConfirmProposalResponse {
   readonly applied: boolean;
   readonly receipts: readonly string[];
+  /** A reshuffle approval that found the Plan or calendar had moved on: the fresh preview's confirm question. */
+  readonly question?: OpenItemQuestion;
 }
 
 // ============================================================================

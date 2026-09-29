@@ -67,7 +67,7 @@ export interface PlanDayDeps extends SurfaceOpenItemsDeps {
   /** `adapters/calendar-adapter.ts`'s `readCalendarEvents`, pre-bound. Throws on I/O failure (AD-8) — `runMorningRitual` catches it. */
   readonly readCalendarEvents: () => Promise<readonly CalendarEvent[]>;
   /** `adapters/calendar-adapter.ts`'s `writeTodaysPlanToCalendar`, pre-bound. Optional — a test that doesn't care about the Yoh-Plan Calendar sync need not stub it. */
-  readonly writeCalendarPlan?: (blocks: readonly PlanBlock[]) => Promise<void>;
+  readonly writeCalendarPlan?: (blocks: readonly PlanBlock[]) => Promise<unknown>;
   readonly log?: (entry: LogEntry) => void;
 }
 
