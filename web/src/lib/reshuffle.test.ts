@@ -111,4 +111,14 @@ describe("reshuffle store", () => {
     await act(async () => done);
     expect(result.current.preview).toBeUndefined();
   });
+
+  it("a rejected request (validation error, no preview) shows its message", async () => {
+    vi.spyOn(homeView, "refetchHomeView").mockResolvedValue();
+    post.mockResolvedValue({ json: async () => ({ ok: false, error: { kind: "validation", message: "Nothing fits at 4." } }) });
+    const { result } = renderHook(() => useReshuffle(undefined));
+    await act(async () => requestReshuffle({ kind: "move-block", planBlockId: "b1", newStart: "2026-09-25T20:00:00.000Z" }));
+    expect(result.current.error).toBe("Nothing fits at 4.");
+    expect(result.current.preview).toBeUndefined();
+    expect(result.current.busy).toBe(false);
+  });
 });

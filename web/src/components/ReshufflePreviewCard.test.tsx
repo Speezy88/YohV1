@@ -32,6 +32,19 @@ describe("ReshufflePreviewCard", () => {
     expect(screen.getByText(/Stretch/)).toBeInTheDocument();
   });
 
+  it("announces the summary in a status live region", () => {
+    render(<ReshufflePreviewCard preview={preview} onApprove={() => {}} onDiscard={() => {}} />);
+    expect(screen.getByRole("status")).toHaveTextContent(preview.summary);
+  });
+
+  it("a rejected preview shows the reason once and has no Approve", () => {
+    const rejected = { ...preview, summary: "That won't fit.", rejectedReason: "That won't fit." };
+    render(<ReshufflePreviewCard preview={rejected} onApprove={() => {}} onDiscard={() => {}} />);
+    expect(screen.getAllByText("That won't fit.")).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Discard" })).toBeInTheDocument();
+  });
+
   it("calls the handlers", () => {
     const onApprove = vi.fn();
     const onDiscard = vi.fn();

@@ -24,8 +24,9 @@ export function ReshufflePreviewCard({ preview, busy = false, error, notice, onA
   const motion = reducedMotion ? "" : "transition-opacity";
   return (
     <div data-testid="reshuffle-preview-card" className="flex shrink-0 flex-col gap-3 rounded-2xl bg-surface-sunken p-4 font-body text-body text-ink-primary">
-      <p className="m-0 font-semibold">{preview.summary}</p>
-      {preview.rejectedReason && <p className="m-0 text-small text-ink-secondary">{preview.rejectedReason}</p>}
+      <p role="status" className="m-0 font-semibold">
+        {preview.rejectedReason ?? preview.summary}
+      </p>
       {preview.unplacedRoutineLabels.length > 0 && (
         <p className="m-0 text-small text-ink-secondary">Couldn't place: {preview.unplacedRoutineLabels.join(", ")}</p>
       )}
@@ -36,14 +37,16 @@ export function ReshufflePreviewCard({ preview, busy = false, error, notice, onA
         </p>
       )}
       <div className="flex items-center gap-2">
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => onApprove(preview.proposalId)}
-          className={`rounded-md bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end px-4 py-1.5 text-small font-bold text-on-accent-solid shadow-extruded-sm disabled:opacity-50 ${motion} ${FOCUS}`}
-        >
-          Approve
-        </button>
+        {!preview.rejectedReason && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => onApprove(preview.proposalId)}
+            className={`rounded-md bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end px-4 py-1.5 text-small font-bold text-on-accent-solid shadow-extruded-sm disabled:opacity-50 ${motion} ${FOCUS}`}
+          >
+            Approve
+          </button>
+        )}
         <button
           type="button"
           disabled={busy}

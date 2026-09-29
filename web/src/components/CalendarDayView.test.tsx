@@ -526,6 +526,17 @@ describe("CalendarDayView pins and moved blocks", () => {
     expect(onUnpin).toHaveBeenCalledWith("t1");
   });
 
+  it("the Unpin button is not nested inside the draggable (no role=button ancestor)", () => {
+    const onUnpin = vi.fn();
+    render(<CalendarDayView blocks={[block({ id: "b1", kind: "work", label: "Draft the memo", taskId: "t1", pinned: true, ...base })]} timeZone={UTC} now={NOON_UTC} onUnpin={onUnpin} onMoveBlock={() => {}} />);
+    const btn = screen.getByRole("button", { name: "Unpin Draft the memo" });
+    expect(btn.closest('[data-testid="calendar-block"]')).toBeNull();
+    expect(btn.parentElement?.closest('[role="button"]')).toBeNull();
+    expect(btn.tabIndex).toBeGreaterThanOrEqual(0);
+    fireEvent.click(btn);
+    expect(onUnpin).toHaveBeenCalledWith("t1");
+  });
+
   it("a pinned routine block shows a glyph but no button", () => {
     render(<CalendarDayView blocks={[block({ id: "r1", kind: "routine", label: "Stretch", pinned: true, ...base })]} timeZone={UTC} now={NOON_UTC} onUnpin={() => {}} />);
     expect(screen.queryByRole("button", { name: /Unpin/ })).toBeNull();

@@ -115,7 +115,7 @@
  * one level up, in `CalendarColumn` — this component only ever renders the
  * timeline itself.
  */
-import { useLayoutEffect, useRef, type ReactNode } from "react";
+import { Fragment, useLayoutEffect, useRef, type ReactNode } from "react";
 import { DragDropProvider } from "@dnd-kit/react";
 import type { HomeCalendarBlock } from "../../../src/types/api.ts";
 import { blockDragSensors, movedStartIso, useBlockDrag } from "../hooks/useBlockDrag.ts";
@@ -340,6 +340,10 @@ function PinGlyph(): React.JSX.Element {
   );
 }
 
+/** The Unpin pill is 20px (size-5) and sits 4px in from the block's top-right corner. */
+const PIN_SIZE_PX = 20;
+const PIN_INSET_PX = 4;
+
 /** 8am, this component's own fallback auto-scroll target for a genuinely empty non-today day (no "now" line to anchor to instead). */
 const EMPTY_DAY_ANCHOR_MINUTES = (8 - DAY_START_HOUR) * 60;
 
@@ -489,8 +493,8 @@ export function CalendarDayView({ blocks, timeZone, now = () => new Date(), isTo
           const moved = (b as { moved?: boolean }).moved === true;
           const pinControl = b.pinned === true && b.taskId !== undefined && onUnpin !== undefined;
           return (
+            <Fragment key={keyFor(b)}>
             <BlockShell
-              key={keyFor(b)}
               id={b.id}
               draggable={onMoveBlock !== undefined && !dragLocked && !readOnly && (b.kind === "work" || isRoutine)}
               fromTime={formatClockTime(new Date(b.start), timeZone)}
@@ -509,25 +513,32 @@ export function CalendarDayView({ blocks, timeZone, now = () => new Date(), isTo
               style={{ top, height, left, ...(width !== undefined ? { width } : {}) }}
             >
               {showLabel ? content.text : null}
-              {b.pinned === true && (
+              {b.pinned === true && !pinControl && (
                 <span className="absolute right-1 top-1 flex items-center rounded-full bg-surface-sunken text-ink-secondary">
-                  {pinControl ? (
-                    <button
-                      type="button"
-                      aria-label={`Unpin ${label}`}
-                      onClick={() => onUnpin(b.taskId!)}
-                      className="flex size-5 items-center justify-center rounded-full focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid"
-                    >
-                      <PinGlyph />
-                    </button>
-                  ) : (
-                    <span data-testid="calendar-block-pinned-glyph" role="img" aria-label="Pinned" className="flex size-5 items-center justify-center">
-                      <PinGlyph />
-                    </span>
-                  )}
+                  <span data-testid="calendar-block-pinned-glyph" role="img" aria-label="Pinned" className="flex size-5 items-center justify-center">
+                    <PinGlyph />
+                  </span>
                 </span>
               )}
             </BlockShell>
+              {pinControl && (
+                // A sibling of the draggable, not a child: nested interactive content is
+                // presentational inside dnd-kit's role="button", and a click here must not start a drag.
+                <span
+                  className="absolute z-10 flex items-center rounded-full bg-surface-sunken text-ink-secondary"
+                  style={{ top: top + PIN_INSET_PX, ...(width !== undefined ? { left: `calc(${typeof left === "number" ? `${left}px` : left} + ${width} - ${PIN_SIZE_PX + PIN_INSET_PX}px)` } : { right: 8 + PIN_INSET_PX }) }}
+                >
+                  <button
+                    type="button"
+                    aria-label={`Unpin ${label}`}
+                    onClick={() => onUnpin(b.taskId!)}
+                    className="flex size-5 items-center justify-center rounded-full focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid"
+                  >
+                    <PinGlyph />
+                  </button>
+                </span>
+              )}
+            </Fragment>
           );
         })}
         {nowVisible && (
