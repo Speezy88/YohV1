@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { RememberedReceipt } from "./RememberedReceipt.tsx";
+import { PageNavigationContext } from "../lib/navigationContext.tsx";
+import * as memoryLib from "../lib/memory.ts";
+import { PAGES } from "../lib/pages.ts";
 import * as memoryApi from "../lib/memoryApi.ts";
 import * as chatStore from "../lib/chatStore.ts";
 import type { RememberedReceipt as Receipt } from "../../../src/types/api.ts";
@@ -90,7 +93,35 @@ describe("RememberedReceipt", () => {
     const { rerender } = render(<RememberedReceipt messageId="m1" receipt={CHEM} state="settled" showViewInMemory={false} />);
     expect(screen.queryByRole("button")).toBeNull();
     expect(screen.getByTestId("remembered-receipt")).not.toHaveTextContent("Undo");
+    // Without a PageShell (no navigation), there is nowhere to go: no button.
     rerender(<RememberedReceipt messageId="m1" receipt={CHEM} state="settled" showViewInMemory />);
-    expect(screen.getByRole("button", { name: "View in Memory" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "View in Memory" })).toBeNull();
+  });
+
+  it("View in Memory opens the item and navigates to the Memory page", () => {
+    const open = vi.spyOn(memoryLib, "openMemoryItem").mockReturnValue(true);
+    const goTo = vi.fn();
+    render(
+      <PageNavigationContext.Provider value={{ index: 0, goTo, next: vi.fn(), prev: vi.fn() }}>
+        <RememberedReceipt messageId="m1" receipt={CHEM} state="settled" showViewInMemory />
+      </PageNavigationContext.Provider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "View in Memory" }));
+    expect(open).toHaveBeenCalledWith("i1");
+    expect(goTo).toHaveBeenCalledWith(PAGES.findIndex((p) => p.id === "memory"));
+  });
+
+  it("for a forgotten item that is gone, links to its folder", () => {
+    vi.spyOn(memoryLib, "openMemoryItem").mockReturnValue(false);
+    const select = vi.spyOn(memoryLib, "selectMemory").mockImplementation(() => {});
+    const goTo = vi.fn();
+    render(
+      <PageNavigationContext.Provider value={{ index: 0, goTo, next: vi.fn(), prev: vi.fn() }}>
+        <RememberedReceipt messageId="m1" receipt={{ ...CHEM, kind: "forgot" }} state="settled" showViewInMemory />
+      </PageNavigationContext.Provider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "View in Memory" }));
+    expect(select).toHaveBeenCalledWith({ kind: "folder", folder: "corrections" });
+    expect(goTo).toHaveBeenCalled();
   });
 });

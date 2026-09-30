@@ -185,3 +185,29 @@ describe("ChatMessage", () => {
     });
   });
 });
+
+describe("ChatMessage memory links (Story 13.9)", () => {
+  it("a #memory-item- link opens that memory and goes to the Memory page", async () => {
+    const memoryLib = await import("../lib/memory.ts");
+    const { PageNavigationContext } = await import("../lib/navigationContext.tsx");
+    const { PAGES } = await import("../lib/pages.ts");
+    const open = vi.spyOn(memoryLib, "openMemoryItem").mockReturnValue(true);
+    const goTo = vi.fn();
+    render(
+      <PageNavigationContext.Provider value={{ index: 0, goTo, next: vi.fn(), prev: vi.fn() }}>
+        <ChatMessage message={msg({ text: "- [Prefers mornings](#memory-item-abc123)" })} />
+      </PageNavigationContext.Provider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Prefers mornings" }));
+    expect(open).toHaveBeenCalledWith("abc123");
+    expect(goTo).toHaveBeenCalledWith(PAGES.findIndex((p) => p.id === "memory"));
+    open.mockRestore();
+  });
+
+  it("any other link renders as plain text, never a live link", () => {
+    render(<ChatMessage message={msg({ text: "See [x](https://evil.example) now" })} />);
+    expect(screen.queryByRole("link")).toBeNull();
+    expect(screen.queryByRole("button", { name: "x" })).toBeNull();
+    expect(screen.getByText(/See x now/)).toBeInTheDocument();
+  });
+});

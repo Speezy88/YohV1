@@ -137,7 +137,7 @@ test("↓ from quick-add moves into the rows, and ↓/↑ there move rows — ne
 
 test("scrolled to its very end, the last row sits fully above the Ask Yoh pill", async ({ page }) => {
   await openTasks(page);
-  const list = page.locator("[data-captures-arrow-keys]");
+  const list = page.getByTestId("page-tasks").locator("[data-captures-arrow-keys]");
   await list.evaluate((el) => {
     el.scrollTop = el.scrollHeight;
   });

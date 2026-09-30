@@ -28,14 +28,19 @@ import { remainingMs, requestHold, requestRelease } from "../lib/checkOff.ts";
 export interface UndoToastProps {
   /** The pending check-off's id. */
   readonly id: string;
-  readonly taskName: string;
+  /** Required unless `label` is given: the default copy is "Checked off {taskName}". */
+  readonly taskName?: string;
+  /** Replaces the default copy (Story 13.9: "Deleted conversation"). */
+  readonly label?: string;
+  /** Default true (check-off): pausing also holds the server's pending record. False pauses the local timer only. */
+  readonly serverHold?: boolean;
   /** How long the toast stays up from mount: the server's `commitAt - asOf`. */
   readonly durationMs: number;
   onUndo(): Promise<void>;
   onExpire(): void;
 }
 
-export function UndoToast({ id, taskName, durationMs, onUndo, onExpire }: UndoToastProps): React.JSX.Element {
+export function UndoToast({ id, taskName, label, serverHold = true, durationMs, onUndo, onExpire }: UndoToastProps): React.JSX.Element {
   const reducedMotion = useReducedMotion();
   const [busy, setBusy] = useState(false);
   /** `undefined` while held; otherwise the ms left to run from when the timer (re)starts. */
@@ -61,9 +66,9 @@ export function UndoToast({ id, taskName, durationMs, onUndo, onExpire }: UndoTo
   // must not strand the hold.
   useEffect(
     () => () => {
-      if (held.current && !undoRequested.current) void requestRelease(id);
+      if (serverHold && held.current && !undoRequested.current) void requestRelease(id);
     },
-    [id],
+    [id, serverHold],
   );
 
   const sync = (): void => {
@@ -73,9 +78,13 @@ export function UndoToast({ id, taskName, durationMs, onUndo, onExpire }: UndoTo
       held.current = true;
       leftAtHold.current = Math.max(0, (runMs ?? 0) - (Date.now() - startedAt.current));
       setRunMs(undefined);
-      void requestHold(id);
+      if (serverHold) void requestHold(id);
     } else if (!engaged && held.current) {
       held.current = false;
+      if (!serverHold) {
+        setRunMs(leftAtHold.current);
+        return;
+      }
       void requestRelease(id).then((outcome) => {
         if (held.current) return; // re-engaged while the release was in flight
         setRunMs(outcome.ok ? remainingMs(outcome.value) : leftAtHold.current);
@@ -110,7 +119,7 @@ export function UndoToast({ id, taskName, durationMs, onUndo, onExpire }: UndoTo
         (reducedMotion ? "notification-card--reduced-motion" : "notification-card")
       }
     >
-      <span>Checked off {taskName}</span>{" "}
+      <span>{label ?? `Checked off ${taskName ?? ""}`}</span>{" "}
       <span aria-hidden="true" className="text-ink-secondary">
         ·
       </span>{" "}

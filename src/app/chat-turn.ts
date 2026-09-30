@@ -680,7 +680,7 @@ function recallMemory(store: MemoryItemStore, topic: string): Result<ChatTurnRes
   if (items.length === 0) return reply(`Nothing in memory matches '${topic}'.`);
   const sections = MEMORY_FOLDERS_IN_ORDER.flatMap((folder) => {
     const inFolder = items.filter((i) => i.folder === folder);
-    return inFolder.length === 0 ? [] : [`${memoryFolderLabel(folder)}\n${inFolder.map((i) => `- ${i.text}`).join("\n")}`];
+    return inFolder.length === 0 ? [] : [`${memoryFolderLabel(folder)}\n${inFolder.map((i) => `- [${i.text.replace(/[\[\]]/g, "\\$&")}](#memory-item-${i.id})`).join("\n")}`];
   });
   return reply(sections.join("\n\n"));
 }

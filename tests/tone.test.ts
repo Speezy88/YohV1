@@ -355,6 +355,7 @@ test("capabilities text lists every registry command, and a new entry needs no t
   const prompt = resolveToneSystemPrompt("hey", true, COMMANDS);
   for (const c of COMMANDS) assert.ok(prompt.includes(c.name), c.name);
   assert.match(prompt, /remember that/);
+  assert.match(prompt, /see and edit everything on the Memory page/);
   const extra = resolveToneSystemPrompt("hey", true, [...COMMANDS, { name: "/zzz", description: "does zzz", example: "/zzz now" }]);
   assert.match(extra, /\/zzz \(does zzz\) for example "\/zzz now"/);
   assert.ok(extra.indexOf("/zzz") < extra.indexOf("You do NOT have"));

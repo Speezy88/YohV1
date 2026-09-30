@@ -257,7 +257,8 @@ function buildCapabilitiesInstruction(webSearchAvailable: boolean, commands: rea
       : "Slash commands you can run for Spencer in this chat: " +
         commands.map((c) => `${c.name} (${c.description}) for example "${c.example}"`).join("; ") +
         ". You file what Spencer tells you after chat turns, show a one-line Remembered receipt with Undo, and he can " +
-        "say \"remember that ...\", \"forget ...\" or \"what do you remember about ...\". ";
+        "say \"remember that ...\", \"forget ...\" or \"what do you remember about ...\". Spencer can see and edit " +
+        "everything on the Memory page. ";
 
   const limits = webSearchAvailable
     ? "You do NOT have a changelog or release notes about your own recent updates, and you CANNOT delete or " +

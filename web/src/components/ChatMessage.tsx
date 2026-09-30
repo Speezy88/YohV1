@@ -52,6 +52,7 @@ import { StructuredQuestion } from "./StructuredQuestion.tsx";
 import { HONEST_REJECTION, submitOpenItemAnswer } from "../lib/openItems.ts";
 import { recordAnsweredOpenItem, resolveMessageQuestion } from "../lib/chatStore.ts";
 import type { ChatViewMessage } from "../lib/chatStore.ts";
+import { useOpenInMemory } from "../lib/memoryApi.ts";
 import { RememberedReceipt } from "./RememberedReceipt.tsx";
 import type { OpenItemQuestion } from "../../../src/types/api.ts";
 
@@ -67,11 +68,44 @@ export interface ChatMessageProps {
 const CAPTION = "font-body text-small text-ink-secondary";
 
 /** The small, safe markdown element set a Yoh reply may use — plain text plus emphasis, lists, and paragraphs. Never `img`/`iframe`/raw HTML. */
-const ALLOWED_MARKDOWN_ELEMENTS = ["p", "strong", "em", "ul", "ol", "li", "br", "code"];
+const ALLOWED_MARKDOWN_ELEMENTS = ["p", "strong", "em", "ul", "ol", "li", "br", "code", "a"];
+const MEMORY_LINK_PREFIX = "#memory-item-";
+const MEMORY_LINK_BUTTON =
+  "inline border-0 bg-transparent p-0 text-left font-body text-body font-semibold text-ink-primary underline underline-offset-2 " +
+  "focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid";
 
 function failureCaption(message: ChatViewMessage): string {
   if (message.text !== "") return "The reply was interrupted.";
   return message.errorText ? `Couldn't get a reply: ${message.errorText}` : "Couldn't get a reply. Try again.";
+}
+
+/**
+ * Markdown for model- or transcript-written text. The only live link is a
+ * `#memory-item-{id}` href (a button that opens that memory); every other
+ * href renders as its plain text, so a model-written link is never live.
+ */
+export function SafeMarkdown({ text }: { readonly text: string }): React.JSX.Element {
+  const openInMemory = useOpenInMemory();
+  return (
+    <Markdown
+      allowedElements={ALLOWED_MARKDOWN_ELEMENTS}
+      components={{
+        a: ({ href, children }) => {
+          if (href?.startsWith(MEMORY_LINK_PREFIX) && openInMemory) {
+            const id = href.slice(MEMORY_LINK_PREFIX.length);
+            return (
+              <button type="button" className={MEMORY_LINK_BUTTON} onClick={() => openInMemory(id)}>
+                {children}
+              </button>
+            );
+          }
+          return <>{children}</>;
+        },
+      }}
+    >
+      {text}
+    </Markdown>
+  );
 }
 
 export function ChatMessage({ message }: ChatMessageProps): React.JSX.Element | null {
@@ -146,7 +180,7 @@ export function ChatMessage({ message }: ChatMessageProps): React.JSX.Element | 
         {thinking ? (
           <ThinkingIndicator statusText={message.statusText ?? ""} />
         ) : (
-          message.text !== "" && <Markdown allowedElements={ALLOWED_MARKDOWN_ELEMENTS}>{message.text}</Markdown>
+          message.text !== "" && <SafeMarkdown text={message.text} />
         )}
         {message.receipts.map((receipt, i) => (
           <p key={i} className={CAPTION}>

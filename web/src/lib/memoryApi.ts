@@ -5,7 +5,10 @@
  * calls `POST /api/memory/undo`; the folder labels are duplicated here once
  * (web imports only types from `src/`), pinned by `memoryApi.test.ts`.
  */
+import { useContext } from "react";
 import { apiClient } from "./apiClient.ts";
+import { openMemoryItem, selectMemory } from "./memory.ts";
+import { PageNavigationContext } from "./navigationContext.tsx";
 import { PAGES } from "./pages.ts";
 import type { MemoryFolder } from "../../../src/types/domain.ts";
 
@@ -23,6 +26,24 @@ export const MEMORY_FOLDER_LABELS: Readonly<Record<MemoryFolder, string>> = {
 /** The Memory page arrives with Story 13.7 (T10b); until it is in `PAGES` there is nowhere for "View in Memory" to go. */
 export function hasMemoryPage(): boolean {
   return PAGES.some((page) => (page.id as string) === "memory");
+}
+
+function memoryPageIndex(): number {
+  return PAGES.findIndex((page) => (page.id as string) === "memory");
+}
+
+/**
+ * Returns a function that opens a memory item on the Memory page, or
+ * `undefined` outside `PageShell` (no navigation to offer). An item that is
+ * no longer listed (a forgotten one) falls back to its folder when given.
+ */
+export function useOpenInMemory(): ((itemId: string, fallbackFolder?: MemoryFolder) => void) | undefined {
+  const nav = useContext(PageNavigationContext);
+  if (!nav) return undefined;
+  return (itemId, fallbackFolder) => {
+    if (!openMemoryItem(itemId) && fallbackFolder) selectMemory({ kind: "folder", folder: fallbackFolder });
+    nav.goTo(memoryPageIndex());
+  };
 }
 
 export type UndoOutcome =

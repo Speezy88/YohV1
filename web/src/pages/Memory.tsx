@@ -6,12 +6,17 @@
  * hint on the shared event bus).
  */
 import { useEffect } from "react";
+import { ChatHistoryPane } from "../components/memory/ChatHistoryPane.tsx";
+import { MemorySearchBox, MemorySearchResults } from "../components/memory/MemorySearch.tsx";
 import { MemoryItemRow } from "../components/memory/MemoryItemRow.tsx";
 import { MemoryRail } from "../components/memory/MemoryRail.tsx";
 import { useReducedMotion } from "../hooks/useReducedMotion.ts";
-import { clearPendingScroll, selectMemory, startMemoryStream, useMemoryView, type MemorySelection } from "../lib/memory.ts";
+import { clearPendingScroll, openMemoryItem, selectMemory, startMemoryStream, useMemorySearch, useMemoryView, type MemorySelection } from "../lib/memory.ts";
 import { formatMemoryDay } from "../lib/memoryFormat.ts";
 import type { MemoryViewResponse } from "../../../src/types/api.ts";
+
+const openSource = (source: { conversationId: string; turnId: string }): void =>
+  selectMemory({ kind: "history", conversationId: source.conversationId, turnId: source.turnId });
 
 const MUTED = "m-0 p-5 font-body text-body text-ink-secondary";
 
@@ -33,7 +38,7 @@ function Pane({ view, selection, pendingScrollId }: { readonly view: MemoryViewR
     return (
       <ul aria-label="Needs review" className="m-0 flex flex-col gap-2 p-0">
         {view.needsReview.map((i) => (
-          <MemoryItemRow key={i.id} item={i} reason={i.reason} />
+          <MemoryItemRow key={i.id} item={i} reason={i.reason} onOpenSource={openSource} />
         ))}
       </ul>
     );
@@ -54,7 +59,14 @@ function Pane({ view, selection, pendingScrollId }: { readonly view: MemoryViewR
     );
   }
   if (selection.kind === "history") {
-    return <h2 className="m-0 p-5 font-body text-body font-medium text-ink-primary">Chat history</h2>;
+    return (
+      <ChatHistoryPane
+        {...(selection.conversationId ? { conversationId: selection.conversationId } : {})}
+        {...(selection.turnId ? { turnId: selection.turnId } : {})}
+        onOpen={(conversationId) => selectMemory({ kind: "history", conversationId })}
+        onBack={() => selectMemory({ kind: "history" })}
+      />
+    );
   }
   const folderId = selection.kind === "folder" ? selection.folder : "feedback";
   const folder = view.folders.find((f) => f.folder === folderId) ?? view.folders[0];
@@ -75,7 +87,7 @@ function Pane({ view, selection, pendingScrollId }: { readonly view: MemoryViewR
         </li>
       ))}
       {folder.items.map((i) => (
-        <MemoryItemRow key={i.id} item={i} />
+        <MemoryItemRow key={i.id} item={i} onOpenSource={openSource} />
       ))}
     </ul>
   );
@@ -84,20 +96,41 @@ function Pane({ view, selection, pendingScrollId }: { readonly view: MemoryViewR
 export default function MemoryPage(): React.JSX.Element {
   const { view, selection, pendingScrollId } = useMemoryView();
   const reducedMotion = useReducedMotion();
+  const search = useMemorySearch();
+  const searching = search.text.trim() !== "";
 
   useEffect(() => startMemoryStream(), []);
 
   return (
     <div className="flex h-full flex-col gap-[22px] p-8 pb-24">
-      <header>
+      <header className="flex flex-wrap items-center justify-between gap-4">
         <h1 className="m-0 font-body text-display font-bold tracking-tight text-ink-primary">Memory</h1>
+        {view.status === "loaded" && (
+          <div className="w-full max-w-[360px]">
+            <MemorySearchBox search={search} />
+          </div>
+        )}
       </header>
       <div className="flex min-h-0 flex-1 gap-5">
         {view.status === "loaded" ? (
           <>
             <MemoryRail view={view.value} selection={selection} onSelect={selectMemory} />
             <section aria-label="Memory items" data-wheel-nav="off" className="min-h-0 min-w-0 flex-1 overflow-y-auto px-1 pb-4 pt-1">
-              <Pane view={view.value} selection={selection} pendingScrollId={pendingScrollId} />
+              {searching ? (
+                <MemorySearchResults
+                  search={search}
+                  onOpenItem={(id) => {
+                    openMemoryItem(id);
+                    search.clear();
+                  }}
+                  onOpenTurn={(conversationId, turnId) => {
+                    selectMemory({ kind: "history", conversationId, turnId });
+                    search.clear();
+                  }}
+                />
+              ) : (
+                <Pane view={view.value} selection={selection} pendingScrollId={pendingScrollId} />
+              )}
             </section>
           </>
         ) : view.status === "error" ? (

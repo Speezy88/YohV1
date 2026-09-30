@@ -44,5 +44,5 @@ test("after another message the line no longer offers Undo", async ({ page }) =>
   await input.fill("Thanks");
   await input.press("Enter");
   await expect(chat.getByRole("button", { name: "Undo" })).toHaveCount(0);
-  await expect(chat.getByTestId("remembered-receipt")).toHaveText("Remembered: Chem club is a club, not a class · Corrections");
+  await expect(chat.getByTestId("remembered-receipt")).toHaveText("Remembered: Chem club is a club, not a class · Corrections · View in Memory");
 });

@@ -44,14 +44,25 @@ test("/remember passes its args (E10)", async () => {
 
 test("recall lists matches grouped by folder in PRD order with folder labels", async () => {
   const m = memory();
-  m.insert(NEW({ folder: "ideas-notes", text: "AP Bio poster idea" }));
-  m.insert(NEW({ folder: "goals-projects", text: "AP Bio 5 by May" }));
+  const idea = m.insert(NEW({ folder: "ideas-notes", text: "AP Bio poster idea" }));
+  const goal = m.insert(NEW({ folder: "goals-projects", text: "AP Bio 5 by May" }));
   const r = await chatTurn(deps(m), { message: "what do you remember about AP Bio?" });
   assert.ok(r.ok);
   const reply = r.value.reply;
   assert.ok(reply.indexOf("Goals & projects") >= 0 && reply.indexOf("Goals & projects") < reply.indexOf("Ideas & notes"));
   assert.match(reply, /AP Bio 5 by May/);
   assert.match(reply, /AP Bio poster idea/);
+  // each line links to its item on the Memory page (T10b)
+  assert.ok(reply.includes(`- [AP Bio 5 by May](#memory-item-${goal.id})`), reply);
+  assert.ok(reply.includes(`- [AP Bio poster idea](#memory-item-${idea.id})`), reply);
+});
+
+test("recall escapes brackets in an item's text so the link stays intact", async () => {
+  const m = memory();
+  const item = m.insert(NEW({ folder: "ideas-notes", text: "Read [draft] notes" }));
+  const r = await chatTurn(deps(m), { message: "what do you remember about draft?" });
+  assert.ok(r.ok);
+  assert.ok(r.value.reply.includes(`- [Read \\[draft\\] notes](#memory-item-${item.id})`), r.value.reply);
 });
 
 test("forget with one match deletes the chain, persists a receipt, and directs a forgot receipt", async () => {

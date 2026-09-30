@@ -10,7 +10,7 @@
  */
 import { useState } from "react";
 import { useReducedMotion } from "../hooks/useReducedMotion.ts";
-import { hasMemoryPage, MEMORY_FOLDER_LABELS, undoMemoryReceipt } from "../lib/memoryApi.ts";
+import { hasMemoryPage, MEMORY_FOLDER_LABELS, undoMemoryReceipt, useOpenInMemory } from "../lib/memoryApi.ts";
 import { setReceiptOutcome, type ReceiptState } from "../lib/chatStore.ts";
 import type { RememberedReceipt as Receipt } from "../../../src/types/api.ts";
 
@@ -48,7 +48,8 @@ export function RememberedReceipt({ messageId, receipt, state, note, showViewInM
   const reduced = useReducedMotion();
   const [busy, setBusy] = useState(false);
   const [undoFailed, setUndoFailed] = useState(false);
-  const canViewInMemory = showViewInMemory ?? hasMemoryPage();
+  const openInMemory = useOpenInMemory();
+  const canViewInMemory = (showViewInMemory ?? hasMemoryPage()) && openInMemory !== undefined;
 
   const undo = async (): Promise<void> => {
     if (!receipt || busy) return;
@@ -85,7 +86,14 @@ export function RememberedReceipt({ messageId, receipt, state, note, showViewInM
               {canViewInMemory && (
                 <>
                   {" · "}
-                  <button type="button" className={LINK_BUTTON}>
+                  <button
+                    type="button"
+                    className={LINK_BUTTON}
+                    onClick={() => {
+                      const first = receipt.items[0];
+                      if (first) openInMemory?.(first.id, first.folder);
+                    }}
+                  >
                     View in Memory
                   </button>
                 </>
