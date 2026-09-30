@@ -29,6 +29,7 @@ import { serve } from "@hono/node-server";
 import { openSqliteConnection } from "../../src/adapters/sqlite.ts";
 import { createChatStore, initChatStoreSchema } from "../../src/adapters/chat-store.ts";
 import { initSettingsStoreSchema } from "../../src/adapters/settings-store.ts";
+import { createMemoryItemStore, initMemoryItemStoreSchema } from "../../src/adapters/memory-item-store.ts";
 import { initRoutineStoreSchema } from "../../src/adapters/routine-store.ts";
 import { appendOutboxInTx, initNotificationStoreSchema } from "../../src/adapters/notification-store.ts";
 import { initPlanStateStoreSchema, replaceDayPinsAndDropsInTx } from "../../src/adapters/plan-state-store.ts";
@@ -70,11 +71,13 @@ initPlanStateStoreSchema(connection.db);
 initRoutineStoreSchema(connection.db);
 initChatStoreSchema(connection.db);
 initSettingsStoreSchema(connection.db);
+initMemoryItemStoreSchema(connection.db);
 initCompletionLogSchema(connection.db);
 
 const store = createMemoryStore(connection);
 // Story 13.1: the REAL chat store — `chatExchange` stores both turns even though `runChatTurn` is scripted.
 const chatHistory = createChatStore(connection);
+export const memoryItems = createMemoryItemStore(connection);
 const startedAt = new Date();
 const today = localIsoDate(startedAt, TIME_ZONE);
 
@@ -150,6 +153,7 @@ function scenarioPlan(version: number): Plan {
 function resetFixturePlan(scenario: boolean): void {
   reshuffleScenario = scenario;
   chatHistory.clearAll();
+  memoryItems.clearAll();
   for (const open of listOpenReshuffleProposals(store)) clearInteractionRequest(store, open.requestId, open.requestVersion);
   connection.db.prepare("DELETE FROM planning_settings").run();
   connection.db.transaction(() => replaceDayPinsAndDropsInTx(connection.db, today, [], []))();

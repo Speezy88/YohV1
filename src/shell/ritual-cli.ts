@@ -212,6 +212,7 @@ import { initRoutineStoreSchema } from "../adapters/routine-store.ts";
 import { createNotification, initNotificationStoreSchema } from "../adapters/notification-store.ts";
 import { getLastHeartbeatAt, initPlanStateStoreSchema, isHeartbeatStale } from "../adapters/plan-state-store.ts";
 import { initSettingsStoreSchema } from "../adapters/settings-store.ts";
+import { initMemoryItemStoreSchema } from "../adapters/memory-item-store.ts";
 import { loadPushoverConfigFromEnv, sendPushoverNotification } from "../adapters/notification-adapter.ts";
 import {
   PLAN_GENERATION_DEGRADED_THRESHOLD_MS,
@@ -1306,6 +1307,7 @@ export async function main(
   // writes it).
   initPlanStateStoreSchema(connection.db);
   initSettingsStoreSchema(connection.db);
+  initMemoryItemStoreSchema(connection.db);
   initRoutineStoreSchema(connection.db);
   const notifyOperational = createOperationalNotifier(connection);
   const checkServerHeartbeatStale = (): boolean => isHeartbeatStale(getLastHeartbeatAt(connection), new Date());

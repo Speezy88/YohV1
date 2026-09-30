@@ -59,6 +59,7 @@ import {
 } from "../adapters/notification-store.ts";
 import { createChatStore, initChatStoreSchema, type ChatStore } from "../adapters/chat-store.ts";
 import { initSettingsStoreSchema } from "../adapters/settings-store.ts";
+import { initMemoryItemStoreSchema } from "../adapters/memory-item-store.ts";
 import { chatExchange, type ChatTurnFn } from "../app/chat-exchange.ts";
 import { todaysChatHistory } from "../app/chat-history.ts";
 import { initRoutineStoreSchema } from "../adapters/routine-store.ts";
@@ -1877,6 +1878,7 @@ if (import.meta.main) {
   initRoutineStoreSchema(connection.db);
   initChatStoreSchema(connection.db);
   initSettingsStoreSchema(connection.db);
+  initMemoryItemStoreSchema(connection.db);
   initCompletionLogSchema(connection.db);
   // Real-use fixes plan, Task 9: `server.ts` is the ONE shell that makes
   // real Claude calls (POST /api/chat's `buildChatDeps` below) —
