@@ -10,6 +10,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
+import { createChatStore, initChatStoreSchema } from "../src/adapters/chat-store.ts";
+import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
 import type { ChatSession } from "../src/app/chat-session.ts";
 import type { ChatTurnDeps } from "../src/app/chat-turn.ts";
 import { createApp, runChatStream, startServer, type ChatSseStreamLike, type ChatTurnFn, type ServerDeps } from "../src/shell/server.ts";
@@ -286,7 +288,7 @@ test("POST /api/chat passes the configured chat deps through to chatTurn, never 
     seen = deps;
     return { ok: true, value: { reply: "", receipts: [] } };
   };
-  const chat = { timeZone: "UTC", runChatTurn: fakeChatTurn } as unknown as ServerDeps["chat"];
+  const chat = { timeZone: "UTC", runChatTurn: fakeChatTurn } as unknown as NonNullable<ServerDeps["chat"]>;
   const { app, connection } = chatApp(chat);
   await (await postChat(app, REQUEST)).text();
   assert.equal(seen?.timeZone, "UTC");
@@ -304,13 +306,11 @@ test("POST /api/chat rejects a missing or blank message with a plain 400 validat
   connection.close();
 });
 
-test("POST /api/chat rejects a malformed history with a 400 validation envelope", async () => {
+test("POST /api/chat ignores a client-sent history (the server owns it)", async () => {
   const { app, connection } = chatApp(seamOnly(async () => ({ ok: true, value: { reply: "", receipts: [] } })));
-  for (const history of ["nope", [{ role: "system", content: "x" }], [{ role: "user" }]]) {
-    const res = await postChat(app, { message: "hi", history });
-    assert.equal(res.status, 400, JSON.stringify(history));
-    assert.deepEqual(await res.json(), { ok: false, error: { kind: "validation", message: "chat: malformed history" } });
-  }
+  const res = await postChat(app, { message: "hi", history: "nope" });
+  assert.equal(res.status, 200);
+  await res.text();
   connection.close();
 });
 
@@ -352,7 +352,7 @@ test("POST /api/chat with the REAL chatTurn streams the general-question reply a
     },
   };
   const connection = openSqliteConnection({ databasePath: ":memory:" });
-  const chat = { store: {}, timeZone: "UTC", now: () => new Date(), llmClient } as unknown as ServerDeps["chat"];
+  const chat = { store: {}, timeZone: "UTC", now: () => new Date(), llmClient } as unknown as NonNullable<ServerDeps["chat"]>;
   const app = createApp({ connection, log: () => {}, ...(chat ? { chat } : {}) });
   const events = parseSseBody(await (await postChat(app, { message: "tell me something", history: [{ role: "user", content: "tell me something" }] })).text());
   assert.deepEqual(events[0], { type: "status", text: "Thinking…" });
@@ -365,7 +365,7 @@ test("POST /api/chat with the REAL chatTurn streams the general-question reply a
   connection.close();
 });
 
-test("POST /api/chat treats an absent history as empty", async () => {
+test("POST /api/chat hands the inner turn only the message", async () => {
   let seenInput: ChatTurnRequest | undefined;
   const { app, connection } = chatApp(
     seamOnly(async (_deps, input) => {
@@ -373,7 +373,28 @@ test("POST /api/chat treats an absent history as empty", async () => {
       return { ok: true, value: { reply: "", receipts: [] } };
     }),
   );
+  await (await postChat(app, { message: "hi", history: [] })).text();
+  assert.equal(seenInput?.message, "hi");
+  connection.close();
+});
+
+test("POST /api/chat stores both turns and GET /api/chat-history/today returns them, without chat deps", async () => {
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db);
+  initChatStoreSchema(connection.db);
+  const chatHistory = createChatStore(connection);
+  const chat = { timeZone: "UTC", now: () => new Date(), runChatTurn: async () => ({ ok: true, value: { reply: "yo", receipts: [] } }) } as unknown as NonNullable<ServerDeps["chat"]>;
+  const app = createApp({ connection, log: () => {}, chat, chatHistory });
   await (await postChat(app, { message: "hi" })).text();
-  assert.deepEqual(seenInput, { message: "hi", history: [] });
+  const withTz = await createApp({ connection, log: () => {}, chatHistory, chat: { timeZone: "UTC" } as unknown as NonNullable<ServerDeps["chat"]> }).request("/api/chat-history/today");
+  const tzBody = (await withTz.json()) as { ok: boolean; value: { turns: { role: string; text: string }[] } };
+  assert.deepEqual(tzBody.value.turns.map((t) => [t.role, t.text]), [["user", "hi"], ["assistant", "yo"]]);
+  connection.close();
+});
+
+test("GET /api/chat-history/today reports not-configured without a chat store", async () => {
+  const { app, connection } = chatApp(undefined);
+  const res = await app.request("/api/chat-history/today");
+  assert.equal(res.status, 503);
   connection.close();
 });

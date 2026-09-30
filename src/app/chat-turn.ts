@@ -76,6 +76,7 @@ import { declareTimeBudget } from "./time-budget.ts";
 import { searchWeb, type WebSearchDeps } from "./web-search.ts";
 import { explainPriority } from "./why-prioritized.ts";
 import { localIsoDate } from "../rituals/ritual-shared.ts";
+import type { ChatStore } from "../adapters/chat-store.ts";
 import type { LogEntry } from "../adapters/logger.ts";
 import type { AnthropicMessagesClient } from "../adapters/llm-adapter.ts";
 import { getPlan, type MemoryStore } from "../adapters/memory-store.ts";
@@ -124,6 +125,8 @@ const NO_PLAN_TODAY_REPLY = "There's no Plan for today yet. Say \"plan my day\" 
 
 export interface ChatTurnDeps extends CreateItemDeps, CalendarEditDeps, WebSearchDeps, SaveSearchResultDeps {
   readonly store: MemoryStore;
+  /** Server-owned chat history (Story 13.1); absent -> the model sees only the current message. */
+  readonly chatHistory?: ChatStore;
   readonly timeZone: string;
   readonly now: () => Date;
   readonly readTasks: () => Promise<readonly Task[]>;
@@ -516,8 +519,22 @@ export async function chatTurn(deps: ChatTurnDeps, input: ChatTurnRequest): Prom
       ...(deps.connection ? { connection: deps.connection } : {}),
       ...(deps.emit ? { emit: deps.emit } : {}),
     },
-    { message: input.message, history: trimHistory(input.history) },
+    { message: input.message, history: trimHistory(historyForModel(deps, input.message)) },
   );
+}
+
+/** Today's stored turns (the last `MAX_CHAT_HISTORY_TURNS`), or just the current message when the store is absent or fails. */
+function historyForModel(deps: ChatTurnDeps, message: string): readonly ChatTurn[] {
+  const fallback: readonly ChatTurn[] = [{ role: "user", content: message }];
+  if (!deps.chatHistory) return fallback;
+  try {
+    const turns = deps.chatHistory.turnsForDate(localIsoDate(deps.now(), deps.timeZone), MAX_CHAT_HISTORY_TURNS);
+    const mapped = turns.filter((t) => t.text.trim() !== "").map((t) => ({ role: t.role, content: t.text }));
+    return mapped.length > 0 ? mapped : fallback;
+  } catch (error) {
+    deps.log?.({ level: "warn", event: "chat-turn.history-read-failed", detail: error instanceof Error ? error.message : String(error) });
+    return fallback;
+  }
 }
 
 /**

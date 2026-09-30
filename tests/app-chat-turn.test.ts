@@ -17,6 +17,7 @@ import assert from "node:assert/strict";
 import { initRoutineStoreSchema } from "../src/adapters/routine-store.ts";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { createMemoryStore, getCurrentTimeBudget, getPlan, putOpenInteractionRequest, putPlan, putTimeBudget, type MemoryStore } from "../src/adapters/memory-store.ts";
+import { createChatStore, initChatStoreSchema, type ChatStore } from "../src/adapters/chat-store.ts";
 import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
 import { PLAN_EDIT_HOW_TO_REPLY } from "../src/core/plan-edit-commands.ts";
 import { CALENDAR_DELETE_NOT_SUPPORTED_REPLY, chatTurn, MAX_CHAT_HISTORY_TURNS, STATUS_THINKING, type ChatTurnDeps } from "../src/app/chat-turn.ts";
@@ -76,6 +77,18 @@ function makeFakeLlmClient(responseText = "I don't have a specific answer for th
 
 function makeSession(): ChatSession {
   return { recentMessages: [], lastSearchAnswer: undefined };
+}
+
+/** A real chat store on in-memory SQLite, pre-seeded with today's (2026-08-22, New York) turns. */
+function seededChatStore(turns: readonly { role: "user" | "assistant"; text: string }[]): ChatStore {
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db);
+  initChatStoreSchema(connection.db);
+  const store = createChatStore(connection);
+  turns.forEach((t, i) => {
+    store.appendTurn({ date: "2026-08-22", role: t.role, text: t.text, at: new Date(Date.UTC(2026, 7, 22, 12, 0, i)).toISOString() });
+  });
+  return store;
 }
 
 function baseDeps(overrides: Partial<ChatTurnDeps> = {}): ChatTurnDeps {
@@ -142,7 +155,7 @@ test("chatTurn recognizes a Time Budget command and never calls the LLM client",
   const store = tempStore();
   const deps = baseDeps({ llmClient, store });
 
-  const result = await chatTurn(deps, { message: "time budget 6h", history: [] });
+  const result = await chatTurn(deps, { message: "time budget 6h" });
 
   assert.equal(result.ok, true);
   if (!result.ok) return;
@@ -155,7 +168,7 @@ test("Story 8.4: a recognized Plan-view command never reaches classifyChatIntent
   const llmClient = makeFakeLlmClient();
   const deps = baseDeps({ llmClient });
 
-  const result = await chatTurn(deps, { message: "what's my plan", history: [] });
+  const result = await chatTurn(deps, { message: "what's my plan" });
 
   assert.equal(result.ok, true);
   assert.equal((llmClient as any).calls.length, 0, "a Task-4 recognizer match must short-circuit BEFORE classifyChatIntent ever runs");
@@ -174,7 +187,6 @@ test("chatTurn falls through to answerQuestion for an unmatched line, costing ex
   // three-call fall-through it's actually about.
   const result = await chatTurn(deps, {
     message: "what should I do about the dishes",
-    history: [{ role: "user", content: "what should I do about the dishes" }],
   });
 
   assert.equal(result.ok, true);
@@ -200,8 +212,9 @@ test("chatTurn trims an untrimmed history down to MAX_CHAT_HISTORY_TURNS before 
     role: i % 2 === 0 ? "user" : "assistant",
     content: `turn-${i}`,
   }));
+  const chatHistory = seededChatStore(longHistory.map((t) => ({ role: t.role, text: t.content })));
 
-  await chatTurn(deps, { message: "turn-49", history: longHistory });
+  await chatTurn({ ...deps, chatHistory }, { message: "turn-49" });
 
   // calls[0] is chatTurn's own classifyCapture call, calls[1]
   // is its classifyChatIntent call (Story 8.4, sent only the current line,
@@ -235,8 +248,9 @@ test("Story 8.6 (Task 7): trimming drops a leading assistant turn if one slips t
     history.push({ role: i % 2 === 0 ? "user" : "assistant", content: `turn-${i}` });
   }
   assert.equal(history.length, 49);
+  const chatHistory = seededChatStore(history.map((t) => ({ role: t.role, text: t.content })));
 
-  await chatTurn(deps, { message: "turn-49", history });
+  await chatTurn({ ...deps, chatHistory }, { message: "turn-49" });
 
   // calls[0] is classifyCapture, calls[1] is classifyChatIntent, calls[2] is answerQuestion (see the test above).
   const sentMessages = (llmClient as any).calls[2].messages as ReadonlyArray<{ role: string; content: string }>;
@@ -251,7 +265,7 @@ test("chatTurn records the current message into session.recentMessages", async (
   const session = makeSession();
   const deps = baseDeps({ session });
 
-  await chatTurn(deps, { message: "  time budget 6h  ", history: [] });
+  await chatTurn(deps, { message: "  time budget 6h  " });
 
   assert.deepEqual(session.recentMessages, ["time budget 6h"]);
 });
@@ -260,7 +274,7 @@ test("chatTurn does not record a blank message", async () => {
   const session = makeSession();
   const deps = baseDeps({ session });
 
-  await chatTurn(deps, { message: "   ", history: [] });
+  await chatTurn(deps, { message: "   " });
 
   assert.deepEqual(session.recentMessages, []);
 });
@@ -274,7 +288,7 @@ test("chatTurn emits STATUS_THINKING first when deps.emit is present, for a reco
   const events: ChatStreamEvent[] = [];
   const deps = baseDeps({ emit: (e) => events.push(e) });
 
-  await chatTurn(deps, { message: "what's my plan", history: [] });
+  await chatTurn(deps, { message: "what's my plan" });
 
   assert.ok(events.length > 0);
   assert.deepEqual(events[0], { type: "status", text: STATUS_THINKING });
@@ -285,13 +299,13 @@ test("chatTurn never emits a done/error event itself, across a recognized comman
 
   // Branch 1: a recognized command (Plan-view).
   const events1: ChatStreamEvent[] = [];
-  await chatTurn(baseDeps({ emit: (e) => events1.push(e) }), { message: "what's my plan", history: [] });
+  await chatTurn(baseDeps({ emit: (e) => events1.push(e) }), { message: "what's my plan" });
   assert.ok(events1.every((e) => e.type === "status" || e.type === "delta"));
 
   // Branch 2: a recognized command that reads Tasks (Mid-Day Re-Flow — no
   // Plan stored, so it resolves cleanly with the "no plan yet" reply).
   const events2: ChatStreamEvent[] = [];
-  await chatTurn(baseDeps({ emit: (e) => events2.push(e), readTasks: async () => tasks }), { message: "reflow my day", history: [] });
+  await chatTurn(baseDeps({ emit: (e) => events2.push(e), readTasks: async () => tasks }), { message: "reflow my day" });
   assert.ok(events2.every((e) => e.type === "status" || e.type === "delta"));
 
   // Branch 3: the general-question fallback, non-streaming call still under
@@ -301,7 +315,6 @@ test("chatTurn never emits a done/error event itself, across a recognized comman
   const llmClient = makeFakeLlmClient("Two plus two is four.");
   await chatTurn(baseDeps({ emit: (e) => events3.push(e), llmClient }), {
     message: "what's 2+2",
-    history: [{ role: "user", content: "what's 2+2" }],
   });
   assert.ok(events3.every((e) => e.type === "status" || e.type === "delta"));
 });
@@ -310,7 +323,7 @@ test("chatTurn emits an additional capability-specific status before a Tasks-rea
   const events: ChatStreamEvent[] = [];
   const deps = baseDeps({ emit: (e) => events.push(e), readTasks: async () => [] });
 
-  await chatTurn(deps, { message: "reflow my day", history: [] });
+  await chatTurn(deps, { message: "reflow my day" });
 
   assert.ok(events.length >= 2, "expected STATUS_THINKING plus a capability-specific status");
   assert.equal(events[0]!.type, "status");
@@ -330,7 +343,7 @@ test("Review Focus #3 (F6, Epic 6 retro): 'save that to my notion research vault
   session.lastSearchAnswer = { query: "hiking boots", answer: { answer: "x", citations: [] } };
   const deps = baseDeps({ llmClient, session });
 
-  const result = await chatTurn(deps, { message: "save that to my notion research vault", history: [] });
+  const result = await chatTurn(deps, { message: "save that to my notion research vault" });
 
   assert.equal(result.ok, true);
   assert.equal(
@@ -392,7 +405,7 @@ test("Review Focus #5: session is threaded by reference across two chatTurn call
     llmClient: makeFakeLlmClient("SEARCH: best hiking boots"),
     searchFn: async () => ({ ok: true, value: { answer: "Salomon test well.", citations: [] } }),
   });
-  await chatTurn(deps1, { message: "search for the best hiking boots", history: [] });
+  await chatTurn(deps1, { message: "search for the best hiking boots" });
   assert.ok(session.lastSearchAnswer, "expected the first turn to set session.lastSearchAnswer");
 
   const createPageBindingCalls: unknown[] = [];
@@ -403,7 +416,7 @@ test("Review Focus #5: session is threaded by reference across two chatTurn call
       return { ok: false, error: { kind: "missing-field", message: "no Notion config configured for this test" } };
     },
   });
-  await chatTurn(deps2, { message: "save that", history: [] });
+  await chatTurn(deps2, { message: "save that" });
   assert.equal(
     createPageBindingCalls.length,
     1,
@@ -430,7 +443,7 @@ test('chatTurn routes a current-information-cue line ("what\'s the latest AI new
     },
   });
 
-  const result = await chatTurn(deps, { message: "what's the latest AI news", history: [] });
+  const result = await chatTurn(deps, { message: "what's the latest AI news" });
 
   assert.equal(result.ok, true);
   if (!result.ok) return;
@@ -454,7 +467,7 @@ test('chatTurn strips the search verb from an explicit-verb line ("search for th
     },
   });
 
-  await chatTurn(deps, { message: "search for the best hiking boots", history: [] });
+  await chatTurn(deps, { message: "search for the best hiking boots" });
 
   assert.deepEqual(searchCalls, ["the best hiking boots"]);
   assert.equal((llmClient as any).calls.length, 0, "the pre-check must catch this line before classifyCapture/classifyChatIntent");
@@ -471,7 +484,7 @@ test('chatTurn treats a leading "search:" prefix (what Research Hub\'s ask box a
     },
   });
 
-  await chatTurn(deps, { message: "search: AP Bio registration deadline", history: [] });
+  await chatTurn(deps, { message: "search: AP Bio registration deadline" });
 
   assert.deepEqual(searchCalls, ["AP Bio registration deadline"]);
   assert.equal((llmClient as any).calls.length, 0, "an explicit search: prefix never depends on the classifier");
@@ -488,7 +501,7 @@ test("M6 (final-review): an explicit \"search:\" prefix always searches, even wh
     },
   });
 
-  const result = await chatTurn(deps, { message: "search: add a new task in notion via api", history: [] });
+  const result = await chatTurn(deps, { message: "search: add a new task in notion via api" });
 
   assert.equal(result.ok, true);
   assert.deepEqual(searchCalls, ["add a new task in notion via api"]);
@@ -533,7 +546,7 @@ test("a search-trigger line replies plainly that web search isn't set up, and ne
     },
   });
 
-  const result = await chatTurn(deps, { message: "search for the best hiking boots", history: [] });
+  const result = await chatTurn(deps, { message: "search for the best hiking boots" });
 
   assert.equal(result.ok, true);
   if (!result.ok) return;
@@ -568,7 +581,7 @@ test("Story 8.4: session.recentMessages records every line that reaches chatTurn
       // stub is enough.
       searchFn: async () => ({ ok: true, value: { answer: "x", citations: [] } }),
     });
-    await chatTurn(deps, { message, history: [] });
+    await chatTurn(deps, { message });
     assert.deepEqual(session.recentMessages, [message], `expected "${message}" to be recorded into session.recentMessages`);
   }
 });
@@ -596,7 +609,7 @@ test("/morning dispatches to morningView and formats its response as chat text �
   putPlan(store, samplePlanFixture());
   const deps = baseDeps({ llmClient, store });
 
-  const result = await chatTurn(deps, { message: "/morning", history: [] });
+  const result = await chatTurn(deps, { message: "/morning" });
   assert.ok(result.ok);
   if (!result.ok) return;
   assert.match(result.value.reply, /Draft the memo/);
@@ -605,7 +618,7 @@ test("/morning dispatches to morningView and formats its response as chat text �
 
 test("/morning with no Plan yet points Spencer at /plan (real-use fixes plan, Task 1) — it still never generates a Plan itself (FR-1)", async () => {
   const deps = baseDeps();
-  const result = await chatTurn(deps, { message: "/morning", history: [] });
+  const result = await chatTurn(deps, { message: "/morning" });
   assert.ok(result.ok);
   if (!result.ok) return;
   assert.equal(result.value.reply, 'No Plan yet today. Type /plan (or say "plan my day") and I\'ll build it now.');
@@ -647,7 +660,7 @@ test("/plan dispatches to planDay and never calls the LLM client", async () => {
   const llmClient = makeFakeLlmClient();
   const deps = planDayReadyDeps({ llmClient });
 
-  const result = await chatTurn(deps, { message: "/plan", history: [] });
+  const result = await chatTurn(deps, { message: "/plan" });
 
   assert.ok(result.ok);
   if (!result.ok) return;
@@ -661,7 +674,7 @@ test("chatTurn recognizes the 'plan my day' family (deterministic, zero LLM call
     const llmClient = makeFakeLlmClient();
     const deps = planDayReadyDeps({ llmClient });
 
-    const result = await chatTurn(deps, { message: line, history: [] });
+    const result = await chatTurn(deps, { message: line });
 
     assert.ok(result.ok, `expected "${line}" to succeed`);
     if (!result.ok) continue;
@@ -672,7 +685,7 @@ test("chatTurn recognizes the 'plan my day' family (deterministic, zero LLM call
 
 test("a Plan-view request ('what's my plan') is never mistaken for a Plan-day (generate) request", async () => {
   const deps = planDayReadyDeps();
-  const result = await chatTurn(deps, { message: "what's my plan", history: [] });
+  const result = await chatTurn(deps, { message: "what's my plan" });
   assert.ok(result.ok);
   if (!result.ok) return;
   // isPlanViewCommand wins here (checked first) — showPlan, not planDay — so
@@ -698,7 +711,7 @@ test("chatTurn recognizes 'what's happening tomorrow' deterministically (zero LL
     },
   });
 
-  const result = await chatTurn(deps, { message: "what's happening tomorrow", history: [] });
+  const result = await chatTurn(deps, { message: "what's happening tomorrow" });
 
   assert.ok(result.ok);
   if (!result.ok) return;
@@ -738,7 +751,7 @@ test("chatTurn's day-view recognizer never swallows isPlanViewCommand's own bare
     },
   });
 
-  const result = await chatTurn(deps, { message: "what's my plan", history: [] });
+  const result = await chatTurn(deps, { message: "what's my plan" });
 
   assert.ok(result.ok);
   if (!result.ok) return;
@@ -770,7 +783,7 @@ test("/night dispatches to startNightCloseOut and surfaces its question", async 
   putPlan(store, samplePlanFixture());
   const deps = baseDeps({ store });
 
-  const result = await chatTurn(deps, { message: "/night", history: [] });
+  const result = await chatTurn(deps, { message: "/night" });
   assert.ok(result.ok);
   if (!result.ok) return;
   assert.ok(result.value.question);
@@ -778,7 +791,7 @@ test("/night dispatches to startNightCloseOut and surfaces its question", async 
 
 test("an unknown command gets a neutral reply listing every real command, never an error", async () => {
   const deps = baseDeps();
-  const result = await chatTurn(deps, { message: "/frobnicate", history: [] });
+  const result = await chatTurn(deps, { message: "/frobnicate" });
   assert.ok(result.ok);
   if (!result.ok) return;
   assert.match(result.value.reply, /No command named "\/frobnicate"/);
@@ -789,7 +802,7 @@ test("command matching is case-insensitive, and a trailing word after the comman
   const store = tempStore();
   putPlan(store, samplePlanFixture());
   const deps = baseDeps({ store });
-  const result = await chatTurn(deps, { message: "/MORNING please", history: [] });
+  const result = await chatTurn(deps, { message: "/MORNING please" });
   assert.ok(result.ok);
   if (!result.ok) return;
   assert.doesNotMatch(result.value.reply, /No command named/);
@@ -899,7 +912,7 @@ test("chatTurn routes a captured Task description through draftItem's Tasks-data
     }),
   });
 
-  const result = await chatTurn(deps, { message: "Lab report draft, due Thursday", history: [] });
+  const result = await chatTurn(deps, { message: "Lab report draft, due Thursday" });
   assert.equal(result.ok, true);
   if (!result.ok) return;
   assert.match(result.value.question?.text ?? "", /Here's what I'll create in Tasks/);
@@ -936,7 +949,7 @@ test("chatTurn does NOT capture an ordinary statement", async () => {
 test("chatTurn's capture check runs AFTER every deterministic recognizer — an explicit time-budget line never reaches any LLM call, capture included", async () => {
   const llmClient = fakeCaptureRoutingClient({ capture: "NONE" });
   const deps = baseDeps({ llmClient });
-  await chatTurn(deps, { message: "time budget 6h", history: [] });
+  await chatTurn(deps, { message: "time budget 6h" });
   assert.equal((llmClient as any).calls.length, 0, "a deterministic time-budget line must never reach any LLM call, capture included");
 });
 
@@ -1035,7 +1048,7 @@ test("the broadened deterministic calendar recognizer routes the incident line a
       }),
     });
 
-    const result = await chatTurn(deps, { message, history: [] });
+    const result = await chatTurn(deps, { message });
 
     assert.equal(result.ok, true, `expected "${message}" to succeed`);
     if (!result.ok) continue;
@@ -1066,7 +1079,7 @@ test("'Lab report draft, due Thursday' still routes to a Task, not a calendar ev
     }),
   });
 
-  const result = await chatTurn(deps, { message: "Lab report draft, due Thursday", history: [] });
+  const result = await chatTurn(deps, { message: "Lab report draft, due Thursday" });
   assert.equal(result.ok, true);
   if (!result.ok) return;
   assert.match(result.value.question?.text ?? "", /Here's what I'll create in Tasks/);
@@ -1097,7 +1110,7 @@ test("classifyCapture's 'event' outcome is the backstop for a calendar-shaped li
   // create-verb-at-start, no event/meeting/appointment/call/block noun, no
   // "meet with"/"meeting with") — this is exactly the free-text case
   // classifyCapture's "event" outcome exists to catch.
-  const result = await chatTurn(deps, { message: "dinner with Jamie tomorrow night", history: [] });
+  const result = await chatTurn(deps, { message: "dinner with Jamie tomorrow night" });
 
   assert.equal(result.ok, true);
   if (!result.ok) return;
@@ -1142,7 +1155,7 @@ test("a cancel/delete/remove Calendar request gets a plain 'can't delete' reply,
   for (const message of ["delete my meeting with Alex tomorrow at 3", "cancel the meeting with Alex tomorrow", "remove my meeting with Alex at 3pm"]) {
     const deps = baseDeps({ llmClient: throwingLlmClient() });
 
-    const result = await chatTurn(deps, { message, history: [] });
+    const result = await chatTurn(deps, { message });
 
     assert.equal(result.ok, true, `expected "${message}" to succeed`);
     if (!result.ok) continue;
@@ -1170,7 +1183,7 @@ test("'add a task to email Alex tomorrow', 'create a project for the science fai
       }),
     });
 
-    const result = await chatTurn(deps, { message, history: [] });
+    const result = await chatTurn(deps, { message });
 
     assert.equal(result.ok, true, `expected "${message}" to succeed`);
     if (!result.ok) continue;
@@ -1195,7 +1208,7 @@ test("/morning's reply embeds only an open item's promptText, never a raw propos
   });
   const deps = baseDeps({ store });
 
-  const result = await chatTurn(deps, { message: "/morning", history: [] });
+  const result = await chatTurn(deps, { message: "/morning" });
   assert.ok(result.ok);
   if (!result.ok) return;
   assert.equal(result.value.reply.includes("[object Object]"), false);
@@ -1222,7 +1235,7 @@ function tasksMissingDueDate(): Task[] {
 test("/sandbox with a non-empty queue returns the first card as ChatTurnResponse.sandboxCard, empty reply, no LLM call", async () => {
   const llmClient = makeFakeLlmClient();
   const deps = baseDeps({ readTasks: async () => tasksMissingDueDate(), llmClient });
-  const result = await chatTurn(deps, { message: "/sandbox", history: [] });
+  const result = await chatTurn(deps, { message: "/sandbox" });
   assert.equal(result.ok, true);
   if (!result.ok) return;
   assert.equal(result.value.reply, "");
@@ -1239,7 +1252,7 @@ test("/sandbox with a non-empty queue returns the first card as ChatTurnResponse
 // Review Focus #5 — an empty queue must never carry a falsy-but-present sandboxCard.
 test("/sandbox with an empty queue replies plainly and carries NO sandboxCard key at all (Review Focus #5)", async () => {
   const deps = baseDeps({ readTasks: async () => [] });
-  const result = await chatTurn(deps, { message: "/sandbox", history: [] });
+  const result = await chatTurn(deps, { message: "/sandbox" });
   assert.equal(result.ok, true);
   if (!result.ok) return;
   assert.equal(result.value.reply, "Nothing's missing a Due Date or Duration.");
@@ -1248,7 +1261,7 @@ test("/sandbox with an empty queue replies plainly and carries NO sandboxCard ke
 
 test("/sandbox is case-insensitive and ignores a trailing word, matching every other slash command", async () => {
   const deps = baseDeps({ readTasks: async () => tasksMissingDueDate() });
-  const result = await chatTurn(deps, { message: "/SANDBOX please", history: [] });
+  const result = await chatTurn(deps, { message: "/SANDBOX please" });
   assert.equal(result.ok, true);
   if (!result.ok) return;
   assert.ok(result.value.sandboxCard);
@@ -1256,7 +1269,7 @@ test("/sandbox is case-insensitive and ignores a trailing word, matching every o
 
 test("an unparseable plan-change request gets the how-to reply, with zero LLM calls and no Task draft", async () => {
   const deps = baseDeps({ llmClient: throwingLlmClient() });
-  const result = await chatTurn(deps, { message: "can you update my plan", history: [] });
+  const result = await chatTurn(deps, { message: "can you update my plan" });
   assert.equal(result.ok, true);
   if (!result.ok) return;
   assert.equal(result.value.reply, PLAN_EDIT_HOW_TO_REPLY);
@@ -1287,7 +1300,7 @@ function reshuffleFixture() {
 
 test("chatTurn: \"I'm behind\" returns an Approve/Discard question and writes no Plan", async () => {
   const { store, plan, deps } = reshuffleFixture();
-  const result = await chatTurn(deps, { message: "I'm behind", history: [] });
+  const result = await chatTurn(deps, { message: "I'm behind" });
   assert.ok(result.ok);
   if (!result.ok) return;
   assert.deepEqual(result.value.question?.options.map((o) => o.label), ["Approve", "Discard"]);
@@ -1297,7 +1310,7 @@ test("chatTurn: \"I'm behind\" returns an Approve/Discard question and writes no
 
 test("chatTurn: a blocker report still re-flows immediately, with no preview", async () => {
   const { store, deps } = reshuffleFixture();
-  const result = await chatTurn(deps, { message: "something came up", history: [] });
+  const result = await chatTurn(deps, { message: "something came up" });
   assert.ok(result.ok);
   if (!result.ok) return;
   assert.equal(result.value.question, undefined);
@@ -1335,7 +1348,7 @@ function planEditFixture(opts: { withPlan?: boolean } = {}) {
 
 test("chatTurn: \"work on X instead of Y\" previews a swap as Approve/Discard", async () => {
   const { store, deps } = planEditFixture();
-  const result = await chatTurn(deps, { message: "work on the poster instead of the labs", history: [] });
+  const result = await chatTurn(deps, { message: "work on the poster instead of the labs" });
   assert.ok(result.ok);
   if (!result.ok) return;
   assert.deepEqual(result.value.question?.options.map((o) => o.label), ["Approve", "Discard"]);
@@ -1350,13 +1363,13 @@ test("chatTurn: \"drop X today\" and \"unpin X\" preview; \"move X after lunch\"
   ];
   for (const [message, request] of cases) {
     const { deps } = planEditFixture();
-    const result = await chatTurn(deps, { message, history: [] });
+    const result = await chatTurn(deps, { message });
     assert.ok(result.ok, message);
     if (!result.ok) return;
     assert.deepEqual((result.value.question?.proposal?.suggested as { request: unknown })?.request, request, message);
   }
   const { deps } = planEditFixture();
-  const moved = await chatTurn(deps, { message: "move the labs to 8pm", history: [] });
+  const moved = await chatTurn(deps, { message: "move the labs to 8pm" });
   assert.ok(moved.ok);
   if (!moved.ok) return;
   assert.ok(moved.value.question, moved.value.reply);
@@ -1365,7 +1378,7 @@ test("chatTurn: \"drop X today\" and \"unpin X\" preview; \"move X after lunch\"
 
 test("chatTurn: an ambiguous plan-edit name asks which, listing up to three titles", async () => {
   const { deps } = planEditFixture();
-  const result = await chatTurn(deps, { message: "drop math today", history: [] });
+  const result = await chatTurn(deps, { message: "drop math today" });
   assert.ok(result.ok);
   if (!result.ok) return;
   assert.equal(result.value.question, undefined);
@@ -1375,7 +1388,7 @@ test("chatTurn: an ambiguous plan-edit name asks which, listing up to three titl
 
 test("chatTurn: an unknown plan-edit name says it couldn't find it", async () => {
   const { deps } = planEditFixture();
-  const result = await chatTurn(deps, { message: "drop the unicorn today", history: [] });
+  const result = await chatTurn(deps, { message: "drop the unicorn today" });
   assert.ok(result.ok);
   if (!result.ok) return;
   assert.equal(result.value.reply, "I couldn't find unicorn in today's Plan.");
@@ -1384,7 +1397,7 @@ test("chatTurn: an unknown plan-edit name says it couldn't find it", async () =>
 test("chatTurn: plan edits and re-flow with no Plan today reply plainly instead of erroring", async () => {
   for (const message of ["drop the labs today", "I'm behind"]) {
     const { deps } = planEditFixture({ withPlan: false });
-    const result = await chatTurn(deps, { message, history: [] });
+    const result = await chatTurn(deps, { message });
     assert.ok(result.ok, message);
     if (!result.ok) return;
     assert.equal(result.value.reply, "There's no Plan for today yet. Say \"plan my day\" to make one.", message);
@@ -1393,13 +1406,13 @@ test("chatTurn: plan edits and re-flow with no Plan today reply plainly instead 
 
 test("chatTurn: a routine line still routes to routines, not plan edits", async () => {
   const { deps } = planEditFixture();
-  const result = await chatTurn(deps, { message: "my study block is 3-3:30 on weekdays", history: [] });
+  const result = await chatTurn(deps, { message: "my study block is 3-3:30 on weekdays" });
   assert.ok(result.ok);
   if (!result.ok) return;
   assert.equal(result.value.question, undefined);
   assert.notEqual(result.value.reply, PLAN_EDIT_HOW_TO_REPLY);
   assert.match(result.value.reply, /study block/i);
-  const listed = await chatTurn(deps, { message: "what are my routines", history: [] });
+  const listed = await chatTurn(deps, { message: "what are my routines" });
   assert.ok(listed.ok);
   if (listed.ok) assert.match(listed.value.reply, /study block/i);
 });
@@ -1407,10 +1420,33 @@ test("chatTurn: a routine line still routes to routines, not plan edits", async 
 test("chatTurn: a plan edit the refit rejects replies with the reason, opens no proposal, and is not an error", async () => {
   const { store, deps } = planEditFixture();
   const busy = [{ id: "e1", title: "Dentist", start: "2026-08-22T00:00:00.000Z", end: "2026-08-23T12:00:00.000Z" }];
-  const result = await chatTurn({ ...deps, readCalendarEventsFn: async () => busy }, { message: "move the labs to 8pm", history: [] });
+  const result = await chatTurn({ ...deps, readCalendarEventsFn: async () => busy }, { message: "move the labs to 8pm" });
   assert.ok(result.ok);
   if (!result.ok) return;
   assert.equal(result.value.question, undefined);
   assert.match(result.value.reply, /Dentist/);
   assert.equal(getPlan(store, "2026-08-22")?.data.version, 1);
+});
+
+test("chatTurn falls back to just the current message when the chat store throws on read", async () => {
+  const llmClient = makeFakeLlmClient("answer");
+  const logged: string[] = [];
+  const chatHistory = {
+    appendTurn: () => { throw new Error("boom"); },
+    turnsForDate: () => { throw new Error("boom"); },
+    clearAll: () => {},
+  } as ChatStore;
+  const result = await chatTurn(baseDeps({ llmClient, chatHistory, log: (e) => logged.push(e.event) }), { message: "what should I do about the dishes" });
+  assert.equal(result.ok, true);
+  const sent = (llmClient as any).calls[2].messages as ReadonlyArray<{ role: string; content: string | ReadonlyArray<{ text: string }> }>;
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0]!.role, "user");
+  assert.ok(logged.includes("chat-turn.history-read-failed"));
+});
+
+test("chatTurn without a chat store sends just the current message as history", async () => {
+  const llmClient = makeFakeLlmClient("answer");
+  await chatTurn(baseDeps({ llmClient }), { message: "what should I do about the dishes" });
+  const sent = (llmClient as any).calls[2].messages as ReadonlyArray<{ role: string }>;
+  assert.equal(sent.length, 1);
 });

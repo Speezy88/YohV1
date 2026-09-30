@@ -57,6 +57,9 @@ import {
   OUTBOX_POLL_INTERVAL_MS,
   tailOutboxSince,
 } from "../adapters/notification-store.ts";
+import { createChatStore, initChatStoreSchema, type ChatStore } from "../adapters/chat-store.ts";
+import { chatExchange, type ChatTurnFn } from "../app/chat-exchange.ts";
+import { todaysChatHistory } from "../app/chat-history.ts";
 import { initRoutineStoreSchema } from "../adapters/routine-store.ts";
 import { HEARTBEAT_INTERVAL_MS, initPlanStateStoreSchema, writeHeartbeat } from "../adapters/plan-state-store.ts";
 import { createMemoryStore, type MemoryStore } from "../adapters/memory-store.ts";
@@ -437,7 +440,7 @@ export interface ChatSseStreamLike {
 }
 
 /** `chatTurn`'s signature (contract C3), injectable as `ServerDeps.chat.runChatTurn` (controller ruling (c): the e2e fixture's seam). */
-export type ChatTurnFn = (deps: ChatTurnDeps, input: ChatTurnRequest) => Promise<Result<ChatTurnResponse, YohError>>;
+export type { ChatTurnFn };
 
 /** The one event a `POST /api/chat` stream carries when the server has no chat dependencies (controller ruling (b)): an SSE stream, not a JSON body, so the client's one parser handles every outcome. */
 const CHAT_NOT_CONFIGURED: ChatStreamEvent = {
@@ -496,10 +499,16 @@ export async function runChatStream(
     return writes;
   };
 
-  let terminal: ChatStreamEvent;
+  // `chatExchange` owns the whole exchange (stores both turns, emits `done`);
+  // this function is transport only, plus the ONE `error` event when the
+  // exchange fails before `done`.
+  let failure: ChatStreamEvent | undefined;
   try {
-    const result = await runChatTurn({ ...deps, emit: (event) => void send(event) }, input);
-    terminal = result.ok ? { type: "done", response: result.value } : { type: "error", error: result.error };
+    const result = await chatExchange(
+      { ...deps, emit: (event) => void send(event), isAborted: () => stream.aborted === true, runChatTurn },
+      input,
+    );
+    if (!result.ok) failure = { type: "error", error: result.error };
   } catch (err) {
     // Review fix: a genuinely unexpected thrown error (a bug, not a `Result`
     // failure `app/chat-turn.ts` already converted) — log the raw message
@@ -508,23 +517,10 @@ export async function runChatStream(
     // prefix-free sentence), but this is the ONE place that still knows the
     // real cause, so it's the one place that can log it.
     deps.log?.({ level: "error", event: "server.chat-stream-failed", detail: err instanceof Error ? err.message : String(err) });
-    terminal = { type: "error", error: { kind: "unreachable", message: GENERIC_SERVER_ERROR_MESSAGE } };
+    failure = { type: "error", error: { kind: "unreachable", message: GENERIC_SERVER_ERROR_MESSAGE } };
   }
-  await send(terminal);
-}
-
-/** Validates a `ChatTurnRequest.history` entry-by-entry (the server trims its length; `chatTurn` owns that). */
-function isChatHistory(value: unknown): value is readonly ChatTurn[] {
-  return (
-    Array.isArray(value) &&
-    value.every(
-      (turn: unknown) =>
-        typeof turn === "object" &&
-        turn !== null &&
-        ((turn as ChatTurn).role === "user" || (turn as ChatTurn).role === "assistant") &&
-        typeof (turn as ChatTurn).content === "string",
-    )
-  );
+  if (failure) await send(failure);
+  await writes;
 }
 
 // ============================================================================
@@ -594,6 +590,8 @@ export interface ServerDeps {
     /** The Yoh Plan calendar sync's two reads; `buildPlanSyncDeps` joins them with `reshuffle`. */
     readonly planSyncReads?: Pick<SyncPlanFromCalendarDeps, "readYohPlanEvents" | "readDeletedYohPlanEventIds" | "readPlanCalendarSnapshot" | "readPlanCalendarWriteState">;
   };
+  /** Story 13.1: the server-owned chat store (history for the model, `GET /api/chat-history/today`). */
+  readonly chatHistory?: ChatStore;
   /**
    * Story 8.5, contract C3: the ONE `ChatSession` every chat route in this
    * process shares (`startServer` builds it; Stories 8.6/8.7's routes reuse
@@ -641,6 +639,11 @@ const ISO_DATE_ONLY_SHAPE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const PLAN_NOT_CONFIGURED: ApiFailure = {
   ok: false,
   error: { kind: "unreachable", message: errorCopyForWire({ kind: "unreachable", message: "server: plan dependencies not configured" }) },
+};
+
+const CHAT_HISTORY_NOT_CONFIGURED: ApiFailure = {
+  ok: false,
+  error: { kind: "unreachable", message: errorCopyForWire({ kind: "unreachable", message: "server: chat history not configured" }) },
 };
 
 function validateReshuffleDecision(value: unknown, c: Context): ReshuffleDecisionRequest | Response {
@@ -766,6 +769,7 @@ export function createApp(deps: ServerDeps) {
     const { runChatTurn: _runChatTurn, ...rest } = deps.chat;
     chatDeps = {
       ...rest,
+      ...(deps.chatHistory ? { chatHistory: deps.chatHistory } : {}),
       session: chatSession,
       get today(): IsoDate {
         return currentIsoDate(new Date(), rest.timeZone);
@@ -1222,17 +1226,12 @@ export function createApp(deps: ServerDeps) {
       .post(
         "/api/chat",
         validator("json", (value, c) => {
-          const body = value as { message?: unknown; history?: unknown } | null;
+          const body = value as { message?: unknown } | null;
           if (typeof body?.message !== "string" || body.message.trim() === "") {
             const invalid: ApiFailure = { ok: false, error: { kind: "validation", message: "chat: missing message" } };
             return c.json(invalid, httpStatus(invalid));
           }
-          const history = body.history ?? [];
-          if (!isChatHistory(history)) {
-            const invalid: ApiFailure = { ok: false, error: { kind: "validation", message: "chat: malformed history" } };
-            return c.json(invalid, httpStatus(invalid));
-          }
-          return { message: body.message, history } satisfies ChatTurnRequest;
+          return { message: body.message } satisfies ChatTurnRequest;
         }),
         (c) => {
           const input = c.req.valid("json");
@@ -1250,6 +1249,13 @@ export function createApp(deps: ServerDeps) {
           );
         },
       )
+      // Story 13.1: today's stored chat turns; works without `chat` deps.
+      .get("/api/chat-history/today", async (c) => {
+        const timeZone = deps.chat?.timeZone ?? process.env["YOH_TIMEZONE"];
+        if (!deps.chatHistory || !timeZone) return c.json(CHAT_HISTORY_NOT_CONFIGURED, httpStatus(CHAT_HISTORY_NOT_CONFIGURED));
+        const result = wire(await todaysChatHistory({ chatHistory: deps.chatHistory, timeZone, now: () => new Date() }, {}));
+        return c.json(result, httpStatus(result));
+      })
       // Story 8.6 (Task 7), AD-16: pure transport over `app/surface-
       // open-items.ts`'s `surfaceOpenItems` — every open interaction
       // request/Proposal, each with its current pending question already
@@ -1330,7 +1336,7 @@ export function startServer(
   env: Readonly<Record<string, string | undefined>> = process.env,
   serveFn: ServeFn = (options) => serve({ ...options }),
   /** Story 7.8's `homeView`, Story 7.10's `checkOff`, Story 8.5's `chat`, Task 6C's `research`, Task 4's `calendarDay`, and Story 9.2's `sandbox`, threaded through the same way `connection` already is. */
-  features: Pick<ServerDeps, "homeView" | "calendarDay" | "checkOff" | "plan" | "planSync" | "chat" | "tasks" | "research" | "sandbox"> = {},
+  features: Pick<ServerDeps, "homeView" | "calendarDay" | "checkOff" | "plan" | "planSync" | "chat" | "chatHistory" | "tasks" | "research" | "sandbox"> = {},
 ): ServerHandle {
   const port = parsePort(env["YOH_SERVER_PORT"]);
   // Contract C3: one ChatSession per server process, shared by every chat route.
@@ -1344,6 +1350,7 @@ export function startServer(
     ...(features.plan ? { plan: features.plan } : {}),
     ...(features.planSync ? { planSync: features.planSync } : {}),
     ...(features.chat ? { chat: features.chat } : {}),
+    ...(features.chatHistory ? { chatHistory: features.chatHistory } : {}),
     ...(features.tasks ? { tasks: features.tasks } : {}),
     ...(features.research ? { research: features.research } : {}),
     ...(features.sandbox ? { sandbox: features.sandbox } : {}),
@@ -1858,6 +1865,7 @@ if (import.meta.main) {
   initNotificationStoreSchema(connection.db);
   initPlanStateStoreSchema(connection.db);
   initRoutineStoreSchema(connection.db);
+  initChatStoreSchema(connection.db);
   initCompletionLogSchema(connection.db);
   // Real-use fixes plan, Task 9: `server.ts` is the ONE shell that makes
   // real Claude calls (POST /api/chat's `buildChatDeps` below) —
@@ -1884,6 +1892,7 @@ if (import.meta.main) {
     ...(calendarDay ? { calendarDay } : {}),
     ...(checkOff ? { checkOff } : {}),
     ...(chat ? { chat } : {}),
+    chatHistory: createChatStore(connection),
     ...(tasks ? { tasks } : {}),
     ...(research ? { research } : {}),
     ...(sandbox ? { sandbox } : {}),

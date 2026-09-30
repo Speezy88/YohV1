@@ -16,7 +16,7 @@
  * the `/api/*` surface. `web/` may `import type` from here (AD-17) and from
  * nothing else in `src/` except other `types/` files.
  */
-import type { ChatTurn, EditableTaskField, Energy, IsoDate, PlanningFieldNames, Proposal, RefiningFieldNames, Result, TaskFieldOption, TaskFieldOptions, TaskStatus, YohError } from "./domain.ts";
+import type { ChatTurn, EditableTaskField, Energy, IsoDate, IsoDateTime, MemoryFolder, PlanningFieldNames, Proposal, RefiningFieldNames, Result, TaskFieldOption, TaskFieldOptions, TaskStatus, YohError } from "./domain.ts";
 
 // ============================================================================
 // Serialized Result envelope
@@ -398,7 +398,8 @@ export interface ConfirmProposalResponse {
  */
 export interface ChatTurnRequest {
   readonly message: string;
-  readonly history: readonly ChatTurn[];
+  /** @deprecated ignored by the server (it owns chat history); T2 removes it */
+  readonly history?: readonly ChatTurn[];
 }
 
 /** `chatTurn`'s value: one reply, ready for any surface to render. */
@@ -424,7 +425,39 @@ export type ChatStreamEvent =
   | { readonly type: "status"; readonly text: string }
   | { readonly type: "delta"; readonly text: string }
   | { readonly type: "done"; readonly response: ChatTurnResponse }
-  | { readonly type: "error"; readonly error: YohError };
+  | { readonly type: "error"; readonly error: YohError }
+  | { readonly type: "remembered"; readonly receipt: RememberedReceipt }
+  | { readonly type: "proposal"; readonly question: OpenItemQuestion }
+  | { readonly type: "rating"; readonly promptId: string };
+
+/** The receipt Yoh shows after it remembers or forgets something (Epic 13). */
+export interface RememberedReceipt {
+  readonly receiptId: string;
+  readonly kind: "remembered" | "forgot";
+  readonly items: readonly {
+    readonly id: string;
+    readonly text: string;
+    readonly folder: MemoryFolder;
+    readonly scope?: string;
+    readonly expiresOn?: IsoDate;
+  }[];
+}
+
+/** One stored chat turn as `GET /api/chat-history/today` returns it. */
+export interface ChatHistoryTurn {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  truncated: boolean;
+  createdAt: IsoDateTime;
+}
+
+/** `GET /api/chat-history/today`'s value. */
+export interface ChatHistoryTodayResponse {
+  readonly conversationId?: string;
+  readonly date: IsoDate;
+  readonly turns: readonly ChatHistoryTurn[];
+}
 
 // ============================================================================
 // Tasks page (Task 6B, FR-43) — new shapes only.

@@ -24,6 +24,8 @@
  */
 export type IsoDateTime = string;
 
+export type MemoryFolder = "feedback" | "planning-preferences" | "corrections" | "about-you" | "patterns" | "goals-projects" | "decisions-commitments" | "ideas-notes";
+
 /**
  * ISO-8601 calendar date with no time-of-day component (e.g. "2026-08-22"),
  * used where only a date is meaningful — a Task's Due Date, a Plan's date,

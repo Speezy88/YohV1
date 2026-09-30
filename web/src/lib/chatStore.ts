@@ -179,7 +179,7 @@ function appendMessage(message: ChatViewMessage): void {
 }
 
 /** The transcript as `ChatTurnRequest.history` — "message" entries only, a card is never appended to the LLM-facing transcript. A turn with no text (a failed reply) is left out: the Messages API rejects empty content. */
-function historyOf(entries: readonly StreamEntry[]): ChatTurnRequest["history"] {
+function historyOf(entries: readonly StreamEntry[]): readonly { role: "user" | "assistant"; content: string }[] {
   return messageEntries(entries)
     .map((e) => e.message)
     .filter((m) => m.status !== "streaming" && m.text.trim() !== "")

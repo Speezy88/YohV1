@@ -27,6 +27,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { serve } from "@hono/node-server";
 import { openSqliteConnection } from "../../src/adapters/sqlite.ts";
+import { createChatStore, initChatStoreSchema } from "../../src/adapters/chat-store.ts";
 import { initRoutineStoreSchema } from "../../src/adapters/routine-store.ts";
 import { appendOutboxInTx, initNotificationStoreSchema } from "../../src/adapters/notification-store.ts";
 import { initPlanStateStoreSchema, replaceDayPinsAndDropsInTx } from "../../src/adapters/plan-state-store.ts";
@@ -66,9 +67,12 @@ const connection = openSqliteConnection({ databasePath: join(dir, "yoh.db") });
 initNotificationStoreSchema(connection.db);
 initPlanStateStoreSchema(connection.db);
 initRoutineStoreSchema(connection.db);
+initChatStoreSchema(connection.db);
 initCompletionLogSchema(connection.db);
 
 const store = createMemoryStore(connection);
+// Story 13.1: the REAL chat store — `chatExchange` stores both turns even though `runChatTurn` is scripted.
+const chatHistory = createChatStore(connection);
 const startedAt = new Date();
 const today = localIsoDate(startedAt, TIME_ZONE);
 
@@ -143,6 +147,7 @@ function scenarioPlan(version: number): Plan {
 }
 function resetFixturePlan(scenario: boolean): void {
   reshuffleScenario = scenario;
+  chatHistory.clearAll();
   for (const open of listOpenReshuffleProposals(store)) clearInteractionRequest(store, open.requestId, open.requestVersion);
   connection.db.transaction(() => replaceDayPinsAndDropsInTx(connection.db, today, [], []))();
   const version = (store.getRecord<Plan>("plan", today)?.version ?? 0) + 1;
@@ -323,6 +328,9 @@ const runChatTurn: ChatTurnFn = async (deps, input) => {
 // create client `runChatTurn`'s capture branch drafted against.
 const chat = {
   store,
+  // `chatExchange` reads these when a chat store is present.
+  timeZone: TIME_ZONE,
+  now: () => new Date(),
   runChatTurn,
   createPage: (database: string, properties: Record<string, string>) =>
     notionCreatePage(notionCreate.client, NOTION_CREATE_CONFIG, database as never, properties),
@@ -448,7 +456,7 @@ const handle = startServer(
         return url.pathname === "/__fixture/state" ? fixtureState(url) : options.fetch(request);
       },
     }),
-  { homeView, calendarDay, checkOff, plan: reshufflePlanDeps, planSync: planSyncDeps, chat, tasks: tasksPage, research, sandbox },
+  { homeView, calendarDay, checkOff, plan: reshufflePlanDeps, planSync: planSyncDeps, chat, chatHistory, tasks: tasksPage, research, sandbox },
 );
 const sweep = startCheckOffCommitSweep({ connection, ...checkOff, now: () => new Date() }, { log: quiet });
 
