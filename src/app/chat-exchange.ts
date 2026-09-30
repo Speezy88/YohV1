@@ -147,16 +147,22 @@ async function fileMemories(
   const store = deps.memoryItems;
   if (!store) return undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let timedOut = false;
   try {
     const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error("memory filing timed out")), deps.memoryFilingTimeoutMs ?? MEMORY_FILING_TIMEOUT_MS);
+      timer = setTimeout(() => {
+        timedOut = true;
+        reject(new Error("memory filing timed out"));
+      }, deps.memoryFilingTimeoutMs ?? MEMORY_FILING_TIMEOUT_MS);
     });
     const filing = (async (): Promise<RememberedReceipt | undefined> => {
       const alwaysLoaded = store.listItems({ folders: ALWAYS_LOADED_FOLDERS, status: ["current"] });
       const candidates = await extractMemories(deps.memoryLlmClient ?? deps.llmClient, text, alwaysLoaded, { forceStated }, deps.connection);
+      // A late extract (after the timeout) or an aborted stream must not write: no receipt means no Undo.
+      if (timedOut || deps.isAborted?.() === true) return undefined;
       const { accepted } = validateFiling(candidates, { now: deps.now(), timeZone: deps.timeZone, forceStated });
       if (accepted.length === 0) return undefined;
-      const filed = planFilingActions(accepted, store.listItems({ status: ["current"] })).map((a) =>
+      const filed = planFilingActions(accepted, alwaysLoaded).map((a) =>
         fileCandidate(store, a, userTurn?.id),
       );
       const receipt: RememberedReceipt = {

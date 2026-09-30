@@ -287,7 +287,10 @@ export const FIXTURE_MEMORY_TEXT = "Chem club is a club, not a class";
 const memoryLlmClient: AnthropicMessagesClient = {
   messages: {
     create: (async (params: { readonly messages: unknown }) => {
-      const reply = /Chem club/.test(JSON.stringify(params.messages))
+      // Match only Spencer's typed text (after the marker), never the always-loaded items the prompt also lists.
+      const prompt = JSON.stringify(params.messages);
+      const typed = prompt.slice(prompt.indexOf("Spencer's message:") + 1);
+      const reply = /Chem club/.test(typed)
         ? JSON.stringify([{ folder: "corrections", text: FIXTURE_MEMORY_TEXT, origin: "stated" }])
         : "[]";
       return {

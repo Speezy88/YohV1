@@ -320,3 +320,40 @@ test("auto filing: timeout or failure shows nothing, logs, never delays or error
   await chatExchange(h.deps, { message: CHEM });
   assert.equal((client as unknown as { calls: unknown[] }).calls.length, 0);
 });
+
+// ---- Story 13.5 fix round ----
+function delayedFiler(text: string, ms: number) {
+  return {
+    messages: { create: async () => { await new Promise((r) => setTimeout(r, ms)); return { content: [{ type: "text", text }], usage: { input_tokens: 1, output_tokens: 1 } }; } },
+  } as unknown as ChatExchangeDeps["llmClient"];
+}
+
+test("auto and explicit filing: an extract that resolves after the timeout files nothing", async () => {
+  for (const turn of [plainTurn(), rememberTurn]) {
+    const client = delayedFiler('[{"folder":"about-you","text":"late","origin":"stated"}]', 80);
+    const h = memoryHarness(turn, { memoryLlmClient: client, memoryFilingTimeoutMs: 10 } as Partial<ChatExchangeDeps>);
+    await chatExchange(h.deps, { message: CHEM });
+    await new Promise((r) => setTimeout(r, 150));
+    assert.equal(h.memoryItems.listItems().length, 0);
+  }
+});
+
+test("auto filing: aborted during the extract files nothing and emits nothing", async () => {
+  let aborted = false;
+  const client = delayedFiler('[{"folder":"about-you","text":"x","origin":"stated"}]', 30);
+  const h = memoryHarness(plainTurn(), { memoryLlmClient: client, isAborted: () => aborted });
+  const p = chatExchange(h.deps, { message: CHEM });
+  setTimeout(() => { aborted = true; }, 10);
+  await p;
+  assert.equal(h.memoryItems.listItems().length, 0);
+  assert.deepEqual(h.events.map((e) => e.type), ["done"]);
+});
+
+test("auto filing: a restatesId outside the always-loaded set inserts instead of superseding", async () => {
+  const h = memoryHarness(plainTurn(), {});
+  const idea = h.memoryItems.insert({ folder: "ideas-notes", text: "Try pottery", origin: "stated" });
+  (h.deps as { memoryLlmClient?: unknown }).memoryLlmClient = fakeFiler(`[{"folder":"about-you","text":"Likes clay","origin":"stated","restatesId":"${idea.id}"}]`);
+  await chatExchange(h.deps, { message: CHEM });
+  assert.equal(h.memoryItems.getItem(idea.id)?.status, "current");
+  assert.equal(h.memoryItems.listItems().length, 2);
+});
