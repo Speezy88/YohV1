@@ -214,7 +214,7 @@ test("chatTurn trims an untrimmed history down to MAX_CHAT_HISTORY_TURNS before 
   }));
   const chatHistory = seededChatStore(longHistory.map((t) => ({ role: t.role, text: t.content })));
 
-  await chatTurn({ ...deps, chatHistory }, { message: "turn-49" });
+  await chatTurn({ ...deps, chatHistory }, { message: "turn-50" });
 
   // calls[0] is chatTurn's own classifyCapture call, calls[1]
   // is its classifyChatIntent call (Story 8.4, sent only the current line,
@@ -226,8 +226,9 @@ test("chatTurn trims an untrimmed history down to MAX_CHAT_HISTORY_TURNS before 
   // its `content` is a one-element text-block array rather than a bare
   // string — normalize back to plain text before comparing to `longHistory`.
   const normalized = sentMessages.map((m) => ({ role: m.role, content: typeof m.content === "string" ? m.content : m.content[0]!.text }));
-  assert.equal(normalized.length, MAX_CHAT_HISTORY_TURNS);
-  assert.deepEqual(normalized, longHistory.slice(longHistory.length - MAX_CHAT_HISTORY_TURNS));
+  // The store's last 40 turns plus the appended current message (`turn-50`) exceed the cap, so one pair is trimmed.
+  assert.equal(normalized.length, MAX_CHAT_HISTORY_TURNS - 1);
+  assert.deepEqual(normalized, [...longHistory.slice(longHistory.length - MAX_CHAT_HISTORY_TURNS + 2), { role: "user", content: "turn-50" }]);
   assert.equal(normalized[0]!.role, "user", "trimming must remove complete pairs, never leaving an assistant turn first");
 });
 
@@ -1442,4 +1443,28 @@ test("chatTurn without a chat store sends just the current message as history", 
   await chatTurn(baseDeps({ llmClient }), { message: "what should I do about the dishes" });
   const sent = (llmClient as any).calls[2].messages as ReadonlyArray<{ role: string }>;
   assert.equal(sent.length, 1);
+});
+
+test("history for the model always ends with the current message, even when the user-turn write failed", async () => {
+  const llmClient = makeFakeLlmClient("answer");
+  const prior = seededChatStore([{ role: "user", text: "earlier" }, { role: "assistant", text: "reply" }]);
+  const chatHistory = { appendTurn: () => { throw new Error("boom"); }, turnsForDate: prior.turnsForDate, clearAll: () => {} } as ChatStore;
+  await chatTurn(baseDeps({ llmClient, chatHistory }), { message: "what should I do about the dishes" });
+  const sent = (llmClient as any).calls[2].messages as ReadonlyArray<{ role: string; content: string | ReadonlyArray<{ text: string }> }>;
+  const norm = sent.map((m) => ({ role: m.role, content: typeof m.content === "string" ? m.content : m.content[0]!.text }));
+  assert.deepEqual(norm.map((m) => m.role), ["user", "assistant", "user"]);
+  assert.equal(norm[2]!.content, "what should I do about the dishes");
+});
+
+test("consecutive same-role stored turns (an orphaned user turn) are merged before going to the model", async () => {
+  const llmClient = makeFakeLlmClient("answer");
+  const chatHistory = seededChatStore([
+    { role: "user", text: "first" },
+    { role: "user", text: "what should I do about the dishes" },
+  ]);
+  await chatTurn(baseDeps({ llmClient, chatHistory }), { message: "what should I do about the dishes" });
+  const sent = (llmClient as any).calls[2].messages as ReadonlyArray<{ role: string; content: string | ReadonlyArray<{ text: string }> }>;
+  assert.equal(sent.length, 1);
+  const c = sent[0]!.content;
+  assert.equal(typeof c === "string" ? c : c[0]!.text, "first\n\nwhat should I do about the dishes");
 });

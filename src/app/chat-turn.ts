@@ -523,14 +523,28 @@ export async function chatTurn(deps: ChatTurnDeps, input: ChatTurnRequest): Prom
   );
 }
 
+/** Joins consecutive same-role turns (an orphaned user turn from a failed exchange) so roles strictly alternate. */
+function mergeSameRoleRuns(turns: readonly ChatTurn[]): readonly ChatTurn[] {
+  const out: ChatTurn[] = [];
+  for (const t of turns) {
+    const prev = out[out.length - 1];
+    if (prev && prev.role === t.role) out[out.length - 1] = { role: prev.role, content: `${prev.content}\n\n${t.content}` };
+    else out.push(t);
+  }
+  return out;
+}
+
 /** Today's stored turns (the last `MAX_CHAT_HISTORY_TURNS`), or just the current message when the store is absent or fails. */
 function historyForModel(deps: ChatTurnDeps, message: string): readonly ChatTurn[] {
   const fallback: readonly ChatTurn[] = [{ role: "user", content: message }];
   if (!deps.chatHistory) return fallback;
   try {
     const turns = deps.chatHistory.turnsForDate(localIsoDate(deps.now(), deps.timeZone), MAX_CHAT_HISTORY_TURNS);
-    const mapped = turns.filter((t) => t.text.trim() !== "").map((t) => ({ role: t.role, content: t.text }));
-    return mapped.length > 0 ? mapped : fallback;
+    const mapped: ChatTurn[] = turns.filter((t) => t.text.trim() !== "").map((t) => ({ role: t.role, content: t.text }));
+    // The list must end with the current message: a failed user-turn write or a midnight rollover between write and read can leave it out.
+    const last = mapped[mapped.length - 1];
+    if (!last || last.role !== "user" || last.content !== message) mapped.push({ role: "user", content: message });
+    return mergeSameRoleRuns(mapped);
   } catch (error) {
     deps.log?.({ level: "warn", event: "chat-turn.history-read-failed", detail: error instanceof Error ? error.message : String(error) });
     return fallback;

@@ -398,3 +398,29 @@ test("GET /api/chat-history/today reports not-configured without a chat store", 
   assert.equal(res.status, 503);
   connection.close();
 });
+
+test("an error thrown after done is logged and never sent as an error event", async () => {
+  let armed = false;
+  let firstReadAfterArm = true;
+  const written: string[] = [];
+  const stream = {
+    get aborted() {
+      if (armed && firstReadAfterArm) {
+        firstReadAfterArm = false;
+        throw new Error("after done");
+      }
+      return false;
+    },
+    async writeSSE(m: { event: string }) {
+      written.push(m.event);
+    },
+  } as unknown as ChatSseStreamLike;
+  const logged: string[] = [];
+  const deps = { log: (e: { event: string }) => logged.push(e.event) } as unknown as ChatTurnDeps;
+  await runChatStream(stream, deps, { message: "hi" }, async () => {
+    armed = true;
+    return { ok: true, value: { reply: "ok", receipts: [] } };
+  });
+  assert.deepEqual(written, ["done"]);
+  assert.deepEqual(logged, ["server.chat-stream-failed"]);
+});

@@ -503,9 +503,17 @@ export async function runChatStream(
   // this function is transport only, plus the ONE `error` event when the
   // exchange fails before `done`.
   let failure: ChatStreamEvent | undefined;
+  let doneSent = false;
   try {
     const result = await chatExchange(
-      { ...deps, emit: (event) => void send(event), isAborted: () => stream.aborted === true, runChatTurn },
+      {
+        ...deps,
+        emit: (event) => {
+          if (event.type === "done") doneSent = true;
+          void send(event);
+        }, isAborted: () => stream.aborted === true,
+        runChatTurn,
+      },
       input,
     );
     if (!result.ok) failure = { type: "error", error: result.error };
@@ -517,7 +525,8 @@ export async function runChatStream(
     // prefix-free sentence), but this is the ONE place that still knows the
     // real cause, so it's the one place that can log it.
     deps.log?.({ level: "error", event: "server.chat-stream-failed", detail: err instanceof Error ? err.message : String(err) });
-    failure = { type: "error", error: { kind: "unreachable", message: GENERIC_SERVER_ERROR_MESSAGE } };
+    // The stream already ended in `done`; a second terminal event would contradict it.
+    if (!doneSent) failure = { type: "error", error: { kind: "unreachable", message: GENERIC_SERVER_ERROR_MESSAGE } };
   }
   if (failure) await send(failure);
   await writes;
