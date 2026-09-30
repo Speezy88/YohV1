@@ -18,6 +18,7 @@ import {
 } from "../src/adapters/memory-store.ts";
 import { openSqliteConnection, type SqliteConnection } from "../src/adapters/sqlite.ts";
 import { initNotificationStoreSchema, tailOutboxSince } from "../src/adapters/notification-store.ts";
+import { writeSetting } from "../src/adapters/settings-store.ts";
 import { runMidDayReflow, type MidDayReflowDeps } from "../src/rituals/mid-day-reflow.ts";
 import type { Plan, PlanBlock, Task } from "../src/types/domain.ts";
 
@@ -754,4 +755,31 @@ test("routines: a throwing routine read becomes a failure Result", async () => {
   const { deps } = harness({ tasks: DEFAULT_TASKS });
   const result = await runMidDayReflow({ ...deps, readRoutines: () => { throw new Error("database is locked"); } });
   assert.equal(result.ok, false);
+});
+
+test("I1: a padded Task past its raw estimate but inside its padded block keeps its unfinished minutes in the re-flow", async () => {
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db);
+  const store = createMemoryStore(connection);
+  writeSetting(connection, "areaDurationPadding", { area: "Work", minutes: 15 });
+  const plan = morningPlan({
+    blocks: [
+      block({ id: "work-0", kind: "work", start: "2026-08-22T09:00:00.000Z", end: "2026-08-22T09:55:00.000Z", label: "Task One", taskId: "t1" }),
+    ],
+  });
+  const { deps } = harness({
+    store,
+    storedPlan: plan,
+    tasks: [makeTask("t1", "Task One", { estimatedDurationMinutes: 40 })],
+    nowIso: "2026-08-22T09:45:00.000Z",
+  });
+  const result = await runMidDayReflow(deps);
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.value.status, "reflowed");
+  const after = getPlan(store, TODAY)!.data.blocks.filter(
+    (b) => b.kind === "work" && b.taskId === "t1" && Date.parse(b.start) >= Date.parse("2026-08-22T09:45:00.000Z"),
+  );
+  const minutes = after.reduce((sum, b) => sum + (Date.parse(b.end) - Date.parse(b.start)) / 60000, 0);
+  assert.equal(minutes, 10, "the 10 padded minutes left are still planned, not padded again");
 });

@@ -43,6 +43,7 @@ import { MEMORY_TOPIC } from "../adapters/chat-store.ts";
 import { readPlanningSettings, writeSettingInTx } from "../adapters/settings-store.ts";
 import { appendOutboxInTx } from "../adapters/notification-store.ts";
 import type { SqliteConnection } from "../adapters/sqlite.ts";
+import { errorCopyForThrown } from "../core/error-copy.ts";
 import { currentRuleValue, validateProposedRuleValue } from "../core/planning-settings.ts";
 import { describePattern } from "../core/pattern-detect.ts";
 import { isOlderThanDays, PATTERN_PROPOSAL_TTL_DAYS, RULE_PROPOSAL_TTL_DAYS } from "../core/proposal-ttl.ts";
@@ -369,14 +370,26 @@ function confirmPattern(
   const nowIso = now.toISOString();
   const existing = getPatternState.call(items, p.kind, p.area) ?? { kind: p.kind, area: p.area };
   const { pendingProposalId: _pending, ...rest } = existing;
+  // Withdraw the card and record declinedAt together: a failed state write must not leave a cleared card behind.
+  const withdrawAsDeclined = (connection: SqliteConnection): Result<null, YohError> => {
+    try {
+      connection.writeTx(() => {
+        clearRequestIfGiven(deps.store, requestId);
+        if (existing.pendingProposalId === proposal.id) putPatternState.call(items, { ...rest, declinedAt: nowIso });
+      });
+      return { ok: true, value: null };
+    } catch (error) {
+      return { ok: false, error: { kind: "unreachable", message: errorCopyForThrown(error) } };
+    }
+  };
   if (!accept) {
-    clearRequestIfGiven(deps.store, requestId);
-    if (existing.pendingProposalId === proposal.id) putPatternState.call(items, { ...rest, declinedAt: nowIso });
+    const declined = withdrawAsDeclined(deps.connection);
+    if (!declined.ok) return declined;
     return { ok: true, value: { applied: false, receipts: [], message: "Okay. I won't ask about that again for a while." } };
   }
   if (isOlderThanDays(proposal.createdAt, now, PATTERN_PROPOSAL_TTL_DAYS)) {
-    clearRequestIfGiven(deps.store, requestId);
-    if (existing.pendingProposalId === proposal.id) putPatternState.call(items, { ...rest, declinedAt: nowIso });
+    const declined = withdrawAsDeclined(deps.connection);
+    if (!declined.ok) return declined;
     return staleRuleProposal("confirm-proposal: that pattern expired");
   }
   if (existing.pendingProposalId !== proposal.id) {

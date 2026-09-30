@@ -155,6 +155,7 @@ export async function reviewMemoryItem(deps: MemoryEditDeps, input: ReviewMemory
     const item = got.value;
     if (input.action === "keep") {
       deps.memoryItems.keepAsHistory(item.id);
+      if (deps.store) withdrawRuleProposal(deps.store, item.id);
       return { ok: true, value: { itemId: item.id } };
     }
     const recalled = await recallMemoryContext(deps, { requestText: "" });

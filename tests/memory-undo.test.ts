@@ -126,3 +126,26 @@ test("answering memory-forget withdraws the item's open rule-change proposal", a
   assert.ok(r.ok);
   assert.equal(getOpenInteractionRequest(w.store, rid), undefined);
 });
+
+test("I2: forgetting a pending item withdraws its card and resets it, so Undo leaves no stranded 'pending'", async () => {
+  const w = world();
+  const u = w.chatHistory.appendTurn({ date: "2026-09-29", role: "user", text: "forget", at: T(0) });
+  const item = w.memoryItems.insert(NEW({ folder: "planning-preferences", text: "Start at 4", ruleChange: "pending" }));
+  const { chainIds } = w.memoryItems.forget(item.id);
+  w.memoryItems.putReceipt({ receiptId: "r-i2", conversationId: u.conversationId, userTurnId: u.id, kind: "forgot", itemIds: [item.id], chainIds, createdAt: T(0) });
+  const r = await undoMemoryReceipt(w, { receiptId: "r-i2" });
+  assert.ok(r.ok);
+  assert.equal(w.memoryItems.getItem(item.id)?.status, "current");
+  assert.equal(w.memoryItems.getItem(item.id)?.ruleChange, "none");
+});
+
+test("M3: undoing a Remembered receipt is refused once an item was edited away from current", async () => {
+  const w = world();
+  const u = w.chatHistory.appendTurn({ date: "2026-09-29", role: "user", text: "remember", at: T(0) });
+  const item = w.memoryItems.insert(NEW());
+  w.memoryItems.putReceipt({ receiptId: "r-m3", conversationId: u.conversationId, userTurnId: u.id, kind: "remembered", itemIds: [item.id], chainIds: [item.id], createdAt: T(0) });
+  w.memoryItems.supersede(item.id, NEW({ text: "Runs at 7" }));
+  const r = await undoMemoryReceipt(w, { receiptId: "r-m3" });
+  assert.ok(!r.ok && r.error.kind === "conflict" && r.error.message === "That can't be undone any more.");
+  assert.equal(w.memoryItems.listItems().length, 1);
+});

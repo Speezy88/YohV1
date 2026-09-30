@@ -16,6 +16,7 @@ import type { MissingFieldReport } from "../core/data-completeness-gate.ts";
 import type { Routine } from "../core/routine-commands.ts";
 import { runDataCompletenessGate } from "./data-completeness.ts";
 import { readPlanningSettings } from "../adapters/settings-store.ts";
+import { applyAreaPadding } from "../core/planning-settings.ts";
 import { computeDayRefit, computeSchoolDayInputs, elapsedMinutesWithinBlock, type DayRefitOutput } from "./reshuffle.ts";
 import { computeBumpLevels, localIsoDate, missingRefiningFor } from "./ritual-shared.ts";
 import type { CalendarEvent, CompleteTask, DayPin, ExternalId, IsoDate, Plan, PlanBlock, Result, Task, YohError } from "../types/domain.ts";
@@ -111,13 +112,20 @@ export async function refitToday(
     }
   }
   const outstanding: CompleteTask[] = [];
+  const prePaddedTaskIds = new Set<ExternalId>();
+  const paddingSettings = deps.store.withDb(readPlanningSettings);
   for (const task of gate.value.completeTasks) {
     if (!scheduledTaskIds.has(task.id)) {
       outstanding.push(task);
       continue;
     }
-    const remaining = task.estimatedDurationMinutes - (elapsedByTask.get(task.id) ?? 0);
-    if (remaining > 0) outstanding.push({ ...task, estimatedDurationMinutes: remaining });
+    // The stored block was padded, so the remainder is measured from the padded estimate (and not padded again).
+    const paddedEstimate = applyAreaPadding([task], paddingSettings)[0]!.estimatedDurationMinutes;
+    const remaining = paddedEstimate - (elapsedByTask.get(task.id) ?? 0);
+    if (remaining > 0) {
+      prePaddedTaskIds.add(task.id);
+      outstanding.push({ ...task, estimatedDurationMinutes: remaining });
+    }
   }
 
   const settings = deps.store.withDb(readPlanningSettings);
@@ -151,6 +159,7 @@ export async function refitToday(
     workStart: school.value.workStart,
     now: nowDate.toISOString(),
     openTasks: outstanding,
+    prePaddedTaskIds,
     budget: {
       date: today,
       totalMinutes: Math.max(1, Math.round(budget.data.totalMinutes - elapsedBudget)),

@@ -241,6 +241,7 @@ import { isOpenTask } from "../core/planning-field-value.ts";
 import { listDayDrops, listDayPins, replaceDayPinsAndDropsInTx } from "../adapters/plan-state-store.ts";
 import { computeDayRefit, elapsedMinutesWithinBlock } from "./reshuffle.ts";
 import { readPlanningSettings } from "../adapters/settings-store.ts";
+import { applyAreaPadding } from "../core/planning-settings.ts";
 import { workStartWithoutCalendar } from "../core/school-day.ts";
 import { listRoutinesFromStore } from "../adapters/routine-store.ts";
 import { appendUnplacedRoutines } from "../core/routine-placement.ts";
@@ -542,6 +543,8 @@ export async function runMidDayReflow(deps: MidDayReflowDeps): Promise<Result<Mi
   }
 
   const outstanding: CompleteTask[] = [];
+  const prePaddedTaskIds = new Set<ExternalId>();
+  const paddingSettings = deps.store.withDb(readPlanningSettings);
   for (const task of gate.value.completeTasks) {
     if (!taskIdsWithAnyBlock.has(task.id)) {
       // Never scheduled today at all — either deferred by this morning's
@@ -552,8 +555,11 @@ export async function runMidDayReflow(deps: MidDayReflowDeps): Promise<Result<Mi
     }
 
     const elapsedMinutesForTask = elapsedMinutesByTaskId.get(task.id) ?? 0;
-    const remainingDurationMinutes = task.estimatedDurationMinutes - elapsedMinutesForTask;
+    // The stored block was padded, so the remainder is measured from the padded estimate (and not padded again).
+    const paddedEstimate = applyAreaPadding([task], paddingSettings)[0]!.estimatedDurationMinutes;
+    const remainingDurationMinutes = paddedEstimate - elapsedMinutesForTask;
     if (remainingDurationMinutes <= 0) continue; // Already fully lived through.
+    prePaddedTaskIds.add(task.id);
     outstanding.push({ ...task, estimatedDurationMinutes: remainingDurationMinutes });
   }
 
@@ -607,6 +613,7 @@ export async function runMidDayReflow(deps: MidDayReflowDeps): Promise<Result<Mi
     workStart: existingPlan.data.workStart ?? workStartWithoutCalendar(today, deps.timeZone, settings) ?? nowIso,
     now: nowIso,
     openTasks: outstanding,
+    prePaddedTaskIds,
     budget: {
       date: today,
       totalMinutes: remainingBudgetMinutes,

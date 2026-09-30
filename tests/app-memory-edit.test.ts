@@ -130,3 +130,14 @@ test("review: keep marks history; renew needs an expired or unused reason", asyn
   assert.ok(kept.ok);
   assert.equal(w.memoryItems.getItem(fresh.id)?.status, "history");
 });
+
+test("M4: Keep as history on a pending item withdraws its rule card and clears 'pending'", async () => {
+  const w = world();
+  const item = w.memoryItems.insert(NEW({ folder: "planning-preferences", text: "Start at 4", ruleChange: "pending" }));
+  putOpenInteractionRequest(w.store, ruleChangeRequestId(item.id), { requestKind: "proposal", promptText: "x", createdAt: "2026-09-29T10:00:00.000Z" } as never);
+  const kept = await reviewMemoryItem(w.deps, { itemId: item.id, action: "keep" });
+  assert.ok(kept.ok);
+  assert.equal(w.memoryItems.getItem(item.id)?.status, "history");
+  assert.equal(w.memoryItems.getItem(item.id)?.ruleChange, "none");
+  assert.equal(getOpenInteractionRequest(w.store, ruleChangeRequestId(item.id)), undefined);
+});

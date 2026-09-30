@@ -375,6 +375,9 @@ export function createMemoryItemStore(connection: SqliteConnection): MemoryItemS
         const rows = chainRows(tx, id);
         const upd = tx.prepare(`UPDATE memory_items SET prior_status = status, status = 'deleted' WHERE id = ? AND status != 'deleted'`);
         for (const r of rows) upd.run(r.id);
+        // A forgotten item's rule-change card is withdrawn by the caller; never leave the item "pending" for Undo to restore.
+        const clear = tx.prepare(`UPDATE memory_items SET rule_change = 'none' WHERE id = ? AND rule_change = 'pending'`);
+        for (const r of rows) clear.run(r.id);
         hint(tx, id);
         return { chainIds: rows.map((r) => r.id) };
       });
@@ -412,7 +415,7 @@ export function createMemoryItemStore(connection: SqliteConnection): MemoryItemS
     keepAsHistory(id) {
       connection.writeTx((tx) => {
         requireRow(tx, id);
-        tx.prepare(`UPDATE memory_items SET status = 'history' WHERE id = ?`).run(id);
+        tx.prepare(`UPDATE memory_items SET status = 'history', rule_change = CASE WHEN rule_change = 'pending' THEN 'none' ELSE rule_change END WHERE id = ?`).run(id);
         hint(tx, id);
       });
     },

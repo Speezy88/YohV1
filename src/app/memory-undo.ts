@@ -21,6 +21,8 @@ export async function undoMemoryReceipt(deps: UndoMemoryDeps, input: UndoMemoryR
     if (!receipt || receipt.undoneAt) return conflict("That can't be undone any more.");
     if (deps.chatHistory.hasUserTurnAfter(receipt.conversationId, receipt.userTurnId)) return conflict("That can't be undone any more.");
     if (receipt.kind === "remembered") {
+      // An edit since the receipt superseded an item: restoring its predecessor would leave two current items.
+      if (receipt.itemIds.some((id) => deps.memoryItems.getItem(id)?.status !== "current")) return conflict("That can't be undone any more.");
       for (const id of receipt.itemIds) {
         deps.memoryItems.undoFiling(id);
         if (deps.store) withdrawRuleProposal(deps.store, id);

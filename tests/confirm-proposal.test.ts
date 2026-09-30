@@ -827,3 +827,11 @@ test("pattern: an invalid padding is a validation failure and writes nothing", a
   if (!r.ok) assert.equal(r.error.kind, "validation");
   assert.equal(h.memoryItems.listItems({ folders: ["patterns"] }).length, 0);
 });
+
+test("M2: a pattern No clears the request and records declinedAt in one transaction (a failed state write keeps the card)", async () => {
+  const h = patternHarness();
+  const failing = { ...h.memoryItems, putPatternState: () => { throw new Error("disk"); } };
+  const r = await confirmProposal({ ...h.deps, memoryItems: failing }, { proposal: h.proposal, accept: false, requestId: h.requestId });
+  assert.equal(r.ok, false);
+  assert.ok(getOpenInteractionRequest(h.store, h.requestId), "the card is still open");
+});

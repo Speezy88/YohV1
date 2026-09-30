@@ -212,6 +212,8 @@ export interface DayRefitInput {
   readonly openTasks: readonly CompleteTask[];
   /** Planning rules; defaults to the built-ins. `computeDayRefit` pads `openTasks` by Area from it, once. */
   readonly settings?: PlanningSettings;
+  /** Tasks in `openTasks` whose estimate is already padded (an in-progress remainder of a padded block); `computeDayRefit` skips them. */
+  readonly prePaddedTaskIds?: ReadonlySet<ExternalId>;
   readonly budget: TimeBudget;
   /** Anchors the fit must route around (calendar anchors, plus protected windows when the caller has no separate `protectedWindows`). */
   readonly fixedEvents: readonly CalendarEvent[];
@@ -333,7 +335,10 @@ export function computeSchoolDayInputs(
 export function computeDayRefit(input: DayRefitInput): Result<DayRefitOutput, YohError> {
   // Area padding applies once, here; the unpinned retry inside recurses through the padded inner fit.
   const settings = input.settings ?? defaultPlanningSettings();
-  return fitPaddedDay({ ...input, settings, openTasks: applyAreaPadding(input.openTasks, settings) });
+  const skip = input.prePaddedTaskIds;
+  const fresh = input.openTasks.filter((t) => !skip?.has(t.id));
+  const padded = new Map(applyAreaPadding(fresh, settings).map((t) => [t.id, t]));
+  return fitPaddedDay({ ...input, settings, openTasks: input.openTasks.map((t) => padded.get(t.id) ?? t) });
 }
 
 function fitPaddedDay(input: DayRefitInput): Result<DayRefitOutput, YohError> {
