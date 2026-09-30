@@ -33,7 +33,7 @@ import {
 } from "../src/adapters/memory-store.ts";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { computeSlipBumpLevel } from "../src/core/slip-bump.ts";
-import type { RecordCompletionInput } from "../src/adapters/completion-log.ts";
+import { listSlipEvents, type RecordCompletionInput } from "../src/adapters/completion-log.ts";
 import {
   applyNightCloseOutConfirmation,
   buildNightCloseOutPromptText,
@@ -698,7 +698,7 @@ test("R7: a lookup that THROWS never blocks recording the completion or the Stat
   store.close();
 });
 
-test("applyNightCloseOutConfirmation does NOT record a completion for a 'slipped' confirmation, and does not even bother with the live-Task lookup", async () => {
+test("applyNightCloseOutConfirmation does NOT record a completion for a 'slipped' confirmation, but looks the Task up for its area", async () => {
   const store = tempStore();
   const completions: RecordCompletionInput[] = [];
   let lookupCalls = 0;
@@ -719,7 +719,33 @@ test("applyNightCloseOutConfirmation does NOT record a completion for a 'slipped
   );
 
   assert.equal(completions.length, 0);
-  assert.equal(lookupCalls, 0, "the live-Task lookup is only needed to snapshot a completion — a 'slipped' confirmation never records one");
+  assert.equal(lookupCalls, 1, "Story 13.2: the lookup supplies the slip event's area");
+  store.close();
+});
+
+test("Story 13.2: a slip appends a slip_events row {taskId, area, date} alongside the slip record; a lookup failure leaves area null and never blocks; a repeat date adds nothing", async () => {
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db);
+  const store = createMemoryStore(connection);
+  const events = () => listSlipEvents(connection);
+  await applyNightCloseOutConfirmation(
+    applyDeps(store, undefined, { lookupTask: () => Promise.resolve({ ...fakeTask(), area: "Work" }) }),
+    "t1", "Draft the memo", "slipped", TODAY, APPLY_COMPLETED_AT,
+  );
+  await applyNightCloseOutConfirmation(
+    applyDeps(store, undefined, { lookupTask: () => Promise.reject(new Error("notion down")), log: () => {} }),
+    "t2", "Other", "slipped", TODAY, APPLY_COMPLETED_AT,
+  );
+  const again = await applyNightCloseOutConfirmation(
+    applyDeps(store, undefined, { lookupTask: () => Promise.resolve({ ...fakeTask(), area: "Work" }) }),
+    "t1", "Draft the memo", "slipped", TODAY, APPLY_COMPLETED_AT,
+  );
+  assert.equal(again.ok, true);
+  assert.deepEqual(events(), [
+    { taskId: "t1", area: "Work", date: TODAY },
+    { taskId: "t2", area: null, date: TODAY },
+  ]);
+  assert.equal(getSlipHistory(store, "t1")?.data.consecutiveSlipCount, 1);
   store.close();
 });
 

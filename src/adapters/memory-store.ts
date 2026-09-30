@@ -888,7 +888,12 @@ export function getSlipHistory(store: MemoryStore, taskId: string): StoredRecord
  * triggered this — means every future caller gets the same guarantee for
  * free. A genuinely NEW slip on a later date still increments normally.
  */
-export function recordSlip(store: MemoryStore, taskId: string, slipDate: IsoDate): StoredRecord<SlipHistory> {
+export function recordSlip(
+  store: MemoryStore,
+  taskId: string,
+  slipDate: IsoDate,
+  onCommit?: (db: Database.Database) => void,
+): StoredRecord<SlipHistory> {
   const current = store.getRecord<SlipHistory>(SLIP_HISTORY_KIND, taskId);
   if (current?.data.lastSlipDate === slipDate) {
     return current; // Already recorded for this exact date — no-op, not a second increment.
@@ -896,7 +901,7 @@ export function recordSlip(store: MemoryStore, taskId: string, slipDate: IsoDate
   return store.readModifyWrite<SlipHistory>(SLIP_HISTORY_KIND, taskId, current?.version, (existing) => ({
     consecutiveSlipCount: (existing?.data.consecutiveSlipCount ?? 0) + 1,
     lastSlipDate: slipDate,
-  }));
+  }), onCommit);
 }
 
 /**

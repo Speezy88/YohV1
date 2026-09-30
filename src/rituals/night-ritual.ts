@@ -187,11 +187,12 @@ import {
   type MemoryStore,
 } from "../adapters/memory-store.ts";
 import type { LogEntry } from "../adapters/logger.ts";
-import type { RecordCompletionInput } from "../adapters/completion-log.ts";
+import { recordSlipEventInTx, type RecordCompletionInput } from "../adapters/completion-log.ts";
 import { ATTENTION, localIsoDate, RESET, shouldUseColor } from "./ritual-shared.ts";
 import type { PlanNotification } from "./ritual-shared.ts";
 import type { EmailMessage } from "../adapters/email-adapter.ts";
 import type {
+  Area,
   ExternalId,
   InteractionRequest,
   IsoDate,
@@ -521,9 +522,9 @@ export interface NightCloseOutApplyDeps {
    * filtered by id; tests use a fake. A rejection is caught and logged; it
    * never blocks either the completion record (recorded with `null` for all
    * three fields) or the Status write itself. `undefined` (Task not found,
-   * or genuinely missing a field) also produces `null` for that field. Never
-   * called for a `"slipped"` confirmation — nothing about a slip snapshots
-   * anything into the Completion Log.
+   * or genuinely missing a field) also produces `null` for that field. Also
+   * run for a `"slipped"` confirmation (Story 13.2), where only `area` is
+   * used, for the `slip_events` row; a failure leaves it null.
    */
   readonly lookupTask: (taskId: ExternalId) => Promise<Task | undefined>;
   readonly log?: (entry: LogEntry) => void;
@@ -555,7 +556,7 @@ export interface NightCloseOutApplyDeps {
  *   `core/slip-bump.ts`'s `computeSlipBumpLevel` (which itself delegates to
  *   `core/escalate-under-strain.ts`'s `computeEscalation`, AD-6) — nothing
  *   in this function fabricates or shortcuts that number. No completion is
- *   recorded, and `lookupTask` is never even called.
+ *   recorded; a `slip_events` row is appended in the same transaction.
  * - `"completed"`: records the completion (see above), then calls
  *   `clearSlip(store, taskId)` ONLY if a `SlipHistory` row currently exists
  *   — a harmless no-op otherwise (Task 17's own AC: the bump is cleared, not
@@ -579,12 +580,12 @@ export async function applyNightCloseOutConfirmation(
 ): Promise<Result<void, YohError>> {
   const log = deps.log ?? ((): void => {});
 
-  let snapshot: { area: string | null; dueDate: IsoDate | null; estimatedMinutes: number | null } = {
+  let snapshot: { area: Area | null; dueDate: IsoDate | null; estimatedMinutes: number | null } = {
     area: null,
     dueDate: null,
     estimatedMinutes: null,
   };
-  if (status === "completed") {
+  {
     try {
       const task = await deps.lookupTask(taskId);
       snapshot = {
@@ -621,7 +622,10 @@ export async function applyNightCloseOutConfirmation(
       const existing = getSlipHistory(deps.store, taskId);
       if (existing) clearSlip(deps.store, taskId);
     } else {
-      recordSlip(deps.store, taskId, closeOutDate);
+      // Story 13.2: the append-only slip event commits in the same transaction as the slip record.
+      recordSlip(deps.store, taskId, closeOutDate, (db) => {
+        recordSlipEventInTx(db, { taskId, area: snapshot.area, date: closeOutDate });
+      });
     }
   } catch (err) {
     return failure(

@@ -18,6 +18,8 @@ import {
   listCompletedTaskIdsOnDate,
   recordCompletion,
   recordCompletionInTx,
+  recordSlipEventInTx,
+  listSlipEvents,
   type RecordCompletionInput,
 } from "../src/adapters/completion-log.ts";
 
@@ -177,5 +179,50 @@ test("recordCompletionInTx inserts within a caller-provided transaction (cross-o
   });
   const row = connection.db.prepare("SELECT * FROM completions WHERE task_id = 't9'").get() as Record<string, unknown>;
   assert.equal(row["task_name"], "Cross-owner write");
+  connection.close();
+});
+
+test("Story 13.2: initCompletionLogSchema adds nullable planned_start/planned_end to an old table, idempotently, without touching existing rows", () => {
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  connection.db.exec(`
+    CREATE TABLE completions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL, task_name TEXT NOT NULL, area TEXT,
+      due_date TEXT, estimated_minutes INTEGER, completed_at TEXT NOT NULL, source TEXT NOT NULL
+    );
+    INSERT INTO completions (task_id, task_name, completed_at, source) VALUES ('old', 'Old one', '2026-09-01T10:00:00.000Z', 'check-off');
+  `);
+  initCompletionLogSchema(connection.db);
+  initCompletionLogSchema(connection.db);
+  const cols = (connection.db.prepare("PRAGMA table_info(completions)").all() as { name: string }[]).map((c) => c.name);
+  assert.ok(cols.includes("planned_start") && cols.includes("planned_end"));
+  const row = connection.db.prepare("SELECT * FROM completions").get() as Record<string, unknown>;
+  assert.equal(row["task_id"], "old");
+  assert.equal(row["planned_start"], null);
+  assert.equal(row["planned_end"], null);
+  connection.close();
+});
+
+test("Story 13.2: recordCompletion stores planned times when given, null when omitted", () => {
+  const connection = tempStore();
+  const base = { taskName: "n", area: null, dueDate: null, estimatedMinutes: null, completedAt: "2026-09-25T18:00:00.000Z", source: "check-off" } as const;
+  recordCompletion(connection, { ...base, taskId: "a", plannedStart: "2026-09-25T09:00:00.000Z", plannedEnd: "2026-09-25T10:00:00.000Z" });
+  recordCompletion(connection, { ...base, taskId: "b" });
+  const rows = connection.db.prepare("SELECT task_id, planned_start, planned_end FROM completions ORDER BY id").all() as Record<string, unknown>[];
+  assert.deepEqual(rows[0], { task_id: "a", planned_start: "2026-09-25T09:00:00.000Z", planned_end: "2026-09-25T10:00:00.000Z" });
+  assert.deepEqual(rows[1], { task_id: "b", planned_start: null, planned_end: null });
+  connection.close();
+});
+
+test("Story 13.2: recordSlipEventInTx appends {taskId, area, date} once per task and date", () => {
+  const connection = tempStore();
+  connection.writeTx((db) => {
+    recordSlipEventInTx(db, { taskId: "t1", area: "Work", date: "2026-09-25" });
+    recordSlipEventInTx(db, { taskId: "t1", area: "Work", date: "2026-09-25" });
+    recordSlipEventInTx(db, { taskId: "t1", area: null, date: "2026-09-26" });
+  });
+  assert.deepEqual(listSlipEvents(connection), [
+    { taskId: "t1", area: "Work", date: "2026-09-25" },
+    { taskId: "t1", area: null, date: "2026-09-26" },
+  ]);
   connection.close();
 });

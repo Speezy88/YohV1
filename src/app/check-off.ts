@@ -108,6 +108,13 @@ function planLabel(deps: CheckOffDeps, taskId: ExternalId, now: Date): string | 
   return plan?.data.blocks.find((b) => b.kind === "work" && b.taskId === taskId)?.label;
 }
 
+/** Story 13.2: the first `work` block for `taskId` on the Plan of the day the check-off was clicked, if any. */
+function plannedWindow(deps: CheckOffDeps, taskId: ExternalId, completedAt: string): { plannedStart: string | null; plannedEnd: string | null } {
+  const plan = getPlan(deps.store, localIsoDate(new Date(completedAt), deps.timeZone));
+  const block = plan?.data.blocks.find((b) => b.kind === "work" && b.taskId === taskId);
+  return { plannedStart: block?.start ?? null, plannedEnd: block?.end ?? null };
+}
+
 // ============================================================================
 // Interaction use-cases (routes)
 // ============================================================================
@@ -230,6 +237,7 @@ export async function commitDueCheckOffs(deps: CheckOffDeps, _input: Record<stri
     for (const row of listDueCheckOffs(deps.connection, deps.now())) {
       const task = await lookupSnapshot(deps, row);
       const taskName = task?.title ?? row.taskName;
+      const planned = plannedWindow(deps, row.taskId, row.completedAt);
       const claimed = deps.connection.writeTx((db) => {
         if (!claimDueCheckOffInTx(db, row.id, deps.now(), retryAt(deps))) return false;
         recordCompletionInTx(db, {
@@ -240,6 +248,8 @@ export async function commitDueCheckOffs(deps: CheckOffDeps, _input: Record<stri
           estimatedMinutes: task?.estimatedDurationMinutes ?? null,
           completedAt: row.completedAt,
           source: "check-off",
+          plannedStart: planned.plannedStart,
+          plannedEnd: planned.plannedEnd,
         });
         appendOutboxInTx(db, { topic: PLAN_TOPIC, entityId: row.taskId });
         return true;

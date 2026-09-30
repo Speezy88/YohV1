@@ -280,6 +280,20 @@ test("the log entry snapshots area/dueDate/estimatedMinutes from the live Task l
   env.connection.close();
 });
 
+test("Story 13.2: a check-off records the Plan block's planned start/end (plan of the click day); no block leaves them null", async () => {
+  const env = setup();
+  await checkedOff(env);
+  await checkedOff(env, "t-unplanned");
+  env.setClock(at(UNDO_WINDOW_MS + 700));
+  await commitDueCheckOffs(env.deps, {});
+  const rows = env.connection.db.prepare("SELECT task_id, planned_start, planned_end FROM completions ORDER BY id").all();
+  assert.deepEqual(rows, [
+    { task_id: "t1", planned_start: "2026-09-25T17:00:00.000Z", planned_end: "2026-09-25T19:00:00.000Z" },
+    { task_id: "t-unplanned", planned_start: null, planned_end: null },
+  ]);
+  env.connection.close();
+});
+
 test("a Task lookup failure never blocks the commit: nulls for the three fields, the Plan label as the name, and a logged error", async () => {
   const env = setup({
     lookupTask: async () => {

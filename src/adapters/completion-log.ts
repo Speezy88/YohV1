@@ -51,6 +51,9 @@ export interface RecordCompletionInput {
   readonly estimatedMinutes: number | null;
   readonly completedAt: IsoDateTime;
   readonly source: CompletionSource;
+  /** Story 13.2: the Plan block's planned window, when a check-off found one. Optional (default null); the seven keys above stay required. */
+  readonly plannedStart?: IsoDateTime | null;
+  readonly plannedEnd?: IsoDateTime | null;
 }
 
 export function initCompletionLogSchema(db: Database.Database): void {
@@ -68,13 +71,54 @@ export function initCompletionLogSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_completions_completed_at ON completions (completed_at);
     CREATE INDEX IF NOT EXISTS idx_completions_task_id ON completions (task_id);
   `);
+  // Story 13.2: databases created before planned times lack these columns. Nothing is backfilled.
+  const columns = db.prepare("PRAGMA table_info(completions)").all() as { name: string }[];
+  if (!columns.some((c) => c.name === "planned_start")) db.exec("ALTER TABLE completions ADD COLUMN planned_start TEXT");
+  if (!columns.some((c) => c.name === "planned_end")) db.exec("ALTER TABLE completions ADD COLUMN planned_end TEXT");
+  db.exec(SLIP_EVENTS_DDL);
+}
+
+const SLIP_EVENTS_DDL = `
+  CREATE TABLE IF NOT EXISTS slip_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT NOT NULL,
+    area TEXT,
+    date TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE (task_id, date)
+  );
+`;
+
+export interface SlipEvent {
+  readonly taskId: ExternalId;
+  readonly area: Area | null;
+  readonly date: IsoDate;
+}
+
+/** Story 13.2: appends one append-only slip event; a repeat for the same task and date is ignored. Call inside the same `writeTx` as the slip record. */
+export function recordSlipEventInTx(db: Database.Database, event: SlipEvent): void {
+  db.exec(SLIP_EVENTS_DDL); // idempotent; keeps callers whose connection skipped init working
+  db.prepare(
+    `INSERT OR IGNORE INTO slip_events (task_id, area, date, created_at) VALUES (@taskId, @area, @date, @createdAt)`,
+  ).run({ taskId: event.taskId, area: event.area, date: event.date, createdAt: new Date().toISOString() });
+}
+
+/** Every slip event, oldest first. */
+export function listSlipEvents(connection: SqliteConnection): SlipEvent[] {
+  connection.db.exec(SLIP_EVENTS_DDL);
+  const rows = connection.db.prepare("SELECT task_id, area, date FROM slip_events ORDER BY id").all() as {
+    task_id: string;
+    area: Area | null;
+    date: string;
+  }[];
+  return rows.map((r) => ({ taskId: r.task_id, area: r.area, date: r.date }));
 }
 
 /** Inserts one completion row. Call inside a `writeTx` when it must commit atomically alongside another owner's write (Story 7.10's check-off commit is the first such caller). */
 export function recordCompletionInTx(db: Database.Database, input: RecordCompletionInput): void {
   db.prepare(
-    `INSERT INTO completions (task_id, task_name, area, due_date, estimated_minutes, completed_at, source)
-     VALUES (@taskId, @taskName, @area, @dueDate, @estimatedMinutes, @completedAt, @source)`,
+    `INSERT INTO completions (task_id, task_name, area, due_date, estimated_minutes, completed_at, source, planned_start, planned_end)
+     VALUES (@taskId, @taskName, @area, @dueDate, @estimatedMinutes, @completedAt, @source, @plannedStart, @plannedEnd)`,
   ).run({
     taskId: input.taskId,
     taskName: input.taskName,
@@ -83,6 +127,8 @@ export function recordCompletionInTx(db: Database.Database, input: RecordComplet
     estimatedMinutes: input.estimatedMinutes,
     completedAt: input.completedAt,
     source: input.source,
+    plannedStart: input.plannedStart ?? null,
+    plannedEnd: input.plannedEnd ?? null,
   });
 }
 
