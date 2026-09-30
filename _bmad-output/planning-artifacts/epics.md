@@ -3022,7 +3022,7 @@ So that a rule change I approve (Story 13.8) changes planning everywhere, and no
 
 **Given** an override value for any `RuleSettingKey`
 **When** the settings store or `validateFiling` checks it
-**Then** it must match the AD-29 value shape (work starts `"HH:MM"` 06:00–21:00 on 5-minute steps; windows `{start, end}` with start < end, 5–180 min; `areaDurationPadding` `{area, minutes 0–120, multiple of 5}`), or it is rejected as `validation`
+**Then** it must match the AD-29 value shape (work starts `"HH:MM"` 09:00–21:00 on 5-minute steps, since work before 09:00 happens only when Spencer places it for a specific day; windows `{start, end}` with start < end, 5–180 min; `areaDurationPadding` `{area, minutes 0–120, multiple of 5}`), or it is rejected as `validation`
 
 ### Story 13.8: Rule-Change Proposals From Planning Preferences
 
