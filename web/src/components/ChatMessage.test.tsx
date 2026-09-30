@@ -117,13 +117,13 @@ describe("ChatMessage", () => {
   });
 
   it("Task 6: a 'try again' response (next = the SAME question) keeps the card and shows the server's message inline", async () => {
-    const sameQuestion = { requestId: "self-check", questionId: "score", text: 'Score (1-10) + a short reason, e.g. "7 feeling on top of things"', options: [], allowsFreeText: true };
+    const sameQuestion = { requestId: "data-completeness", questionId: "score", text: 'Score (1-10) + a short reason, e.g. "7 feeling on top of things"', options: [], allowsFreeText: true };
     vi.spyOn(openItemsLib, "submitOpenItemAnswer").mockResolvedValue({
       ok: true,
       value: { message: "Just send a number from 1 to 10, plus an optional reason.", receipts: [], next: sameQuestion },
     });
     const recordSpy = vi.spyOn(chatStore, "recordAnsweredOpenItem").mockImplementation(() => {});
-    render(<ChatMessage message={msg({ text: "Quick Self-Check…", question: sameQuestion })} />);
+    render(<ChatMessage message={msg({ text: "Quick check-in…", question: sameQuestion })} />);
 
     fireEvent.change(screen.getByLabelText("Other"), { target: { value: "not sure" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));

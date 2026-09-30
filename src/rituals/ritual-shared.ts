@@ -1,7 +1,7 @@
 /**
  * src/rituals/ritual-shared.ts
  *
- * Final whole-branch review, Finding 3. `night-ritual.ts`, `self-check.ts`,
+ * Final whole-branch review, Finding 3. `night-ritual.ts`
  * and `mid-day-reflow.ts` had all come to import date/color/notification
  * helpers from `rituals/morning-ritual.ts` — exactly the "shared utils file
  * becomes a bottleneck" anti-pattern AD-9 itself names (for the narrower
@@ -366,7 +366,7 @@ export function localIsoDate(instant: Date, timeZone: string): IsoDate {
  * What a ritual's `sendNotification`/`sendFailureAlert` seam receives — the
  * `adapters/notification-adapter.ts` message shape, minus its credentials.
  * Shared across every ritual that sends a Pushover push
- * (`morning-ritual.ts`, `night-ritual.ts`, `self-check.ts`) and
+ * (`morning-ritual.ts`, `night-ritual.ts`) and
  * `shell/ritual-cli.ts`'s own failure-alert channel.
  */
 export interface PlanNotification {

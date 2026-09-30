@@ -40,8 +40,7 @@ import {
   listUncheckedDays,
   markUncheckedDayShown,
   clearUncheckedDay,
-  getSelfCheckState,
-  putSelfCheckState,
+  removeRetiredRecords,
   getPlan,
   putPlan,
   putRitualRun,
@@ -969,43 +968,29 @@ test("clearUncheckedDay only removes the record for its OWN date — a different
 });
 
 // ============================================================================
-// SelfCheckState (Task 24 / Story 4.3, FR-17, AD-6)
+// removeRetiredRecords (Story 13.12, Ruling E11) — one-time cleanup of the
+// retired Self-Check's stored leftovers
 // ============================================================================
 
-test("getSelfCheckState returns undefined before any schedule has ever been initialized (cold start)", () => {
-  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
-  assert.equal(getSelfCheckState(store), undefined);
-  store.close();
-});
+test("removeRetiredRecords deletes a legacy request, legacy records rows and the legacy invocation row, and is a no-op the second time", () => {
+  const connection = openSqliteConnection({ databasePath: tempDbPath() });
+  initNotificationStoreSchema(connection.db);
+  const store = createMemoryStore(connection);
+  putOpenInteractionRequest(store, "self-check", makeRequest({ requestKind: "self-check", promptText: "How are things going?" }));
+  putOpenInteractionRequest(store, "keep-me", makeRequest({ requestKind: "data-completeness" }));
+  store.readModifyWrite("self-check", "current", undefined, () => ({ nextDueDate: "2026-08-26", nextDueMinuteOfDay: 600 }));
+  store.readModifyWrite("ritual-invocation", "self-check", undefined, () => ({ at: "2026-08-20T10:00:00.000Z" }));
+  store.readModifyWrite("ritual-invocation", "morning", undefined, () => ({ at: "2026-08-20T10:00:00.000Z" }));
 
-test("putSelfCheckState persists a record retrievable via getSelfCheckState, at version 1", () => {
-  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
-  const record = putSelfCheckState(store, { nextDueDate: "2026-08-26", nextDueMinuteOfDay: 600 });
-  assert.equal(record.version, 1);
+  const first = removeRetiredRecords(store);
+  assert.equal(first.removed, 3);
+  assert.equal(getOpenInteractionRequest(store, "self-check"), undefined);
+  assert.ok(getOpenInteractionRequest(store, "keep-me"), "an unrelated request survives");
+  assert.equal(store.listRecordsByKind("self-check").length, 0);
+  assert.equal(store.getRecord("ritual-invocation", "self-check"), undefined);
+  assert.ok(store.getRecord("ritual-invocation", "morning"), "other rituals' invocation rows survive");
 
-  const read = getSelfCheckState(store);
-  assert.ok(read);
-  assert.equal(read.data.nextDueDate, "2026-08-26");
-  assert.equal(read.data.nextDueMinuteOfDay, 600);
-  assert.equal(read.data.lastCheckInDate, undefined);
-  store.close();
-});
-
-test("putSelfCheckState called again replaces the value in place (upsert), not a second row", () => {
-  const store = createMemoryStore(openSqliteConnection({ databasePath: tempDbPath() }));
-  putSelfCheckState(store, { nextDueDate: "2026-08-26", nextDueMinuteOfDay: 600 });
-  const second = putSelfCheckState(store, {
-    nextDueDate: "2026-08-28",
-    nextDueMinuteOfDay: 720,
-    lastCheckInDate: "2026-08-24",
-    lastScore: 7,
-    lastReason: "feeling on top of things",
-  });
-  assert.equal(second.version, 2);
-
-  const read = getSelfCheckState(store);
-  assert.equal(read?.data.nextDueDate, "2026-08-28");
-  assert.equal(read?.data.lastScore, 7);
+  assert.deepEqual(removeRetiredRecords(store), { removed: 0 });
   store.close();
 });
 

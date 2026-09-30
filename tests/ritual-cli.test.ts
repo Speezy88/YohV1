@@ -9,7 +9,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { createMemoryStore, getRitualInvocation, putPlan, putRitualInvocation, putSelfCheckState } from "../src/adapters/memory-store.ts";
+import { createMemoryStore, getRitualInvocation, putPlan, putRitualInvocation } from "../src/adapters/memory-store.ts";
 import { recordSlip } from "../src/adapters/memory-store.ts";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { initCompletionLogSchema, recordCompletion } from "../src/adapters/completion-log.ts";
@@ -27,11 +27,9 @@ import {
   checkDailyRitualMissedRun,
   formatDayCount,
   checkMorningPlanGenerationDegraded,
-  checkSelfCheckMissedRun,
   createOperationalNotifier,
   runRitualCli,
   DAILY_RITUAL_MISSED_RUN_GRACE_HOURS,
-  SELF_CHECK_MISSED_RUN_GRACE_DAYS,
   type MissedRunCheckResult,
   type RitualCliDeps,
 } from "../src/shell/ritual-cli.ts";
@@ -40,13 +38,11 @@ import {
 // edit only, per the task brief.
 import { createMorningRitualDeps } from "../src/shell/ritual-cli/morning-deps.ts";
 import { createNightEscalateRitualDeps, createNightPromptRitualDeps } from "../src/shell/ritual-cli/night-deps.ts";
-import { createSelfCheckRitualDeps } from "../src/shell/ritual-cli/self-check-deps.ts";
 import { PLAN_GENERATION_DEGRADED_THRESHOLD_MS } from "../src/rituals/morning-ritual.ts";
 import type { MorningRitualOutcome } from "../src/rituals/morning-ritual.ts";
 import type { PlanNotification } from "../src/rituals/ritual-shared.ts";
 import { recordNightCloseOutHandledWithoutPrompt, runNightEscalateRitual, runNightPromptRitual } from "../src/rituals/night-ritual.ts";
 import type { NightEscalateOutcome, NightPromptOutcome } from "../src/rituals/night-ritual.ts";
-import type { SelfCheckOutcome } from "../src/rituals/self-check.ts";
 import type { Plan, Result, YohError } from "../src/types/domain.ts";
 
 /** Default "never missed" check — most existing dispatch tests don't care about the Task 26 / Story 5.2 dead-man's-switch at all. */
@@ -99,9 +95,6 @@ function deps(
     runNightEscalate: async () => {
       throw new Error("runNightEscalate should not be called by a `morning` dispatch test");
     },
-    runSelfCheck: async () => {
-      throw new Error("runSelfCheck should not be called by a `morning` dispatch test");
-    },
     sendFailureAlert: async (notification) => {
       sink.alerts.push(notification);
     },
@@ -133,9 +126,6 @@ function nightPromptDeps(
     runNightEscalate: async () => {
       throw new Error("runNightEscalate should not be called by a `night-prompt` dispatch test");
     },
-    runSelfCheck: async () => {
-      throw new Error("runSelfCheck should not be called by a `night-prompt` dispatch test");
-    },
     sendFailureAlert: async (notification) => {
       sink.alerts.push(notification);
     },
@@ -164,43 +154,6 @@ function nightEscalateDeps(
       throw new Error("runNightPrompt should not be called by a `night-escalate` dispatch test");
     },
     runNightEscalate: async () => {
-      onRun?.();
-      return outcome;
-    },
-    runSelfCheck: async () => {
-      throw new Error("runSelfCheck should not be called by a `night-escalate` dispatch test");
-    },
-    sendFailureAlert: async (notification) => {
-      sink.alerts.push(notification);
-    },
-    checkMissedRun,
-    recordInvocation,
-    notifyOperational: NOOP_NOTIFY_OPERATIONAL,
-  };
-}
-
-function selfCheckDeps(
-  outcome: Result<SelfCheckOutcome, YohError>,
-  sink: Sink,
-  onRun?: () => void,
-  checkMissedRun: () => MissedRunCheckResult = NOT_MISSED,
-  recordInvocation: () => void = NOOP_RECORD_INVOCATION,
-): RitualCliDeps {
-  return {
-    io: {
-      writeLine: (l) => sink.out.push(l),
-      writeError: (l) => sink.err.push(l),
-    },
-    runMorning: async () => {
-      throw new Error("runMorning should not be called by a `self-check` dispatch test");
-    },
-    runNightPrompt: async () => {
-      throw new Error("runNightPrompt should not be called by a `self-check` dispatch test");
-    },
-    runNightEscalate: async () => {
-      throw new Error("runNightEscalate should not be called by a `self-check` dispatch test");
-    },
-    runSelfCheck: async () => {
       onRun?.();
       return outcome;
     },
@@ -295,6 +248,21 @@ test("an unknown subcommand exits 2 without running anything", async () => {
   assert.equal(code, 2);
   assert.equal(ran, 0);
   assert.match(s.err.join("\n"), /breakfast/);
+});
+
+test("the retired `self-check` subcommand is an unknown subcommand: exit 2, usage lists exactly the three live ones", async () => {
+  const s = sink();
+  let ran = 0;
+  const code = await runRitualCli(
+    ["self-check"],
+    deps({ ok: true, value: { status: "already-ran", date: TODAY, planId: undefined } }, s, () => {
+      ran += 1;
+    }),
+  );
+
+  assert.equal(code, 2);
+  assert.equal(ran, 0);
+  assert.match(s.err.join("\n"), /usage: node src\/shell\/ritual-cli\.ts <morning\|night-prompt\|night-escalate>/);
 });
 
 // ============================================================================
@@ -478,89 +446,17 @@ test("end-to-end: night-prompt then night-escalate, both real, are no-ops when /
 });
 
 // ============================================================================
-// `self-check` (Task 24 / Story 4.3)
-// ============================================================================
-
-test("`self-check` runs the ritual and reports today's Self-Check was sent, exit code 0", async () => {
-  const s = sink();
-  let ran = 0;
-  const code = await runRitualCli(
-    ["self-check"],
-    selfCheckDeps({ ok: true, value: { status: "prompted", date: TODAY } }, s, () => {
-      ran += 1;
-    }),
-  );
-
-  assert.equal(code, 0);
-  assert.equal(ran, 1);
-  assert.match(s.out.join("\n"), /self-check/i);
-  assert.deepEqual(s.err, []);
-});
-
-test("`self-check` on a day that isn't due reports the no-op, exit code 0", async () => {
-  const s = sink();
-  const code = await runRitualCli(
-    ["self-check"],
-    selfCheckDeps({ ok: true, value: { status: "not-due", date: TODAY, nextDueDate: "2026-08-26" } }, s),
-  );
-
-  assert.equal(code, 0);
-  assert.match(s.out.join("\n"), /not due/i);
-});
-
-test("`self-check` on its very first-ever run reports the schedule was initialized, exit code 0", async () => {
-  const s = sink();
-  const code = await runRitualCli(
-    ["self-check"],
-    selfCheckDeps({ ok: true, value: { status: "initialized", date: TODAY, nextDueDate: "2026-08-26" } }, s),
-  );
-
-  assert.equal(code, 0);
-  assert.match(s.out.join("\n"), /initialized/i);
-});
-
-test("`self-check` when a prompt from an earlier trigger is still open reports the no-op, exit code 0", async () => {
-  const s = sink();
-  const code = await runRitualCli(["self-check"], selfCheckDeps({ ok: true, value: { status: "already-open", date: TODAY } }, s));
-
-  assert.equal(code, 0);
-  assert.match(s.out.join("\n"), /already waiting|check chat/i);
-});
-
-test("a failing self-check ritual becomes a structured stderr line and a non-zero exit code (AD-8)", async () => {
-  const s = sink();
-  const code = await runRitualCli(
-    ["self-check"],
-    selfCheckDeps({ ok: false, error: { kind: "conflict", message: "self-check: could not persist the Self-Check prompt" } }, s),
-  );
-
-  assert.equal(code, 1);
-  assert.equal(s.err.length, 1);
-  const entry = JSON.parse(s.err[0]!) as { level: string; event: string; kind: string; message: string };
-  assert.equal(entry.level, "error");
-  assert.equal(entry.kind, "conflict");
-  assert.match(entry.message, /could not persist the Self-Check prompt/);
-});
-
-test("self-check no longer appears in the 'not yet built' set — it's a real, built subcommand now (all four AD-5 subcommands are built)", async () => {
-  const s = sink();
-  const code = await runRitualCli(["self-check"], selfCheckDeps({ ok: true, value: { status: "not-due", date: TODAY, nextDueDate: TODAY } }, s));
-  assert.equal(code, 0);
-  assert.doesNotMatch(s.err.join("\n"), /not implemented yet/i);
-});
-
-// ============================================================================
 // Failure-alert wrapper (Task 25 / Story 5.1, AD-7/AD-9): a single shared
-// `withFailureAlert` mechanism applied identically to all four subcommands.
+// `withFailureAlert` mechanism applied identically to all three subcommands.
 // Covers both failure modes AD-7 names — a `Result` failure AND a thrown
 // error escaping the subcommand invocation entirely — plus the "no alert on
 // success" and "distinct wording" requirements.
 // ============================================================================
 
-const NORMAL_NOTIFICATION_TITLES = ["Today's Plan", "Close out today?", "Quick Self-Check"];
+const NORMAL_NOTIFICATION_TITLES = ["Today's Plan", "Close out today?"];
 
 /** Builds a `RitualCliDeps` where every run* function throws (not a Result failure) except the one under test, which throws the given error. Mirrors the "should not be called" convention the other helpers above use. */
-function throwingDeps(which: "runMorning" | "runNightPrompt" | "runNightEscalate" | "runSelfCheck", err: Error, s: Sink): RitualCliDeps {
+function throwingDeps(which: "runMorning" | "runNightPrompt" | "runNightEscalate", err: Error, s: Sink): RitualCliDeps {
   const unexpected = (label: string) => async () => {
     throw new Error(`${label} should not be called by this dispatch test`);
   };
@@ -572,7 +468,6 @@ function throwingDeps(which: "runMorning" | "runNightPrompt" | "runNightEscalate
     runMorning: unexpected("runMorning"),
     runNightPrompt: unexpected("runNightPrompt"),
     runNightEscalate: unexpected("runNightEscalate"),
-    runSelfCheck: unexpected("runSelfCheck"),
     sendFailureAlert: async (notification) => {
       s.alerts.push(notification);
     },
@@ -691,43 +586,9 @@ test("`night-escalate` sends NO failure alert on a successful run", async () => 
   assert.deepEqual(s.alerts, []);
 });
 
-// ---- self-check ----
+// ---- cross-cutting: the three alert titles are mutually distinguishable, not just distinct from normal notifications ----
 
-test("`self-check` sends exactly one distinctly-worded failure alert when the ritual returns a Result failure, before exit code 1", async () => {
-  const s = sink();
-  const code = await runRitualCli(
-    ["self-check"],
-    selfCheckDeps({ ok: false, error: { kind: "conflict", message: "self-check: could not persist the Self-Check prompt" } }, s),
-  );
-
-  assert.equal(code, 1);
-  assert.equal(s.alerts.length, 1);
-  const alert = s.alerts[0]!;
-  assert.equal(alert.title, "Self-check failed");
-  assert.ok(!NORMAL_NOTIFICATION_TITLES.includes(alert.title), "failure alert title must be distinct from a normal Plan/close-out/Self-Check notification title");
-  assert.match(alert.message, /could not persist the Self-Check prompt/);
-});
-
-test("`self-check` sends the failure alert and exits non-zero when runSelfCheck THROWS instead of returning a Result failure", async () => {
-  const s = sink();
-  const code = await runRitualCli(["self-check"], throwingDeps("runSelfCheck", new Error("self-check: unexpected crash"), s));
-
-  assert.equal(code, 1);
-  assert.equal(s.alerts.length, 1);
-  assert.equal(s.alerts[0]!.title, "Self-check failed");
-  assert.match(s.alerts[0]!.message, /unexpected crash/);
-});
-
-test("`self-check` sends NO failure alert on a successful run", async () => {
-  const s = sink();
-  const code = await runRitualCli(["self-check"], selfCheckDeps({ ok: true, value: { status: "prompted", date: TODAY } }, s));
-  assert.equal(code, 0);
-  assert.deepEqual(s.alerts, []);
-});
-
-// ---- cross-cutting: the four alert titles are mutually distinguishable, not just distinct from normal notifications ----
-
-test("the four subcommands' failure alerts each get their own plain title, not a generic shared one (AD-7: mutually distinguishable, even though none names the raw subcommand id anymore — polish-1 fix round)", async () => {
+test("the three subcommands' failure alerts each get their own plain title, not a generic shared one (AD-7: mutually distinguishable, even though none names the raw subcommand id anymore — polish-1 fix round)", async () => {
   const titles = new Set<string>();
 
   const sMorning = sink();
@@ -745,35 +606,7 @@ test("the four subcommands' failure alerts each get their own plain title, not a
   titles.add(sNightEscalate.alerts[0]!.title);
   assert.equal(sNightEscalate.alerts[0]!.title, "Night reminder failed");
 
-  const sSelfCheck = sink();
-  await runRitualCli(["self-check"], selfCheckDeps({ ok: false, error: { kind: "unreachable", message: "x" } }, sSelfCheck));
-  titles.add(sSelfCheck.alerts[0]!.title);
-  assert.equal(sSelfCheck.alerts[0]!.title, "Self-check failed");
-
-  assert.equal(titles.size, 4, "each subcommand's failure alert title must be distinguishable from the other three");
-});
-
-test("createSelfCheckRitualDeps requires YOH_TIMEZONE and Pushover credentials (review fix), but no Notion/Calendar/SMTP", () => {
-  const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
-
-  assert.throws(() => createSelfCheckRitualDeps(store, {}), /YOH_TIMEZONE/);
-  assert.throws(
-    () => createSelfCheckRitualDeps(store, { YOH_TIMEZONE: "America/New_York" }),
-    /PUSHOVER/,
-    "review fix: self-check now needs Pushover credentials too — see rituals/self-check.ts's own docstring for why",
-  );
-
-  const deps = createSelfCheckRitualDeps(store, {
-    YOH_TIMEZONE: "America/New_York",
-    PUSHOVER_APP_TOKEN: "fake-app-token",
-    PUSHOVER_USER_KEY: "fake-user-key",
-  });
-  assert.equal(deps.timeZone, "America/New_York");
-  assert.equal(typeof deps.now, "function");
-  assert.equal(typeof deps.random, "function");
-  assert.equal(typeof deps.sendNotification, "function");
-
-  store.close();
+  assert.equal(titles.size, 3, "each subcommand's failure alert title must be distinguishable from the other two");
 });
 
 // ============================================================================
@@ -877,7 +710,7 @@ test("AD-5: ritual-cli.ts never waits for input — it reads no stdin at all", (
 // ============================================================================
 //
 // Layers: (1) unit tests for the two pure query functions,
-// `checkDailyRitualMissedRun`/`checkSelfCheckMissedRun`, directly against a
+// `checkDailyRitualMissedRun`, directly against a
 // real `MemoryStore`, reading the `RitualInvocation` marker (Task 26 review
 // fix); (2) integration tests through `runRitualCli` proving the wiring —
 // `withFailureAlert` sends a distinctly-worded alert on a miss — and, most
@@ -931,43 +764,6 @@ test("checkDailyRitualMissedRun: true first-ever cold start (no RitualInvocation
 
   assert.equal(getRitualInvocation(store, "morning"), undefined, "sanity: nothing stored yet");
   const result = checkDailyRitualMissedRun(store, "morning", () => CHECK_NOW);
-
-  assert.deepEqual(result, { missed: false });
-  store.close();
-});
-
-// ---- checkSelfCheckMissedRun ----
-//
-// Task 26 review fix: this now reads the SAME `RitualInvocation` marker
-// (keyed `"self-check"`), NOT `SelfCheckState.nextDueDate` — see the
-// "unanswered prompt" regression tests further below for why that mattered.
-
-test(`checkSelfCheckMissedRun: a RitualInvocation older than the ${SELF_CHECK_MISSED_RUN_GRACE_DAYS}-day grace threshold is a missed run, with the exact plain-language detail`, () => {
-  const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
-  putRitualInvocation(store, "self-check", { at: hoursAgo(SELF_CHECK_MISSED_RUN_GRACE_DAYS * 24 + 12) }); // 132h since -> rounds to "about 6 days"
-
-  const result = checkSelfCheckMissedRun(store, () => CHECK_NOW);
-
-  assert.equal(result.missed, true);
-  assert.equal(result.detail, "self-check hasn't run in about 6 days");
-  store.close();
-});
-
-test(`checkSelfCheckMissedRun: a RitualInvocation within the ${SELF_CHECK_MISSED_RUN_GRACE_DAYS}-day grace threshold does NOT trigger a missed run`, () => {
-  const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
-  putRitualInvocation(store, "self-check", { at: hoursAgo(24 * 3) }); // 3 days ago — well within grace
-
-  const result = checkSelfCheckMissedRun(store, () => CHECK_NOW);
-
-  assert.deepEqual(result, { missed: false });
-  store.close();
-});
-
-test("checkSelfCheckMissedRun: true first-ever cold start (no RitualInvocation at all) does NOT trigger a missed run", () => {
-  const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
-
-  assert.equal(getRitualInvocation(store, "self-check"), undefined, "sanity: nothing stored yet");
-  const result = checkSelfCheckMissedRun(store, () => CHECK_NOW);
 
   assert.deepEqual(result, { missed: false });
   store.close();
@@ -1143,43 +939,6 @@ test("REVIEW FIX (Important): `night-escalate`'s 'not-prompted-yet' no-op (write
   store.close();
 });
 
-test("REVIEW FIX (Important): self-check's unanswered-but-normal 'already-open' prompt (SelfCheckState.nextDueDate stuck far in the past) does NOT cause a false missed-run alarm across several daily invocations — checkSelfCheckMissedRun no longer reads SelfCheckState at all", async () => {
-  const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
-  // The exact regression scenario: an open Self-Check prompt Spencer hasn't
-  // answered yet — SelfCheckState.nextDueDate never advances past this (a
-  // genuinely normal, designed-for state; see self-check.ts's own
-  // `already-open` no-op outcome). Seeded here only to demonstrate it no
-  // longer matters to this check at all.
-  putSelfCheckState(store, { nextDueDate: "2026-08-01", nextDueMinuteOfDay: 600 }); // 21 days before 2026-08-22
-
-  const s = sink();
-  let invocations = 0;
-  const now = () => CHECK_NOW;
-
-  for (let i = 0; i < 3; i++) {
-    const code = await runRitualCli(
-      ["self-check"],
-      selfCheckDeps(
-        { ok: true, value: { status: "already-open", date: TODAY } },
-        s,
-        () => {
-          invocations += 1;
-        },
-        () => checkSelfCheckMissedRun(store, now),
-        () => putRitualInvocation(store, "self-check", { at: now().toISOString() }),
-      ),
-    );
-    assert.equal(code, 0);
-  }
-
-  assert.equal(invocations, 3);
-  assert.deepEqual(s.alerts, [], "an unanswered-but-normal Self-Check prompt must never itself trigger a missed-run alarm");
-
-  const laterCheck = checkSelfCheckMissedRun(store, () => new Date(CHECK_NOW.getTime() + 24 * 60 * 60 * 1000));
-  assert.deepEqual(laterCheck, { missed: false }, "even though SelfCheckState.nextDueDate is 21+ days stale, a recent invocation means no false alarm");
-  store.close();
-});
-
 // ---- runRitualCli wiring: a missed-run check sends its own distinctly-worded alert ----
 
 test("`morning` sends a distinctly-worded missed-run alert (not the 'failed' wording) when checkMissedRun reports a miss, naming the subcommand and the detail", async () => {
@@ -1203,7 +962,7 @@ test("`morning` sends a distinctly-worded missed-run alert (not the 'failed' wor
   assert.match(alert.message, /3\.2 days ago/);
 });
 
-test("`night-prompt`/`night-escalate`/`self-check` each send their own distinctly-worded, plain-titled missed-run alert", async () => {
+test("`night-prompt`/`night-escalate` each send their own distinctly-worded, plain-titled missed-run alert", async () => {
   const cases: Array<{ title: string; run: (s: Sink) => Promise<number> }> = [
     {
       title: "Night check-in didn't run",
@@ -1220,11 +979,6 @@ test("`night-prompt`/`night-escalate`/`self-check` each send their own distinctl
           ["night-escalate"],
           nightEscalateDeps({ ok: true, value: { status: "no-open-request", date: TODAY } }, s, undefined, () => ({ missed: true, detail: "x" })),
         ),
-    },
-    {
-      title: "Self-check didn't run",
-      run: (s) =>
-        runRitualCli(["self-check"], selfCheckDeps({ ok: true, value: { status: "not-due", date: TODAY, nextDueDate: TODAY } }, s, undefined, () => ({ missed: true, detail: "x" }))),
     },
   ];
 
@@ -1306,9 +1060,6 @@ test("SELF-HEALING: after a missed-run alert fires for `morning`, the ritual sti
     runNightEscalate: async () => {
       throw new Error("should not be called");
     },
-    runSelfCheck: async () => {
-      throw new Error("should not be called");
-    },
     sendFailureAlert: async (notification) => {
       s.alerts.push(notification);
     },
@@ -1342,7 +1093,7 @@ test("SELF-HEALING: after a missed-run alert fires for `morning`, the ritual sti
 });
 
 // ============================================================================
-// Task 27 / Story 5.3 — the four create*RitualDeps functions delegate their
+// Task 27 / Story 5.3 — the three create*RitualDeps functions delegate their
 // log seam to the SHARED adapters/logger.ts writer, instead of each
 // repeating its own process.stderr.write closure.
 // ============================================================================
@@ -1435,20 +1186,6 @@ test("createNightEscalateRitualDeps.log delegates to the shared structured-log w
   }
   assert.equal(capture.chunks.length, 1);
   assert.deepEqual(JSON.parse(capture.chunks[0]!), { level: "error", event: "night-ritual.escalate-send-failed", detail: "boom" });
-  store.close();
-});
-
-test("createSelfCheckRitualDeps.log delegates to the shared structured-log writer", () => {
-  const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
-  const deps = createSelfCheckRitualDeps(store, { YOH_TIMEZONE: "America/New_York", PUSHOVER_APP_TOKEN: "x", PUSHOVER_USER_KEY: "y" });
-  const capture = captureStderr();
-  try {
-    deps.log?.({ level: "info", event: "self-check.prompted" });
-  } finally {
-    capture.restore();
-  }
-  assert.equal(capture.chunks.length, 1);
-  assert.deepEqual(JSON.parse(capture.chunks[0]!), { level: "info", event: "self-check.prompted" });
   store.close();
 });
 
@@ -1574,7 +1311,7 @@ test("a degraded Plan-generation run and a missed-run alert both fire independen
   assert.equal(s.alerts[1]!.title, "Morning Plan was slow");
 });
 
-test("the degraded-performance check is `morning`-only — night-prompt/night-escalate/self-check never raise it even on a successful run", async () => {
+test("the degraded-performance check is `morning`-only — night-prompt/night-escalate never raise it even on a successful run", async () => {
   const sNightPrompt = sink();
   await runRitualCli(["night-prompt"], nightPromptDeps({ ok: true, value: { status: "prompted", date: TODAY, tasks: [] } }, sNightPrompt));
   assert.deepEqual(sNightPrompt.alerts, []);
@@ -1583,9 +1320,6 @@ test("the degraded-performance check is `morning`-only — night-prompt/night-es
   await runRitualCli(["night-escalate"], nightEscalateDeps({ ok: true, value: { status: "no-open-request", date: TODAY } }, sNightEscalate));
   assert.deepEqual(sNightEscalate.alerts, []);
 
-  const sSelfCheck = sink();
-  await runRitualCli(["self-check"], selfCheckDeps({ ok: true, value: { status: "prompted", date: TODAY } }, sSelfCheck));
-  assert.deepEqual(sSelfCheck.alerts, []);
 });
 
 // ============================================================================
@@ -1695,7 +1429,7 @@ test("a throwing checkServerHeartbeatStale is logged and treated as fresh — it
   assert.ok(s.err.some((line) => /heartbeat-check-failed/.test(line)));
 });
 
-test("night-prompt/night-escalate/self-check never receive a checkServerHeartbeatStale check (morning-only, like checkDegraded)", async () => {
+test("night-prompt/night-escalate never receive a checkServerHeartbeatStale check (morning-only, like checkDegraded)", async () => {
   const s = sink();
   // nightPromptDeps et al. simply never set checkServerHeartbeatStale — this test documents that omitting it is the norm and nothing crashes.
   await runRitualCli(["night-prompt"], {
@@ -1733,7 +1467,7 @@ test("createOperationalNotifier writes a real `operational` in-app notification 
 // pure where possible, with tests pinning each exact string").
 // ============================================================================
 
-const BANNED_ALERT_JARGON = [/AD-7/, /Data-Completeness Gate/, /Work\/Break fitting/, /self-healing/i, /grace:\s*\d/i, /"morning"/, /"night-prompt"/, /"night-escalate"/, /"self-check"/, /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/];
+const BANNED_ALERT_JARGON = [/AD-7/, /Data-Completeness Gate/, /Work\/Break fitting/, /self-healing/i, /grace:\s*\d/i, /"morning"/, /"night-prompt"/, /"night-escalate"/, /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/];
 
 function assertNoJargon(text: string): void {
   for (const pattern of BANNED_ALERT_JARGON) {
@@ -1751,8 +1485,7 @@ test("buildFailedAlertBody: pins the exact plain-language copy per subcommand", 
     'Tonight\'s close-out check-in couldn\'t finish: boom. It will try again at the next scheduled time, or type "/night".',
   );
   assert.equal(buildFailedAlertBody("night-escalate", "boom"), "Tonight's reminder email couldn't finish: boom. It will try again at the next scheduled time.");
-  assert.equal(buildFailedAlertBody("self-check", "boom"), "Today's Self-Check couldn't finish: boom. It will try again at the next scheduled time.");
-  for (const subcommand of ["morning", "night-prompt", "night-escalate", "self-check"]) {
+  for (const subcommand of ["morning", "night-prompt", "night-escalate"]) {
     assertNoJargon(buildFailedAlertBody(subcommand, "x"));
   }
 });
@@ -1762,10 +1495,6 @@ test("buildMissedRunAlertBody: pins the exact plain-language copy — fix round 
     buildMissedRunAlertBody("morning Plan hasn't run in about 4 days"),
     "The morning Plan hasn't run in about 4 days — your Mac may have been asleep or off. It'll run again at its next scheduled time.",
   );
-  assert.equal(
-    buildMissedRunAlertBody("self-check hasn't run in about 10 days"),
-    "The self-check hasn't run in about 10 days — your Mac may have been asleep or off. It'll run again at its next scheduled time.",
-  );
 });
 
 // ---- fix round (review finding 1): plain, distinct, per-subcommand TITLES ----
@@ -1774,18 +1503,16 @@ test("buildFailedAlertTitle: pins the exact plain title per subcommand, each mut
   assert.equal(buildFailedAlertTitle("morning"), "Morning Plan failed");
   assert.equal(buildFailedAlertTitle("night-prompt"), "Night check-in failed");
   assert.equal(buildFailedAlertTitle("night-escalate"), "Night reminder failed");
-  assert.equal(buildFailedAlertTitle("self-check"), "Self-check failed");
-  const titles = ["morning", "night-prompt", "night-escalate", "self-check"].map(buildFailedAlertTitle);
-  assert.equal(new Set(titles).size, 4);
+  const titles = ["morning", "night-prompt", "night-escalate"].map(buildFailedAlertTitle);
+  assert.equal(new Set(titles).size, 3);
 });
 
 test("buildMissedRunAlertTitle: pins the exact plain title per subcommand, each mutually distinct (AD-7)", () => {
   assert.equal(buildMissedRunAlertTitle("morning"), "Morning Plan didn't run");
   assert.equal(buildMissedRunAlertTitle("night-prompt"), "Night check-in didn't run");
   assert.equal(buildMissedRunAlertTitle("night-escalate"), "Night reminder didn't run");
-  assert.equal(buildMissedRunAlertTitle("self-check"), "Self-check didn't run");
-  const titles = ["morning", "night-prompt", "night-escalate", "self-check"].map(buildMissedRunAlertTitle);
-  assert.equal(new Set(titles).size, 4);
+  const titles = ["morning", "night-prompt", "night-escalate"].map(buildMissedRunAlertTitle);
+  assert.equal(new Set(titles).size, 3);
 });
 
 test("buildDegradedAlertTitle: pins the exact plain title (morning is the only real caller — checkMorningPlanGenerationDegraded's own doc comment)", () => {
@@ -1796,7 +1523,7 @@ test("buildHeartbeatStaleAlertTitle: pins the exact plain title, no 'heartbeat' 
   const title = buildHeartbeatStaleAlertTitle();
   assert.equal(title, "Server isn't checking in");
   assert.doesNotMatch(title, /heartbeat/i);
-  for (const subcommand of ["morning", "night-prompt", "night-escalate", "self-check"]) {
+  for (const subcommand of ["morning", "night-prompt", "night-escalate"]) {
     assert.notEqual(title, buildFailedAlertTitle(subcommand));
     assert.notEqual(title, buildMissedRunAlertTitle(subcommand));
   }
@@ -1804,7 +1531,7 @@ test("buildHeartbeatStaleAlertTitle: pins the exact plain title, no 'heartbeat' 
 });
 
 test("every alert title is free of the raw subcommand id and of internal jargon (titles now render in-app, NotificationOverlay.tsx)", () => {
-  for (const subcommand of ["morning", "night-prompt", "night-escalate", "self-check"]) {
+  for (const subcommand of ["morning", "night-prompt", "night-escalate"]) {
     assertNoJargon(buildFailedAlertTitle(subcommand));
     assertNoJargon(buildMissedRunAlertTitle(subcommand));
   }
@@ -1814,38 +1541,27 @@ test("every alert title is free of the raw subcommand id and of internal jargon 
 
 // ---- fix round (review finding 3): whole-day counts, never a decimal ----
 
-test("checkDailyRitualMissedRun/checkSelfCheckMissedRun: the real detail names a WHOLE day count, never a decimal, using the plain per-subcommand subject (fix round 2, review finding 1)", () => {
+test("checkDailyRitualMissedRun: the real detail names a WHOLE day count, never a decimal, using the plain per-subcommand subject (fix round 2, review finding 1)", () => {
   const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
   // 48h since last invocation, 36h grace -> 48h/24 = exactly 2 days.
   putRitualInvocation(store, "morning", { at: hoursAgo(48) });
-  // 5 days + 12h grace + a further 240h (10 days) since -> 15 days total.
-  putRitualInvocation(store, "self-check", { at: hoursAgo(SELF_CHECK_MISSED_RUN_GRACE_DAYS * 24 + 24 * 10) }); // 15 days since
 
   const daily = checkDailyRitualMissedRun(store, "morning", () => CHECK_NOW);
-  const selfCheck = checkSelfCheckMissedRun(store, () => CHECK_NOW);
 
   assert.equal(daily.detail, "morning Plan hasn't run in about 2 days");
-  assert.equal(selfCheck.detail, "self-check hasn't run in about 15 days");
   assert.doesNotMatch(daily.detail ?? "", /\d+\.\d/, "no decimal day count");
-  assert.doesNotMatch(selfCheck.detail ?? "", /\d+\.\d/, "no decimal day count");
   store.close();
 });
 
-test("buildMissedRunAlertBody composed with the real detail: pins the exact end-to-end sentence for morning and self-check (the reviewer's own two worked examples)", () => {
+test("buildMissedRunAlertBody composed with the real detail: pins the exact end-to-end sentence for morning", () => {
   const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
   putRitualInvocation(store, "morning", { at: hoursAgo(24 * 4) }); // exactly 4 days since, well past the 36h grace
-  putRitualInvocation(store, "self-check", { at: hoursAgo(SELF_CHECK_MISSED_RUN_GRACE_DAYS * 24 + 24 * 5) }); // 10 days since
 
   const daily = checkDailyRitualMissedRun(store, "morning", () => CHECK_NOW);
-  const selfCheck = checkSelfCheckMissedRun(store, () => CHECK_NOW);
 
   assert.equal(
     buildMissedRunAlertBody(daily.detail ?? ""),
     "The morning Plan hasn't run in about 4 days — your Mac may have been asleep or off. It'll run again at its next scheduled time.",
-  );
-  assert.equal(
-    buildMissedRunAlertBody(selfCheck.detail ?? ""),
-    "The self-check hasn't run in about 10 days — your Mac may have been asleep or off. It'll run again at its next scheduled time.",
   );
   store.close();
 });
@@ -1872,16 +1588,13 @@ test("buildHeartbeatStaleAlertBody: pins the exact plain-language copy, no 'hear
   assert.doesNotMatch(buildHeartbeatStaleAlertBody(), /heartbeat/i);
 });
 
-test("checkDailyRitualMissedRun/checkSelfCheckMissedRun: the real (non-mocked) missed-run detail is plain — no ISO timestamp, no 'grace: Nh', no quoted ritual id", () => {
+test("checkDailyRitualMissedRun: the real (non-mocked) missed-run detail is plain — no ISO timestamp, no 'grace: Nh', no quoted ritual id", () => {
   const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
   putRitualInvocation(store, "morning", { at: hoursAgo(DAILY_RITUAL_MISSED_RUN_GRACE_HOURS + 12) });
-  putRitualInvocation(store, "self-check", { at: hoursAgo(SELF_CHECK_MISSED_RUN_GRACE_DAYS * 24 + 12) });
 
   const daily = checkDailyRitualMissedRun(store, "morning", () => CHECK_NOW);
-  const selfCheck = checkSelfCheckMissedRun(store, () => CHECK_NOW);
 
   assertNoJargon(buildMissedRunAlertBody(daily.detail ?? ""));
-  assertNoJargon(buildMissedRunAlertBody(selfCheck.detail ?? ""));
   store.close();
 });
 

@@ -163,16 +163,6 @@ export function buildNightCloseOutQuestion(requestId: string, task: NightCloseOu
   };
 }
 
-export function buildSelfCheckQuestion(requestId: string): OpenItemQuestion {
-  return {
-    requestId,
-    questionId: "score",
-    text: 'Score (1-10) + a short reason, e.g. "7 feeling on top of things"',
-    options: [],
-    allowsFreeText: true,
-  };
-}
-
 /** The fallback question for any `requestKind` this file doesn't otherwise recognize — mirrors `chat-cli.ts`'s pre-Epic-8 generic surface-then-clear-on-any-non-empty-answer behavior. */
 export function buildGenericQuestion(requestId: string): OpenItemQuestion {
   return { requestId, questionId: "generic", text: "", options: [], allowsFreeText: true };

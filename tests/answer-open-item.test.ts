@@ -44,11 +44,13 @@ test("answerOpenItem dispatches a night-close-out request to answerNightCloseOut
   store.close();
 });
 
-test("answerOpenItem dispatches a self-check request to answerSelfCheck", async () => {
+test("answerOpenItem answers a leftover retired-kind (self-check) request generically and clears it", async () => {
   const store = tempStore();
   putOpenInteractionRequest(store, "self-check", { requestKind: "self-check", promptText: "x", createdAt: "x" });
-  const result = await answerOpenItem(fullDeps(store), { requestId: "self-check", questionId: "score", answer: "8 fine" });
+  const result = await answerOpenItem(fullDeps(store), { requestId: "self-check", questionId: "generic", answer: "8 fine" });
   assert.equal(result.ok, true);
+  if (result.ok) assert.equal(result.value.next, "done");
+  assert.equal(getOpenInteractionRequest(store, "self-check"), undefined);
   store.close();
 });
 

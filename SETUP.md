@@ -203,7 +203,7 @@ is a plain `node` command run against this repo's own files, from a working
 directory where `.env` is loadable (either `cwd` when you run it, or
 wherever your process manager sets it — see the crontab example below).
 
-### The four ritual-cli subcommands (AD-5)
+### The three ritual-cli subcommands (AD-5)
 
 `src/shell/ritual-cli.ts` takes exactly one positional subcommand:
 
@@ -211,15 +211,12 @@ wherever your process manager sets it — see the crontab example below).
 node src/shell/ritual-cli.ts morning
 node src/shell/ritual-cli.ts night-prompt
 node src/shell/ritual-cli.ts night-escalate
-node src/shell/ritual-cli.ts self-check
 ```
 
 - `morning` — generates and delivers today's Plan (Story 1.10).
 - `night-prompt` — the first, un-escalated close-out prompt (Story 3.1).
 - `night-escalate` — the second, escalated close-out attempt if the first
   went unanswered (Story 3.2).
-- `self-check` — asks (roughly every `SELF_CHECK_DEFAULT_INTERVAL_DAYS`
-  days — see below) how well Yoh is doing (Story 4.3).
 
 Each is a **one-shot process that runs and exits** — see "Not a daemon"
 below.
@@ -229,24 +226,14 @@ below.
 Yoh's interactive surface is the Web App (`src/shell/server.ts`), reached at
 the tailnet HTTPS URL `tailscale serve` publishes — see
 `deploy/DEPLOY.md`. It's the one long-lived process (see "Not a daemon"
-below); the four `ritual-cli.ts` subcommands above are the only other way
+below); the three `ritual-cli.ts` subcommands above are the only other way
 Yoh runs. From it: ask "what's my plan", answer an open interaction request
-(a Data-Completeness prompt, a close-out confirmation, a Self-Check score, a
+(a Data-Completeness prompt, a close-out confirmation, a
 Time-Budget-change Proposal), declare a Time Budget, and so on — the
 terminal `chat-cli.ts` this section used to point at is retired (Story 8.9,
 FR-50): every capability it had now lives here.
 
 ### A sample crontab
-
-`self-check`'s own due-date check happens *inside* the ritual, not by
-picking the right cron cadence for it (see `src/rituals/self-check.ts`'s own
-"Randomization mechanism" doc comment): the ritual decides for itself
-whether today is close enough to its own randomized target time, and is a
-cheap no-op every other trigger. Its default interval is
-`SELF_CHECK_DEFAULT_INTERVAL_DAYS = 4` days (shortening to as few as
-`SELF_CHECK_MIN_INTERVAL_DAYS = 1` day after a low score), so it needs to be
-triggered more often than that interval — e.g. hourly — for its own
-randomized time-of-day to land promptly.
 
 ```cron
 # Morning Plan, once daily in the morning.
@@ -257,10 +244,6 @@ randomized time-of-day to land promptly.
 
 # Night escalation, a couple hours after the prompt, in case it went unanswered.
 0 23 * * * cd /path/to/yoh && node src/shell/ritual-cli.ts night-escalate >> /var/log/yoh/night-escalate.log 2>&1
-
-# Self-Check: triggered hourly; the ritual itself is a no-op except on its
-# own ~4-day (or shorter, after a low score) randomized due date/time.
-0 * * * * cd /path/to/yoh && node src/shell/ritual-cli.ts self-check >> /var/log/yoh/self-check.log 2>&1
 ```
 
 Use real absolute paths in place of `/path/to/yoh`. `.env` must be loadable

@@ -68,7 +68,7 @@ launchctl bootout gui/$(id -u)/com.yoh.server
 launchctl bootout gui/$(id -u)/com.yoh.morning
 launchctl bootout gui/$(id -u)/com.yoh.night-prompt
 launchctl bootout gui/$(id -u)/com.yoh.night-escalate
-launchctl bootout gui/$(id -u)/com.yoh.self-check
+launchctl bootout gui/$(id -u)/com.yoh.self-check   # retired job; only needed if it is still loaded
 ```
 Then copy the `.env`, the database and the stored Google token file:
 ```
@@ -102,10 +102,11 @@ tailscale serve status                        # note the https://yoh.<tailnet>.t
 0 7 * * *  cd /home/spencer/yoh && /usr/bin/node --env-file=.env src/shell/ritual-cli.ts morning        >> /home/spencer/yoh/logs/morning.log 2>&1
 0 21 * * * cd /home/spencer/yoh && /usr/bin/node --env-file=.env src/shell/ritual-cli.ts night-prompt   >> /home/spencer/yoh/logs/night-prompt.log 2>&1
 0 23 * * * cd /home/spencer/yoh && /usr/bin/node --env-file=.env src/shell/ritual-cli.ts night-escalate >> /home/spencer/yoh/logs/night-escalate.log 2>&1
-5 * * * *  cd /home/spencer/yoh && /usr/bin/node --env-file=.env src/shell/ritual-cli.ts self-check     >> /home/spencer/yoh/logs/self-check.log 2>&1
 17 3 * * * cd /home/spencer/yoh && /usr/bin/node --env-file=.env src/shell/backup-cli.ts                >> /home/spencer/yoh/logs/backup.log 2>&1
 ```
 Then create the log folder: `mkdir -p ~/yoh/logs`
+
+**Retired: disable the self-check timer.** The four-day Self-Check is gone (the Rating replaced it), so `ritual-cli.ts self-check` now exits with a usage error. On the Pi, find and disable whatever still triggers it: `systemctl list-timers | grep -i self` on `yoh`, then `sudo systemctl disable --now <that-timer>`; also delete any `self-check` line from `crontab -e`. On the Mac, run `launchctl bootout gui/$(id -u)/com.yoh.self-check` if the job is still loaded.
 
 ## 8. Point your devices at the Pi
 

@@ -1,11 +1,11 @@
 /**
  * Tests for `src/core/open-item-answers.ts` (Story 8.1) — moved verbatim
  * from `tests/chat-cli.test.ts` (`parseNightCloseOutAnswer`/`isSkipAnswer`/
- * `parseSelfCheckAnswer`/`parseProposalAnswer`), same behavior.
+ * `parseProposalAnswer`), same behavior.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isSkipAnswer, parseNightCloseOutAnswer, parseProposalAnswer, parseSelfCheckAnswer } from "../src/core/open-item-answers.ts";
+import { isSkipAnswer, parseNightCloseOutAnswer, parseProposalAnswer } from "../src/core/open-item-answers.ts";
 
 test("parseNightCloseOutAnswer recognizes completed/slipped synonyms, rejects anything else", () => {
   assert.equal(parseNightCloseOutAnswer("completed"), "completed");
@@ -74,46 +74,6 @@ test("isSkipAnswer recognizes only the literal 'skip' (case-insensitive)", () =>
   assert.equal(isSkipAnswer("  skip  "), true);
   assert.equal(isSkipAnswer("skip it"), false);
   assert.equal(isSkipAnswer("completed"), false);
-});
-
-test("parseSelfCheckAnswer: accepts a valid score + reason", () => {
-  assert.deepEqual(parseSelfCheckAnswer("7 feeling good"), { score: 7, reason: "feeling good" });
-  assert.deepEqual(parseSelfCheckAnswer("10 everything is on track"), { score: 10, reason: "everything is on track" });
-  assert.equal(parseSelfCheckAnswer("not a number at all"), undefined);
-  assert.equal(parseSelfCheckAnswer("11 out of range"), undefined);
-  assert.equal(parseSelfCheckAnswer("0 out of range"), undefined);
-});
-
-// Task 6 (Spencer: "the waiting on you questions do not go away when they
-// are answered" — traced to this parser's old strict "number<space>reason"
-// shape). Every example from the task brief, plus the no-number rejection.
-test("Task 6: parseSelfCheckAnswer accepts natural replies — score required, reason optional", () => {
-  assert.deepEqual(parseSelfCheckAnswer("7"), { score: 7, reason: "" });
-  assert.deepEqual(parseSelfCheckAnswer("7/10"), { score: 7, reason: "" });
-  assert.deepEqual(parseSelfCheckAnswer("7 out of 10"), { score: 7, reason: "" });
-  assert.deepEqual(parseSelfCheckAnswer("7, feeling good"), { score: 7, reason: "feeling good" });
-  assert.deepEqual(parseSelfCheckAnswer("7 - tired but ok"), { score: 7, reason: "tired but ok" });
-  assert.deepEqual(parseSelfCheckAnswer("seven"), { score: 7, reason: "" });
-  assert.deepEqual(parseSelfCheckAnswer("i'd say a 6. slept badly"), { score: 6, reason: "slept badly" });
-  assert.deepEqual(parseSelfCheckAnswer("8!"), { score: 8, reason: "" });
-});
-
-test("Task 6: parseSelfCheckAnswer rejects a reply with no 1-10 number at all", () => {
-  assert.equal(parseSelfCheckAnswer("not a number at all"), undefined);
-  assert.equal(parseSelfCheckAnswer(""), undefined);
-  assert.equal(parseSelfCheckAnswer("eleven"), undefined);
-});
-
-// M2 (final-review): a digit anywhere in the reply is preferred over a
-// spelled-out number word, and the LAST standalone 1-10 digit wins when
-// several are present — the misread cases the review verified.
-test("M2 (final-review): a digit is preferred over a spelled-out number word when both are present", () => {
-  assert.deepEqual(parseSelfCheckAnswer("had one rough class, but 7"), { score: 7, reason: "" });
-  assert.deepEqual(parseSelfCheckAnswer("two tests today, feeling like a 6"), { score: 6, reason: "" });
-});
-
-test("M2 (final-review): the LAST standalone 1-10 digit wins when several are present", () => {
-  assert.deepEqual(parseSelfCheckAnswer("3 hours of sleep, 5"), { score: 5, reason: "" });
 });
 
 test("parseProposalAnswer recognizes common yes/no variants and rejects anything else", () => {

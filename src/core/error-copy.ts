@@ -100,7 +100,7 @@ function looksAlreadyMapped(message: string): boolean {
   return !RAW_LEAK_PATTERN.test(message) && !INTERNAL_PREFIX_PATTERN.test(message);
 }
 
-/** Review fix (Task 4 follow-up): every sentence `errorCopy` returns ends in terminal punctuation — a caller that appends a follow-up sentence (`answer-data-completeness.ts`, `answer-night-close-out.ts`, `answer-self-check.ts`) must never produce a run-on with no punctuation between the two. */
+/** Review fix (Task 4 follow-up): every sentence `errorCopy` returns ends in terminal punctuation — a caller that appends a follow-up sentence (`answer-data-completeness.ts`, `answer-night-close-out.ts`) must never produce a run-on with no punctuation between the two. */
 function ensureTerminalPunctuation(text: string): string {
   const trimmed = text.trimEnd();
   return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;

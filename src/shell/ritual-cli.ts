@@ -18,11 +18,10 @@
  * source for any stdin/readline use.
  *
  * Task 10 introduces this file with ONE subcommand, `morning`. AD-5 names
- * three more — `night-prompt` (Task 19), `night-escalate` (Task 20), and
- * `self-check` (Task 24). All four are now built (see the per-task update
- * paragraphs below) — `SUBCOMMANDS` reflects that, rather than any
- * subcommand falling through to "unknown subcommand" or a "not implemented
- * yet" placeholder.
+ * two more — `night-prompt` (Task 19) and `night-escalate` (Task 20). All
+ * three are built (see the per-task update paragraphs below) — `SUBCOMMANDS`
+ * reflects that, rather than any subcommand falling through to "unknown
+ * subcommand" or a "not implemented yet" placeholder.
  *
  * Task 19 update (Story 3.1): adds the `night-prompt` subcommand
  * (`handleNightPromptResult`, `createNightPromptRitualDeps`) with the exact
@@ -52,35 +51,14 @@
  * through its own `store`. No new subcommand, no new dep to bind here —
  * see both ritual files' own docstrings for the design.
  *
- * Task 24 update (Story 4.3, FR-17, AD-6): adds the FOURTH and final AD-5
- * subcommand, `self-check` (`handleSelfCheckResult`,
- * `createSelfCheckRitualDeps`) — the last of AD-5's four named subcommands
- * is now built; `SUBCOMMANDS` no longer names anything as "planned but not
- * yet built." No Notion, Calendar, or SMTP credentials are needed for THIS
- * subcommand, but — per the Task 24 review fix below — Pushover IS: it
- * needs `YOH_TIMEZONE` (defining "today" and the local time-of-day its
- * randomized due time compares against) plus `PUSHOVER_APP_TOKEN`/
- * `PUSHOVER_USER_KEY`, the same credentials `morning`/`night-prompt`
- * already require.
- *
- * Task 24 review-fix update: `createSelfCheckRitualDeps` now ALSO wires
- * `adapters/notification-adapter.ts`'s `sendPushoverNotification` — mirroring
- * `createNightPromptRitualDeps`'s own Task 20 review-fix precedent exactly
- * (see that function's own doc comment, and `rituals/self-check.ts`'s own
- * "The push notification" docstring section for why this matters even MORE
- * for Self-Check than it did for night-prompt: a randomized ~4-day cadence
- * gives Spencer no habitual daily moment to stumble onto an open prompt, and
- * unlike night-close-out there is no second, escalating retry channel if a
- * silently-persisted request goes unnoticed).
- *
  * Task 25 update (Story 5.1, AD-7/AD-9, Epic 5's first task — the epic hardens
- * all four subcommands at once rather than piecemeal per-epic, per the epic
+ * all three subcommands at once rather than piecemeal per-epic, per the epic
  * note): every failure branch below used to end with just the structured
  * stderr line ("AD-7's real failure alerting is Epic 5" — that comment is now
  * gone from each `handle*Result` function, replaced by this). Now a single
  * shared wrapper, `withFailureAlert` (factored once per AD-9, applied
- * identically to all four dispatch branches in `runRitualCli`), sends ONE
- * Pushover alert — worded distinctly from a normal Plan/close-out/Self-Check
+ * identically to all three dispatch branches in `runRitualCli`), sends ONE
+ * Pushover alert — worded distinctly from a normal Plan/close-out
  * notification, naming the failing subcommand and the error — before any
  * subcommand's invocation (a `Result` failure OR a thrown error escaping it
  * entirely) returns a non-zero exit code. The channel it sends on
@@ -115,12 +93,10 @@
  * ordinary state of a brand-new install, not a failure; both check
  * functions return `{ missed: false }` for it.
  *
- * **Grace thresholds** (`DAILY_RITUAL_MISSED_RUN_GRACE_HOURS = 36`,
- * `SELF_CHECK_MISSED_RUN_GRACE_DAYS = 5`) are documented, concrete starting
- * values, not load-bearing constants — see each constant's own doc comment
+ * **Grace thresholds** (`DAILY_RITUAL_MISSED_RUN_GRACE_HOURS = 36`) is a documented, concrete
+ * starting value, not a load-bearing constant — see its own doc comment
  * for the reasoning, mirroring this project's established pattern for
- * FR-2's even-split weights, FR-11's slip curve, Self-Check's own interval/
- * low-score threshold, etc.
+ * FR-2's even-split weights, FR-11's slip curve, etc.
  *
  * **Documented scope boundary (required by this task's own brief, AC 3):
  * this check is self-referential ONLY.** Every check above runs from
@@ -150,14 +126,12 @@
  * and treated as `{ missed: false }`; `runSubcommand` still runs next.
  *
  * (2) **The dead-man's-switch now reads a dedicated `RitualInvocation`
- * marker (`memory-store.ts`), not `RitualRun`/`SelfCheckState`.** Those two
- * only advance on specific ritual-DOMAIN outcomes (`RitualRun`: `morning`'s
+ * marker (`memory-store.ts`), not `RitualRun`.** That one
+ * only advances on specific ritual-DOMAIN outcomes (`morning`'s
  * `delivered` / `night-prompt`'s `prompted` / `night-escalate`'s
- * `escalated`; `SelfCheckState.nextDueDate`: cold-start init or a genuine
- * answer) — an ordinary, CORRECT no-op success (`nothing-to-plan`,
- * `no-plan-today`, `not-prompted-yet`, an unanswered-but-normal
- * `already-open` Self-Check prompt, etc.) wrote nothing at all, so reading
- * either as "was this subcommand invoked" produced false alarms on
+ * `escalated`) — an ordinary, CORRECT no-op success (`nothing-to-plan`,
+ * `no-plan-today`, `not-prompted-yet`, etc.) wrote nothing at all, so
+ * reading it as "was this subcommand invoked" produced false alarms on
  * perfectly healthy quiet days — the opposite of what a dead-man's-switch
  * should ever do. `RitualInvocation` answers a narrower, different
  * question instead ("did the scheduler actually invoke this process and
@@ -230,7 +204,6 @@ import {
   type NightPromptRitualDeps,
   type NightPromptOutcome,
 } from "../rituals/night-ritual.ts";
-import { runSelfCheckRitual, type SelfCheckOutcome, type SelfCheckRitualDeps } from "../rituals/self-check.ts";
 import type { Result, YohError } from "../types/domain.ts";
 // Task 12: each subcommand's real adapter wiring lives in its own
 // per-subcommand deps builder under `shell/ritual-cli/` (a pure-move split
@@ -238,7 +211,6 @@ import type { Result, YohError } from "../types/domain.ts";
 // keeps only the entry point, dispatch, and the AD-7 top-level handler.
 import { createMorningRitualDeps } from "./ritual-cli/morning-deps.ts";
 import { createNightEscalateRitualDeps, createNightPromptRitualDeps } from "./ritual-cli/night-deps.ts";
-import { createSelfCheckRitualDeps } from "./ritual-cli/self-check-deps.ts";
 
 // ============================================================================
 // Injectable IO / ritual seams
@@ -289,12 +261,10 @@ export interface RitualCliDeps {
   readonly runNightPrompt: () => Promise<Result<NightPromptOutcome, YohError>>;
   /** `rituals/night-ritual.ts`'s `runNightEscalateRitual`, pre-bound to its deps (Task 20 / Story 3.2). */
   readonly runNightEscalate: () => Promise<Result<NightEscalateOutcome, YohError>>;
-  /** `rituals/self-check.ts`'s `runSelfCheckRitual`, pre-bound to its deps (Task 24 / Story 4.3). */
-  readonly runSelfCheck: () => Promise<Result<SelfCheckOutcome, YohError>>;
   /**
    * AD-7's failure-alert channel (Task 25 / Story 5.1): sends ONE Pushover
-   * alert, worded distinctly from a normal Plan/close-out/Self-Check
-   * notification. Deliberately separate from any of the four `run*`
+   * alert, worded distinctly from a normal Plan/close-out
+   * notification. Deliberately separate from any of the three `run*`
    * functions above and from each ritual's OWN `sendNotification` seam (see
    * `createMorningRitualDeps` etc.) — this must work regardless of which
    * subcommand failed, or whether that subcommand's own ritual has a
@@ -305,9 +275,9 @@ export interface RitualCliDeps {
   /**
    * Task 26 / Story 5.2, AD-7's dead-man's-switch: has this subcommand
    * actually been INVOKED recently enough? Pre-bound per subcommand exactly
-   * like the four `run*` seams above (`checkDailyRitualMissedRun`/
-   * `checkSelfCheckMissedRun`, below, are what `main` wires up as the real
-   * ones — reading the `RitualInvocation` marker, `memory-store.ts`). May
+   * like the three `run*` seams above (`checkDailyRitualMissedRun`,
+   * below, is what `main` wires up as the real
+   * one — reading the `RitualInvocation` marker, `memory-store.ts`). May
    * THROW (the real ones do a live store read) — `withFailureAlert` wraps
    * the call in its own try/catch (`safeCheckMissedRun`, review fix) and
    * treats a throw as `{ missed: false }`, never letting it escape or block
@@ -352,19 +322,18 @@ export interface RitualCliDeps {
   readonly checkServerHeartbeatStale?: () => boolean;
 }
 
-/** AD-5's full subcommand set — all four are now built. */
+/** AD-5's full subcommand set — all three are built. */
 const SUBCOMMANDS = {
   morning: "built",
   "night-prompt": "built",
   "night-escalate": "built",
-  "self-check": "built",
 } as const;
 
 // Final whole-branch review, Finding 2: there is no `yoh` binary and no
 // `ritual` subcommand — the real invocation is positional, running this file
 // directly via `node`. See SETUP.md's "Running Yoh" section for the full
 // invocation, including the interactive chat CLI and a sample crontab.
-const USAGE = "usage: node src/shell/ritual-cli.ts <morning|night-prompt|night-escalate|self-check>";
+const USAGE = "usage: node src/shell/ritual-cli.ts <morning|night-prompt|night-escalate>";
 
 // ============================================================================
 // runRitualCli
@@ -409,10 +378,6 @@ export async function runRitualCli(argv: readonly string[], deps: RitualCliDeps)
     return withFailureAlert("night-escalate", deps.runNightEscalate, handleNightEscalateResult, deps.io, deps.sendFailureAlert, deps.checkMissedRun, deps.recordInvocation, deps.notifyOperational);
   }
 
-  if (subcommand === "self-check") {
-    return withFailureAlert("self-check", deps.runSelfCheck, handleSelfCheckResult, deps.io, deps.sendFailureAlert, deps.checkMissedRun, deps.recordInvocation, deps.notifyOperational);
-  }
-
   const planned = Object.hasOwn(SUBCOMMANDS, subcommand)
     ? SUBCOMMANDS[subcommand as keyof typeof SUBCOMMANDS]
     : undefined;
@@ -442,7 +407,7 @@ export async function runRitualCli(argv: readonly string[], deps: RitualCliDeps)
  *
  * On either, exactly one Pushover alert is sent (via `sendAlertSafely`,
  * below) BEFORE this returns a non-zero exit code, worded distinctly from a
- * normal Plan/close-out/Self-Check notification. `handleResult` still owns
+ * normal Plan/close-out notification. `handleResult` still owns
  * the existing structured-stderr-line/exit-code logic for the
  * `Result`-failure case unchanged (this task keeps those lines as-is per its
  * own scope note) — this wrapper only adds the alert send in front of it,
@@ -469,8 +434,8 @@ export async function runRitualCli(argv: readonly string[], deps: RitualCliDeps)
  * `safeRecordInvocation`) is now called unconditionally after
  * `runSubcommand` resolves — in the caught-throw branch AND the normal
  * return branch, `Result` success or failure alike — writing the
- * `RitualInvocation` marker `checkDailyRitualMissedRun`/
- * `checkSelfCheckMissedRun` read on the NEXT invocation. See both
+ * `RitualInvocation` marker `checkDailyRitualMissedRun`
+ * reads on the NEXT invocation. See both
  * functions' own doc comments and the file docstring's "Task 26 review-fix
  * update" section for the full reasoning.
  *
@@ -564,8 +529,7 @@ function safeCheckServerHeartbeatStale(checkServerHeartbeatStale: () => boolean,
 /**
  * Task 26 review-fix: wraps `checkMissedRun()` in its OWN try/catch,
  * SEPARATE from and BEFORE the region the try/catch inside
- * `withFailureAlert` covers. The real checks (`checkDailyRitualMissedRun`/
- * `checkSelfCheckMissedRun`) do a live `MemoryStore` read that CAN throw (a
+ * `withFailureAlert` covers. The real checks (`checkDailyRitualMissedRun`) does a live `MemoryStore` read that CAN throw (a
  * `SQLITE_BUSY` under the exact cross-process concurrency AD-10 documents
  * — e.g. `server.ts` writing while `ritual-cli.ts` reads — a malformed
  * stored blob, a disk I/O error). Left unguarded, that throw used to
@@ -677,7 +641,7 @@ async function sendPushoverAlertSafely(
  * no longer read as a developer-facing tag like `Yoh: night-prompt missed a
  * run` — it needs the same plain-English treatment as the body. `titleSubject`
  * gives every alert kind a short, plain, per-subcommand NOUN PHRASE ("Morning
- * Plan", "Night check-in", "Night reminder", "Self-check") that keeps titles
+ * Plan", "Night check-in", "Night reminder") that keeps titles
  * mutually distinct (AD-7) without the raw subcommand id or a "Yoh:" prefix.
  * `ritualSubject` (below) is the SEPARATE, longer sentence-subject phrasing
  * ("This morning's Plan") used inside body text, where a full sentence reads
@@ -698,8 +662,6 @@ function titleSubject(subcommand: string): string {
       return "Night check-in";
     case "night-escalate":
       return "Night reminder";
-    case "self-check":
-      return "Self-check";
     default:
       return subcommand;
   }
@@ -733,8 +695,6 @@ function ritualSubject(subcommand: string): string {
       return "Tonight's close-out check-in";
     case "night-escalate":
       return "Tonight's reminder email";
-    case "self-check":
-      return "Today's Self-Check";
     default:
       return `Yoh's ${subcommand}`;
   }
@@ -754,9 +714,8 @@ function ritualRetryHint(subcommand: string): string {
 
 /**
  * The "this run failed" alert's body (worded distinctly from a normal
- * Plan/close-out/Self-Check notification — see `handleMorningResult`'s
- * `NOTIFICATION_TITLE`, `NIGHT_PROMPT_NOTIFICATION_TITLE`, and
- * `SELF_CHECK_NOTIFICATION_TITLE`, none of which mention the word "failed"
+ * Plan/close-out notification — see `handleMorningResult`'s
+ * `NOTIFICATION_TITLE` and `NIGHT_PROMPT_NOTIFICATION_TITLE`, none of which mention the word "failed"
  * or the subcommand's own name). `message` is the underlying `YohError`'s
  * own message (or a caught throw's) — already a plain sentence fragment
  * from the layer that produced it — relayed as-is, just no longer wrapped
@@ -770,7 +729,7 @@ export function buildFailedAlertBody(subcommand: string, message: string): strin
 /**
  * Fix round 2 (review finding 1): the plain, lower-case, MID-sentence noun
  * phrase the MISSED-RUN alert's body embeds inside "The ${…} hasn't run in
- * …" — "morning Plan", "night check-in", "night reminder", "self-check".
+ * …" — "morning Plan", "night check-in", "night reminder".
  * Deliberately a THIRD register, distinct from both `titleSubject` (Title
  * Case, the alert TITLE) and `ritualSubject` (a full sentence-subject
  * phrase like "This morning's Plan", the FAILED alert's body) — each
@@ -784,8 +743,6 @@ function missedRunSubject(subcommand: string): string {
       return "night check-in";
     case "night-escalate":
       return "night reminder";
-    case "self-check":
-      return "self-check";
     default:
       return subcommand;
   }
@@ -797,12 +754,12 @@ function missedRunSubject(subcommand: string): string {
  * worded distinctly from BOTH a normal notification AND
  * `buildFailedAlertBody`'s "failed" wording above (this run itself hasn't
  * failed — or even started yet — a PRIOR one appears to have never
- * happened). `detail` (built by `checkDailyRitualMissedRun`/
- * `checkSelfCheckMissedRun`, below, using `missedRunSubject` above) is
+ * happened). `detail` (built by `checkDailyRitualMissedRun`,
+ * below, using `missedRunSubject` above) is
  * already the full lower-case "‹subject› hasn't run in ‹N days›" clause —
  * this only adds the leading "The " (the one capital letter in the whole
  * sentence) and the trailing reassurance, so it reads as one calm sentence:
- * "The self-check hasn't run in about 10 days — your Mac may have been
+ * "The morning Plan hasn't run in about 10 days — your Mac may have been
  * asleep or off. It'll run again at its next scheduled time." Fix round 2
  * (review finding 1): simpler than round 1's wording — drops "shown a
  * successful run" for just "run", and "it's running now, as normal" for
@@ -920,8 +877,7 @@ async function sendHeartbeatStaleAlertSafely(
  * `subcommand`'s own last-recorded `RitualInvocation.at` is treated as a
  * missed prior occurrence. A documented, concrete starting value (tunable —
  * mirrors this project's established pattern for FR-2's even-split
- * weights, FR-11's slip curve, Self-Check's own interval/low-score
- * threshold, etc.), not derived from anything else.
+ * weights, FR-11's slip curve, etc.), not derived from anything else.
  *
  * Reasoning: normal daily cadence produces roughly a 24h gap between
  * consecutive invocations. `36` gives ~12h of slack above that for
@@ -934,35 +890,12 @@ async function sendHeartbeatStaleAlertSafely(
 export const DAILY_RITUAL_MISSED_RUN_GRACE_HOURS = 36;
 
 /**
- * Grace threshold for `self-check`'s missed-run check
- * (`checkSelfCheckMissedRun`, below), expressed in DAYS (converted to hours
- * internally — `checkInvocationStaleness` only ever takes hours) for
- * readability against Self-Check's own ~4-day cadence: more than this many
- * days since `self-check`'s own last-recorded `RitualInvocation.at` is
- * treated as a missed run. A documented, concrete starting value, chosen
- * the same way as `DAILY_RITUAL_MISSED_RUN_GRACE_HOURS` above.
- *
- * Reasoning: `ritual-cli.ts self-check` is presumably invoked by OS cron at
- * some fixed granularity independent of Self-Check's own ~4-day due-date
- * cadence (`SELF_CHECK_DEFAULT_INTERVAL_DAYS`, `rituals/self-check.ts` —
- * see that file's own "Randomization mechanism" docstring section: the
- * RITUAL decides whether "now" is due, not the trigger frequency itself).
- * `5` stays deliberately generous relative to that assumed cadence — large
- * enough that no plausible trigger frequency's ordinary jitter could ever
- * cross it, small enough that a genuine scheduler/host outage is still
- * caught within roughly one Self-Check cadence-length, not silently
- * forever.
- */
-export const SELF_CHECK_MISSED_RUN_GRACE_DAYS = 5;
-
-/**
- * Shared staleness check underlying BOTH `checkDailyRitualMissedRun` and
- * `checkSelfCheckMissedRun` below: has `subcommand` been INVOKED — its
+ * Shared staleness check underlying `checkDailyRitualMissedRun` below: has `subcommand` been INVOKED — its
  * process ran to completion, `Result` success or failure, crash or not —
  * within `graceHours`? Reads `memory-store.ts`'s `RitualInvocation` marker
  * (Task 26 review fix), written unconditionally by `withFailureAlert`
- * after EVERY invocation of `subcommand` — unlike `RitualRun`/
- * `SelfCheckState`, which only advance on specific ritual-DOMAIN outcomes
+ * after EVERY invocation of `subcommand` — unlike `RitualRun`,
+ * which only advances on specific ritual-DOMAIN outcomes
  * and so produced false alarms on ordinary, correct no-op days (see the
  * file docstring's "Task 26 review-fix update" section for the full
  * history).
@@ -1011,31 +944,13 @@ function checkInvocationStaleness(store: MemoryStore, subcommand: string, now: (
 /**
  * Task 26 / Story 5.2's dead-man's-switch check for the three DAILY rituals
  * (`morning`, `night-prompt`, `night-escalate`) — `checkInvocationStaleness`
- * with `DAILY_RITUAL_MISSED_RUN_GRACE_HOURS`. Exported (like
- * `checkSelfCheckMissedRun` below) so the threshold and the cold-start
+ * with `DAILY_RITUAL_MISSED_RUN_GRACE_HOURS`. Exported so the threshold and the cold-start
  * exemption are each independently unit-testable against a real
  * `MemoryStore`, separately from the `withFailureAlert`/`runRitualCli`
  * wiring that actually calls it.
  */
 export function checkDailyRitualMissedRun(store: MemoryStore, subcommand: string, now: () => Date): MissedRunCheckResult {
   return checkInvocationStaleness(store, subcommand, now, DAILY_RITUAL_MISSED_RUN_GRACE_HOURS);
-}
-
-/**
- * Task 26 / Story 5.2's dead-man's-switch check for `self-check` —
- * `checkInvocationStaleness` with `SELF_CHECK_MISSED_RUN_GRACE_DAYS * 24`
- * hours, keyed by the `"self-check"` subcommand name. Prior to the Task 26
- * review fix this read `SelfCheckState.nextDueDate` instead (a genuinely
- * different mechanism, since Self-Check's own cadence is variable and
- * randomized) — that produced a false alarm from an unanswered-but-normal
- * `already-open` Self-Check prompt (a state `nextDueDate` never advances
- * past). Reading the SAME `RitualInvocation` marker
- * `checkDailyRitualMissedRun` reads (just with `self-check`'s own grace)
- * fixes that: the marker updates on every invocation regardless of what
- * Self-Check's own ritual-domain logic decided to do this time.
- */
-export function checkSelfCheckMissedRun(store: MemoryStore, now: () => Date): MissedRunCheckResult {
-  return checkInvocationStaleness(store, "self-check", now, SELF_CHECK_MISSED_RUN_GRACE_DAYS * 24);
 }
 
 // ============================================================================
@@ -1047,8 +962,7 @@ export function checkSelfCheckMissedRun(store: MemoryStore, now: () => Date): Mi
  * generation (the Data-Completeness Gate through Work/Break fitting — see
  * `morning-ritual.ts`'s `PLAN_GENERATION_DEGRADED_THRESHOLD_MS` doc comment
  * for the exact span and the threshold's own reasoning) take longer than
- * that threshold? Exported (like `checkDailyRitualMissedRun`/
- * `checkSelfCheckMissedRun` above) so it is independently unit-testable
+ * that threshold? Exported (like `checkDailyRitualMissedRun` above) so it is independently unit-testable
  * against a plain `MorningRitualOutcome` value, separately from the
  * `withFailureAlert`/`runRitualCli` wiring that actually calls it.
  *
@@ -1184,38 +1098,8 @@ function handleNightEscalateResult(result: Result<NightEscalateOutcome, YohError
   }
 }
 
-/** Mirrors `handleNightPromptResult`'s shape/exit-code conventions for the `self-check` subcommand's outcomes (Task 24 / Story 4.3). */
-function handleSelfCheckResult(result: Result<SelfCheckOutcome, YohError>, io: RitualCliIo): number {
-  if (!result.ok) {
-    io.writeError(
-      JSON.stringify({
-        level: "error",
-        event: "ritual-cli.self-check-failed",
-        kind: result.error.kind,
-        message: result.error.message,
-      }),
-    );
-    return 1;
-  }
-
-  switch (result.value.status) {
-    case "initialized":
-      io.writeLine(`Self-Check schedule initialized for the first time — next check-in around ${result.value.nextDueDate}.`);
-      return 0;
-    case "not-due":
-      io.writeLine(`Not due for a Self-Check yet — next one around ${result.value.nextDueDate}.`);
-      return 0;
-    case "already-open":
-      io.writeLine(`Already waiting on Spencer's answer to the last Self-Check prompt — check chat.`);
-      return 0;
-    case "prompted":
-      io.writeLine(`Asked Spencer for a Self-Check — check chat to answer.`);
-      return 0;
-  }
-}
-
 // ============================================================================
-// Real adapter wiring — see shell/ritual-cli/{morning,night,self-check}-deps.ts
+// Real adapter wiring — see shell/ritual-cli/{morning,night}-deps.ts
 // ============================================================================
 
 /** A `RitualCliDeps` runner that throws if called — used for the OTHER subcommand's slot below, mirroring `shell/server.ts`'s own "throws only if actually invoked" convention for a seam a given run never exercises. */
@@ -1327,7 +1211,6 @@ export async function main(
         runMorning: unreachableRunner("runMorning"),
         runNightPrompt: () => runNightPromptRitual(deps),
         runNightEscalate: unreachableRunner("runNightEscalate"),
-        runSelfCheck: unreachableRunner("runSelfCheck"),
         sendFailureAlert,
         checkMissedRun: () => checkDailyRitualMissedRun(store, "night-prompt", () => new Date()),
         recordInvocation: () => putRitualInvocation(store, "night-prompt", { at: new Date().toISOString() }),
@@ -1350,33 +1233,9 @@ export async function main(
         runMorning: unreachableRunner("runMorning"),
         runNightPrompt: unreachableRunner("runNightPrompt"),
         runNightEscalate: () => runNightEscalateRitual(deps),
-        runSelfCheck: unreachableRunner("runSelfCheck"),
         sendFailureAlert,
         checkMissedRun: () => checkDailyRitualMissedRun(store, "night-escalate", () => new Date()),
         recordInvocation: () => putRitualInvocation(store, "night-escalate", { at: new Date().toISOString() }),
-        notifyOperational,
-      });
-    }
-
-    if (argv[0] === "self-check") {
-      let deps: SelfCheckRitualDeps;
-      let sendFailureAlert: (notification: PlanNotification) => Promise<void>;
-      try {
-        deps = createSelfCheckRitualDeps(store, env);
-        sendFailureAlert = createFailureAlertSender(env);
-      } catch (err) {
-        io.writeError(`ritual-cli: ${err instanceof Error ? err.message : String(err)}`);
-        return 2;
-      }
-      return await runRitualCli(argv, {
-        io,
-        runMorning: unreachableRunner("runMorning"),
-        runNightPrompt: unreachableRunner("runNightPrompt"),
-        runNightEscalate: unreachableRunner("runNightEscalate"),
-        runSelfCheck: () => runSelfCheckRitual(deps),
-        sendFailureAlert,
-        checkMissedRun: () => checkSelfCheckMissedRun(store, () => new Date()),
-        recordInvocation: () => putRitualInvocation(store, "self-check", { at: new Date().toISOString() }),
         notifyOperational,
       });
     }
@@ -1395,7 +1254,6 @@ export async function main(
       runMorning: () => runMorningRitual(deps),
       runNightPrompt: unreachableRunner("runNightPrompt"),
       runNightEscalate: unreachableRunner("runNightEscalate"),
-      runSelfCheck: unreachableRunner("runSelfCheck"),
       sendFailureAlert,
       checkMissedRun: () => checkDailyRitualMissedRun(store, "morning", () => new Date()),
       recordInvocation: () => putRitualInvocation(store, "morning", { at: new Date().toISOString() }),

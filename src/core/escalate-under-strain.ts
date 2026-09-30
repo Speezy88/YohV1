@@ -7,7 +7,7 @@
  * function, `computeEscalation(strainCount, curve)`, and nothing else: no
  * per-consumer curve constant lives here (each consumer — `slip-bump.ts`
  * today; `tone.ts`'s Task 18 escalation and a future Night Ritual close-out
- * (Task 19) / Self-Check interval (Task 24) later — supplies its OWN
+ * (Task 19) later — supplies its OWN
  * `EscalationCurve`, defined in its own file, per AD-6's "no consumer
  * derives its own normalized score or level enum, each just supplies its
  * own curve").

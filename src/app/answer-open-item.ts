@@ -17,13 +17,12 @@ import { parseProposalAnswer } from "../core/open-item-answers.ts";
 import { MEMORY_FORGET_NONE, MEMORY_FORGET_QUESTION_ID, PROPOSAL_QUESTION_ID } from "../core/open-item-questions.ts";
 import { answerDataCompleteness, type AnswerDataCompletenessDeps } from "./answer-data-completeness.ts";
 import { answerNightCloseOut, type AnswerNightCloseOutDeps } from "./answer-night-close-out.ts";
-import { answerSelfCheck, type AnswerSelfCheckDeps } from "./answer-self-check.ts";
 import { confirmProposal, type ConfirmProposalDeps } from "./confirm-proposal.ts";
 import { buildOpenItemQuestion } from "./surface-open-items.ts";
 import type { CalendarEditChange, NotionDatabaseTarget, Proposal, Result, YohError } from "../types/domain.ts";
 import type { AnswerOpenItemRequest, AnswerOpenItemResponse } from "../types/api.ts";
 
-export interface AnswerOpenItemDeps extends AnswerDataCompletenessDeps, AnswerNightCloseOutDeps, AnswerSelfCheckDeps {
+export interface AnswerOpenItemDeps extends AnswerDataCompletenessDeps, AnswerNightCloseOutDeps {
   readonly store: MemoryStore;
   /** E5: when set with `timeZone`, the answer and Yoh's reply are stored as today's chat turns. Store failures are logged, never surfaced. */
   readonly chatHistory?: ChatStore;
@@ -150,8 +149,6 @@ async function dispatchAnswer(deps: AnswerOpenItemDeps, input: AnswerOpenItemReq
       return answerDataCompleteness(deps, input);
     case "night-close-out":
       return answerNightCloseOut(deps, input);
-    case "self-check":
-      return answerSelfCheck(deps, input);
     case "proposal":
       return answerProposalOpenItem(deps, input, record);
     case "memory-forget":

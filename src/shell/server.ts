@@ -13,8 +13,8 @@
  * the authentication — there is no login screen, session cookie, or
  * password (FR-39).
  *
- * Schedules no ritual (AD-5, AD-15): the four cron one-shots (`morning`,
- * `night-prompt`, `night-escalate`, `self-check`) stay OS-scheduled via
+ * Schedules no ritual (AD-5, AD-15): the three cron one-shots (`morning`,
+ * `night-prompt`, `night-escalate`) stay OS-scheduled via
  * `shell/ritual-cli.ts`, and this file never imports `rituals/` or
  * `ritual-cli.ts`.
  *
@@ -64,7 +64,7 @@ import { chatExchange, type ChatTurnFn } from "../app/chat-exchange.ts";
 import { todaysChatHistory } from "../app/chat-history.ts";
 import { initRoutineStoreSchema } from "../adapters/routine-store.ts";
 import { HEARTBEAT_INTERVAL_MS, initPlanStateStoreSchema, writeHeartbeat } from "../adapters/plan-state-store.ts";
-import { createMemoryStore, type MemoryStore } from "../adapters/memory-store.ts";
+import { createMemoryStore, removeRetiredRecords, type MemoryStore } from "../adapters/memory-store.ts";
 import {
   initCompletionLogSchema,
   listCompletedTaskIdsOnDate,
@@ -590,15 +590,13 @@ export interface ServerDeps {
    * which `surfaceOpenItems`'s is a structural subset of) overlap on
    * `store`/`session`/`llmClient`, so this is their intersection, minus:
    * `session` (one per process, `chatSession` below), `emit` (one per
-   * request, `runChatStream`), and `today` (`AnswerSelfCheckDeps`'s field —
-   * like `session`, computed fresh per read by `createApp`, via a getter, so
-   * a long-running server never freezes "today" at startup). Absent (no
+   * request, `runChatStream`). Absent (no
    * `CLAUDE_API_KEY`/`YOH_TIMEZONE`), every one of the three routes reports
    * its own clear `unreachable` error. `runChatTurn` is a test seam
    * (default: the real `chatTurn`), the same DI convention as
    * `eventStream.sleep`.
    */
-  readonly chat?: Omit<ChatTurnDeps & AnswerOpenItemDeps, "session" | "emit" | "today"> & {
+  readonly chat?: Omit<ChatTurnDeps & AnswerOpenItemDeps, "session" | "emit"> & {
     readonly runChatTurn?: ChatTurnFn;
     /** The Yoh Plan calendar sync's two reads; `buildPlanSyncDeps` joins them with `reshuffle`. */
     readonly planSyncReads?: Pick<SyncPlanFromCalendarDeps, "readYohPlanEvents" | "readDeletedYohPlanEventIds" | "readPlanCalendarSnapshot" | "readPlanCalendarWriteState">;
@@ -738,10 +736,8 @@ function wire<T>(result: ApiResult<T>): ApiResult<T> {
  * than imported: `server.ts` never imports `rituals/` at all (AD-5, AD-15 —
  * `tests/server.test.ts`'s own structural rule), the identical small,
  * deliberate duplication that helper's own doc comment already documents
- * between `core/time-budget.ts` and `core/derived-priority.ts`. Story 8.6
- * (Task 7): `AnswerSelfCheckDeps.today` must be Spencer's CURRENT local
- * calendar day, computed fresh on every read (see `chatDeps`'s `today`
- * getter in `createApp`), never the server process's UTC start time.
+ * between `core/time-budget.ts` and `core/derived-priority.ts`. Callers must pass Spencer's CURRENT local calendar day, computed fresh on
+ * every read, never the server process's UTC start time.
  */
 function currentIsoDate(instant: Date, timeZone: string): IsoDate {
   const parts = new Intl.DateTimeFormat("en-US", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(instant);
@@ -779,11 +775,6 @@ export function createApp(deps: ServerDeps) {
   // real dependency `chatTurn`/`surfaceOpenItems`/`answerOpenItem` read) is
   // stripped out here so it never reaches any of the three (pinned by
   // `tests/server-chat.test.ts`'s "never the runChatTurn seam itself" case).
-  // `today` is a live getter, not a value captured once at startup — the
-  // process may run for days, and `AnswerSelfCheckDeps.today` must always be
-  // Spencer's CURRENT local calendar day (mirrors `session` immediately
-  // below: both are per-read state `createApp` supplies, never something
-  // `deps.chat`'s own config carries).
   let chatDeps: (Omit<ChatTurnDeps, "emit"> & AnswerOpenItemDeps) | undefined;
   if (deps.chat) {
     const { runChatTurn: _runChatTurn, ...rest } = deps.chat;
@@ -792,9 +783,6 @@ export function createApp(deps: ServerDeps) {
       ...(deps.chatHistory ? { chatHistory: deps.chatHistory } : {}),
       ...(deps.memoryItems ? { memoryItems: deps.memoryItems } : {}),
       session: chatSession,
-      get today(): IsoDate {
-        return currentIsoDate(new Date(), rest.timeZone);
-      },
     };
   }
 
@@ -1893,7 +1881,6 @@ function buildChatDeps(
     readFieldOptions,
     recordCompletion,
     lookupTask,
-    random: Math.random,
   };
 }
 
@@ -1908,6 +1895,14 @@ if (import.meta.main) {
   initSettingsStoreSchema(connection.db);
   initMemoryItemStoreSchema(connection.db);
   initCompletionLogSchema(connection.db);
+  // Story 13.12 (Ruling E11): one-time, idempotent removal of the retired
+  // periodic check-in's stored leftovers. Never fatal.
+  try {
+    const { removed } = removeRetiredRecords(createMemoryStore(connection));
+    if (removed > 0) writeStructuredLog({ level: "info", event: "server.retired-cleanup", detail: { removed } });
+  } catch (error) {
+    writeStructuredLog({ level: "warn", event: "server.retired-cleanup", detail: { message: error instanceof Error ? error.message : String(error) } });
+  }
   // Real-use fixes plan, Task 9: `server.ts` is the ONE shell that makes
   // real Claude calls (POST /api/chat's `buildChatDeps` below) —
   // `ritual-cli.ts` never calls Claude at all, so it needs no equivalent

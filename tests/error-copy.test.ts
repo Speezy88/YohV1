@@ -148,7 +148,7 @@ test("errorCopyForThrown handles a non-Error thrown value without throwing itsel
 // ============================================================================
 // Review fix #2: errorCopy always ends in terminal punctuation, so a caller
 // that appends its own follow-up sentence (answer-data-completeness.ts,
-// answer-night-close-out.ts, answer-self-check.ts) never produces a run-on.
+// answer-night-close-out.ts) never produces a run-on.
 // ============================================================================
 
 test("errorCopy: every kind ends in terminal punctuation, even when the underlying message doesn't", () => {
@@ -181,8 +181,8 @@ test("errorCopy: the exact select-guard rejection (notion-adapter.ts) names the 
   assert.match(copy, /[.!?]$/);
   assert.doesNotMatch(copy, /notion-adapter/);
 
-  // The exact shape answer-data-completeness.ts/answer-night-close-out.ts/
-  // answer-self-check.ts build: `${errorCopy(...)} <follow-up sentence>` —
+  // The exact shape answer-data-completeness.ts/answer-night-close-out.ts
+  // build: `${errorCopy(...)} <follow-up sentence>` —
   // must read as two proper sentences, never a run-on.
   const withFollowUp = `${copy} Try again with a value closer to what's already in Notion.`;
   assert.match(withFollowUp, /\. Try again/);

@@ -232,22 +232,22 @@ describe("ChatPanel", () => {
   // injects each one, on open, as its own Yoh message with an inline
   // Structured Question card.
   describe("pending ritual questions (Task 6 addendum)", () => {
-    const PENDING_SELF_CHECK: OpenItem = {
-      requestId: "self-check",
-      requestKind: "self-check",
-      promptText: "Quick Self-Check: on a scale of 1-10, how well is this working for you right now? Give me a number and a short written reason.",
-      question: { requestId: "self-check", questionId: "score", text: 'Score (1-10) + a short reason, e.g. "7 feeling on top of things"', options: [], allowsFreeText: true },
+    const PENDING_ITEM: OpenItem = {
+      requestId: "data-completeness",
+      requestKind: "data-completeness",
+      promptText: "Quick check-in: on a scale of 1-10, how well is this working for you right now? Give me a number and a short written reason.",
+      question: { requestId: "data-completeness", questionId: "score", text: 'Score (1-10) + a short reason, e.g. "7 feeling on top of things"', options: [], allowsFreeText: true },
     };
 
-    it("a pending self-check request shows as a chat message with its question card, once the panel is open", async () => {
-      vi.spyOn(openItemsModule, "useOpenItems").mockReturnValue({ status: "loaded", items: [PENDING_SELF_CHECK] });
+    it("a pending ritual request shows as a chat message with its question card, once the panel is open", async () => {
+      vi.spyOn(openItemsModule, "useOpenItems").mockReturnValue({ status: "loaded", items: [PENDING_ITEM] });
       renderOpenPanel();
-      await waitFor(() => expect(screen.getByText(/Quick Self-Check/)).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByText(/Quick check-in/)).toBeInTheDocument());
       expect(screen.getByLabelText("Other")).toBeInTheDocument();
     });
 
-    it("answering a pending self-check inline (\"7, feeling good\") resolves it and the card disappears", async () => {
-      vi.spyOn(openItemsModule, "useOpenItems").mockReturnValue({ status: "loaded", items: [PENDING_SELF_CHECK] });
+    it("answering a pending ritual inline (\"7, feeling good\") resolves it and the card disappears", async () => {
+      vi.spyOn(openItemsModule, "useOpenItems").mockReturnValue({ status: "loaded", items: [PENDING_ITEM] });
       vi.spyOn(openItemsModule, "submitOpenItemAnswer").mockResolvedValue({
         ok: true,
         value: { message: "Thanks — got it. I'll check in again before too long.", receipts: [], next: "done" },
@@ -259,7 +259,7 @@ describe("ChatPanel", () => {
       fireEvent.click(within(screen.getByTestId("structured-question")).getByRole("button", { name: "Send" }));
 
       await waitFor(() =>
-        expect(openItemsModule.submitOpenItemAnswer).toHaveBeenCalledWith({ requestId: "self-check", questionId: "score", answer: "7, feeling good" }),
+        expect(openItemsModule.submitOpenItemAnswer).toHaveBeenCalledWith({ requestId: "data-completeness", questionId: "score", answer: "7, feeling good" }),
       );
       await waitFor(() => expect(screen.queryByLabelText("Other")).not.toBeInTheDocument());
       expect(screen.getByText("Thanks — got it. I'll check in again before too long.")).toBeInTheDocument();
@@ -267,14 +267,14 @@ describe("ChatPanel", () => {
 
     it("the same pending request is never shown twice in one session, even after a refetch", async () => {
       const { rerender } = render(<>{null}</>);
-      vi.spyOn(openItemsModule, "useOpenItems").mockReturnValue({ status: "loaded", items: [PENDING_SELF_CHECK] });
+      vi.spyOn(openItemsModule, "useOpenItems").mockReturnValue({ status: "loaded", items: [PENDING_ITEM] });
       act(() => openChatPanel());
       rerender(<ChatPanel />);
-      await waitFor(() => expect(screen.getAllByText(/Quick Self-Check/)).toHaveLength(1));
+      await waitFor(() => expect(screen.getAllByText(/Quick check-in/)).toHaveLength(1));
 
       // A second render with the SAME item still pending (e.g. a hint-driven refetch) must not duplicate it.
       rerender(<ChatPanel />);
-      expect(screen.getAllByText(/Quick Self-Check/)).toHaveLength(1);
+      expect(screen.getAllByText(/Quick check-in/)).toHaveLength(1);
     });
   });
 });

@@ -5,8 +5,8 @@
 # copying this to /etc/systemd/system/yoh-server.service.
 #
 # The server binds 127.0.0.1 only and is reached exclusively through
-# `tailscale serve` HTTPS. It schedules no ritual: the four cron one-shots
-# (ritual-cli.ts morning / night-prompt / night-escalate / self-check) stay
+# `tailscale serve` HTTPS. It schedules no ritual: the three cron one-shots
+# (ritual-cli.ts morning / night-prompt / night-escalate) stay
 # in the crontab, unchanged.
 
 [Unit]

@@ -38,11 +38,11 @@ test("writeStructuredLog writes exactly one single-line JSON object, newline-ter
 
 test("writeStructuredLog omits `detail` from the JSON entirely when the entry carries none, rather than writing detail: undefined/null", () => {
   const { target, chunks } = fakeTarget();
-  writeStructuredLog({ level: "warn", event: "self-check.not-due" }, target);
+  writeStructuredLog({ level: "warn", event: "morning.not-due" }, target);
 
   const parsed = JSON.parse(chunks[0]!) as Record<string, unknown>;
   assert.equal(Object.hasOwn(parsed, "detail"), false);
-  assert.deepEqual(parsed, { level: "warn", event: "self-check.not-due" });
+  assert.deepEqual(parsed, { level: "warn", event: "morning.not-due" });
 });
 
 test("writeStructuredLog preserves every level and carries an arbitrary detail shape verbatim", () => {

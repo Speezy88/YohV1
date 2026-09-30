@@ -9,7 +9,6 @@ import {
   buildGenericQuestion,
   buildNightCloseOutQuestion,
   buildProposalQuestion,
-  buildSelfCheckQuestion,
   nextDataCompletenessQuestion,
   nextNightCloseOutTask,
   PROPOSAL_QUESTION_ID,
@@ -123,8 +122,7 @@ test("buildNightCloseOutQuestion builds the fixed completed/slipped/skip options
   assert.deepEqual(q.options.map((o) => o.value), ["completed", "slipped", "skip"]);
 });
 
-test("buildSelfCheckQuestion/buildGenericQuestion build their fixed shapes", () => {
-  assert.equal(buildSelfCheckQuestion("self-check").questionId, "score");
+test("buildGenericQuestion builds its fixed shape", () => {
   assert.equal(buildGenericQuestion("x").questionId, "generic");
 });
 

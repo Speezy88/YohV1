@@ -11,7 +11,7 @@ Google Calendar + Claude (Haiku 4.5 for classify/capture/answer) + Perplexity
 
 - Server: Node 24 with native TypeScript type-stripping (no build step), Hono, SQLite (better-sqlite3).
 - Web: React + Vite + Tailwind v4 in `web/`, served by the server.
-- Scheduled rituals: `src/shell/ritual-cli.ts` (morning, night-prompt, night-escalate, self-check) and `src/shell/backup-cli.ts`, run by launchd.
+- Scheduled rituals: `src/shell/ritual-cli.ts` (morning, night-prompt, night-escalate) and `src/shell/backup-cli.ts`, run by launchd.
 
 ## Where things live
 ```
@@ -19,7 +19,7 @@ src/types/     domain.ts (domain types), api.ts (HTTP request/response types; we
 src/core/      pure logic — no I/O, no module state (chat-commands, quick-add, search-intent, tone, error-copy, ...)
 src/adapters/  I/O — notion-adapter, calendar-adapter, llm-adapter, search-adapter, sqlite (only DB opener), *-store, logger
 src/app/       one file per interaction use-case (chat-turn, home-view, check-off, confirm-proposal, ...)
-src/rituals/   scheduled workflows (morning-ritual, night-ritual, self-check, data-completeness, ...)
+src/rituals/   scheduled workflows (morning-ritual, night-ritual, data-completeness, ...)
 src/shell/     entry points: server.ts (all HTTP routes + real deps wiring), ritual-cli.ts, backup-cli.ts
 tests/         node:test files (flat, e.g. tests/app-chat-turn.test.ts); tests/e2e/fixture-server.ts = fake-backed server for Playwright
 web/src/       pages/, components/, lib/ (API clients, stores, eventBus), hooks/, tokens.css (design tokens)

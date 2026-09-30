@@ -5,8 +5,8 @@ only over the tailnet (AD-15). No staging/prod split, no containers.
 
 The host runs two kinds of process against one SQLite file:
 
-- the four cron one-shots (`node src/shell/ritual-cli.ts morning |
-  night-prompt | night-escalate | self-check`), OS-scheduled exactly as in
+- the three cron one-shots (`node src/shell/ritual-cli.ts morning |
+  night-prompt | night-escalate`), OS-scheduled exactly as in
   `SETUP.md`'s sample crontab. **The server does not replace or schedule
   them.** Keep the crontab as it is.
 - `yoh-server` (`src/shell/server.ts`), long-running, supervised by

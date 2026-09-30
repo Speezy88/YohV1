@@ -235,26 +235,26 @@ describe("chatStore", () => {
   // appendPendingOpenItem / resolveMessageQuestion (C1, final-review)
   // ==========================================================================
 
-  const SELF_CHECK_ITEM: OpenItem = {
-    requestId: "self-check",
-    requestKind: "self-check",
+  const PENDING_ITEM: OpenItem = {
+    requestId: "data-completeness",
+    requestKind: "data-completeness",
     promptText: "How are things going?",
-    question: { requestId: "self-check", questionId: "score", text: "Score (1-10)?", options: [], allowsFreeText: true },
+    question: { requestId: "data-completeness", questionId: "score", text: "Score (1-10)?", options: [], allowsFreeText: true },
   };
 
   it("appendPendingOpenItem shows one Yoh message per requestId+questionId, a no-op on a repeat of the SAME pending item", () => {
     const { result } = renderHook(() => useChatStore());
-    act(() => appendPendingOpenItem(SELF_CHECK_ITEM));
+    act(() => appendPendingOpenItem(PENDING_ITEM));
     expect(messagesOf(result.current)).toHaveLength(1);
-    expect(messagesOf(result.current)[0]).toMatchObject({ role: "assistant", text: "How are things going?", question: SELF_CHECK_ITEM.question });
+    expect(messagesOf(result.current)[0]).toMatchObject({ role: "assistant", text: "How are things going?", question: PENDING_ITEM.question });
 
-    act(() => appendPendingOpenItem(SELF_CHECK_ITEM));
+    act(() => appendPendingOpenItem(PENDING_ITEM));
     expect(messagesOf(result.current)).toHaveLength(1); // still just the one — same request, still pending, never shown twice
   });
 
   it("C1 (final-review): once resolveMessageQuestion clears an item, a LATER re-raise under the same requestId (a ritual reusing its fixed id) shows again", () => {
     const { result } = renderHook(() => useChatStore());
-    act(() => appendPendingOpenItem(SELF_CHECK_ITEM));
+    act(() => appendPendingOpenItem(PENDING_ITEM));
     const messageId = messagesOf(result.current)[0]!.id;
 
     // Spencer answers it — the app resolves this message's question (Task 6's
@@ -263,16 +263,16 @@ describe("chatStore", () => {
     expect(messagesOf(result.current)[0]!.question).toBeUndefined();
 
     // The ritual runs again later and re-raises under the SAME fixed
-    // requestId/questionId (self-check's questionId is always "score") — it
+    // requestId/questionId (the score question's questionId is always "score") — it
     // must show again, not be silently swallowed by the dedupe forever.
-    act(() => appendPendingOpenItem(SELF_CHECK_ITEM));
+    act(() => appendPendingOpenItem(PENDING_ITEM));
     expect(messagesOf(result.current)).toHaveLength(2);
-    expect(messagesOf(result.current)[1]).toMatchObject({ role: "assistant", text: "How are things going?", question: SELF_CHECK_ITEM.question });
+    expect(messagesOf(result.current)[1]).toMatchObject({ role: "assistant", text: "How are things going?", question: PENDING_ITEM.question });
   });
 
   it("resolveMessageQuestion clears the question from the stored message, so a remounted component reading the SAME message never shows it again", () => {
     const { result } = renderHook(() => useChatStore());
-    act(() => appendPendingOpenItem(SELF_CHECK_ITEM));
+    act(() => appendPendingOpenItem(PENDING_ITEM));
     const messageId = messagesOf(result.current)[0]!.id;
     act(() => resolveMessageQuestion(messageId));
     expect(messagesOf(result.current)[0]).toMatchObject({ role: "assistant", text: "How are things going?" });

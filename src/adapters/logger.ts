@@ -7,14 +7,13 @@
  * byte-identical `{ level, event, detail }` log-entry interface
  * (`morning-ritual.ts`'s `MorningRitualLogEntry`, `night-ritual.ts`'s
  * `NightPromptLogEntry` and its `NightEscalateLogEntry` alias,
- * `mid-day-reflow.ts`'s `MidDayReflowLogEntry`, `self-check.ts`'s
- * `SelfCheckLogEntry` — five declarations of the exact same shape, some of
+ * `mid-day-reflow.ts`'s `MidDayReflowLogEntry` — four declarations of the exact same shape, some of
  * whose own doc comments already said "mirroring NightPromptLogEntry's
  * shape," acknowledging the duplication with nowhere shared to put it), and
  * `shell/ritual-cli.ts`'s four `create*RitualDeps` functions each
  * independently repeated the exact same 3-line
  * `process.stderr.write(\`${JSON.stringify(entry)}\n\`)` closure to bind
- * one. Five duplicated type declarations plus four duplicated write
+ * one. Four duplicated type declarations plus four duplicated write
  * closures for one genuinely shared capability is exactly what AD-9 says
  * gets its own file — this one.
  *

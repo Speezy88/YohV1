@@ -172,7 +172,7 @@
  * this file and every other `rituals/*.ts` file import from (AD-1:
  * `shell -> rituals`, and within `rituals/*.ts` itself, every sibling ritual
  * -> `ritual-shared.ts`, never the reverse). These pieces used to live
- * directly in this file — `night-ritual.ts`/`self-check.ts`/
+ * directly in this file — `night-ritual.ts`/
  * `mid-day-reflow.ts` importing them from a file literally named for the
  * Morning Ritual was exactly the "shared utils file becomes a bottleneck"
  * anti-pattern AD-9 itself warns against, so they were extracted into their
@@ -312,8 +312,7 @@ export const MORNING_RITUAL_ID = "morning";
  * A documented, concrete starting value — the Architecture Spine's own
  * Deferred section explicitly leaves the exact number to build time, per
  * this project's established pattern for exactly this situation (FR-2's
- * even-split weights, FR-11's slip curve, Self-Check's own interval/
- * low-score threshold, Task 23's deferral-streak threshold, Task 26's own
+ * even-split weights, FR-11's slip curve, Task 23's deferral-streak threshold, Task 26's own
  * missed-run grace windows, etc. — see each constant's own doc comment for
  * the same "tunable, not load-bearing" framing). `5000` (5 seconds, a
  * "low-seconds value" per this task's own implementer note) is chosen as

@@ -74,7 +74,7 @@ test("surfaceOpenItems falls straight to the blind ask when a suggestion was alr
   store.close();
 });
 
-test("surfaceOpenItems builds the fixed question for night-close-out and self-check requests, and a generic one for an unknown kind", async () => {
+test("surfaceOpenItems builds the fixed question for night-close-out requests, and a generic one for an unknown or retired kind", async () => {
   const store = tempStore();
   const tasks: NightCloseOutTaskDetail[] = [{ taskId: "t1", taskTitle: "Draft the memo" }];
   putOpenInteractionRequest(store, "night-close-out", { requestKind: "night-close-out", promptText: "x", detail: { date: "2026-09-25", tasks }, createdAt: "x" });
@@ -85,7 +85,7 @@ test("surfaceOpenItems builds the fixed question for night-close-out and self-ch
   if (!result.ok) return;
   const byId = Object.fromEntries(result.value.items.map((i) => [i.requestId, i.question.questionId]));
   assert.equal(byId["night-close-out"], "t1");
-  assert.equal(byId["self-check"], "score");
+  assert.equal(byId["self-check"], "generic");
   assert.equal(byId["future"], "generic");
   store.close();
 });

@@ -22,7 +22,6 @@ import {
   buildGenericQuestion,
   buildNightCloseOutQuestion,
   buildProposalQuestion,
-  buildSelfCheckQuestion,
   nextDataCompletenessQuestion,
   nextNightCloseOutTask,
   type DataCompletenessCursor,
@@ -104,8 +103,6 @@ async function buildForRecord(deps: SurfaceOpenItemsDeps, record: StoredRecord<I
       });
       return pending ? buildNightCloseOutQuestion(record.id, pending) : "done";
     }
-    case "self-check":
-      return buildSelfCheckQuestion(record.id);
     case "memory-forget": {
       const ids = (record.data.detail as { readonly itemIds?: readonly string[] } | undefined)?.itemIds ?? [];
       const store = deps.memoryItems;

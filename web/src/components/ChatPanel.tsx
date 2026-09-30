@@ -30,7 +30,7 @@
  * panel on click.
  *
  * Task 6 addendum (Spencer): Task 2 removed "Waiting on you" and left
- * ritual-raised open interaction requests (self-check, data-completeness,
+ * ritual-raised open interaction requests (data-completeness,
  * night close-out) with NO surface at all. This panel now surfaces them
  * itself: every open request `GET /api/open-items` reports appears as its
  * own Yoh message in the stream (`chatStore.ts`'s `appendPendingOpenItem`),

@@ -678,7 +678,7 @@ export interface Proposal<T> {
  * surface before accepting any unrelated input (UX-DR5; Story 8.9:
  * originally `chat-cli.ts`). Introduced by Task 5 (the Data-Completeness
  * Gate, FR-4) as the first of several prompt kinds sharing this pattern —
- * later tasks (Night close-out FR-12–FR-14, Self-Check FR-17,
+ * later tasks (Night close-out FR-12–FR-14,
  * Propose-Don't-Impose AD-3) persist their own prompts through the same
  * shape rather than each inventing a parallel one. A `Proposal<T>` (above)
  * is itself surfaced this way: AD-3 says "`memory-store.ts` persists every
@@ -695,7 +695,7 @@ export interface Proposal<T> {
  * expires an open request — it waits indefinitely for that clear).
  */
 export interface InteractionRequest<TDetail = unknown> {
-  /** What this request is about, e.g. "data-completeness", "night-close-out", "self-check", "proposal". Free-form per requester, not a fixed enum — mirrors `Proposal.kind`'s own free-form design so a later task can add a new request kind without touching this shape. */
+  /** What this request is about, e.g. "data-completeness", "night-close-out", "proposal". Free-form per requester, not a fixed enum — mirrors `Proposal.kind`'s own free-form design so a later task can add a new request kind without touching this shape. */
   readonly requestKind: string;
   /** The prompt line(s) Chat renders verbatim before accepting other input (UX-DR5, UX-DR10; Story 8.9: plain text, never ANSI — `chat-cli.ts`, since retired, was the one caller that applied accent-color wrapping). */
   readonly promptText: string;
@@ -710,8 +710,8 @@ export interface InteractionRequest<TDetail = unknown> {
 
 /**
  * EscalationCurve — the per-consumer shape (cap, step) that
- * `computeEscalation` applies to a strain count. `slip-bump.ts`,
- * `self-check.ts`, and `tone.ts` each supply their own curve; the curve
+ * `computeEscalation` applies to a strain count. `slip-bump.ts`
+ * and `tone.ts` each supply their own curve; the curve
  * shape itself is shared and defined once here (AD-6).
  */
 export interface EscalationCurve {

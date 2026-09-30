@@ -100,13 +100,13 @@ const listeners = new Set<() => void>();
  * C1 (final-review): which ritual-raised open-item questions have already
  * been injected into this session's transcript (`appendPendingOpenItem`),
  * keyed on `requestId + questionId` rather than `requestId` alone — every
- * ritual (`self-check`, `night-close-out`, `data-completeness`) reuses one
+ * ritual (`night-close-out`, `data-completeness`) reuses one
  * fixed `requestId` across every run, so keying on `requestId` alone meant
  * a re-raised question, weeks later, stayed permanently invisible once the
  * FIRST one had ever been shown. `resolveMessageQuestion` deletes an entry
  * the moment its question is actually resolved, so a later re-raise (even
- * one that reuses the exact same requestId+questionId, as self-check
- * always does) is no longer in this Set and shows again. Client state only,
+ * one that reuses the exact same requestId+questionId, as a ritual
+ * question always does) is no longer in this Set and shows again. Client state only,
  * never persisted.
  */
 const shownPendingRequestIds = new Set<string>();
@@ -335,7 +335,7 @@ export function recordAnsweredOpenItem(
 
 /**
  * Task 6 addendum: appends one ritual-raised pending open interaction
- * request (self-check, data-completeness, night close-out) as a Yoh message
+ * request (data-completeness, night close-out) as a Yoh message
  * — `item.promptText` as the message text, `item.question` as its inline
  * Structured Question card, answerable exactly like any other inline
  * question (`ChatMessage.tsx`'s own `answerInline`). A no-op past the first
