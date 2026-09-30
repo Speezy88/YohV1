@@ -211,3 +211,19 @@ describe("ChatMessage memory links (Story 13.9)", () => {
     expect(screen.getByText(/See x now/)).toBeInTheDocument();
   });
 });
+
+describe("ChatMessage rating prompt (Story 13.11)", () => {
+  it("renders the prompt after a finished reply, and not while streaming or on Spencer's turn", () => {
+    const rating = { promptId: "p1", phase: "open" as const };
+    const { unmount } = render(<ChatMessage message={msg({ text: "Plan updated.", rating })} />);
+    expect(screen.getByRole("radiogroup", { name: "How is Yoh doing?" })).toBeInTheDocument();
+    unmount();
+    render(<ChatMessage message={msg({ text: "x", status: "streaming", rating })} />);
+    expect(screen.queryByRole("radiogroup")).toBeNull();
+  });
+
+  it("shows nothing for a dismissed prompt", () => {
+    render(<ChatMessage message={msg({ text: "Plan updated.", rating: { promptId: "p1", phase: "dismissed" } })} />);
+    expect(screen.queryByTestId("rating-prompt")).toBeNull();
+  });
+});

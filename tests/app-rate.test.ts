@@ -111,3 +111,11 @@ test("POST /api/rating validates, stores, and reports conflicts", async () => {
   const bare = createApp({ connection: h.connection, log: () => {} });
   assert.notEqual((await bare.request("/api/rating", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ promptId: "p1", score: 2 }) })).status, 200);
 });
+
+test("a note files through memoryLlmClient when there is no llmClient (the e2e fixture's wiring)", async () => {
+  const h = setup();
+  const deps = { ...(h.deps as object), memoryLlmClient: h.llmClient, llmClient: undefined } as unknown as Parameters<typeof rate>[0];
+  await rate(deps, { promptId: "p1", score: 1 });
+  const r = await rate(deps, { promptId: "p1", score: 1, note: "The plan was too wordy" });
+  assert.ok(r.ok && r.value.receipt?.items.length === 1);
+});

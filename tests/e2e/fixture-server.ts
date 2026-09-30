@@ -28,6 +28,8 @@ import { join } from "node:path";
 import { serve } from "@hono/node-server";
 import { openSqliteConnection } from "../../src/adapters/sqlite.ts";
 import { createChatStore, initChatStoreSchema } from "../../src/adapters/chat-store.ts";
+import { FIXTURE_RATING_NOTE } from "./fixture-memory-seed.ts";
+import { createRatingStore, initRatingStoreSchema } from "../../src/adapters/rating-store.ts";
 import { initSettingsStoreSchema } from "../../src/adapters/settings-store.ts";
 import { createMemoryItemStore, initMemoryItemStoreSchema } from "../../src/adapters/memory-item-store.ts";
 import { initRoutineStoreSchema } from "../../src/adapters/routine-store.ts";
@@ -74,12 +76,15 @@ initRoutineStoreSchema(connection.db);
 initChatStoreSchema(connection.db);
 initSettingsStoreSchema(connection.db);
 initMemoryItemStoreSchema(connection.db);
+initRatingStoreSchema(connection.db);
 initCompletionLogSchema(connection.db);
 
 const store = createMemoryStore(connection);
 // Story 13.1: the REAL chat store — `chatExchange` stores both turns even though `runChatTurn` is scripted.
 const chatHistory = createChatStore(connection);
 export const memoryItems = createMemoryItemStore(connection);
+// Story 13.11: the REAL rating store; the draw is forced below so the prompt appears whenever the schedule allows it.
+const ratings = createRatingStore(connection);
 const startedAt = new Date();
 const today = localIsoDate(startedAt, TIME_ZONE);
 
@@ -156,6 +161,7 @@ function resetFixturePlan(scenario: boolean): void {
   reshuffleScenario = scenario;
   chatHistory.clearAll();
   memoryItems.clearAll();
+  ratings.clearAll();
   for (const open of listOpenReshuffleProposals(store)) clearInteractionRequest(store, open.requestId, open.requestVersion);
   connection.db.prepare("DELETE FROM planning_settings").run();
   connection.db.transaction(() => replaceDayPinsAndDropsInTx(connection.db, today, [], []))();
@@ -284,8 +290,9 @@ const draftFieldsLlmClient: AnthropicMessagesClient = {
  * suggestions). Returns one Corrections candidate ONLY for the Chem club fixture text, otherwise `[]`,
  * so unrelated fixture turns never file.
  */
-export { FIXTURE_CONVERSATIONS, FIXTURE_MEMORY_ITEMS, FIXTURE_RULE_TEXT } from "./fixture-memory-seed.ts";
+export { FIXTURE_CONVERSATIONS, FIXTURE_MEMORY_ITEMS, FIXTURE_RATING_NOTE, FIXTURE_RULE_TEXT } from "./fixture-memory-seed.ts";
 export const FIXTURE_MEMORY_TEXT = "Chem club is a club, not a class";
+/** Story 13.11: the "What was off?" note the rating spec sends; the memory LLM files it to Feedback. */
 const memoryLlmClient: AnthropicMessagesClient = {
   messages: {
     create: (async (params: { readonly messages: unknown }) => {
@@ -294,6 +301,8 @@ const memoryLlmClient: AnthropicMessagesClient = {
       const typed = prompt.slice(prompt.indexOf("Spencer's message:") + 1);
       const reply = /Chem club/.test(typed)
         ? JSON.stringify([{ folder: "corrections", text: FIXTURE_MEMORY_TEXT, origin: "stated" }])
+        : typed.includes(FIXTURE_RATING_NOTE)
+          ? JSON.stringify([{ folder: "feedback", text: FIXTURE_RATING_NOTE, origin: "stated" }])
         : /2:30 on school days/.test(typed)
           ? JSON.stringify([{ folder: "planning-preferences", text: FIXTURE_RULE_TEXT, origin: "stated", ruleChange: { key: "schoolDayWorkStart", value: "14:30" } }])
           : "[]";
@@ -350,6 +359,10 @@ const runChatTurn: ChatTurnFn = async (deps, input) => {
     if (!card) return { ok: true, value: { reply: "Nothing's missing a Due Date or Duration.", receipts: [] } };
     return { ok: true, value: { reply: "", receipts: [], sandboxCard: card } };
   }
+  // Story 13.11: `/morning` is a substantive turn, so the rating schedule may prompt after it.
+  if (input.message.trim() === "/morning") {
+    return { ok: true, value: { reply: "Fixture morning.", receipts: [], substantive: true } };
+  }
   const memoryCommand = recognizeMemoryCommand(input.message);
   if (memoryCommand?.kind === "remember") {
     return { ok: true, value: { reply: "Got it.", receipts: [], memory: { kind: "remember", text: memoryCommand.text } } };
@@ -381,6 +394,7 @@ const chat = {
   connection,
   runChatTurn,
   memoryLlmClient,
+  ratingDraw: () => 0,
   createPage: (database: string, properties: Record<string, string>) =>
     notionCreatePage(notionCreate.client, NOTION_CREATE_CONFIG, database as never, properties),
 } as unknown as NonNullable<ServerDeps["chat"]>;
@@ -511,7 +525,7 @@ const handle = startServer(
         return url.pathname === "/__fixture/state" ? fixtureState(url) : options.fetch(request);
       },
     }),
-  { homeView, calendarDay, checkOff, plan: reshufflePlanDeps, planSync: planSyncDeps, chat, chatHistory, memoryItems, tasks: tasksPage, research, sandbox },
+  { homeView, calendarDay, checkOff, plan: reshufflePlanDeps, planSync: planSyncDeps, chat, chatHistory, memoryItems, ratings, tasks: tasksPage, research, sandbox },
 );
 const sweep = startCheckOffCommitSweep({ connection, ...checkOff, now: () => new Date() }, { log: quiet });
 

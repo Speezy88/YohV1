@@ -30,6 +30,17 @@ import type { ChatStreamEvent, ChatTurnRequest, OpenItem, OpenItemQuestion, Reme
 /** Story 13.4: a Remembered Receipt offers Undo (`undoable`) until Spencer's next message (`settled`), or shows the outcome of an Undo (`removed`). */
 export type ReceiptState = "undoable" | "removed" | "settled";
 
+/**
+ * Story 13.11: the "How is Yoh doing?" prompt under a reply. `answered` is the
+ * folded "Rated N" line, `note` (score 1) also shows the optional note field,
+ * `done` is the folded line after Send or Skip, `dismissed` renders nothing.
+ */
+export interface MessageRating {
+  readonly promptId: string;
+  readonly phase: "open" | "answered" | "note" | "done" | "dismissed";
+  readonly score?: 1 | 2 | 3;
+}
+
 export interface ChatViewMessage {
   readonly id: string;
   readonly role: "user" | "assistant";
@@ -47,6 +58,8 @@ export interface ChatViewMessage {
   readonly receiptState?: ReceiptState;
   /** The server's message after an Undo, or a refusal. */
   readonly receiptNote?: string;
+  /** Story 13.11: the `rating` event's prompt. */
+  readonly rating?: MessageRating;
 }
 
 /** One entry in the chat stream: an ordinary turn, (Story 9.2) an inline Sandbox Card, or (Story 9.3) the session-ending Finale. */
@@ -199,6 +212,27 @@ export function setReceiptOutcome(messageId: string, receiptState: ReceiptState,
   patchMessage(messageId, () => ({ receiptState, ...(receiptNote !== undefined ? { receiptNote } : {}) }));
 }
 
+/** Story 13.11: folds a change into one message's rating prompt. */
+export function setMessageRating(messageId: string, patch: Partial<MessageRating>): void {
+  patchMessage(messageId, (m) => (m.rating ? { rating: { ...m.rating, ...patch } } : {}));
+}
+
+/** Story 13.11: a note that filed to memory is that message's Remembered Receipt (Undo until the next message). */
+export function setMessageReceipt(messageId: string, receipt: RememberedReceipt): void {
+  patchMessage(messageId, () => ({ receipt, receiptState: "undoable" as const }));
+}
+
+/** Story 13.11: a new message closes an open prompt locally; the server records the dismissal itself. */
+function dismissOpenRatings(): void {
+  if (!messageEntries(state.entries).some((e) => e.message.rating?.phase === "open")) return;
+  set({
+    ...state,
+    entries: state.entries.map((e) =>
+      e.kind === "message" && e.message.rating?.phase === "open" ? { ...e, message: { ...e.message, rating: { ...e.message.rating, phase: "dismissed" as const } } } : e,
+    ),
+  });
+}
+
 function appendMessage(message: ChatViewMessage): void {
   set({ ...state, entries: [...state.entries, { kind: "message", id: message.id, message }] });
 }
@@ -253,6 +287,7 @@ export async function send(message: string): Promise<void> {
   const assistantId = `chat-${++nextId}`;
   const request: ChatTurnRequest = { message: trimmed };
   settleUndoableReceipts();
+  dismissOpenRatings();
   appendMessage({ id: userId, role: "user", text: trimmed, receipts: [], status: "done" });
   appendMessage({ id: assistantId, role: "assistant", text: "", receipts: [], status: "streaming", statusText: INITIAL_STATUS_TEXT });
   set({ ...state, draft: "", sending: true });
@@ -280,6 +315,9 @@ export async function send(message: string): Promise<void> {
         return;
       case "proposal":
         appendProposalQuestion(event.question);
+        return;
+      case "rating":
+        patchMessage(assistantId, () => ({ rating: { promptId: event.promptId, phase: "open" as const } }));
         return;
       case "error":
         patchMessage(assistantId, () => ({ status: "error", errorText: event.error.message }));

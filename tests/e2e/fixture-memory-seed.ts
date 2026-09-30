@@ -21,6 +21,9 @@ export interface FixtureMemoryItem {
   readonly sourceTurn?: number;
 }
 
+/** Story 13.11: the "What was off?" note the rating spec sends. */
+export const FIXTURE_RATING_NOTE = "The plan was too wordy";
+
 export const FIXTURE_MEMORY_ITEMS: readonly FixtureMemoryItem[] = [
   { key: "about", folder: "about-you", text: "Runs before school on weekdays", origin: "stated", sourceTurn: 0 },
   { key: "feedback", folder: "feedback", text: "Keep answers short in the morning", origin: "stated", scope: "mornings" },

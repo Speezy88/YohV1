@@ -53,7 +53,7 @@ export async function rate(deps: RateDeps, input: RatingRequest): Promise<Result
 
 async function fileNote(deps: RateDeps, note: string, today: string): Promise<RememberedReceipt> {
   const failed: RememberedReceipt = { receiptId: randomUUID(), kind: "remembered", items: [] };
-  if (!deps.memoryItems || !deps.llmClient) return failed;
+  if (!deps.memoryItems || !(deps.memoryLlmClient ?? deps.llmClient)) return failed;
   try {
     const turns = deps.chatHistory?.turnsForDate(today) ?? [];
     const last = turns[turns.length - 1];

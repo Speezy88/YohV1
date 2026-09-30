@@ -50,10 +50,11 @@ import Markdown from "react-markdown";
 import { ThinkingIndicator } from "./ThinkingIndicator.tsx";
 import { StructuredQuestion } from "./StructuredQuestion.tsx";
 import { HONEST_REJECTION, submitOpenItemAnswer } from "../lib/openItems.ts";
-import { recordAnsweredOpenItem, resolveMessageQuestion } from "../lib/chatStore.ts";
+import { recordAnsweredOpenItem, resolveMessageQuestion, setMessageRating, setMessageReceipt } from "../lib/chatStore.ts";
 import type { ChatViewMessage } from "../lib/chatStore.ts";
 import { useOpenInMemory } from "../lib/memoryApi.ts";
 import { RememberedReceipt } from "./RememberedReceipt.tsx";
+import { RatingPrompt } from "./RatingPrompt.tsx";
 import type { OpenItemQuestion } from "../../../src/types/api.ts";
 
 export interface ChatMessageProps {
@@ -189,6 +190,13 @@ export function ChatMessage({ message }: ChatMessageProps): React.JSX.Element | 
         ))}
         {!isUser && message.status === "done" && (
           <RememberedReceipt messageId={message.id} receipt={message.receipt} state={message.receiptState ?? "settled"} note={message.receiptNote} />
+        )}
+        {!isUser && message.status === "done" && message.rating && (
+          <RatingPrompt
+            rating={message.rating}
+            onChange={(patch) => setMessageRating(message.id, patch)}
+            onReceipt={(receipt) => setMessageReceipt(message.id, receipt)}
+          />
         )}
         {showQuestion && (
           <>

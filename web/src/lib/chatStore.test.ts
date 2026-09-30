@@ -16,6 +16,8 @@ import {
   resolveMessageQuestion,
   send,
   setDraft,
+  setMessageRating,
+  setMessageReceipt,
   updateStreamEntry,
   useChatStore,
 } from "./chatStore.ts";
@@ -340,6 +342,50 @@ describe("chatStore", () => {
         updateStreamEntry(id, "sandbox-finale", { status: "done" });
       });
       expect(result.current.entries.find((e) => e.id === id)).toMatchObject({ kind: "sandbox-card", status: "pending" });
+    });
+  });
+  describe("Rating prompt (Story 13.11)", () => {
+    it("a rating event opens a prompt on the assistant message", async () => {
+      const stream = controllableStream();
+      const { result } = renderHook(() => useChatStore());
+      act(() => void send("/morning"));
+      stream.emit({ type: "done", response: { reply: "Fixture morning.", receipts: [] } });
+      stream.emit({ type: "rating", promptId: "p1" });
+      await stream.finish();
+      expect(messagesOf(result.current)[1]).toMatchObject({ rating: { promptId: "p1", phase: "open" } });
+    });
+
+    it("the next send() marks an open prompt dismissed locally but leaves a folded one alone", async () => {
+      let stream = controllableStream();
+      const { result } = renderHook(() => useChatStore());
+      act(() => void send("/morning"));
+      stream.emit({ type: "done", response: { reply: "a", receipts: [] } });
+      stream.emit({ type: "rating", promptId: "p1" });
+      await stream.finish();
+      act(() => setMessageRating(messagesOf(result.current)[1]!.id, { phase: "answered", score: 3 }));
+      stream = controllableStream();
+      act(() => void send("/night"));
+      stream.emit({ type: "done", response: { reply: "b", receipts: [] } });
+      stream.emit({ type: "rating", promptId: "p2" });
+      await stream.finish();
+      stream = controllableStream();
+      act(() => void send("thanks"));
+      const msgs = messagesOf(result.current);
+      expect(msgs[1]!.rating).toMatchObject({ phase: "answered", score: 3 });
+      expect(msgs[3]!.rating).toMatchObject({ phase: "dismissed" });
+      stream.emit({ type: "done", response: { reply: "c", receipts: [] } });
+      await stream.finish();
+    });
+
+    it("setMessageReceipt stores an undoable receipt on the message", async () => {
+      const stream = controllableStream();
+      const { result } = renderHook(() => useChatStore());
+      act(() => void send("/morning"));
+      stream.emit({ type: "done", response: { reply: "a", receipts: [] } });
+      await stream.finish();
+      const receipt = { receiptId: "r9", kind: "remembered" as const, items: [] };
+      act(() => setMessageReceipt(messagesOf(result.current)[1]!.id, receipt));
+      expect(messagesOf(result.current)[1]).toMatchObject({ receipt, receiptState: "undoable" });
     });
   });
   describe("Remembered Receipt (Story 13.4)", () => {
