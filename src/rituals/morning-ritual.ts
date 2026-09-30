@@ -952,7 +952,7 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
   const reasoning = generatePlanReasoning({
     tasks: candidates,
     today,
-    eligibleTaskIds: plannedTaskIds,
+    eligibleTaskIds: plannedTaskIds, areaPadding: settings.areaDurationPadding,
     ...(deps.bumpLevels ? { bumpLevels: deps.bumpLevels } : {}),
   });
   if (!reasoning.ok) {

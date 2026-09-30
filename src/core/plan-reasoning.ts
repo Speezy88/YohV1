@@ -72,7 +72,7 @@
  * template) -- documented here and in this task's report for visibility.
  */
 import { computeDerivedPriorityFactors, type DerivedPriorityFactors } from "./derived-priority.ts";
-import type { CompleteTask, ExternalId, IsoDate, Result, YohError } from "../types/domain.ts";
+import type { Area, CompleteTask, ExternalId, IsoDate, Result, YohError } from "../types/domain.ts";
 
 // ============================================================================
 // Public input shape
@@ -121,6 +121,12 @@ export interface GeneratePlanReasoningInput {
    * Plan" and produces its own honest line that claims no lead at all.
    */
   readonly eligibleTaskIds?: ReadonlySet<ExternalId>;
+  /**
+   * Confirmed `areaDurationPadding` settings (Story 13.13, E1). When set, a
+   * deterministic sentence citing the padding is appended for each Area that
+   * has an included Task and padding > 0. Absent or empty: no change.
+   */
+  readonly areaPadding?: Readonly<Partial<Record<Area, number>>>;
 }
 
 // ============================================================================
@@ -163,6 +169,39 @@ function formatFactorList(factors: readonly string[]): string {
  * `ok: true`, including an empty one.
  */
 export function generatePlanReasoning(input: GeneratePlanReasoningInput): Result<string, YohError> {
+  const base = generateBaseReasoning(input);
+  if (!base.ok) return base;
+  const citation = describeAreaPadding(input);
+  return citation ? { ok: true, value: `${base.value} ${citation}` } : base;
+}
+
+function joinAreas(areas: readonly string[]): string {
+  if (areas.length <= 2) return areas.join(" and ");
+  return `${areas.slice(0, -1).join(", ")}, and ${areas[areas.length - 1]}`;
+}
+
+/** One deterministic sentence per distinct padding amount, for Areas of Tasks that actually got a block. */
+function describeAreaPadding(input: GeneratePlanReasoningInput): string {
+  const padding = input.areaPadding;
+  if (!padding) return "";
+  const included = new Set<string>();
+  for (const task of input.tasks) {
+    if (task.area.kind !== "set") continue;
+    if (input.eligibleTaskIds !== undefined && !input.eligibleTaskIds.has(task.id)) continue;
+    included.add(task.area.value);
+  }
+  const byMinutes = new Map<number, string[]>();
+  for (const area of [...included].sort()) {
+    const minutes = padding[area as Area];
+    if (minutes === undefined || minutes <= 0) continue;
+    byMinutes.set(minutes, [...(byMinutes.get(minutes) ?? []), area]);
+  }
+  return [...byMinutes.entries()]
+    .map(([minutes, areas]) => `Blocks for ${joinAreas(areas)} Tasks include ${minutes} extra minutes, per the padding you approved.`)
+    .join(" ");
+}
+
+function generateBaseReasoning(input: GeneratePlanReasoningInput): Result<string, YohError> {
   const { tasks, today, bumpLevels, eligibleTaskIds } = input;
 
   // Derivation: always across the FULL candidate set, per this function's

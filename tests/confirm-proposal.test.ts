@@ -709,3 +709,121 @@ test("rule-change: a gone item (purged) never strands the card on decline, expir
   assert.ok(!s.ok && s.error.kind === "stale-proposal");
   assert.equal(getOpenInteractionRequest(stale.store, stale.requestId), undefined);
 });
+
+// ---- pattern (Story 13.13) ---------------------------------------------------
+import type { PatternProposal } from "../src/types/domain.ts";
+
+function patternHarness(kind: "area-overrun" | "area-slips" = "area-overrun", now = new Date(NOW)) {
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db);
+  initMemoryItemStoreSchema(connection.db);
+  const store = createMemoryStore(connection);
+  const memoryItems = createMemoryItemStore(connection);
+  const suggested: PatternProposal = {
+    kind,
+    area: "History",
+    occurrences: 5,
+    firstSeen: "2026-08-01",
+    lastSeen: "2026-08-20",
+    sampleDates: ["2026-08-01", "2026-08-20"],
+    ...(kind === "area-overrun" ? { paddingMinutes: 30 } : {}),
+  };
+  const id = "pattern-1";
+  const proposal: Proposal<PatternProposal> = {
+    id,
+    kind: "pattern",
+    entityId: `${kind}::History`,
+    entityVersion: "new",
+    suggested,
+    reason: "Yoh noticed History Tasks run about 30 min over.\n5 times since Aug 1: Aug 1, Aug 20\nPlan for that?",
+    createdAt: NOW,
+  };
+  const requestId = `proposal:${id}`;
+  putOpenInteractionRequest(store, requestId, { requestKind: "proposal", promptText: proposal.reason, detail: { proposal }, createdAt: NOW });
+  memoryItems.putPatternState({ kind, area: "History", pendingProposalId: id });
+  const deps: ConfirmProposalDeps = { store, connection, memoryItems, now: () => now };
+  const padding = () => store.withDb(readPlanningSettings).areaDurationPadding["History"] ?? 0;
+  return { deps, store, connection, memoryItems, proposal, requestId, padding };
+}
+
+test("pattern: Yes on an overrun writes the padding, files a Patterns item, clears pending, replies with a receipt", async () => {
+  const h = patternHarness();
+  const r = await confirmProposal(h.deps, { proposal: h.proposal, accept: true, requestId: h.requestId });
+  assert.ok(r.ok);
+  if (!r.ok) return;
+  assert.equal(r.value.applied, true);
+  assert.equal(r.value.message, "Planning 30 extra min for History Tasks. Revert it on the Memory page.");
+  assert.equal(h.padding(), 30);
+  const items = h.memoryItems.listItems({ folders: ["patterns"] });
+  assert.equal(items.length, 1);
+  assert.equal(items[0]?.text, "History Tasks run about 30 min over.");
+  assert.equal(items[0]?.origin, "inferred");
+  assert.equal(items[0]?.ruleChange, "confirmed");
+  assert.equal(r.value.receipt?.kind, "remembered");
+  assert.equal(r.value.receipt?.items[0]?.id, items[0]?.id);
+  assert.equal(r.value.receipt?.items[0]?.folder, "patterns");
+  const state = h.memoryItems.getPatternState("area-overrun", "History");
+  assert.equal(state?.pendingProposalId, undefined);
+  assert.equal(state?.confirmedAt, NOW);
+  assert.equal(getOpenInteractionRequest(h.store, h.requestId), undefined);
+});
+
+test("pattern: Yes on slips files a Patterns item only", async () => {
+  const h = patternHarness("area-slips");
+  const r = await confirmProposal(h.deps, { proposal: h.proposal, accept: true, requestId: h.requestId });
+  assert.ok(r.ok);
+  if (!r.ok) return;
+  assert.equal(r.value.message, "Noted.");
+  assert.equal(h.padding(), 0);
+  const items = h.memoryItems.listItems({ folders: ["patterns"] });
+  assert.equal(items[0]?.ruleChange, "none");
+  assert.equal(items[0]?.text, "History Tasks keep slipping to the next day.");
+});
+
+test("pattern: No files nothing and sets declinedAt", async () => {
+  const h = patternHarness();
+  const r = await confirmProposal(h.deps, { proposal: h.proposal, accept: false, requestId: h.requestId });
+  assert.ok(r.ok);
+  if (r.ok) {
+    assert.equal(r.value.applied, false);
+    assert.equal(r.value.message, "Okay. I won't ask about that again for a while.");
+  }
+  assert.equal(h.padding(), 0);
+  assert.equal(h.memoryItems.listItems({ folders: ["patterns"] }).length, 0);
+  const state = h.memoryItems.getPatternState("area-overrun", "History");
+  assert.equal(state?.pendingProposalId, undefined);
+  assert.equal(state?.declinedAt, NOW);
+  assert.equal(getOpenInteractionRequest(h.store, h.requestId), undefined);
+});
+
+test("pattern: a Yes after pattern_state moved on is stale and writes nothing", async () => {
+  const h = patternHarness();
+  h.memoryItems.putPatternState({ kind: "area-overrun", area: "History", declinedAt: NOW });
+  const r = await confirmProposal(h.deps, { proposal: h.proposal, accept: true, requestId: h.requestId });
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.equal(r.error.kind, "stale-proposal");
+  assert.equal(h.padding(), 0);
+  assert.equal(h.memoryItems.listItems({ folders: ["patterns"] }).length, 0);
+  assert.equal(getOpenInteractionRequest(h.store, h.requestId), undefined);
+});
+
+test("pattern: an expired Yes (7 days) is withdrawn as declined", async () => {
+  const h = patternHarness("area-overrun", new Date("2026-09-01T09:00:00.000Z"));
+  const r = await confirmProposal(h.deps, { proposal: h.proposal, accept: true, requestId: h.requestId });
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.equal(r.error.kind, "stale-proposal");
+  assert.equal(h.padding(), 0);
+  const state = h.memoryItems.getPatternState("area-overrun", "History");
+  assert.equal(state?.pendingProposalId, undefined);
+  assert.equal(state?.declinedAt, "2026-09-01T09:00:00.000Z");
+  assert.equal(getOpenInteractionRequest(h.store, h.requestId), undefined);
+});
+
+test("pattern: an invalid padding is a validation failure and writes nothing", async () => {
+  const h = patternHarness();
+  const bad = { ...h.proposal, suggested: { ...h.proposal.suggested, paddingMinutes: 33 } };
+  const r = await confirmProposal(h.deps, { proposal: bad, accept: true, requestId: h.requestId });
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.equal(r.error.kind, "validation");
+  assert.equal(h.memoryItems.listItems({ folders: ["patterns"] }).length, 0);
+});

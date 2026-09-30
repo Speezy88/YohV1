@@ -827,6 +827,9 @@ export function createApp(deps: ServerDeps) {
       ...rest,
       ...(deps.chatHistory ? { chatHistory: deps.chatHistory } : {}),
       ...(deps.memoryItems ? { memoryItems: deps.memoryItems } : {}),
+      // Rule-change and pattern Yes answers write settings + memory in one transaction.
+      connection: (rest as { connection?: SqliteConnection }).connection ?? deps.connection,
+      now: rest.now ?? deps.clock ?? (() => new Date()),
       ...(deps.ratings ? { ratings: deps.ratings } : {}),
       session: chatSession,
     };

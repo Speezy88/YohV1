@@ -26,6 +26,7 @@
  * rather than throwing (this codebase's existing "throws only if actually
  * invoked" injection convention).
  */
+import { randomUUID } from "node:crypto";
 import {
   clearInteractionRequest,
   clearTimeBudgetDeferralStreak,
@@ -43,7 +44,8 @@ import { readPlanningSettings, writeSettingInTx } from "../adapters/settings-sto
 import { appendOutboxInTx } from "../adapters/notification-store.ts";
 import type { SqliteConnection } from "../adapters/sqlite.ts";
 import { currentRuleValue, validateProposedRuleValue } from "../core/planning-settings.ts";
-import { isOlderThanDays, RULE_PROPOSAL_TTL_DAYS } from "../core/proposal-ttl.ts";
+import { describePattern } from "../core/pattern-detect.ts";
+import { isOlderThanDays, PATTERN_PROPOSAL_TTL_DAYS, RULE_PROPOSAL_TTL_DAYS } from "../core/proposal-ttl.ts";
 import { ruleChangeConfirmedCopy, ruleChangeDeclinedCopy, ruleValuesEqual } from "../core/rule-change.ts";
 import { parsePlanningFieldValue, PLANNING_FIELD_LABELS } from "../core/planning-field-value.ts";
 import { localIsoDate } from "../rituals/ritual-shared.ts";
@@ -58,7 +60,9 @@ import type {
   Proposal,
   ReshufflePreview,
   Result,
+  PatternProposal,
   RuleChange,
+  RuleSettingValue,
   Task,
   TaskFieldOverride,
   TimeBudget,
@@ -208,6 +212,16 @@ function timeBudgetEntityAccessor(store: MemoryStore): ProposalEntityAccessor<Pa
 // confirmProposal — the single confirm path (this story's own new logic)
 // ============================================================================
 
+/** Structural twin of the memory-item store's PatternState (this file may not import that store). */
+interface PatternStateLike {
+  kind: string;
+  area: string;
+  pendingProposalId?: string;
+  declinedAt?: string;
+  lastOfferedOn?: string;
+  confirmedAt?: string;
+}
+
 export interface ConfirmProposalDeps {
   readonly store: MemoryStore;
   /** `notion-adapter.ts`'s `updateTaskField`, pre-bound to its client/config — required only for the `"field-value"` kind. */
@@ -232,7 +246,13 @@ export interface ConfirmProposalDeps {
   /** Required only for the `"reshuffle"` kind: everything `approveReshuffle` needs besides `store`. */
   readonly reshuffle?: Omit<ApproveReshuffleDeps, "store">;
   /** Required only for the `"rule-change"` kind: marks the raising memory item confirmed/declined. */
-  readonly memoryItems?: { setRuleChange(id: string, ruleChange: "none" | "pending" | "confirmed" | "declined"): void };
+  readonly memoryItems?: {
+    setRuleChange(id: string, ruleChange: "none" | "pending" | "confirmed" | "declined"): void;
+    /** Required only for the `"pattern"` kind. */
+    insert?(input: { folder: "patterns"; text: string; origin: "inferred"; ruleChange: "none" | "confirmed"; at?: string }): { readonly id: string };
+    getPatternState?(kind: string, area: string): PatternStateLike | undefined;
+    putPatternState?(state: PatternStateLike): void;
+  };
   /** Clock for the rule-change 7-day expiry; defaults to the real clock. */
   readonly now?: () => Date;
 }
@@ -327,6 +347,80 @@ function confirmRuleChange(
   return { ok: true, value: { applied: true, receipts: [], message: ruleChangeConfirmedCopy(change) } };
 }
 
+/**
+ * `"pattern"` (Story 13.13): a Yes files a Patterns item (and, for an
+ * overrun, the `areaDurationPadding` override) in ONE transaction; a No,
+ * an expiry or a moved-on `pattern_state` writes nothing. Reads no memory text.
+ */
+function confirmPattern(
+  deps: ConfirmProposalDeps,
+  proposal: Proposal<PatternProposal>,
+  accept: boolean,
+  requestId: string | undefined,
+): Result<ConfirmProposalResponse, YohError> {
+  const p = proposal.suggested;
+  const items = deps.memoryItems;
+  if (!deps.connection || !items?.insert || !items.getPatternState || !items.putPatternState) {
+    clearRequestIfGiven(deps.store, requestId);
+    return missingDependency(proposal.kind, deps.connection ? "memoryItems" : "connection");
+  }
+  const { insert, getPatternState, putPatternState } = items;
+  const now = deps.now ? deps.now() : new Date();
+  const nowIso = now.toISOString();
+  const existing = getPatternState.call(items, p.kind, p.area) ?? { kind: p.kind, area: p.area };
+  const { pendingProposalId: _pending, ...rest } = existing;
+  if (!accept) {
+    clearRequestIfGiven(deps.store, requestId);
+    if (existing.pendingProposalId === proposal.id) putPatternState.call(items, { ...rest, declinedAt: nowIso });
+    return { ok: true, value: { applied: false, receipts: [], message: "Okay. I won't ask about that again for a while." } };
+  }
+  if (isOlderThanDays(proposal.createdAt, now, PATTERN_PROPOSAL_TTL_DAYS)) {
+    clearRequestIfGiven(deps.store, requestId);
+    if (existing.pendingProposalId === proposal.id) putPatternState.call(items, { ...rest, declinedAt: nowIso });
+    return staleRuleProposal("confirm-proposal: that pattern expired");
+  }
+  if (existing.pendingProposalId !== proposal.id) {
+    clearRequestIfGiven(deps.store, requestId);
+    return staleRuleProposal("confirm-proposal: that pattern is no longer pending");
+  }
+  const overrun = p.kind === "area-overrun";
+  let padding: RuleSettingValue | undefined;
+  if (overrun) {
+    const settings = deps.store.withDb(readPlanningSettings);
+    const checked = validateProposedRuleValue(settings, "areaDurationPadding", { area: p.area, minutes: p.paddingMinutes ?? 0 });
+    if (!checked.ok) {
+      clearRequestIfGiven(deps.store, requestId);
+      return checked;
+    }
+    padding = checked.value;
+  }
+  const text = describePattern(p).headline.replace(/^Yoh noticed /, "");
+  let itemId: string;
+  try {
+    itemId = deps.connection.writeTx((db) => {
+      if (padding !== undefined) {
+        writeSettingInTx(db, "areaDurationPadding", padding);
+        appendOutboxInTx(db, { topic: MEMORY_TOPIC, entityId: "areaDurationPadding" });
+      }
+      const item = insert.call(items, { folder: "patterns", text, origin: "inferred", ruleChange: overrun ? "confirmed" : "none", at: nowIso });
+      putPatternState.call(items, { ...rest, confirmedAt: nowIso });
+      return item.id;
+    });
+  } catch (error) {
+    return { ok: false, error: { kind: "unreachable", message: error instanceof Error ? error.message : "confirm-proposal: pattern failed" } };
+  }
+  clearRequestIfGiven(deps.store, requestId);
+  return {
+    ok: true,
+    value: {
+      applied: true,
+      receipts: [],
+      message: overrun ? `Planning ${p.paddingMinutes ?? 0} extra min for ${p.area} Tasks. Revert it on the Memory page.` : "Noted.",
+      receipt: { receiptId: randomUUID(), kind: "remembered", items: [{ id: itemId, text, folder: "patterns" }] },
+    },
+  };
+}
+
 export async function confirmProposal(
   deps: ConfirmProposalDeps,
   input: ConfirmProposalInput,
@@ -394,6 +488,10 @@ export async function confirmProposal(
 
   if (proposal.kind === "rule-change") {
     return confirmRuleChange(deps, proposal as Proposal<RuleChange>, accept, requestId);
+  }
+
+  if (proposal.kind === "pattern") {
+    return confirmPattern(deps, proposal as Proposal<PatternProposal>, accept, requestId);
   }
 
   // Every other kind: extracted-payload write functions, no generic

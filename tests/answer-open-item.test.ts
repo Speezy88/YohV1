@@ -9,6 +9,7 @@ import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { createChatStore, initChatStoreSchema } from "../src/adapters/chat-store.ts";
 import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
 import { answerOpenItem } from "../src/app/answer-open-item.ts";
+import { createMemoryItemStore, initMemoryItemStoreSchema } from "../src/adapters/memory-item-store.ts";
 
 function tempStore() {
   const c = openSqliteConnection({ databasePath: ":memory:" });
@@ -269,4 +270,26 @@ test("answerOpenItem still returns its Result when the chat store throws (E5)", 
   assert.equal(result.ok, true);
   assert.equal(logged.length > 0, true);
   store.close();
+});
+
+test("answerOpenItem passes a pattern Yes's message and receipt through", async () => {
+  const c = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(c.db);
+  initMemoryItemStoreSchema(c.db);
+  const store = createMemoryStore(c);
+  const memoryItems = createMemoryItemStore(c);
+  const now = new Date("2026-08-24T09:00:00.000Z");
+  const proposal = {
+    id: "pattern-1", kind: "pattern", entityId: "area-slips::History", entityVersion: "new", reason: "r", createdAt: now.toISOString(),
+    suggested: { kind: "area-slips", area: "History", occurrences: 5, firstSeen: "2026-08-01", lastSeen: "2026-08-20", sampleDates: ["2026-08-01"] },
+  };
+  putOpenInteractionRequest(store, "proposal:pattern-1", { requestKind: "proposal", promptText: "r", detail: { proposal, cursor: { questionId: "confirm" } }, createdAt: now.toISOString() });
+  memoryItems.putPatternState({ kind: "area-slips", area: "History", pendingProposalId: "pattern-1" });
+  const result = await answerOpenItem({ ...fullDeps(store), connection: c, memoryItems, now: () => now }, { requestId: "proposal:pattern-1", questionId: "confirm", answer: "yes" });
+  assert.ok(result.ok);
+  if (!result.ok) return;
+  assert.equal(result.value.message, "Noted.");
+  assert.equal(result.value.receipt?.items[0]?.folder, "patterns");
+  assert.equal(result.value.next, "done");
+  c.close();
 });

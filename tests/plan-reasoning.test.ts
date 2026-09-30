@@ -345,3 +345,41 @@ test("plan reasoning mentions Priority only when it changed the order", () => {
   const unchanged = generatePlanReasoning({ tasks: [mk("a", "2026-08-23", "High"), mk("b", "2026-08-25")], today: TODAY });
   assert.ok(unchanged.ok && !unchanged.value.includes("priority"));
 });
+
+// ---- areaPadding (Story 13.13) ---------------------------------------------
+const PADDING_SENTENCE = (areas: string) => `Blocks for ${areas} Tasks include`;
+
+test("areaPadding: cites the approved padding for an Area that got a block", () => {
+  const a = makeCompleteTask("a", { title: "Essay", area: "History", dueDate: "2026-08-24" });
+  const b = makeCompleteTask("b", { title: "Inbox", area: "Work", dueDate: "2026-08-30" });
+  const base = generatePlanReasoning({ tasks: [a, b], today: TODAY });
+  const r = generatePlanReasoning({ tasks: [a, b], today: TODAY, areaPadding: { History: 30 } as never });
+  assert.ok(base.ok && r.ok);
+  assert.equal(r.value, `${base.value} Blocks for History Tasks include 30 extra minutes, per the padding you approved.`);
+});
+
+test("areaPadding: several Areas are sorted and joined; one distinct amount each is stated per Area group", () => {
+  const a = makeCompleteTask("a", { area: "History" });
+  const b = makeCompleteTask("b", { area: "Work" });
+  const r = generatePlanReasoning({ tasks: [a, b], today: TODAY, areaPadding: { History: 30, Work: 30 } as never });
+  assert.ok(r.ok);
+  assert.match(r.value, /Blocks for History and Work Tasks include 30 extra minutes, per the padding you approved\.$/);
+});
+
+test("areaPadding: an Area whose Task was deferred (not eligible) or with 0 padding is not cited", () => {
+  const a = makeCompleteTask("a", { area: "History" });
+  const b = makeCompleteTask("b", { area: "Work" });
+  const base = generatePlanReasoning({ tasks: [a, b], today: TODAY, eligibleTaskIds: new Set(["b"]) });
+  const r = generatePlanReasoning({ tasks: [a, b], today: TODAY, eligibleTaskIds: new Set(["b"]), areaPadding: { History: 30, Work: 0 } as never });
+  assert.ok(base.ok && r.ok);
+  assert.equal(r.value, base.value);
+  assert.doesNotMatch(r.value, new RegExp(PADDING_SENTENCE("History")));
+});
+
+test("areaPadding: absent or empty leaves the text byte-identical", () => {
+  const a = makeCompleteTask("a", { area: "History" });
+  const base = generatePlanReasoning({ tasks: [a], today: TODAY });
+  const r = generatePlanReasoning({ tasks: [a], today: TODAY, areaPadding: {} as never });
+  assert.ok(base.ok && r.ok);
+  assert.equal(r.value, base.value);
+});

@@ -359,6 +359,8 @@ export interface AnswerOpenItemResponse {
   readonly message?: string;
   readonly receipts: readonly string[];
   readonly next: OpenItemQuestion | "done";
+  /** A pattern Yes: what was filed (not persisted; no Undo, Revert lives on the Memory page). */
+  readonly receipt?: RememberedReceipt;
 }
 
 // ============================================================================
@@ -381,6 +383,8 @@ export interface ConfirmProposalResponse {
   readonly question?: OpenItemQuestion;
   /** Copy that replaces the generic reply (a rule-change answer). */
   readonly message?: string;
+  /** A pattern Yes: what was filed (not persisted; no Undo). */
+  readonly receipt?: RememberedReceipt;
 }
 
 // ============================================================================

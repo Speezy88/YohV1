@@ -107,6 +107,7 @@ async function answerProposalOpenItem(
           ? {}
           : { message: "Okay — I won't make that change." }),
       receipts: result.value.receipts,
+      ...(result.value.receipt ? { receipt: result.value.receipt } : {}),
       next: result.value.question ?? "done",
     },
   };
