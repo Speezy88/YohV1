@@ -1278,7 +1278,7 @@ export function createApp(deps: ServerDeps) {
         }),
         async (c) => {
           if (!deps.memoryItems || !deps.chatHistory) return c.json(MEMORY_NOT_CONFIGURED, httpStatus(MEMORY_NOT_CONFIGURED));
-          const result = wire(await undoMemoryReceipt({ memoryItems: deps.memoryItems, chatHistory: deps.chatHistory }, c.req.valid("json")));
+          const result = wire(await undoMemoryReceipt({ memoryItems: deps.memoryItems, chatHistory: deps.chatHistory, ...(deps.chat?.store ? { store: deps.chat.store } : {}) }, c.req.valid("json")));
           return c.json(result, httpStatus(result));
         },
       )

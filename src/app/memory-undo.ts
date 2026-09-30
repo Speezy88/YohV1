@@ -1,5 +1,6 @@
 /** `POST /api/memory/undo` (Story 13.4): reverse a Remembered Receipt while no later user turn exists. */
 import type { ChatStore } from "../adapters/chat-store.ts";
+import { withdrawRuleProposal, type MemoryStore } from "../adapters/memory-store.ts";
 import type { MemoryItemStore } from "../adapters/memory-item-store.ts";
 import { errorCopyForThrown } from "../core/error-copy.ts";
 import type { UndoMemoryRequest, UndoMemoryResponse } from "../types/api.ts";
@@ -8,6 +9,8 @@ import type { Result, YohError } from "../types/domain.ts";
 export interface UndoMemoryDeps {
   readonly memoryItems: MemoryItemStore;
   readonly chatHistory: ChatStore;
+  /** Open-request store: undoing a filing withdraws its pending rule-change Proposal. */
+  readonly store?: MemoryStore;
 }
 
 const conflict = (message: string): Result<never, YohError> => ({ ok: false, error: { kind: "conflict", message } });
@@ -18,7 +21,10 @@ export async function undoMemoryReceipt(deps: UndoMemoryDeps, input: UndoMemoryR
     if (!receipt || receipt.undoneAt) return conflict("That can't be undone any more.");
     if (deps.chatHistory.hasUserTurnAfter(receipt.conversationId, receipt.userTurnId)) return conflict("That can't be undone any more.");
     if (receipt.kind === "remembered") {
-      for (const id of receipt.itemIds) deps.memoryItems.undoFiling(id);
+      for (const id of receipt.itemIds) {
+        deps.memoryItems.undoFiling(id);
+        if (deps.store) withdrawRuleProposal(deps.store, id);
+      }
     } else {
       deps.memoryItems.restore(receipt.chainIds);
     }

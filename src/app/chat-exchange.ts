@@ -13,12 +13,11 @@
 import { randomUUID } from "node:crypto";
 import { localIsoDate } from "../rituals/ritual-shared.ts";
 import type { StoredChatTurn } from "../adapters/chat-store.ts";
-import { extractMemories } from "../adapters/llm-adapter.ts";
-import { ALWAYS_LOADED_FOLDERS } from "../core/memory-folders.ts";
-import { isTrivialTurn, MEMORY_FILING_TIMEOUT_MS, planFilingActions, validateFiling, type FilingAction } from "../core/memory-filing.ts";
-import type { ChatStreamEvent, ChatTurnRequest, ChatTurnResponse, RememberedReceipt } from "../types/api.ts";
-import type { MemoryCandidate, Result, YohError } from "../types/domain.ts";
+import { isTrivialTurn } from "../core/memory-filing.ts";
+import type { ChatStreamEvent, ChatTurnRequest, ChatTurnResponse } from "../types/api.ts";
+import type { Result, YohError } from "../types/domain.ts";
 import { chatTurn, type ChatTurnDeps } from "./chat-turn.ts";
+import { fileMemory, type FileMemoryOutput } from "./file-memory.ts";
 
 export type ChatTurnFn = (deps: ChatTurnDeps, input: ChatTurnRequest) => Promise<Result<ChatTurnResponse, YohError>>;
 
@@ -98,7 +97,9 @@ export async function chatExchange(
   // Post-done seam (AD-27 order): `remembered` (here), then `proposal`, `rating` in later stories.
   if (directive?.kind === "forgot") emit({ type: "remembered", receipt: directive.receipt });
   else if (directive?.kind === "remember") {
-    emit({ type: "remembered", receipt: await fileExplicitly(deps, directive.text, userTurn) });
+    const filed = await fileExplicitly(deps, directive.text, userTurn);
+    emit({ type: "remembered", receipt: filed.receipt });
+    if (filed.proposal) emit({ type: "proposal", question: filed.proposal });
   } else if (
     !directive &&
     deps.memoryItems &&
@@ -106,8 +107,12 @@ export async function chatExchange(
   ) {
     // Story 13.5: automatic filing. Failure, timeout, or nothing worth filing shows nothing.
     try {
-      const receipt = await fileMemories(deps, input.message.trim(), userTurn, false);
-      if (receipt) emit({ type: "remembered", receipt });
+      const filed = await fileMemory(deps, { text: input.message.trim(), forceStated: false, ...(userTurn ? { userTurn } : {}) });
+      if (!filed.ok) throw new Error(filed.error.message);
+      if (filed.value) {
+        emit({ type: "remembered", receipt: filed.value.receipt });
+        if (filed.value.proposal) emit({ type: "proposal", question: filed.value.proposal });
+      }
     } catch (error) {
       deps.log?.({ level: "warn", event: "chat-exchange.filing-failed", detail: describe(error) });
     }
@@ -121,92 +126,12 @@ export async function chatExchange(
  * empty result yields a receipt with `items: []` (the web says "Couldn't save that to
  * memory."). Never throws, never an `error` event.
  */
-async function fileExplicitly(deps: ChatExchangeDeps, text: string, userTurn: StoredChatTurn | undefined): Promise<RememberedReceipt> {
-  const failed: RememberedReceipt = { receiptId: randomUUID(), kind: "remembered", items: [] };
-  try {
-    return (await fileMemories(deps, text, userTurn, true)) ?? failed;
-  } catch (error) {
-    deps.log?.({ level: "warn", event: "chat-exchange.memory-filing-failed", detail: describe(error) });
+async function fileExplicitly(deps: ChatExchangeDeps, text: string, userTurn: StoredChatTurn | undefined): Promise<FileMemoryOutput> {
+  const failed: FileMemoryOutput = { receipt: { receiptId: randomUUID(), kind: "remembered", items: [] } };
+  const filed = await fileMemory(deps, { text, forceStated: true, ...(userTurn ? { userTurn } : {}) });
+  if (!filed.ok) {
+    deps.log?.({ level: "warn", event: "chat-exchange.memory-filing-failed", detail: filed.error.message });
     return failed;
   }
-}
-
-/**
- * One filing pass shared by the explicit and automatic paths: Haiku extracts from Spencer's
- * typed text plus the always-loaded set (never the reply), `validateFiling` checks,
- * `planFilingActions` maps restate/contradict to supersede, each item is filed and a receipt
- * stored. Bounded by the filing timeout. Resolves `undefined` when nothing was accepted;
- * rejects on failure or timeout (the caller decides what that looks like).
- */
-async function fileMemories(
-  deps: ChatExchangeDeps,
-  text: string,
-  userTurn: StoredChatTurn | undefined,
-  forceStated: boolean,
-): Promise<RememberedReceipt | undefined> {
-  const store = deps.memoryItems;
-  if (!store) return undefined;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let timedOut = false;
-  try {
-    const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => {
-        timedOut = true;
-        reject(new Error("memory filing timed out"));
-      }, deps.memoryFilingTimeoutMs ?? MEMORY_FILING_TIMEOUT_MS);
-    });
-    const filing = (async (): Promise<RememberedReceipt | undefined> => {
-      const alwaysLoaded = store.listItems({ folders: ALWAYS_LOADED_FOLDERS, status: ["current"] });
-      const candidates = await extractMemories(deps.memoryLlmClient ?? deps.llmClient, text, alwaysLoaded, { forceStated }, deps.connection);
-      // A late extract (after the timeout) or an aborted stream must not write: no receipt means no Undo.
-      if (timedOut || deps.isAborted?.() === true) return undefined;
-      const { accepted } = validateFiling(candidates, { now: deps.now(), timeZone: deps.timeZone, forceStated });
-      if (accepted.length === 0) return undefined;
-      const filed = planFilingActions(accepted, alwaysLoaded).map((a) =>
-        fileCandidate(store, a, userTurn?.id),
-      );
-      const receipt: RememberedReceipt = {
-        receiptId: randomUUID(),
-        kind: "remembered",
-        items: filed.map((i) => ({
-          id: i.id,
-          text: i.text,
-          folder: i.folder,
-          ...(i.scope !== undefined ? { scope: i.scope } : {}),
-          ...(i.expiresOn !== undefined ? { expiresOn: i.expiresOn } : {}),
-        })),
-      };
-      if (userTurn) {
-        store.putReceipt({
-          receiptId: receipt.receiptId,
-          conversationId: userTurn.conversationId,
-          userTurnId: userTurn.id,
-          kind: "remembered",
-          itemIds: filed.map((i) => i.id),
-          chainIds: filed.map((i) => i.id),
-          createdAt: deps.now().toISOString(),
-        });
-      }
-      return receipt;
-    })();
-    filing.catch(() => {}); // a late failure after the timeout must not go unhandled
-    return await Promise.race([filing, timeout]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
-
-function fileCandidate(store: NonNullable<ChatExchangeDeps["memoryItems"]>, action: FilingAction, sourceTurnId: string | undefined) {
-  const c = action.candidate;
-  const next = {
-    folder: c.folder,
-    text: c.text,
-    origin: c.origin,
-    ...(c.scope !== undefined ? { scope: c.scope } : {}),
-    ...(c.expiresOn !== undefined ? { expiresOn: c.expiresOn } : {}),
-    ...(c.entityRef !== undefined ? { entityRef: c.entityRef } : {}),
-    ...(sourceTurnId !== undefined ? { sourceTurnId } : {}),
-    // ruleChange stays "none" until T9.
-  };
-  return action.kind === "supersede" && action.targetId !== undefined ? store.supersede(action.targetId, next) : store.insert(next);
+  return filed.value ?? failed;
 }

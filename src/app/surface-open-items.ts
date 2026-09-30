@@ -9,11 +9,12 @@
  * one place (Controller Ruling 1), never duplicated between surfacing and
  * answering.
  */
-import { getOpenInteractionRequest, getTaskFieldOverride, listOpenInteractionRequests, type MemoryStore, type StoredRecord } from "../adapters/memory-store.ts";
+import { clearInteractionRequest, getOpenInteractionRequest, getTaskFieldOverride, listOpenInteractionRequests, type MemoryStore, type StoredRecord } from "../adapters/memory-store.ts";
 import { suggestFieldValue, type AnthropicMessagesClient } from "../adapters/llm-adapter.ts";
 import type { SqliteConnection } from "../adapters/sqlite.ts";
 import type { MemoryItemStore } from "../adapters/memory-item-store.ts";
 import { memoryFolderLabel } from "../core/memory-folders.ts";
+import { isOlderThanDays, RULE_PROPOSAL_TTL_DAYS } from "../core/proposal-ttl.ts";
 import { isProposalExpired } from "../core/reshuffle-preview.ts";
 import { parsePlanningFieldValue } from "../core/planning-field-value.ts";
 import { buildMemoryForgetQuestion } from "../core/open-item-questions.ts";
@@ -144,6 +145,17 @@ export async function surfaceOpenItems(deps: SurfaceOpenItemsDeps, _input: Recor
   for (const record of open) {
     const proposal = (record.data.detail as { readonly proposal?: Proposal<unknown> } | undefined)?.proposal;
     if (record.data.requestKind === "proposal" && proposal?.kind === "reshuffle" && isProposalExpired(proposal.createdAt, now)) continue;
+    if (record.data.requestKind === "proposal" && proposal?.kind === "rule-change" && isOlderThanDays(proposal.createdAt, now, RULE_PROPOSAL_TTL_DAYS)) {
+      // Lazy 7-day TTL (AD-29): withdrawn, never shown; the preference stays as a declined soft item.
+      try {
+        clearInteractionRequest(deps.store, record.id, record.version);
+        const itemId = (proposal.suggested as { memoryItemId?: string } | undefined)?.memoryItemId;
+        if (itemId) deps.memoryItems?.setRuleChange(itemId, "declined");
+      } catch {
+        // a concurrent answer already cleared it
+      }
+      continue;
+    }
     const question = await buildForRecord(deps, record);
     items.push({
       requestId: record.id,

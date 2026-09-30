@@ -278,6 +278,9 @@ export async function send(message: string): Promise<void> {
       case "remembered":
         patchMessage(assistantId, () => ({ receipt: event.receipt, receiptState: "undoable" as const }));
         return;
+      case "proposal":
+        appendProposalQuestion(event.question);
+        return;
       case "error":
         patchMessage(assistantId, () => ({ status: "error", errorText: event.error.message }));
         set({ ...state, sending: false });
@@ -353,6 +356,19 @@ export function appendPendingOpenItem(item: OpenItem): void {
   shownPendingRequestIds.add(key);
   const id = `chat-${++nextId}`;
   appendMessage({ id, role: "assistant", text: item.promptText, receipts: [], question: item.question, status: "done" });
+}
+
+/**
+ * Story 13.8: the `proposal` stream event (a rule-change card raised by post-done filing).
+ * Same dedupe as `appendPendingOpenItem` (`requestId::questionId`), so the next chat-panel
+ * open's `GET /api/open-items` never re-appends it. Empty text: the card renders the
+ * question text itself, so the words are not shown twice.
+ */
+export function appendProposalQuestion(question: OpenItemQuestion): void {
+  const key = pendingItemKey(question.requestId, question.questionId);
+  if (shownPendingRequestIds.has(key)) return;
+  shownPendingRequestIds.add(key);
+  appendMessage({ id: `chat-${++nextId}`, role: "assistant", text: "", receipts: [], question, status: "done" });
 }
 
 /**

@@ -355,6 +355,22 @@ describe("chatStore", () => {
       expect(messagesOf(result.current)[1]).toMatchObject({ status: "done", receipt: RECEIPT, receiptState: "undoable" });
     });
 
+    it("a proposal event appends one text-less question card, and appendPendingOpenItem does not re-append it", async () => {
+      const stream = controllableStream();
+      const { result } = renderHook(() => useChatStore());
+      const question = { requestId: "proposal:rule-change-i1", questionId: "confirm", text: "Change school-day work start from 3:15 PM to 2:30 PM?", options: [{ label: "Yes", value: "yes" }, { label: "No", value: "no" }], allowsFreeText: false };
+      act(() => void send("start work at 2:30 on school days"));
+      stream.emit({ type: "done", response: { reply: "Got it.", receipts: [] } });
+      stream.emit({ type: "remembered", receipt: RECEIPT });
+      stream.emit({ type: "proposal", question });
+      await stream.finish();
+      const cards = messagesOf(result.current).filter((m) => m.question);
+      expect(cards).toHaveLength(1);
+      expect(cards[0]).toMatchObject({ role: "assistant", text: "", question });
+      act(() => appendPendingOpenItem({ requestId: question.requestId, promptText: question.text, question } as unknown as OpenItem));
+      expect(messagesOf(result.current).filter((m) => m.question)).toHaveLength(1);
+    });
+
     it("the next send() settles every undoable receipt", async () => {
       const stream = controllableStream();
       const { result } = renderHook(() => useChatStore());
