@@ -66,6 +66,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { isValidIsoDateTime, normalizeIsoDateTime } from "./iso-datetime.ts";
 import { writeStructuredLog } from "./logger.ts";
+import { isMemoryFolder, MEMORY_FOLDERS_IN_ORDER } from "../core/memory-folders.ts";
 import { recordLlmUsage, type LlmUsagePurpose } from "./llm-usage-store.ts";
 import type { SqliteConnection } from "./sqlite.ts";
 import type {
@@ -73,6 +74,9 @@ import type {
   ChatTurn,
   ExternalId,
   FieldValueSuggestion,
+  MemoryCandidate,
+  MemoryFolder,
+  MemoryItem,
   NotionDatabaseTarget,
   PlanningFieldNames,
   Task,
@@ -260,6 +264,93 @@ function recordUsageSafely(connection: SqliteConnection | undefined, purpose: Ll
       detail: { purpose, model, message: err instanceof Error ? err.message : String(err) },
     });
   }
+}
+
+// ============================================================================
+// extractMemories (Story 13.4): Haiku proposes at most 2 memory candidates
+// from Spencer's TYPED text only. `core/memory-filing.ts` validates them.
+// ============================================================================
+
+const EXTRACT_MEMORIES_MAX_TOKENS = 600;
+
+function extractMemoriesSystemPrompt(opts: { forceStated: boolean; forceFolder?: MemoryFolder }): string {
+  return [
+    "You are Yoh's memory filer. From Spencer's typed message, propose at most 2 short facts worth remembering.",
+    "Reply with ONLY a JSON array (no prose). Each element: {\"folder\", \"text\", \"origin\", optional \"scope\", \"expiresOn\", \"entityRef\", \"restatesId\", \"contradictsId\", \"sensitive\", \"ruleChange\"}.",
+    `folder is one of: ${MEMORY_FOLDERS_IN_ORDER.join(", ")}.`,
+    "text: one sentence in Spencer's own meaning, at most 280 characters.",
+    'origin: "stated" when Spencer said it outright, "inferred" otherwise.',
+    "For feedback items, scope is the NARROWEST reading of what Spencer's words cover (for example \"this kind of request\"); never widen it.",
+    "expiresOn: YYYY-MM-DD, only for time-bound facts.",
+    "restatesId / contradictsId: the id of an existing item below that this repeats or contradicts.",
+    'sensitive: "health", "emotion" or "finance" when the fact is about those.',
+    'ruleChange: {"key", "value"} only when Spencer states a planning rule (keys: schoolDayWorkStart, otherDayWorkStart, lunchWindow, communityWindow, areaDurationPadding).',
+    opts.forceStated ? "Spencer explicitly asked you to remember this, so origin is \"stated\"." : "",
+    opts.forceFolder ? `File it in the folder ${opts.forceFolder}.` : "",
+    "If nothing is worth remembering, reply [].",
+  ]
+    .filter((l) => l !== "")
+    .join("\n");
+}
+
+function parseMemoryCandidates(text: string): MemoryCandidate[] {
+  const start = text.indexOf("[");
+  const end = text.lastIndexOf("]");
+  if (start < 0 || end <= start) return [];
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text.slice(start, end + 1));
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(raw)) return [];
+  const out: MemoryCandidate[] = [];
+  for (const e of raw) {
+    if (out.length >= 2) break;
+    if (!e || typeof e !== "object") continue;
+    const r = e as Record<string, unknown>;
+    if (!isMemoryFolder(r.folder) || typeof r.text !== "string" || r.text.trim() === "") continue;
+    const c: MemoryCandidate = { folder: r.folder, text: r.text.trim(), origin: r.origin === "inferred" ? "inferred" : "stated" };
+    if (typeof r.scope === "string" && r.scope.trim() !== "") c.scope = r.scope.trim();
+    if (typeof r.expiresOn === "string") c.expiresOn = r.expiresOn;
+    if (typeof r.entityRef === "string" && r.entityRef !== "") c.entityRef = r.entityRef;
+    if (typeof r.restatesId === "string" && r.restatesId !== "") c.restatesId = r.restatesId;
+    if (typeof r.contradictsId === "string" && r.contradictsId !== "") c.contradictsId = r.contradictsId;
+    if (r.sensitive === "health" || r.sensitive === "emotion" || r.sensitive === "finance") c.sensitive = r.sensitive;
+    const rc = r.ruleChange as { key?: unknown; value?: unknown } | undefined;
+    if (rc && typeof rc === "object" && typeof rc.key === "string") {
+      c.ruleChange = { key: rc.key as NonNullable<MemoryCandidate["ruleChange"]>["key"], value: rc.value };
+    }
+    out.push(c);
+  }
+  return out;
+}
+
+/**
+ * Proposes memory candidates from Spencer's typed text. The prompt sees only
+ * `typedText` and the always-loaded items (for the duplicate check). Malformed
+ * output yields `[]`; only a transport error throws (AD-8).
+ */
+export async function extractMemories(
+  client: AnthropicMessagesClient,
+  typedText: string,
+  alwaysLoaded: readonly MemoryItem[],
+  opts: { forceStated: boolean; forceFolder?: MemoryFolder },
+  connection?: SqliteConnection,
+): Promise<readonly MemoryCandidate[]> {
+  const existing = alwaysLoaded.length === 0 ? "(none)" : alwaysLoaded.map((i) => `- ${i.id} [${i.folder}] ${i.text}`).join("\n");
+  const message = await client.messages.create({
+    model: CLAUDE_CHAT_MODEL_FAST,
+    max_tokens: EXTRACT_MEMORIES_MAX_TOKENS,
+    system: [cacheableSystemBlock(extractMemoriesSystemPrompt(opts))],
+    messages: [{ role: "user", content: `Existing memory items:\n${existing}\n\nSpencer's message:\n${typedText}` }],
+  });
+  recordUsageSafely(connection, "extract-memories", CLAUDE_CHAT_MODEL_FAST, message.usage);
+  const text = message.content
+    .filter((block): block is Anthropic.TextBlock => block.type === "text")
+    .map((block) => block.text)
+    .join("\n");
+  return parseMemoryCandidates(text);
 }
 
 // ============================================================================

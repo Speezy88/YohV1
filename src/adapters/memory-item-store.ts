@@ -36,7 +36,48 @@ export interface PatternState {
   lastOfferedOn?: IsoDate;
 }
 
+export interface MemoryReceipt {
+  receiptId: string;
+  conversationId: string;
+  userTurnId: string;
+  kind: "remembered" | "forgot";
+  itemIds: string[];
+  chainIds: string[];
+  createdAt: IsoDateTime;
+  undoneAt?: IsoDateTime;
+}
+
+interface ReceiptRow {
+  receipt_id: string;
+  conversation_id: string;
+  user_turn_id: string;
+  kind: MemoryReceipt["kind"];
+  item_ids: string;
+  chain_ids: string;
+  created_at: string;
+  undone_at: string | null;
+}
+
+function toReceipt(r: ReceiptRow): MemoryReceipt {
+  const out: MemoryReceipt = {
+    receiptId: r.receipt_id,
+    conversationId: r.conversation_id,
+    userTurnId: r.user_turn_id,
+    kind: r.kind,
+    itemIds: JSON.parse(r.item_ids) as string[],
+    chainIds: JSON.parse(r.chain_ids) as string[],
+    createdAt: r.created_at,
+  };
+  if (r.undone_at !== null) out.undoneAt = r.undone_at;
+  return out;
+}
+
 export interface MemoryItemStore {
+  putReceipt(receipt: Omit<MemoryReceipt, "undoneAt">): void;
+  getReceipt(receiptId: string): MemoryReceipt | undefined;
+  /** Newest receipt of `kind` in the conversation that has not been undone. */
+  latestReceipt(conversationId: string, kind: MemoryReceipt["kind"]): MemoryReceipt | undefined;
+  markReceiptUndone(receiptId: string, at?: IsoDateTime): void;
   insert(input: NewMemoryItem): MemoryItem;
   supersede(oldId: string, next: NewMemoryItem): MemoryItem;
   merge(oldIds: readonly [string, string], next: NewMemoryItem): MemoryItem;
@@ -116,6 +157,17 @@ export function initMemoryItemStoreSchema(db: Database.Database): void {
       INSERT INTO memory_items_fts(memory_items_fts, rowid, text) VALUES ('delete', old.rowid, old.text);
       INSERT INTO memory_items_fts(rowid, text) VALUES (new.rowid, new.text);
     END;
+    CREATE TABLE IF NOT EXISTS memory_receipts (
+      receipt_id TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL,
+      user_turn_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      item_ids TEXT NOT NULL,
+      chain_ids TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      undone_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS memory_receipts_conv_idx ON memory_receipts (conversation_id, kind, created_at);
     CREATE TABLE IF NOT EXISTS pattern_state (
       kind TEXT NOT NULL,
       area TEXT NOT NULL,
@@ -223,6 +275,33 @@ export function createMemoryItemStore(connection: SqliteConnection): MemoryItemS
   const read = (id: string): MemoryItem => toItem(requireRow(db, id));
 
   return {
+    putReceipt(r) {
+      connection.writeTx((tx) => {
+        tx.prepare(
+          `INSERT INTO memory_receipts (receipt_id, conversation_id, user_turn_id, kind, item_ids, chain_ids, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        ).run(r.receiptId, r.conversationId, r.userTurnId, r.kind, JSON.stringify(r.itemIds), JSON.stringify(r.chainIds), r.createdAt);
+        hint(tx, r.receiptId);
+      });
+    },
+    getReceipt(receiptId) {
+      const row = db.prepare<[string], ReceiptRow>(`SELECT * FROM memory_receipts WHERE receipt_id = ?`).get(receiptId);
+      return row ? toReceipt(row) : undefined;
+    },
+    latestReceipt(conversationId, kind) {
+      const row = db
+        .prepare<[string, string], ReceiptRow>(
+          `SELECT * FROM memory_receipts WHERE conversation_id = ? AND kind = ? AND undone_at IS NULL ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+        )
+        .get(conversationId, kind);
+      return row ? toReceipt(row) : undefined;
+    },
+    markReceiptUndone(receiptId, at) {
+      connection.writeTx((tx) => {
+        tx.prepare(`UPDATE memory_receipts SET undone_at = ? WHERE receipt_id = ?`).run(at ?? new Date().toISOString(), receiptId);
+        hint(tx, receiptId);
+      });
+    },
     insert(input) {
       const text = validate(input);
       const id = connection.writeTx((tx) => {
@@ -366,6 +445,7 @@ export function createMemoryItemStore(connection: SqliteConnection): MemoryItemS
       connection.writeTx((tx) => {
         tx.prepare(`DELETE FROM memory_items`).run();
         tx.prepare(`DELETE FROM pattern_state`).run();
+        tx.prepare(`DELETE FROM memory_receipts`).run();
       });
     },
   };

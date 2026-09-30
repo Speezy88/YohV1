@@ -19,6 +19,7 @@ import {
   classifyChatIntent,
   draftCalendarEditRequest,
   draftNotionPageFields,
+  extractMemories,
   loadLlmAdapterConfigFromEnv,
   normalizeQuickAddLine,
   streamGeneralQuestion,
@@ -1006,4 +1007,47 @@ test("normalizeQuickAddLine's stable system block is byte-identical across two c
   assert.equal(firstBlocks[0]!.text, secondBlocks[0]!.text);
   assert.equal(firstBlocks[1]!.cache_control, undefined);
   assert.notEqual(firstBlocks[1]!.text, secondBlocks[1]!.text);
+});
+
+// ============================================================================
+// extractMemories (Story 13.4)
+// ============================================================================
+
+test("extractMemories parses candidates, sees only typed text and always-loaded items, records usage", async () => {
+  const connection = fakeUsageConnection();
+  const json = JSON.stringify([
+    { folder: "feedback", text: "Keep plans short", origin: "stated", scope: "plans", restatesId: "m1" },
+    { folder: "about-you", text: "Runs at 6", origin: "stated", expiresOn: "2026-12-01", sensitive: "health", ruleChange: { key: "schoolDayWorkStart", value: "16:00" } },
+    { folder: "nope", text: "bad folder", origin: "stated" },
+    { folder: "about-you", text: "", origin: "stated" },
+    { folder: "about-you", text: "third", origin: "stated" },
+  ]);
+  const { calls, client } = fakeClient(textMessage("```json\n" + json + "\n```"));
+  const alwaysLoaded = [{ id: "m1", folder: "feedback", text: "Keep plans brief", origin: "stated", ruleChange: "none", status: "current", createdAt: "x", confirmedAt: "x" }] as const;
+  const out = await extractMemories(client, "remember that I run at 6", alwaysLoaded as never, { forceStated: true }, connection);
+  assert.equal(out.length, 2);
+  assert.deepEqual(out[0], { folder: "feedback", text: "Keep plans short", origin: "stated", scope: "plans", restatesId: "m1" });
+  assert.equal(out[1]!.sensitive, "health");
+  assert.equal(out[1]!.expiresOn, "2026-12-01");
+  assert.deepEqual(out[1]!.ruleChange, { key: "schoolDayWorkStart", value: "16:00" });
+  const sent = JSON.stringify(calls[0]!.params.messages);
+  assert.match(sent, /remember that I run at 6/);
+  assert.match(sent, /m1/);
+  assert.match(sent, /Keep plans brief/);
+  assert.match(systemText(calls[0]!.params), /narrowest/i);
+  assert.equal(calls[0]!.params.model, CLAUDE_CHAT_MODEL_FAST);
+  assert.equal(listLlmUsage(connection)[0]!.purpose, "extract-memories");
+});
+
+test("extractMemories returns [] for malformed output and throws on transport error", async () => {
+  const { client } = fakeClient(textMessage("no idea"));
+  assert.deepEqual(await extractMemories(client, "remember that x", [], { forceStated: true }), []);
+  const boom: AnthropicMessagesClient = { messages: { create: (() => Promise.reject(new Error("net"))) as never } };
+  await assert.rejects(() => extractMemories(boom, "remember that x", [], { forceStated: true }), /net/);
+});
+
+test("extractMemories forceFolder is named in the prompt", async () => {
+  const { calls, client } = fakeClient(textMessage("[]"));
+  await extractMemories(client, "x", [], { forceStated: false, forceFolder: "ideas-notes" });
+  assert.match(JSON.stringify(calls[0]!.params), /ideas-notes/);
 });

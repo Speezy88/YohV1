@@ -38,7 +38,7 @@ import type { SqliteConnection } from "./sqlite.ts";
  * (`draftCalendarEditRequest`), `suggest-field` (`suggestFieldValue`),
  * `quick-add-normalize` (Polish 4 Task 1: `normalizeQuickAddLine`).
  */
-export type LlmUsagePurpose = "classify" | "capture" | "answer" | "draft-notion" | "draft-calendar" | "suggest-field" | "quick-add-normalize";
+export type LlmUsagePurpose = "classify" | "capture" | "answer" | "draft-notion" | "draft-calendar" | "suggest-field" | "quick-add-normalize" | "extract-memories";
 
 /** One recorded Claude API call. Field names are camelCase (this codebase's usual TS convention — mirrors `notification-store.ts`'s `CreateNotificationInput`'s `deepLink` vs. its own `deep_link` SQL column); the SQL table itself uses `snake_case` columns, per Task 9's own column list. */
 export interface LlmUsageRecord {

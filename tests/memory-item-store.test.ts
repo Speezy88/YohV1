@@ -138,3 +138,20 @@ test("pattern state upsert and clearAll", () => {
   assert.deepEqual(store.listItems(), []);
   assert.deepEqual(store.searchRelevant("Fridays", ["patterns"], 5), []);
 });
+
+test("receipts: put/get/latest/markUndone with outbox hints", () => {
+  const { store, connection } = fresh();
+  const before = outboxCount(connection);
+  store.putReceipt({ receiptId: "r1", conversationId: "c1", userTurnId: "t1", kind: "remembered", itemIds: ["a"], chainIds: [], createdAt: T1 });
+  store.putReceipt({ receiptId: "r2", conversationId: "c1", userTurnId: "t2", kind: "remembered", itemIds: ["b"], chainIds: [], createdAt: T2 });
+  store.putReceipt({ receiptId: "r3", conversationId: "c1", userTurnId: "t3", kind: "forgot", itemIds: [], chainIds: ["x", "y"], createdAt: T2 });
+  assert.equal(outboxCount(connection), before + 3);
+  assert.deepEqual(store.getReceipt("r3"), { receiptId: "r3", conversationId: "c1", userTurnId: "t3", kind: "forgot", itemIds: [], chainIds: ["x", "y"], createdAt: T2 });
+  assert.equal(store.getReceipt("nope"), undefined);
+  assert.equal(store.latestReceipt("c1", "remembered")?.receiptId, "r2");
+  assert.equal(store.latestReceipt("c2", "remembered"), undefined);
+  store.markReceiptUndone("r2", T2);
+  assert.equal(store.latestReceipt("c1", "remembered")?.receiptId, "r1");
+  assert.equal(store.getReceipt("r2")?.undoneAt, T2);
+  assert.equal(outboxCount(connection), before + 4);
+});

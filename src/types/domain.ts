@@ -46,6 +46,20 @@ export interface MemoryItem {
   lastMatchedAt?: IsoDateTime;
 }
 
+/** A memory item proposed for filing (Story 13.4); validated by `core/memory-filing.ts`. */
+export interface MemoryCandidate {
+  folder: MemoryFolder;
+  text: string;
+  origin: "stated" | "inferred";
+  scope?: string;
+  expiresOn?: IsoDate;
+  entityRef?: ExternalId;
+  restatesId?: string;
+  contradictsId?: string;
+  sensitive?: "health" | "emotion" | "finance";
+  ruleChange?: { key: RuleSettingKey; value: unknown };
+}
+
 /**
  * ISO-8601 calendar date with no time-of-day component (e.g. "2026-08-22"),
  * used where only a date is meaningful — a Task's Due Date, a Plan's date,
