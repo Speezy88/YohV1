@@ -82,3 +82,24 @@ Sourced from `_bmad-output/brainstorming/brainstorm-phase2-web-app-ui-2026-09-24
 ## Notes
 
 Nothing in this addendum overrides `prd.md`. Where this file states rationale or a starting point, `prd.md`'s FR text is still the binding contract; this is supporting detail for whoever (Spencer, wearing the architect/dev hat) picks up implementation next.
+
+## Epic 13: Memory — Technical Notes (added 2026-09-29)
+
+For `bmad-architecture`. These are starting points, not requirements.
+
+- **Storage:** a server-side chat store (the Spine's anticipated `chat-store.ts` owner under AD-10) plus a memory-item store in SQLite. Each item records folder, text, stated/inferred, created/updated, source turn, optional expiry, and `supersededBy`. Ratings go in their own small log table, never in memory.
+- **Retrieval:**
+  - Always-loaded folders are injected into every answering/capture/planning model call under a fixed character budget. Research reference points: Letta core memory is about 2k characters; ChatGPT's saved memory is about 1.2–1.4k words.
+  - When-relevant folders and chat-history search use SQLite FTS5 (BM25).
+  - No embeddings: keyword search is sufficient at hundreds of items (see https://dev.to/intframe/grep-first-embed-when-it-earns-it-530a on grep-first retrieval). Revisit at about 10,000 items, or if keyword search visibly misses (PRD §9.4, §11 item 15).
+- **Filing:**
+  - One Haiku extraction call per non-trivial turn chooses ADD, UPDATE, SUPERSEDE, or NOOP against the most similar existing items (the Mem0-style operation set).
+  - The same extraction call classifies sensitive content (health, emotions, finances) and drops anything Spencer did not state outright, which enforces FR-54's ban, including on FR-60 "What was off?" answers. It also proposes an expiry for time-bound items.
+  - Deterministic recognizers in `core/` handle "remember", "forget", and "what do you remember" before any LLM step (AGENTS.md anti-pattern 7).
+- **Deferred parameters (Epic 13):** the always-loaded cap, the trivial-turn filter, pattern evidence thresholds and the 30-day quiet period are open (PRD §11 item 14).
+- **Research digest (2026-09-29):** Claude Code typed memory (user/feedback/project/reference, one fact per file, index always loaded), ChatGPT saved memories vs chat-history reference, Letta/MemGPT core/recall/archival, LangMem semantic/episodic/procedural, Mem0 extract-then-update, Zep/Graphiti temporal invalidation. The failure modes it names each have a mitigation in the PRD:
+  - bloat → FR-56 cap;
+  - stale facts → FR-53 expiry and FR-54 supersede;
+  - wrong inferences → the stated/inferred label, the FR-54 sensitive-inference ban, and FR-58 repeated evidence;
+  - creepy recall → FR-56 "only when it changes the answer";
+  - over-generalized feedback → each Feedback item stores its reason and scope.

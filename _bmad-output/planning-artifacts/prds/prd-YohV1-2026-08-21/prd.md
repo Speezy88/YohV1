@@ -1,7 +1,7 @@
 ---
 title: PRD: Yoh
 created: 2026-08-21
-updated: 2026-09-25
+updated: 2026-09-29
 status: final
 ---
 
@@ -94,8 +94,8 @@ Yoh has exactly one user, permanently — not a v1 scoping choice (see §8 Non-G
 - **Research Vault** — A Notion store for on-demand research output. Output-only; not a planning input. A first slice — live web search plus filing a result on request (§5.8) — is in scope as of Phase 1.5, brought forward from its original Phase 5 placement.
 - **Live Write Registry** — The fixed, named set of write and search actions Yoh may perform — from Chat, or (from Phase 2) from Web App controls such as a checkbox or Approve. As of Phase 1.5: create Task (existing), create Page (FR-26), edit Calendar time-block (FR-27), search the web (FR-28, read-only — writes nothing), file a search result to Research Vault (FR-29). Phase 2 adds: mark Task complete (FR-41, Status-only), apply a Reshuffle Preview to Yoh-owned blocks (FR-32), and queue a /research question that searches and files (FR-51). Yoh is never given raw Notion/Calendar API or token access to route from freeform chat text — only these named actions.
 - **Chat** — Yoh's interactive conversation surface, as distinct from the non-interactive Morning/Night Ritual runs. Through Phase 1.5 this was the CLI's terminal session; from Phase 2 it is ~~the Web App's Chat page (FR-42)~~ *(amended 2026-09-27, Spencer: the Web App's Chat panel, FR-42 — there is no Chat page)*, and the CLI is retired (FR-50). FR-24–FR-29 gate on a request arriving through Chat, whichever surface hosts it.
-- **Web App** — Yoh's Phase 2 interface: four pages, in order — ~~Home, Chat, Tasks, Desk~~ *(amended 2026-09-27: Home, Tasks, Desk, Research Hub; §5.11)* — plus a Screensaver and the Chat panel available over every page. The only interactive surface once the CLI is retired.
-- **Slash Command** — A `/`-prefixed command typed in Chat (`/morning`, `/night`, `/sandbox`, `/research`). Typing `/` opens the **Command Palette**, a filterable list of every command with a description and example.
+- **Web App** — Yoh's Phase 2 interface: five pages, in order — ~~Home, Chat, Tasks, Desk~~ *(amended 2026-09-27: Home, Tasks, Desk, Research Hub; §5.11)* *(amended 2026-09-29, Spencer: Home, Tasks, Desk, Research Hub, Memory; §5.11, FR-59)* — plus a Screensaver and the Chat panel available over every page. The only interactive surface once the CLI is retired.
+- **Slash Command** — A `/`-prefixed command typed in Chat (`/morning`, `/plan`, `/night`, `/sandbox`, `/research`, `/remember`, `/forget`; FR-42). Typing `/` opens the **Command Palette**, a filterable list of every command with a description and example.
 - **Reshuffle Preview** — The animated proposed day Yoh shows after a drag (FR-32). Nothing is written until Spencer clicks Approve.
 - **Pin** — A Task Spencer has dragged to a specific time; fixed there for today only. Changes placement, never Derived Priority (FR-31).
 - **Routine** / **Routine Block** — Recurring life-context time (commute, meals) that Spencer declares once; Yoh stores it and places it daily as a movable Yoh-owned block (FR-35).
@@ -113,11 +113,22 @@ Yoh has exactly one user, permanently — not a v1 scoping choice (see §8 Non-G
 - **Work/Break Block** — A clock-based scheduling unit, default 70 minutes work / 15 minutes break, that a Task is fitted into (a Task may span multiple blocks).
 - **Mid-Day Re-Flow** — A user-initiated, real-time adjustment of the remaining day's Plan. Never triggered by Yoh proactively.
 - **Blocker** — A logistical obstacle to a Plan Block. Yoh reschedules around Blockers; it does not attempt to resolve or problem-solve them.
-- **Escalate-Under-Strain** — The shared pattern governing Night Ritual retries, Slip-Bump magnitude, Tone escalation, and Self-Check frequency: each intensifies only in proportion to how much it's being ignored or slipping, never on a flat schedule.
+- **Escalate-Under-Strain** — The shared pattern governing Night Ritual retries, Slip-Bump magnitude, Tone escalation, and Rating frequency (FR-60; it replaced Self-Check frequency): each intensifies only in proportion to how much it's being ignored or slipping, never on a flat schedule.
 - **Propose-Don't-Impose** — The trust boundary requiring explicit Spencer confirmation before Yoh acts on a learned pattern, a Time Budget change it suggests, or a Blocker resolution.
-- **Self-Check** — A periodic (~every 4 days, randomized time) prompt asking Spencer to score how well Yoh is working, with a short written reason; frequency increases immediately after any single low score, not only after a trend.
-- **Hot Memory** — Yoh's fast-access memory of recent days, patterns, and preferences.
-- **Cold Memory** — Yoh's full history, queried on demand and distilled into pattern-statements over time, rather than kept hot.
+- **Self-Check** — *(Superseded by Rating, FR-60, 2026-09-29.)* A periodic (~every 4 days, randomized time) prompt asking Spencer to score how well Yoh is working, with a short written reason; frequency increases immediately after any single low score, not only after a trend.
+- **Hot Memory** — Yoh's fast-access memory of recent days, patterns, and preferences. *(Amended 2026-09-29: this is Yoh's own planning history, not Memory, which is what Spencer tells Yoh; §5.14.)*
+- **Cold Memory** — Yoh's full history, queried on demand and distilled into pattern-statements over time, rather than kept hot. *(Amended 2026-09-29: distinct from Memory, §5.14, as with Hot Memory.)*
+- **Memory** / **Memory Item** — What Yoh remembers about Spencer from chat (§5.14). Each item is one fact in one Memory Folder, marked stated or inferred, dated, and optionally set to expire.
+- **Memory Folder** — One of eight fixed folders (FR-53). Always loaded: Feedback, Planning preferences, Corrections, About you, Patterns. Loaded when relevant: Goals & projects, Decisions & commitments. Loaded only when asked: Ideas & notes.
+- **Conversation** — One continuous chat thread in the Chat panel, from its first turn until Spencer starts a new one. The unit of "delete one conversation" (FR-52).
+- **Chat History** — The stored transcripts of all Conversations (FR-52). Not Memory: deleting it does not delete Memory Items.
+- **Stated / Inferred** — A Memory Item is stated when Spencer said it outright (including via "remember …"), and inferred when Yoh concluded it from context. Editing an inferred item makes it stated (FR-59).
+- **Always-loaded** — A Memory Folder whose items go into every model call that answers, captures, files, or plans (FR-53, FR-56).
+- **Superseded** — A Memory Item replaced by a newer one that contradicts it. It stays viewable as history under the current item (FR-54).
+- **Needs review** — The Memory page list of expired items, items not loaded because an always-loaded folder is over its cap, and items awaiting a renew/edit/delete/keep-as-history decision (FR-53, FR-56, FR-59).
+- **Ratings log** — The store of Rating scores (FR-60). Never loaded into a model call and never part of Memory.
+- **Remembered Receipt** — The one-line "Remembered: …" chat line, with Undo, shown whenever Yoh files a Memory Item (FR-54).
+- **Rating** — The occasional "How is Yoh doing?" 1–3 prompt that replaces the Self-Check (FR-60). Scores go to a ratings log, never into Memory.
 - **Tone** — Yoh's default communication register (casual, peer-level), which shifts to concise/educational for factual questions and escalates in urgency only via Slip-Bump — never randomly or via manual Voice Packs.
 - **Voice Pack** — An optional, manually-selected character voice (Phase 5). Fully decoupled from Tone escalation.
 - **Canvas** — Spencer's school Canvas LMS (Instructure), the source of school assignment due dates. Read-only; not a planning input Yoh reads directly — see Canvas Sync. Blocked on school API access approval as of this PRD's last update.
@@ -259,7 +270,7 @@ A Task that slips (doesn't complete as planned) receives a priority increase tow
 The system prompts Spencer once per day to close out the day's Plan (confirm what completed, what slipped).
 
 **Consequences (testable):**
-- Close-out data (completed/slipped status per Plan Block) feeds Derived Priority (FR-2), Slip-Bump (FR-11), and memory (FR-17) for subsequent days.
+- Close-out data (completed/slipped status per Plan Block) feeds Derived Priority (FR-2), Slip-Bump (FR-11), and memory (FR-15) for subsequent days.
 
 #### FR-13: Capped escalating retry
 
@@ -279,13 +290,17 @@ If both close-out attempts go unacknowledged, the system stops escalating for th
 
 ---
 
-### 5.5 Memory, Learning & Self-Check
+### 5.5 Memory & Learning
 
-**Description:** Yoh maintains a fast "hot" memory of recent patterns and a full "cold" history queried on demand, and periodically asks Spencer to score how well it's working — using that signal to adjust its own check-in frequency. Every learned pattern requires confirmation before Yoh acts on it.
+*Amended 2026-09-29 (Spencer): retitled from "Memory, Learning & Self-Check". The Self-Check is retired; the Rating (FR-60) replaces it.*
+
+**Description:** Yoh maintains a fast "hot" memory of recent patterns and a full "cold" history queried on demand, and, *(amended 2026-09-29: the Self-Check is retired)* occasionally asks Spencer for a one-tap Rating of how well it's working (FR-60). Every learned pattern requires confirmation before Yoh acts on it.
 
 **Functional Requirements:**
 
 #### FR-15: Hot/Cold memory model
+
+*Extended 2026-09-29 (Spencer): §5.14 adds what Spencer tells Yoh. That is persistent chat history (FR-52) and eight memory folders (FR-53–FR-59). The hot/cold model below still covers Yoh's own planning history.*
 
 The system maintains a fast-access "hot" memory of recent days, patterns, and preferences, and a "cold" full-history store queried on demand and distilled into pattern-statements over time.
 
@@ -299,8 +314,11 @@ Any learned behavioral pattern, suggested Time Budget change, or Blocker-handlin
 
 **Consequences (testable):**
 - No learned pattern silently changes Yoh's behavior (e.g., auto-adjusting a default) without a prior explicit confirmation from Spencer for that specific change.
+- *Amended 2026-09-29 (Spencer):* a Feedback or Planning-preferences item that Spencer stated is his explicit instruction and so satisfies this gate (FR-56). A preference Yoh infers is never filed there; it becomes a Pattern proposal (FR-58) that needs his yes.
 
 #### FR-17: Periodic Self-Check
+
+*Superseded 2026-09-29 (Spencer) by FR-60, the "How is Yoh doing?" rating. The four-day prompt is retired. Its low-score rule carries over to FR-60. The text below is kept as history.*
 
 Approximately every 4 days, at a randomized time, the system prompts Spencer for a numeric score and a short written reason evaluating how well Yoh is working. A single low score shortens the interval until the next check-in — Yoh reacts to one bad signal immediately rather than waiting for a pattern to emerge.
 
@@ -328,6 +346,8 @@ The system communicates in a casual, peer-level register by default, switching t
 - Responses read like a peer's summary, not corporate or assistant-boilerplate phrasing — no unearned enthusiasm, no filler preamble before the actual content.
 
 #### FR-19: Tone escalation tied to Escalate-Under-Strain only
+
+*Amended 2026-09-29 (Spencer): Escalate-Under-Strain no longer covers Self-Check frequency; the Self-Check is retired (FR-60). The Rating's pull-forward after a 1 is the one Rating rule that follows it.*
 
 The system's Tone becomes more urgent/authoritative only as a function of the Slip-Bump mechanic (§5.3) — never on a schedule, at random, or independent of actual slip/strain signals.
 
@@ -557,7 +577,7 @@ Each completed card's values are written back to Notion through FR-24's write pa
 
 ### 5.11 Pages and App Shell (Phase 2, priority 3)
 
-**Description:** The Web App has four pages, each with one job, in order — Home answers *what, in what order, and when*; Tasks is for finding things; Desk is for reflecting at the end of the day; Research Hub holds saved research — plus a launch/idle Screensaver. **There is no Chat page** *(amended 2026-09-27, Spencer)*: Chat is a panel available on every page, opened from a small "Ask Yoh" pill fixed bottom-center (or ⌘K), covering the content area right of the sidebar while the page behind stays dimmed. Commands are slash commands, not buttons, to keep every page uncluttered. Three usage contexts drive every choice: a home-morning start, a 30-second-to-two-minute classroom capture, and a longer desk session after school. Realizes UJ-4, UJ-5, UJ-6.
+**Description:** The Web App has ~~four~~ **five** *(amended 2026-09-29, Spencer)* pages, each with one job, in order — Home answers *what, in what order, and when*; Tasks is for finding things; Desk is for reflecting at the end of the day; Research Hub holds saved research; Memory shows what Yoh remembers (FR-59) — plus a launch/idle Screensaver. **There is no Chat page** *(amended 2026-09-27, Spencer)*: Chat is a panel available on every page, opened from a small "Ask Yoh" pill fixed bottom-center (or ⌘K), covering the content area right of the sidebar while the page behind stays dimmed. Commands are slash commands, not buttons, to keep every page uncluttered. Three usage contexts drive every choice: a home-morning start, a 30-second-to-two-minute classroom capture, and a longer desk session after school. Realizes UJ-4, UJ-5, UJ-6.
 
 **Functional Requirements:**
 
@@ -568,7 +588,7 @@ From a closed laptop, Spencer can capture a Task in at most three actions: open 
 **Consequences (testable):**
 - The app icon opens the Web App directly on Home (or the launch splash that fades into Home, FR-45) with no login, picker, or intermediate screen under normal operation. `[ASSUMPTION: session persists across launches; auth mechanics are architecture's call]`
 - No Phase 2 feature — including the Screensaver — may add a required click to this flow. This is a regression gate on every future page change.
-- Every page is reachable from every other page in one gesture or click. **Swipe navigation retired 2026-09-27 (Spencer):** pages sit in a vertical stack, moved between with smooth up/down arrow buttons, the ↑/↓ keys (and Page Up/Page Down) when no text field has focus, an edge-aware mouse wheel, and a left nav sidebar that jumps directly to any page. No swipe gesture is a requirement anywhere in this document; every prior swipe reference is superseded by this line.
+- Every page is reachable from every other page in one gesture or click. **Swipe navigation retired 2026-09-27 (Spencer):** pages sit in a vertical stack, moved between with smooth up/down arrow buttons, the ↑/↓ keys (and Page Up/Page Down) when no text field has focus, an edge-aware mouse wheel, and a left nav sidebar that jumps directly to any page (five pages as of 2026-09-29, with Memory after Research Hub, FR-59). No swipe gesture is a requirement anywhere in this document; every prior swipe reference is superseded by this line.
 
 #### FR-40: Home page
 
@@ -594,16 +614,16 @@ Checking a Task on Home marks it completed: the row fades out, the Task's Status
 
 *Amended 2026-09-27 (Spencer):* Chat is not a page — it is a panel available over every page (§5.11), opened from the "Ask Yoh" pill or ⌘K. Everywhere below that says "Chat" names that panel, not a page.
 
-Chat is a dedicated conversation with Yoh that replaces the CLI as the Chat surface (§4). It supports five slash commands — `/morning` (Morning Ritual), `/plan` (build today's Plan on demand — added 2026-09-27; `/morning` never generates one, FR-1 stands), `/night` (Night Ritual), `/sandbox` (§5.10), `/research` (FR-51) — and typing `/` opens a filterable Command Palette.
+Chat is a dedicated conversation with Yoh that replaces the CLI as the Chat surface (§4). It supports ~~five~~ seven *(amended 2026-09-29, Spencer)* slash commands — `/morning` (Morning Ritual), `/plan` (build today's Plan on demand — added 2026-09-27; `/morning` never generates one, FR-1 stands), `/night` (Night Ritual), `/sandbox` (§5.10), `/research` (FR-51), `/remember` and `/forget` (FR-55; the plain-word forms still work) — and typing `/` opens a filterable Command Palette.
 
 **Consequences (testable):**
 - The Command Palette lists every available slash command with a one-line description and an example, filters as Spencer types, and is the app-wide way to discover and run commands. No separate help page is required for command discovery.
 - While Yoh is working, the page shows a loading indicator and status text naming what it's doing; responses stream in as they generate rather than appearing all at once.
-- Every capability the CLI offered through Chat — Time Budget changes (FR-5), Mid-Day Re-Flow (FR-9), Blocker reports (FR-10), answering open interaction requests and Proposals (FR-16, FR-25), FR-24–FR-29, and Self-Check responses (FR-17) — is reachable from Chat before the CLI is retired.
-- Yoh never claims or offers a capability it doesn't have, and it closes out a conversation when it naturally ends rather than prompting for more.
+- Every capability the CLI offered through Chat — Time Budget changes (FR-5), Mid-Day Re-Flow (FR-9), Blocker reports (FR-10), answering open interaction requests and Proposals (FR-16, FR-25), FR-24–FR-29, and Self-Check responses (FR-17; from Epic 13, FR-60 ratings) — is reachable from Chat before the CLI is retired.
+- Yoh never claims or offers a capability it doesn't have, and it closes out a conversation when it naturally ends rather than prompting for more. *Amended 2026-09-29 (Spencer): the one exception is the Rating prompt (FR-60), which may follow a substantive turn.*
 - `/morning` opens today's Morning Ritual in Chat: the Plan, its reasoning line (FR-3), and any pending questions or Proposals. It never sends a second push notification (FR-1's one-per-day holds) and never regenerates the Plan on its own — regenerating remains a Mid-Day Re-Flow (FR-9).
 - `/night` runs the Night Ritual close-out (FR-12) interactively in Chat. A close-out completed this way before the scheduled prompt counts as that night's close-out: the scheduled prompt and its escalation (FR-13) are cancelled for that night, and the day is never marked unchecked (FR-14).
-- The left vertical menu bar ships empty as a placeholder ~~(its contents are out of scope, §9.4)~~. *Amended 2026-09-27 (Spencer):* it is the left nav sidebar (§5.11) — Yoh wordmark, then Home/Tasks/Desk/Research Hub, then the theme toggle. No longer a placeholder.
+- The left vertical menu bar ships empty as a placeholder ~~(its contents are out of scope, §9.4)~~. *Amended 2026-09-27 (Spencer):* it is the left nav sidebar (§5.11) — Yoh wordmark, then Home/Tasks/Desk/Research Hub, then the theme toggle. No longer a placeholder. *Amended 2026-09-29 (Spencer): the sidebar list is Home/Tasks/Desk/Research Hub/Memory, then the theme toggle.*
 
 #### FR-43: Tasks page
 
@@ -713,11 +733,137 @@ Typing `/research <question>` in Chat queues a research question; Yoh searches, 
 - The filed page follows FR-29's provenance rule (source-tagged, dated) and FR-28's citation and honest-failure rules. A failed search raises an In-App Notification saying so, not a research-ready one.
 - `/research` never runs without the command; FR-28's no-automatic-search boundary is unchanged.
 
+### 5.14 Memory — "Yoh remembers you" (Epic 13)
+
+*Added 2026-09-29 (Spencer). Supersedes the client-memory-only chat transcript (UX OQ 13), extends FR-15, and replaces FR-17.*
+
+**Description:** Yoh keeps a persistent, visible memory of Spencer, much as Claude's memory works. It holds his goals, the context around his projects, how he likes to plan, what Yoh got wrong, and what he liked or disliked about Yoh itself. Memory has two jobs: Yoh gets to know Spencer without being told twice, and Yoh corrects its own behavior over time from what Spencer tells it. Every memory is one short item in one of eight folders. Spencer can see, edit, and delete every item, and nothing is remembered silently.
+
+**Out of scope here:** embeddings or vector search (§9.4), memory shared with any other person or service, and memory changing a hard planning rule without confirmation (FR-57).
+
+#### FR-52: Persistent chat history
+
+Chat transcripts are stored on Spencer's host and survive a reload, a new session, and a switch of device. They are kept indefinitely, until Spencer deletes them.
+
+**Consequences (testable):**
+- Reloading the Web App, or opening it on another device, shows the same conversation history.
+- Spencer can delete one Conversation or clear all history. Deleting one Conversation is a direct write. Clearing all history asks for a confirmation step first, because it cannot be undone.
+- Deleting history does not delete memories filed from it (FR-54). Those have their own delete (FR-59). An item whose source Conversation was deleted stays and shows "source deleted" in place of the link.
+- History is searchable from the Memory page (FR-59).
+- Chat stays one-shot per turn: Yoh reads recent history for context, but a stored transcript never re-runs an action or re-applies a Proposal.
+- If the chat store is unavailable, Chat still answers, the Memory page shows an error state for history, and nothing is shown as saved.
+
+#### FR-53: Memory folders and memory items
+
+Memories live in eight fixed folders. Each item holds one fact.
+
+| Folder | Holds | Loaded |
+|---|---|---|
+| **Feedback** | What Spencer liked or disliked about Yoh's behavior, and changes he asked for, with the reason and when it applies. Stated items only | Always |
+| **Planning preferences** | How Spencer likes his day planned: block length, buffers, how packed a day is, when to nudge. Stated items only | Always |
+| **Corrections** | Facts Yoh got wrong, and the fix ("that's a club, not a class") | Always |
+| **About you** | Routines, energy, people and their roles | Always |
+| **Patterns** | Confirmed patterns Yoh noticed in Spencer's check-off history (FR-58) | Always |
+| **Goals & projects** | Goals with target dates, and project context Notion doesn't hold (why, what done looks like, current state) | When relevant |
+| **Decisions & commitments** | Decisions and their reasons; commitments with dates | When relevant |
+| **Ideas & notes** | Things to come back to | Only when asked |
+
+**Consequences (testable):**
+- Every memory item records its folder, its text, whether Spencer **stated** it or Yoh **inferred** it, when it was created and last changed, the chat turn it came from (if any), and an optional expiry date.
+- Feedback and Planning preferences only ever hold items Spencer stated. A preference Yoh infers (for example, that he seems to dislike long answers) is never filed there; it becomes a Pattern proposal under FR-58 and needs his yes. Inferred items in other folders (About you, Goals & projects, and so on) are recallable facts and never change Yoh's behavior.
+- Time-bound items (this semester's schedule, an exam, a project deadline) carry an expiry. Yoh sets the expiry at filing and shows it in the receipt; Spencer can change or clear it (FR-59). An expired item is no longer loaded, and the Memory page lists it under Needs review (FR-59) rather than deleting it. The review actions are renew, edit, delete, or keep as history.
+- "When relevant" means the item's text keyword-matches the request. "Only when asked" (Ideas & notes) means an explicit "what do you remember about …" or a Memory page query. Architecture picks the matching method.
+- Nothing already held in Notion, Google Calendar, or Yoh's own stores (Tasks, events, Plans, Routines, the Time Budget, the Completion Log) is duplicated into memory. Memory holds context about those records, not the records themselves.
+
+#### FR-54: Automatic filing with a visible receipt
+
+After each chat turn, Yoh checks whether the turn contained something worth remembering. If it did, Yoh files it and shows a one-line "Remembered: …" receipt with Undo in the chat.
+
+**Consequences (testable):**
+- A turn with nothing worth keeping files nothing and shows no receipt; this includes trivial turns. `[ASSUMPTION: the filter for trivial turns is an architecture decision]`
+- Undo removes the item completely, and the receipt then says so. If the item superseded or updated an earlier one, Undo restores the prior item or version. Undo is available until Spencer's next message.
+- A new item that restates an existing one updates that item instead of creating a duplicate. A new item that contradicts an existing one supersedes it: the newer one is current, and the older one stays viewable as history on the Memory page.
+- Yoh never files anything it has inferred about Spencer's health, emotions, or finances. It files these only when Spencer states them outright, and they are marked stated. The ban also applies to answers given to the FR-60 "What was off?" follow-up.
+- Filing is a Yoh-owned local write at the direct-write tier (§6). It never touches Notion or Calendar.
+- If filing fails, or the Memory store or search is unavailable, the chat reply is not affected, and no success receipt is shown.
+
+#### FR-55: Memory commands in chat
+
+Spencer can manage memory in plain words. Yoh recognizes these deterministically, never through an LLM routing guess:
+- "remember …" files the item immediately as stated.
+- "forget …" or "forget that" deletes the matching item, or the last one filed. Forgetting an item deletes its history (superseded versions) too.
+- "what do you remember about …" lists matching items with their folder.
+
+**Consequences (testable):**
+- "remember …" always files, even when auto-filing would have skipped the turn.
+- "forget …" that matches more than one item asks which one, and deletes nothing until Spencer answers. "forget …" that matches nothing says so and deletes nothing.
+- `/remember` and `/forget` are slash-command forms of the same commands and appear in the Command Palette (FR-42). The plain-word forms keep working.
+- A memory command shows the same receipt shape as FR-54.
+
+#### FR-56: Recall in answers and planning
+
+Yoh uses memory whenever it answers, captures, or plans.
+
+**Consequences (testable):**
+- Every model call that answers Spencer, captures, files, or builds a Plan includes the always-loaded folders (FR-53), subject to the cap below. Items from the when-relevant folders are included only when they match the request.
+- The always-loaded set has a fixed size cap. Past the cap, the newest items are loaded and the oldest spill to Needs review: they are not loaded and never deleted. The Memory page marks which items are not loaded, so nothing is dropped silently. `[ASSUMPTION: the cap value is set in architecture]`
+- Yoh uses a memory only when it changes the answer. It never brings up an old personal detail unprompted just to show that it remembers. Checkable proxy: no memory content appears in a reply unless the item was among the request's matched or always-loaded items.
+- A Feedback item changes Yoh's behavior from the next turn onward, with no confirmation step. Spencer stating it is the instruction. Conflicts with built-in rules are handled by FR-57.
+- Trade-off: with no confirmation, a misheard Feedback item shifts behavior until Spencer notices. The mitigation is the Remembered Receipt with Undo (FR-54) and edit or delete on the Memory page (FR-59). Inferred items never reach Feedback (FR-53).
+- If the Memory store is unavailable, Yoh still answers and plans without it, and shows nothing as remembered.
+
+#### FR-57: Memory never silently overrides a built-in rule
+
+A Feedback or Planning-preferences item can conflict with a built-in planning rule. The built-in rules are: work-start times, protected windows (Lunch, Community time), the Time Budget, and Derived Priority weights. In that case Yoh raises a Proposal to change the rule. The item alone does not change it.
+
+**Consequences (testable):**
+- "Start work at 2:30 on school days" files the preference and raises a Proposal, e.g. "Change school-day work start from 3:15 PM to 2:30 PM? Yes/No". Only a yes changes planning, and it applies through the normal confirm path (FR-16, FR-48).
+- A preference whose Proposal is pending does not affect planning.
+- A confirmed change becomes a stored setting that Spencer can see and revert on the Memory page (FR-59).
+- A declined Proposal leaves the rule unchanged and does not affect planning. The preference stays filed, marked declined, and is not proposed again unless Spencer raises it again.
+- Preferences that don't conflict with a built-in rule (tone, wording, how much detail Yoh gives) take effect directly under FR-56.
+
+#### FR-58: Patterns are proposed, never assumed
+
+Yoh looks for patterns in the Completion Log (FR-47) and slip history, for example Tasks of one Area that routinely run over their Estimated Duration. It proposes each pattern once. Only a yes files it to Patterns.
+
+**Consequences (testable):**
+- A pattern Yoh infers about how Spencer likes to be served (for example, that he seems to dislike long answers) is proposed here as a Pattern, never filed to Feedback or Planning preferences (FR-53).
+- A pattern needs repeated evidence before it is proposed: several occurrences over at least two weeks, never a single day. `[ASSUMPTION: thresholds set in architecture]`
+- Proposals follow FR-16 (Propose-Don't-Impose): "Yoh noticed History essays run about 30 minutes over. Plan for that? Yes/No." A no files nothing, and the same pattern is not proposed again for at least 30 days. `[ASSUMPTION: 30-day quiet period]`
+- A confirmed pattern that changes planning (a duration padding, for example) is shown in the Plan's reasoning line (FR-3) whenever it affects a placement.
+
+#### FR-59: Memory page
+
+The Web App gains a fifth page, Memory, after Research Hub (§5.11 lists all five). It shows the eight folders, a search box, and chat history.
+
+**Consequences (testable):**
+- Every item can be viewed, edited, moved between folders, and deleted. Edits, moves, and deletes are direct writes with a visible result (§6). Deleting an item deletes its history too.
+- Editing an inferred item makes it stated. An edit that duplicates another item offers to merge the two. Spencer can change or clear an item's expiry.
+- One search covers memories and chat history. It matches by keyword, and each result shows its folder or conversation date.
+- Each item shows stated or inferred, its dates, and a link to the chat turn it came from (or "source deleted" when that Conversation was deleted, FR-52).
+- Superseded items appear as history under the current item. Expired items, and items not loaded because an always-loaded folder is over its cap (FR-56), appear in a "Needs review" list, with the actions renew, edit, delete, or keep as history. Items not loaded are marked as such.
+- Confirmed rule changes (FR-57) are listed as settings with a revert action.
+- If the Memory store or search is unavailable, the page shows an error state and never shows unsaved changes as saved.
+- The page follows the design system (FR-46), the page order in §5.11, and the Accessibility NFR (§6).
+
+#### FR-60: "How is Yoh doing?" rating (replaces FR-17)
+
+Occasionally, right after a substantive turn, Yoh asks "How is Yoh doing?" with three choices: 1 (poor), 2 (okay), and 3 (good). A substantive turn is a plan change, a re-fit, a researched answer, or a Morning or Night Ritual.
+
+**Consequences (testable):**
+- At most one prompt per calendar day (in `YOH_TIMEZONE`), at a randomized turn, with one exception for a 1 (see below). It never appears mid-block unprompted (FR-9). Spencer can dismiss it with no effect; a dismissal counts toward the day's one prompt.
+- Scores go to a ratings log, never into memory. The log feeds trends (§10) and is not loaded into any model call.
+- A 2 or a 3 stores nothing beyond the score. A 1 asks one optional follow-up, "What was off?". Spencer's answer is filed to Feedback under FR-54's rules (dedupe, supersede, and the sensitive-inference ban). It is Spencer's own words, so it is stated.
+- A 1 brings the next prompt forward: it may come on the next substantive turn, even the same day, instead of waiting for the daily random slot. At most one such extra prompt per day. This carries FR-17's rule that a single low score shortens the interval (Escalate-Under-Strain, §4).
+- FR-17's four-day Self-Check prompt is retired. Its "number + written reason" requirement is replaced by this rule: a score alone is complete, and a reason is asked for only after a 1. This prompt is the one exception to FR-42's "closes out … rather than prompting for more".
+
 ## 6. Cross-Cutting NFRs
 
 - **Reliability.** The Morning and Night Rituals must run daily without manual intervention. A failure to run — a crash, an expired auth token, an unreachable API — must be surfaced to Spencer, not fail silently. There is no support team and no other user to notice; if Yoh goes quiet, Spencer is the only signal, so the system must not rely on him noticing an *absence*.
 - **Data integrity.** Writes to Calendar or Notion must never corrupt or lose Task/Calendar data. This is a harder guarantee than most personal tools need, because the data being written into is Spencer's real calendar and real task list, not a sandbox. Every write capability sits at exactly one of three tiers, chosen per capability and never defaulted: **automatic**, Ritual-triggered and scoped to Yoh-owned records only (FR-22, FR-23); **direct-write**, where Spencer's own explicit instruction is validated and written immediately with no separate draft-and-confirm step — the instruction itself is the confirmation (FR-24, an explicit answer to a direct question; FR-29, an explicit "save that" request); or **confirm-then-write**, where Yoh proposes or drafts something and nothing is written until Spencer explicitly confirms it (FR-25, FR-26, FR-27). FR-28's search is read-only and writes nothing at any tier. The guarantee that Yoh never touches a record it doesn't own has exactly one explicit exception, FR-27: the boundary moves from "never" to "never without naming the event and being told yes," trading ownership for an explicit per-action confirmation. FR-24 and FR-26 both widen the Notion write surface beyond Status; both satisfy this guarantee the way FR-24 established it — a select-backed or schema-bound property is only ever written as one of its real, currently-existing options (fuzzy-matched, never invented), and a write that can't confidently resolve fails and re-prompts instead of guessing. All Phase 1.5 write capabilities (FR-26–FR-29; FR-25 reuses FR-24's existing write path rather than adding a new one) route through the fixed, named Live Write Registry (§4) — Yoh is never given raw Notion/Calendar API access to route from freeform chat text. Every write triggered from Chat (FR-24–FR-29) is echoed back to Spencer as a one-line receipt in that same chat, so nothing changes silently mid-conversation. Ritual-triggered writes (FR-22, FR-23) run outside any chat session and keep their own existing channel — the Ritual's notification (Observability, below); this NFR does not add a new chat-receipt requirement to those already-shipped Phase 1 paths.
 - **Data integrity — Phase 2 writes.** Phase 2's new writes each sit at one of the three existing tiers: checking a Task off (FR-41) is **direct-write** — the check is the instruction, and it writes Status only; /sandbox answers (FR-38) and `/research` filing (FR-51) are **direct-write**, the same shape as FR-24 and FR-29; applying a Reshuffle Preview (FR-32) is **confirm-then-write**, with Approve as the confirmation, and it only ever touches Yoh-owned events. No Phase 2 capability deletes anything from Notion. On the Web App, the chat-receipt requirement above is met in-page: a write triggered in Chat is acknowledged in Chat; a write triggered elsewhere (check-off, Approve, /sandbox finale) is acknowledged by its visible result or an In-App Notification (FR-49), and a failed write is always surfaced — never shown as success.
+- **Data integrity — Memory (Epic 13).** Filing a Memory Item (FR-54), a memory command (FR-55), and edits or deletes on the Memory page (FR-59) are **direct-write** to Yoh-owned local records only. None of them touches Notion or Calendar, and each shows a receipt or a visible result. Confirming a Pattern (FR-58), and a preference that changes a built-in planning rule (FR-57), are **confirm-then-write**. Chat history and memory are never lost to a reload or a restart, and they are included in Yoh's backups. Backups retain deleted items until they rotate out.
 - **Latency.** Plan generation must complete comfortably before the Morning Ritual notification is due — no hard SLA, but "fast enough to not feel broken" (low seconds, not minutes) is a real requirement, since a slow or hung Morning Ritual is functionally the same failure as one that doesn't run at all. Phase 2 adds interactive targets, since the Web App is judged by feel: the Reshuffle Preview begins animating within about 2 seconds of drag-release, a check-off fades immediately (the Notion write can finish in the background), and Chat shows a thinking state within a fraction of a second of sending. `[ASSUMPTION: numeric targets are starting points for bmad-ux/architecture to confirm]`
 - **Accessibility.** The off-white/black neumorphic style must still meet WCAG 2.2 AA `[ASSUMPTION: standard chosen at drafting]` contrast for text and for the boundaries of interactive controls (checkboxes, Approve/Discard, chat input). Soft-shadow surfaces alone may not be the only cue that something is clickable or checked. Motion respects the OS reduced-motion setting: animations shorten or become simple fades, and no information is conveyed by motion alone. The contrast check itself happens in bmad-ux.
 - **Capture speed.** The three-action capture flow (FR-39) is a standing requirement, not a launch-day target: any change that adds a required step to it is a regression.
@@ -725,8 +871,8 @@ Typing `/research <question>` in Chat queues a research question; Yoh searches, 
 
 ## 7. Constraints and Guardrails
 
-- **Privacy.** All Task and Calendar data is personal and single-user. No data leaves Spencer's own Notion workspace and Google account except as required by the Notion and Calendar integrations themselves (§5.7). No third-party analytics, telemetry, or data sharing. **Phase 2 exception — public feeds:** Desk's crypto tickers (Bitcoin, Solana, Ethereum), weather, and business/AI news (FR-44) call public data providers. Only the query itself leaves Yoh (ticker symbols, a location for weather, news categories); no Task, Calendar, or usage data is ever sent. The Web App's own assets and data stay on Spencer's host — no third-party analytics script ships in it.
-- **Cost.** Yoh must run on infrastructure Spencer already owns — laptop, Raspberry Pi, or existing cloud/server setup. No new recurring paid service was required for Phase 1. Web search (FR-28, §5.8) introduces the first ongoing external API cost, brought forward from its original Phase 5 placement — single-user, on-demand search volume; provider choice and pricing tier are implementation detail (`addendum.md`), not a PRD requirement. Phase 2's public feeds (§7 Privacy exception) must run on **free tiers only** — no new paid feed subscription; a feed whose free tier disappears is dropped or replaced, not upgraded. The Web App is hosted on infrastructure Spencer already owns. `[ASSUMPTION: hosting shape — local, Pi, or existing server — is architecture's call; it must be reachable from the laptop in class]`
+- **Privacy.** All Task and Calendar data is personal and single-user. No data leaves Spencer's own Notion workspace and Google account except as required by the Notion and Calendar integrations themselves (§5.7). No third-party analytics, telemetry, or data sharing. **Phase 2 exception — public feeds:** Desk's crypto tickers (Bitcoin, Solana, Ethereum), weather, and business/AI news (FR-44) call public data providers. Only the query itself leaves Yoh (ticker symbols, a location for weather, news categories); no Task, Calendar, or usage data is ever sent. The Web App's own assets and data stay on Spencer's host — no third-party analytics script ships in it. **Memory (Epic 13):** chat history, Memory Items, and ratings are stored only on Spencer's host. Memory text is sent only to the LLM provider inside Yoh's own model calls (answers, capture, filing, Plan builds). It is never sent to the web-search provider or included in any search query, and is never sent anywhere else.
+- **Cost.** Yoh must run on infrastructure Spencer already owns — laptop, Raspberry Pi, or existing cloud/server setup. No new recurring paid service was required for Phase 1. Web search (FR-28, §5.8) introduces the first ongoing external API cost, brought forward from its original Phase 5 placement — single-user, on-demand search volume; provider choice and pricing tier are implementation detail (`addendum.md`), not a PRD requirement. Memory filing (Epic 13) costs at most one Haiku call per non-trivial chat turn. Phase 2's public feeds (§7 Privacy exception) must run on **free tiers only** — no new paid feed subscription; a feed whose free tier disappears is dropped or replaced, not upgraded. The Web App is hosted on infrastructure Spencer already owns. `[ASSUMPTION: hosting shape — local, Pi, or existing server — is architecture's call; it must be reachable from the laptop in class]`
 - **Safety.** Not a meaningful concern for Phase 1–2's software-only surface. Becomes relevant once Phase 3 introduces physical hardware (speaker placement/volume near water, an always-on device) — deferred to that phase's own scoping, not applicable now.
 
 ## 8. Non-Goals (Explicit)
@@ -743,6 +889,8 @@ Typing `/research <question>` in Chat queues a research question; Yoh searches, 
 - Drag-to-Reshuffle will never move, resize, or delete a Calendar event Yoh did not create (FR-33); non-Yoh events are always fixed anchors in a reshuffle.
 - Dragging or pinning a Task will never change its Derived Priority (FR-2, FR-31) — manual placement is today-only and does not become a priority input.
 - In-App Notifications will never be used to check in on progress mid-block or nudge Spencer unprompted (FR-49, FR-9).
+- Memory will never silently change a built-in planning rule (FR-57), and Yoh will never act on a pattern it noticed without Spencer's yes (FR-58).
+- Yoh will never store an inference about Spencer's health, emotions, or finances (FR-54). Every Memory Item is visible and deletable. There is no hidden memory.
 
 ## 9. MVP Scope
 
@@ -752,7 +900,7 @@ Typing `/research <question>` in Chat queues a research question; Yoh searches, 
 - Time Budget declaration/persistence and Work/Break Block fitting (FR-5–FR-8).
 - Mid-Day Re-Flow (user-initiated), logistics-only Blocker handling, Slip-Bump (FR-9–FR-11).
 - Night Ritual close-out, capped escalating retry, unchecked-day handling (FR-12–FR-14).
-- Hot/Cold memory, Propose-Don't-Impose confirmation gate, periodic Self-Check (FR-15–FR-17).
+- Hot/Cold memory, Propose-Don't-Impose confirmation gate, periodic Self-Check (FR-15–FR-17). *(Amended 2026-09-29: the Self-Check is retired; the Rating, FR-60, replaces it.)*
 - Default/contextual Tone with Escalate-Under-Strain-driven escalation (FR-18–FR-19).
 - Notion Tasks/Projects read, Task Status write-back, CLI-driven missing-planning-field write-back; Google Calendar read/write with strict Yoh-owned-event isolation (FR-20–FR-24).
 - Terminal/CLI interface — the only surface for Phase 1.
@@ -775,6 +923,10 @@ Ordered by Spencer's priority:
 4. **Groundwork** — Completion/Activity Log, surface-agnostic confirmation, In-App Notifications, CLI retirement, async `/research` (FR-47–FR-51).
 5. **Changes to existing requirements** — FR-2 (Pin doesn't touch priority), FR-4 (Required/Refining tiers), FR-23 (check-off trigger), FR-24 (Chat on any surface); FR-1 and FR-12–FR-14 gain on-demand `/morning` and `/night` entry points (FR-42) without changing their once-per-day and escalation-cap guarantees.
 
+### 9.3a In Scope (Epic 13 — Yoh remembers you, added 2026-09-29)
+
+Persistent chat history, eight Memory Folders with automatic filing, a receipt and Undo, memory commands, recall in answers and planning, rule-change Proposals, confirm-gated Patterns, the Memory page, and the "How is Yoh doing?" Rating (FR-52–FR-60). It replaces FR-17 and extends FR-15 and FR-42.
+
 ### 9.4 Out of Scope
 
 - **Physical hardware device** (Pi 5, wake-word/STT/TTS voice pipeline, bedroom/bathroom build) — Phase 3. Architecture direction already researched (see brief `addendum.md`), but no product-level parts (mic/speaker/display) chosen yet. The Phase-1 Night Ritual's second escalation attempt (FR-13) no longer depends on this — it uses email for Phase 1, with the home-speaker call-out remaining a Phase 3 upgrade once the hardware exists, not a blocking dependency.
@@ -789,24 +941,25 @@ Ordered by Spencer's priority:
 - **Manual Voice Packs** — Phase 5, and permanently decoupled from Tone escalation (§5.6 Out of Scope).
 - **Self-calibrating task-duration estimates** — Phase 6; Estimated Duration remains a manually-entered Task field. The Completion Log (FR-47) is the Phase 2 groundwork that makes this possible later.
 - **Recurring Calendar events** — not part of MVP, Phase 1.5, or Phase 2 (Routines, FR-35, are Yoh-stored and don't use Google recurrence); several Google Calendar recurring-event gotchas are noted in the brief's addendum but are explicitly out of scope until recurrence is added.
+- **Embeddings / vector search for memory** — keyword search covers Spencer's scale (hundreds of items). Revisit if Memory passes about 10,000 items (§11).
 - **Room-cleanliness camera** — long-term/aspirational, not committed to any numbered phase.
 - **Canvas LMS assignment sync** — reads assignment due dates from Spencer's school Canvas LMS and creates/updates corresponding Notion Task records (course → Area, due date, name) so Canvas assignments flow through the existing Notion Tasks pipeline unchanged; Estimated Duration and Energy still get filled by Spencer via the existing Data-Completeness Gate (FR-4), since Canvas can't supply either. Blocked on the school's Canvas admin approving API access (a Canvas Developer Key); not assigned to a numbered phase yet — revisit once access is granted (§11).
 
 ## 10. Success Metrics
 
 **Primary**
-- **SM-1**: Plan-follow rate — the declared Time Budget and generated Plan are actually used to structure the day on most days (self-assessed via Self-Check, FR-17), not abandoned partway through. Validates FR-1, FR-2, FR-8.
+- **SM-1**: Plan-follow rate — the declared Time Budget and generated Plan are actually used to structure the day on most days (self-assessed via Self-Check, FR-17; from Epic 13, the Rating trend, FR-60), not abandoned partway through. Validates FR-1, FR-2, FR-8.
 - **SM-2**: MVP shipped and in daily use by September 2, 2026. Validates the full Phase-1 scope (§9.1).
 
 **Secondary**
 - **SM-3**: Data-Completeness Gate prompts and Slip-Bump adjustments are followed rather than dismissed — a sign the Plan stays realistic enough to trust. Validates FR-4, FR-11.
-- **SM-4**: Self-Check scores stay stable or trend upward over time, since Escalate-Under-Strain is designed to intensify only when they trend down. Validates FR-17, FR-19.
+- **SM-4**: *(Amended 2026-09-29: measured by the Rating trend, FR-60, not the retired Self-Check.)* Rating scores stay stable or trend upward over time, since Escalate-Under-Strain is designed to intensify only when they trend down. Validates FR-60, FR-19.
 
 **Counter-metrics (do not optimize)**
 - **SM-C1**: Night Ritual escalation frequency (how often FR-13's second attempt fires) — this is a symptom of the Plan or the day going wrong, not a target to increase or feature-tune toward. Counterbalances SM-1.
-- **SM-C2**: Self-Check prompt frequency — a system that checks in more often because scores are trending low is doing what it's designed to do (Escalate-Under-Strain), not something to be proud of; the frequency itself is not a success signal. Counterbalances SM-4.
+- **SM-C2**: *(Amended 2026-09-29: Rating prompt frequency, FR-60.)* Rating prompt frequency — a system that checks in more often because scores are trending low is doing what it's designed to do (Escalate-Under-Strain), not something to be proud of; the frequency itself is not a success signal. Counterbalances SM-4.
 
-**Phase 1.5 (FR-25–FR-29): intentionally unmetered.** No SM extends to Phase 1.5 yet — a decision, not an oversight. These capabilities were added roadmap-driven (§2), not in response to observed Phase 1 usage, so there's no real baseline yet to set a meaningful target against. Whether chat-driven Notion writes, calendar edits, and web search actually get used (vs. sitting unused) is exactly the kind of signal Self-Check (FR-17) and ordinary usage observation should surface within a few weeks — a Phase 1.5 SM belongs in a near-future PRD update once that evidence exists, not guessed at here.
+**Phase 1.5 (FR-25–FR-29): intentionally unmetered.** No SM extends to Phase 1.5 yet — a decision, not an oversight. These capabilities were added roadmap-driven (§2), not in response to observed Phase 1 usage, so there's no real baseline yet to set a meaningful target against. Whether chat-driven Notion writes, calendar edits, and web search actually get used (vs. sitting unused) is exactly the kind of signal the Rating (FR-60, which replaced the Self-Check) and ordinary usage observation should surface within a few weeks — a Phase 1.5 SM belongs in a near-future PRD update once that evidence exists, not guessed at here.
 
 **Phase 2 (FR-30–FR-51)** `[ASSUMPTION: Phase 2 metrics proposed at drafting — confirm or cut]`
 - **SM-5**: The Web App is the only way Spencer uses Yoh — used on most school days, including in-class captures — and the CLI is retired with nothing lost (FR-42 parity list complete). Validates FR-39–FR-42, FR-50.
@@ -816,6 +969,12 @@ Ordered by Spencer's priority:
 **Phase 2 counter-metrics (do not optimize)**
 - **SM-C3**: Time spent in the Web App, or Desk visits per day — not a target. The one-job-per-page design aims to get Spencer in and out; more time in the app isn't success. Counterbalances SM-5.
 - **SM-C4**: In-App Notification count — not a target. More notifications is noise, not engagement. Counterbalances SM-7.
+
+**Epic 13 (added 2026-09-29)** `[ASSUMPTION: proposed, confirm after a few weeks of use]`
+- **SM-8**: Spencer rarely repeats himself. A fact or instruction he has already given does not have to be given again. Measured as the count of restatement-updates per month (FR-54 events where a new item updated an existing one because Spencer restated it); a legitimate refinement counts too, so read the trend, not one month. Validates FR-53–FR-56.
+- **SM-9**: Measured as the monthly mean Rating plus the count of repeated Feedback on an already-filed behavior (a Feedback item that supersedes or restates an existing one within 30 days). With at most one Rating per day the monthly n is small, so read trends loosely. Validates FR-56, FR-60.
+- **SM-C5**: Memory Item count is not a target. More memories is bloat, not learning. Counterbalances SM-8.
+- **SM-C6**: Rating prompt frequency is not a target. A higher frequency after low scores is the design working, not success. Counterbalances SM-9.
 
 ## 11. Open Questions
 
@@ -844,6 +1003,10 @@ The four questions that blocked Phase 1 in the first draft are resolved below; t
 12. **Hosting and app icon** — how the Web App is hosted on owned infrastructure and launched from an icon in one click (FR-39), including reachability from the school network. Owner: Spencer. Revisit: `bmad-architecture`.
 13. **Design details deferred to UX** — Command Palette depth (settled as sufficient for discovery; details to UX), check-off undo window (FR-41), unpin gesture (FR-31), Tasks page grouping controls (FR-43), whether needs-data also shows a tray alongside the In-App Notification (FR-34). Owner: Spencer. Revisit: `bmad-ux`.
 
+**Epic 13 (added 2026-09-29):**
+14. **Memory design details** — the always-loaded size cap (FR-56), the trivial-turn filter (FR-54), pattern evidence thresholds (FR-58), the Memory page layout, and where Remembered Receipts sit in the Chat panel. Owner: Spencer. Revisit: `bmad-ux` (page, receipt) and `bmad-architecture` (cap, filter, thresholds, storage).
+15. **Embeddings** — not needed at current scale (keyword search). Owner: Spencer. Revisit: if Memory passes about 10,000 items, or keyword search visibly misses.
+
 ## 12. Assumptions Index
 
 No Phase 1 or Phase 1.5 assumptions remain in the FR text; Phase 2's inline tags are listed at the end of this section. Three of §11's four newly-resolved Phase 1 questions started as inline `[ASSUMPTION]` tags in the first draft — FR-2's weighting approach, FR-11's cap/growth curve, and FR-13's escalation channel — all now resolved and removed from the FR text. FR-17's threshold was an Open Question only; it never carried an inline tag. One Phase 1.5 assumption exists outside the FR text: the working choice of Perplexity as FR-28/FR-29's search provider carries forward from Research Vault's original Phase 5 scoping without reconfirmation. It's capability-level-irrelevant (§7 deliberately keeps provider choice out of the FR text as implementation detail) and tracked as Open Question §11 item 7 rather than an inline tag.
@@ -866,3 +1029,9 @@ No Phase 1 or Phase 1.5 assumptions remain in the FR text; Phase 2's inline tags
 - §6 Latency — Phase 2 interactive latency targets.
 - §7 Cost — hosting shape (§11 item 12).
 - §10 — SM-5–SM-7 and SM-C3–SM-C4 as proposed.
+
+**Epic 13 inline assumptions (2026-09-29), to confirm:**
+- FR-54 — the filter that decides which turns are trivial is an architecture decision.
+- FR-56 — the always-loaded size cap is set in architecture.
+- FR-58 — pattern evidence thresholds, and the 30-day quiet period after a no.
+- §10 — SM-8, SM-9, SM-C5, and SM-C6 as proposed.
