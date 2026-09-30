@@ -379,6 +379,8 @@ export interface ConfirmProposalResponse {
   readonly receipts: readonly string[];
   /** A reshuffle approval that found the Plan or calendar had moved on: the fresh preview's confirm question. */
   readonly question?: OpenItemQuestion;
+  /** Copy that replaces the generic reply (a rule-change answer). */
+  readonly message?: string;
 }
 
 // ============================================================================

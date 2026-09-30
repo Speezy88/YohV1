@@ -1478,3 +1478,21 @@ export function queryColdMemoryPatterns(store: MemoryStore, options: ColdMemoryQ
 
   return patterns;
 }
+
+/** Every open `"proposal"` request whose proposal is a `"rule-change"` (Story 13.8). */
+export function findOpenRuleProposals(store: MemoryStore): StoredRecord<InteractionRequest>[] {
+  return listOpenInteractionRequests(store).filter((r) => {
+    if (r.data.requestKind !== "proposal") return false;
+    const proposal = (r.data.detail as { proposal?: { kind?: string } } | undefined)?.proposal;
+    return proposal?.kind === "rule-change";
+  });
+}
+
+/** Clears the open rule-change proposal raised by memory item `itemId`, if any. Returns whether one was open. */
+export function withdrawRuleProposal(store: MemoryStore, itemId: string): boolean {
+  const id = `proposal:rule-change-${itemId}`;
+  const current = getOpenInteractionRequest(store, id);
+  if (!current) return false;
+  clearInteractionRequest(store, id, current.version);
+  return true;
+}

@@ -101,7 +101,11 @@ async function answerProposalOpenItem(
   return {
     ok: true,
     value: {
-      ...(result.value.applied || result.value.question ? {} : { message: "Okay — I won't make that change." }),
+      ...(result.value.message
+        ? { message: result.value.message }
+        : result.value.applied || result.value.question
+          ? {}
+          : { message: "Okay — I won't make that change." }),
       receipts: result.value.receipts,
       next: result.value.question ?? "done",
     },

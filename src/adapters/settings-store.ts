@@ -10,6 +10,7 @@ import type { Area, RuleSettingKey } from "../types/domain.ts";
 import type { SqliteConnection } from "./sqlite.ts";
 import { appendOutboxInTx } from "./notification-store.ts";
 import { MEMORY_TOPIC } from "./chat-store.ts";
+import { writeStructuredLog } from "./logger.ts";
 import {
   builtInPlanningDefaults,
   resolvePlanningSettings,
@@ -46,10 +47,14 @@ export function readSettingOverrides(db: Database.Database): SettingOverrides {
     try {
       parsed = JSON.parse(row.value);
     } catch {
+      writeStructuredLog({ level: "warn", event: "settings-store.invalid-row-skipped", detail: { key: row.key, area: row.area } });
       continue;
     }
     // A stored value that no longer validates is ignored rather than breaking planning.
-    if (!isRuleKey(row.key) || !validateRuleValue(row.key, row.key === "areaDurationPadding" ? { area: row.area, minutes: parsed } : parsed).ok) continue;
+    if (!isRuleKey(row.key) || !validateRuleValue(row.key, row.key === "areaDurationPadding" ? { area: row.area, minutes: parsed } : parsed).ok) {
+      writeStructuredLog({ level: "warn", event: "settings-store.invalid-row-skipped", detail: { key: row.key, area: row.area } });
+      continue;
+    }
     if (row.key === "areaDurationPadding") padding[row.area] = parsed as number;
     else if (row.key === "schoolDayWorkStart" || row.key === "otherDayWorkStart") out[row.key] = parsed as string;
     else out[row.key] = parsed as { start: string; end: string };

@@ -756,4 +756,15 @@ export interface CheckOffSweepSummary {
 }
 
 /** The closed set of planning rules Spencer can override (Story 13.7). The Time Budget is not one of them. */
+/** A planning-rule value: a clock time, a protected window, or per-Area padding. */
+export type RuleSettingValue = string | { readonly start: string; readonly end: string } | { readonly area: Area; readonly minutes: number };
+
+/** Payload of a `"rule-change"` Proposal (Story 13.8): the override to write, the resolved value it replaces, and the memory item that raised it. */
+export interface RuleChange {
+  readonly key: RuleSettingKey;
+  readonly value: RuleSettingValue;
+  readonly previous: RuleSettingValue;
+  readonly memoryItemId: string;
+}
+
 export type RuleSettingKey = "schoolDayWorkStart" | "otherDayWorkStart" | "lunchWindow" | "communityWindow" | "areaDurationPadding";

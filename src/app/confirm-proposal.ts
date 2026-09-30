@@ -37,8 +37,13 @@ import {
   type MemoryStore,
   PLAN_TOPIC,
 } from "../adapters/memory-store.ts";
+import { MEMORY_TOPIC } from "../adapters/chat-store.ts";
+import { readPlanningSettings, writeSettingInTx } from "../adapters/settings-store.ts";
 import { appendOutboxInTx } from "../adapters/notification-store.ts";
 import type { SqliteConnection } from "../adapters/sqlite.ts";
+import { currentRuleValue, validateProposedRuleValue } from "../core/planning-settings.ts";
+import { isOlderThanDays, RULE_PROPOSAL_TTL_DAYS } from "../core/proposal-ttl.ts";
+import { ruleChangeConfirmedCopy, ruleChangeDeclinedCopy, ruleValuesEqual } from "../core/rule-change.ts";
 import { parsePlanningFieldValue, PLANNING_FIELD_LABELS } from "../core/planning-field-value.ts";
 import { localIsoDate } from "../rituals/ritual-shared.ts";
 import { approveReshuffle, discardReshuffle, type ApproveReshuffleDeps } from "./approve-reshuffle.ts";
@@ -52,6 +57,7 @@ import type {
   Proposal,
   ReshufflePreview,
   Result,
+  RuleChange,
   Task,
   TaskFieldOverride,
   TimeBudget,
@@ -224,6 +230,10 @@ export interface ConfirmProposalDeps {
   readonly timeZone?: string;
   /** Required only for the `"reshuffle"` kind: everything `approveReshuffle` needs besides `store`. */
   readonly reshuffle?: Omit<ApproveReshuffleDeps, "store">;
+  /** Required only for the `"rule-change"` kind: marks the raising memory item confirmed/declined. */
+  readonly memoryItems?: { setRuleChange(id: string, ruleChange: "none" | "pending" | "confirmed" | "declined"): void };
+  /** Clock for the rule-change 7-day expiry; defaults to the real clock. */
+  readonly now?: () => Date;
 }
 
 export interface ConfirmProposalInput {
@@ -247,6 +257,64 @@ function missingDependency(kind: string, dependency: string): Result<ConfirmProp
       message: `confirm-proposal: no "${dependency}" dependency configured — cannot confirm a "${kind}" proposal`,
     },
   };
+}
+
+function staleRuleProposal(message: string): Result<ConfirmProposalResponse, YohError> {
+  return { ok: false, error: { kind: "stale-proposal", message } };
+}
+
+/**
+ * `"rule-change"` (Story 13.8, AD-29): a Yes writes the planning override
+ * through `writeSettingInTx` and confirms the raising memory item in ONE
+ * transaction; a No or an expired/stale/invalid one writes no planning.
+ * Reads no memory text — only the item id from the stored payload.
+ */
+function confirmRuleChange(
+  deps: ConfirmProposalDeps,
+  proposal: Proposal<RuleChange>,
+  accept: boolean,
+  requestId: string | undefined,
+): Result<ConfirmProposalResponse, YohError> {
+  const change = proposal.suggested;
+  if (!accept) {
+    deps.memoryItems?.setRuleChange(change.memoryItemId, "declined");
+    clearRequestIfGiven(deps.store, requestId);
+    return { ok: true, value: { applied: false, receipts: [], message: ruleChangeDeclinedCopy(change) } };
+  }
+  if (!deps.connection || !deps.memoryItems) {
+    clearRequestIfGiven(deps.store, requestId);
+    return missingDependency(proposal.kind, deps.connection ? "memoryItems" : "connection");
+  }
+  const memoryItems = deps.memoryItems;
+  const now = deps.now ? deps.now() : new Date();
+  if (isOlderThanDays(proposal.createdAt, now, RULE_PROPOSAL_TTL_DAYS)) {
+    memoryItems.setRuleChange(change.memoryItemId, "declined");
+    clearRequestIfGiven(deps.store, requestId);
+    return staleRuleProposal("confirm-proposal: that rule change expired");
+  }
+  const area = typeof change.value === "object" && "area" in change.value ? change.value.area : undefined;
+  const settings = deps.store.withDb(readPlanningSettings);
+  if (!ruleValuesEqual(currentRuleValue(settings, change.key, area), change.previous)) {
+    memoryItems.setRuleChange(change.memoryItemId, "none");
+    clearRequestIfGiven(deps.store, requestId);
+    return staleRuleProposal("confirm-proposal: that setting changed since the proposal");
+  }
+  const checked = validateProposedRuleValue(settings, change.key, change.value);
+  if (!checked.ok) {
+    clearRequestIfGiven(deps.store, requestId);
+    return checked;
+  }
+  try {
+    deps.connection.writeTx((db) => {
+      writeSettingInTx(db, change.key, checked.value);
+      appendOutboxInTx(db, { topic: MEMORY_TOPIC, entityId: change.key });
+      memoryItems.setRuleChange(change.memoryItemId, "confirmed");
+    });
+  } catch (error) {
+    return { ok: false, error: { kind: "unreachable", message: error instanceof Error ? error.message : "confirm-proposal: rule change failed" } };
+  }
+  clearRequestIfGiven(deps.store, requestId);
+  return { ok: true, value: { applied: true, receipts: [], message: ruleChangeConfirmedCopy(change) } };
 }
 
 export async function confirmProposal(
@@ -312,6 +380,10 @@ export async function confirmProposal(
         ],
       },
     };
+  }
+
+  if (proposal.kind === "rule-change") {
+    return confirmRuleChange(deps, proposal as Proposal<RuleChange>, accept, requestId);
   }
 
   // Every other kind: extracted-payload write functions, no generic

@@ -6,7 +6,7 @@
  * read only here and only inside function bodies (school-day.ts imports this
  * file too, so nothing may touch the other module at load time).
  */
-import type { Area, CompleteTask, Result, RuleSettingKey, YohError } from "../types/domain.ts";
+import type { Area, CompleteTask, Result, RuleSettingKey, RuleSettingValue, YohError } from "../types/domain.ts";
 import { SCHOOL_PROTECTED_WINDOWS, WORK_START_TIMES, type ProtectedWindowSpec } from "./school-day.ts";
 
 export interface ClockTime {
@@ -27,7 +27,7 @@ export interface PlanningDefaults {
   readonly protectedWindows: readonly ProtectedWindowSpec[];
 }
 
-export type RuleSettingValue = string | { readonly start: string; readonly end: string } | { readonly area: Area; readonly minutes: number };
+export type { RuleSettingValue };
 
 export interface SettingOverrides {
   schoolDayWorkStart?: string;
@@ -100,6 +100,41 @@ export function validateRuleValue(key: RuleSettingKey, value: unknown): Result<R
     default:
       return invalid(`unknown rule setting "${String(key)}"`, { key });
   }
+}
+
+/** The resolved value for `key` in the same shape `validateRuleValue` returns; an Area with no padding is 0 minutes. */
+export function currentRuleValue(settings: PlanningSettings, key: RuleSettingKey, area?: Area): RuleSettingValue {
+  const clock = (t: ClockTime): string => `${String(t.hour).padStart(2, "0")}:${String(t.minute).padStart(2, "0")}`;
+  switch (key) {
+    case "schoolDayWorkStart":
+      return clock(settings.workStart.schoolDay);
+    case "otherDayWorkStart":
+      return clock(settings.workStart.otherDay);
+    case "lunchWindow":
+    case "communityWindow": {
+      const w = settings.protectedWindows.find((x) => x.key === (key === "lunchWindow" ? "lunch" : "community"));
+      return w
+        ? { start: clock({ hour: w.startHour, minute: w.startMinute }), end: clock({ hour: w.endHour, minute: w.endMinute }) }
+        : { start: "00:00", end: "00:00" };
+    }
+    case "areaDurationPadding":
+      return { area: area ?? "", minutes: area === undefined ? 0 : (settings.areaDurationPadding[area] ?? 0) };
+  }
+}
+
+/** `validateRuleValue`, plus: lunch and community windows must not overlap once the change applies (T4 carry-over). */
+export function validateProposedRuleValue(settings: PlanningSettings, key: RuleSettingKey, value: unknown): Result<RuleSettingValue, YohError> {
+  const checked = validateRuleValue(key, value);
+  if (!checked.ok) return checked;
+  if (key === "lunchWindow" || key === "communityWindow") {
+    const other = currentRuleValue(settings, key === "lunchWindow" ? "communityWindow" : "lunchWindow") as { start: string; end: string };
+    const mine = checked.value as { start: string; end: string };
+    const range = (w: { start: string; end: string }): [number, number] => [toMinutes(parseClock(w.start)!), toMinutes(parseClock(w.end)!)];
+    const [a0, a1] = range(mine);
+    const [b0, b1] = range(other);
+    if (a0 < b1 && b0 < a1) return invalid("lunch and community windows must not overlap", { key, value });
+  }
+  return checked;
 }
 
 function applyWindow(defaults: readonly ProtectedWindowSpec[], key: string, override: { start: string; end: string } | undefined): readonly ProtectedWindowSpec[] {

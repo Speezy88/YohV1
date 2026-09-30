@@ -556,3 +556,133 @@ test("confirmProposal: an unrecognized proposal kind with accept:true returns a 
   assert.equal(result.error.kind, "validation");
   store.close();
 });
+
+// ---- rule-change (Story 13.8) ----------------------------------------------
+import { createMemoryItemStore, initMemoryItemStoreSchema } from "../src/adapters/memory-item-store.ts";
+import { readPlanningSettings, writeSetting } from "../src/adapters/settings-store.ts";
+import { ruleChangeProposalId, ruleChangeRequestId } from "../src/core/rule-change.ts";
+import type { RuleChange } from "../src/types/domain.ts";
+
+function ruleHarness(now = new Date(NOW)) {
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db);
+  initMemoryItemStoreSchema(connection.db);
+  const store = createMemoryStore(connection);
+  const memoryItems = createMemoryItemStore(connection);
+  const item = memoryItems.insert({ folder: "planning-preferences", text: "Start work at 2:30 on school days", origin: "stated", scope: "standing", sourceTurnId: "t1", ruleChange: "pending" } as never);
+  const change: RuleChange = { key: "schoolDayWorkStart", value: "14:30", previous: "15:15", memoryItemId: item.id };
+  const proposal: Proposal<RuleChange> = {
+    id: ruleChangeProposalId(item.id),
+    kind: "rule-change",
+    entityId: "schoolDayWorkStart",
+    entityVersion: JSON.stringify("15:15"),
+    suggested: change,
+    reason: "Change school-day work start from 3:15 PM to 2:30 PM?",
+    createdAt: NOW,
+  };
+  const requestId = ruleChangeRequestId(item.id);
+  putOpenInteractionRequest(store, requestId, { requestKind: "proposal", promptText: proposal.reason, detail: { proposal }, createdAt: NOW });
+  const deps: ConfirmProposalDeps = { store, connection, memoryItems, now: () => now };
+  const workStart = () => store.withDb(readPlanningSettings).workStart.schoolDay;
+  return { deps, store, connection, memoryItems, item, proposal, requestId, workStart };
+}
+
+test("rule-change: Yes writes the override, confirms the item, clears the request", async () => {
+  const h = ruleHarness();
+  const r = await confirmProposal(h.deps, { proposal: h.proposal, accept: true, requestId: h.requestId });
+  assert.ok(r.ok);
+  if (r.ok) {
+    assert.equal(r.value.applied, true);
+    assert.equal(r.value.message, "Changed school-day work start to 2:30 PM. Revert it on the Memory page.");
+  }
+  assert.deepEqual(h.workStart(), { hour: 14, minute: 30 });
+  assert.equal(h.memoryItems.getItem(h.item.id)?.ruleChange, "confirmed");
+  assert.equal(getOpenInteractionRequest(h.store, h.requestId), undefined);
+});
+
+test("rule-change: No writes nothing, declines the item", async () => {
+  const h = ruleHarness();
+  const r = await confirmProposal(h.deps, { proposal: h.proposal, accept: false, requestId: h.requestId });
+  assert.ok(r.ok);
+  if (r.ok) {
+    assert.equal(r.value.applied, false);
+    assert.equal(r.value.message, "Kept 3:15 PM. Your preference stays saved, marked declined.");
+  }
+  assert.deepEqual(h.workStart(), { hour: 15, minute: 15 });
+  assert.equal(h.memoryItems.getItem(h.item.id)?.ruleChange, "declined");
+  assert.equal(getOpenInteractionRequest(h.store, h.requestId), undefined);
+});
+
+test("rule-change: a stale Yes returns stale-proposal, writes nothing, item goes none", async () => {
+  const h = ruleHarness();
+  await writeSetting(h.connection, "schoolDayWorkStart", "16:00");
+  const r = await confirmProposal(h.deps, { proposal: h.proposal, accept: true, requestId: h.requestId });
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.equal(r.error.kind, "stale-proposal");
+  assert.deepEqual(h.workStart(), { hour: 16, minute: 0 });
+  assert.equal(h.memoryItems.getItem(h.item.id)?.ruleChange, "none");
+  assert.equal(getOpenInteractionRequest(h.store, h.requestId), undefined);
+});
+
+test("rule-change: an expired Yes (7 days) is withdrawn as declined", async () => {
+  const h = ruleHarness(new Date("2026-09-01T09:00:00.000Z"));
+  const r = await confirmProposal(h.deps, { proposal: h.proposal, accept: true, requestId: h.requestId });
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.equal(r.error.kind, "stale-proposal");
+  assert.deepEqual(h.workStart(), { hour: 15, minute: 15 });
+  assert.equal(h.memoryItems.getItem(h.item.id)?.ruleChange, "declined");
+  assert.equal(getOpenInteractionRequest(h.store, h.requestId), undefined);
+});
+
+test("rule-change: a window that would overlap is a validation failure and writes nothing", async () => {
+  const h = ruleHarness();
+  const cur = h.store.withDb(readPlanningSettings);
+  const community = cur.protectedWindows.find((w) => w.key === "community")!;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const previous = { start: "10:55", end: "11:35" };
+  const value = { start: `${pad(community.startHour)}:${pad(community.startMinute)}`, end: `${pad(community.endHour)}:${pad(community.endMinute)}` };
+  const change: RuleChange = { key: "lunchWindow", value, previous, memoryItemId: h.item.id };
+  const proposal = { ...h.proposal, entityId: "lunchWindow", suggested: change };
+  // Only meaningful when the built-in lunch window equals `previous`; otherwise use its real value.
+  const lunch = cur.protectedWindows.find((w) => w.key === "lunch")!;
+  const real = { start: `${pad(lunch.startHour)}:${pad(lunch.startMinute)}`, end: `${pad(lunch.endHour)}:${pad(lunch.endMinute)}` };
+  const r = await confirmProposal(h.deps, { proposal: { ...proposal, suggested: { ...change, previous: real } }, accept: true, requestId: h.requestId });
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.equal(r.error.kind, "validation");
+  assert.deepEqual(h.store.withDb(readPlanningSettings).protectedWindows, cur.protectedWindows);
+  assert.equal(getOpenInteractionRequest(h.store, h.requestId), undefined);
+});
+
+test("rule-change: missing connection or memoryItems is a missing dependency", async () => {
+  const h = ruleHarness();
+  const r = await confirmProposal({ store: h.store }, { proposal: h.proposal, accept: true, requestId: h.requestId });
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.equal(r.error.kind, "unreachable");
+});
+
+test("rule-change: store helpers find and withdraw the open rule proposal; question is Yes/No only", async () => {
+  const { findOpenRuleProposals, withdrawRuleProposal } = await import("../src/adapters/memory-store.ts");
+  const { buildProposalQuestion } = await import("../src/core/open-item-questions.ts");
+  const h = ruleHarness();
+  assert.equal(findOpenRuleProposals(h.store).length, 1);
+  assert.equal(buildProposalQuestion(h.requestId, "q", h.proposal).allowsFreeText, false);
+  assert.equal(withdrawRuleProposal(h.store, h.item.id), true);
+  assert.equal(withdrawRuleProposal(h.store, h.item.id), false);
+  assert.equal(findOpenRuleProposals(h.store).length, 0);
+});
+
+test("settings-store logs a skipped invalid stored row", async () => {
+  const { readSettingOverrides, initSettingsStoreSchema } = await import("../src/adapters/settings-store.ts");
+  const h = ruleHarness();
+  initSettingsStoreSchema(h.connection.db);
+  h.connection.db.prepare("INSERT INTO planning_settings (key, area, value, updated_at) VALUES ('schoolDayWorkStart','', '\"07:00\"', 'x')").run();
+  const lines: string[] = [];
+  const orig = process.stderr.write.bind(process.stderr);
+  (process.stderr as { write: unknown }).write = (c: string) => (lines.push(String(c)), true);
+  try {
+    readSettingOverrides(h.connection.db);
+  } finally {
+    (process.stderr as { write: unknown }).write = orig;
+  }
+  assert.ok(lines.some((l) => l.includes("settings-store.invalid-row-skipped")));
+});
