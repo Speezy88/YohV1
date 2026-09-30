@@ -18,6 +18,7 @@ export const PAGES = [
   { id: "tasks", label: "Tasks" },
   { id: "desk", label: "Desk" },
   { id: "research", label: "Research Hub" },
+  { id: "memory", label: "Memory" },
 ] as const;
 
 export type PageId = (typeof PAGES)[number]["id"];

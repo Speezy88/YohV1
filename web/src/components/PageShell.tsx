@@ -1,6 +1,6 @@
 // web/src/components/PageShell.tsx — Story 7.6; Task 6A (2026-09-27)
 // rebuilds this as the vertical page stack: Home → Tasks → Desk →
-// Research Hub, one page in view at a time, with a persistent left Sidebar
+// Research Hub → Memory, one page in view at a time, with a persistent left Sidebar
 // and a Chat panel that overlays every page. Navigation (sidebar click, the
 // on-screen up/down arrow buttons, ↑/↓/Page Up/Page Down, an edge-aware
 // mouse wheel) only ever changes `usePageNavigation`'s index — every page
@@ -30,6 +30,7 @@ import HomePage from "../pages/Home.tsx";
 import TasksPage from "../pages/Tasks.tsx";
 import DeskPage from "../pages/Desk.tsx";
 import ResearchHubPage from "../pages/ResearchHub.tsx";
+import MemoryPage from "../pages/Memory.tsx";
 import { useReducedMotion } from "../hooks/useReducedMotion.ts";
 import { Screensaver } from "./Screensaver.tsx";
 import { useLaunchSplash } from "../lib/readiness.ts";
@@ -44,7 +45,7 @@ import { AskYohPill } from "./AskYohPill.tsx";
 import { ChatPanel } from "./ChatPanel.tsx";
 import { toggleChatPanel, useChatPanel } from "../lib/chatPanel.ts";
 
-const PAGE_COMPONENTS = { home: HomePage, tasks: TasksPage, desk: DeskPage, research: ResearchHubPage } as const;
+const PAGE_COMPONENTS = { home: HomePage, tasks: TasksPage, desk: DeskPage, research: ResearchHubPage, memory: MemoryPage } as const;
 
 export function PageShell(): React.JSX.Element {
   const nav = usePageNavigation();

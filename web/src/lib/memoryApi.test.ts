@@ -15,8 +15,8 @@ describe("memoryApi", () => {
     ]);
   });
 
-  it("has no Memory page yet", () => {
-    expect(hasMemoryPage()).toBe(false);
+  it("has a Memory page now", () => {
+    expect(hasMemoryPage()).toBe(true);
   });
 
   it("returns the server message on success and sends the receipt id", async () => {

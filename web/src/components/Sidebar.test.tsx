@@ -51,7 +51,7 @@ describe("Sidebar", () => {
 
   it("the down arrow is disabled on the last page; the up arrow calls prev()", () => {
     const prev = vi.fn();
-    renderWithNav({ index: 3, goTo: vi.fn(), next: vi.fn(), prev });
+    renderWithNav({ index: 4, goTo: vi.fn(), next: vi.fn(), prev });
     expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled();
     screen.getByRole("button", { name: "Previous page" }).click();
     expect(prev).toHaveBeenCalledTimes(1);
@@ -64,6 +64,6 @@ describe("Sidebar", () => {
 
   it("announces the current page via the visually-hidden live region", () => {
     renderWithNav({ index: 2, goTo: vi.fn(), next: vi.fn(), prev: vi.fn() });
-    expect(screen.getByText("Desk, page 3 of 4")).toBeInTheDocument();
+    expect(screen.getByText("Desk, page 3 of 5")).toBeInTheDocument();
   });
 });

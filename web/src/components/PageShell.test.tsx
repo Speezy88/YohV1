@@ -145,9 +145,10 @@ describe("PageShell", () => {
     const tasks = screen.getByTestId("page-tasks");
     const desk = screen.getByTestId("page-desk");
     const research = screen.getByTestId("page-research");
+    const memory = screen.getByTestId("page-memory");
     expect(home).not.toHaveAttribute("aria-hidden");
     expect(home).not.toHaveAttribute("inert");
-    for (const offScreen of [tasks, desk, research]) {
+    for (const offScreen of [tasks, desk, research, memory]) {
       expect(offScreen).toHaveAttribute("aria-hidden", "true");
       expect(offScreen).toHaveAttribute("inert");
     }

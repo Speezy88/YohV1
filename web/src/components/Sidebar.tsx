@@ -26,6 +26,7 @@ const PAGE_ICON_PATHS: Record<(typeof PAGES)[number]["id"], string> = {
   tasks: "M9 6h11 M9 12h11 M9 18h11 M4 6l1 1 2-2 M4 12l1 1 2-2 M4 18l1 1 2-2",
   desk: "M3 4h18v12H3z M8 20h8 M12 16v4",
   research: "M11 17a6 6 0 1 0 0-12 6 6 0 0 0 0 12z M20 20l-4.5-4.5",
+  memory: "M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z M5 17a3 3 0 0 1 3-3h11",
 };
 
 const UP_ARROW_PATH = "M6 15l6-6 6 6";
