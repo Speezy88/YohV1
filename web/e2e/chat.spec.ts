@@ -18,6 +18,10 @@ async function openChat(page: Page): Promise<void> {
   await expect(page.getByTestId("chat-panel")).toBeVisible();
 }
 
+test.beforeEach(async ({ request }) => {
+  await request.post("/__fixture/reset");
+});
+
 test("Enter shows Spencer's turn and the Thinking Indicator at once, then Yoh's reply streams in over POST /api/chat", async ({ page }) => {
   await openChat(page);
   const chat = page.getByTestId("chat-panel");

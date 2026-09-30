@@ -88,24 +88,24 @@ describe("streamChat", () => {
   it("POSTs the request as JSON to /api/chat and relays each event in order", async () => {
     const fetchMock = stubFetch(new Response(sseStream([block({ type: "delta", text: "ok" }), block(DONE)]), { headers: { "Content-Type": "text/event-stream" } }));
     const events: ChatStreamEvent[] = [];
-    await streamChat({ message: "hi", history: [{ role: "user", content: "hi" }] }, { onEvent: (e) => events.push(e) });
+    await streamChat({ message: "hi" }, { onEvent: (e) => events.push(e) });
     expect(events).toEqual([{ type: "delta", text: "ok" }, DONE]);
     const [url, init] = fetchMock.mock.calls[0]! as [string | URL, RequestInit];
     expect(String(url)).toMatch(/\/api\/chat$/);
     expect(init.method).toBe("POST");
-    expect(JSON.parse(String(init.body))).toEqual({ message: "hi", history: [{ role: "user", content: "hi" }] });
+    expect(JSON.parse(String(init.body))).toEqual({ message: "hi" });
   });
 
   it("resolves for a well-formed error event — a handled outcome, not a transport failure", async () => {
     stubFetch(new Response(sseStream([block(NOT_CONFIGURED)]), { headers: { "Content-Type": "text/event-stream" } }));
     const events: ChatStreamEvent[] = [];
-    await expect(streamChat({ message: "hi", history: [] }, { onEvent: (e) => events.push(e) })).resolves.toBeUndefined();
+    await expect(streamChat({ message: "hi" }, { onEvent: (e) => events.push(e) })).resolves.toBeUndefined();
     expect(events).toEqual([NOT_CONFIGURED]);
   });
 
   it("rejects when the fetch itself fails", async () => {
     stubFetch(new Error("network down"));
-    await expect(streamChat({ message: "hi", history: [] }, { onEvent: () => {} })).rejects.toThrow("network down");
+    await expect(streamChat({ message: "hi" }, { onEvent: () => {} })).rejects.toThrow("network down");
   });
 
   it("rejects with the envelope's message when the server answers with a JSON failure instead of a stream", async () => {
@@ -115,13 +115,13 @@ describe("streamChat", () => {
         headers: { "Content-Type": "application/json" },
       }),
     );
-    await expect(streamChat({ message: "hi", history: [] }, { onEvent: () => {} })).rejects.toThrow("chat: missing message");
+    await expect(streamChat({ message: "hi" }, { onEvent: () => {} })).rejects.toThrow("chat: missing message");
   });
 
   it("rejects when the stream ends without a done or error event (the connection dropped mid-reply)", async () => {
     stubFetch(new Response(sseStream([block({ type: "delta", text: "Sure, I" })]), { headers: { "Content-Type": "text/event-stream" } }));
     const events: ChatStreamEvent[] = [];
-    await expect(streamChat({ message: "hi", history: [] }, { onEvent: (e) => events.push(e) })).rejects.toThrow(/ended before/);
+    await expect(streamChat({ message: "hi" }, { onEvent: (e) => events.push(e) })).rejects.toThrow(/ended before/);
     expect(events).toEqual([{ type: "delta", text: "Sure, I" }]);
   });
 });

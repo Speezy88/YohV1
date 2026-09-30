@@ -34,6 +34,10 @@ function row(page: Page, title: string) {
   return page.getByTestId("task-row").filter({ hasText: title });
 }
 
+test.beforeEach(async ({ request }) => {
+  await request.post("/__fixture/reset");
+});
+
 test("fresh load → Tasks → quick-add is focused → one line + Enter creates the Task with the right Due and Duration", async ({ page }) => {
   await openTasks(page);
   const quickAdd = page.getByRole("textbox", { name: "New task" });

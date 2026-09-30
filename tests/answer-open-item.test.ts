@@ -6,6 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createMemoryStore, getCurrentTimeBudget, getOpenInteractionRequest, putOpenInteractionRequest, putTimeBudget } from "../src/adapters/memory-store.ts";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
+import { createChatStore, initChatStoreSchema } from "../src/adapters/chat-store.ts";
 import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
 import { answerOpenItem } from "../src/app/answer-open-item.ts";
 
@@ -234,5 +235,36 @@ test("answerOpenItem: a notion-page-draft proposal that fails Notion's own valid
   assert.doesNotMatch(result.value.message ?? "", /notion-adapter/);
   assert.doesNotMatch(result.value.message ?? "", /any more/i);
   assert.doesNotMatch(result.value.message ?? "", /stale/i);
+  store.close();
+});
+
+test("answerOpenItem stores the answer and the reply as today's chat turns (E5)", async () => {
+  const store = tempStore();
+  const cc = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(cc.db);
+  initChatStoreSchema(cc.db);
+  const chatHistory = createChatStore(cc);
+  putOpenInteractionRequest(store, "future-thing", { requestKind: "some-future-kind", promptText: "x", createdAt: "x" });
+  const result = await answerOpenItem(
+    { ...fullDeps(store), chatHistory, timeZone: "UTC", now: () => new Date("2026-08-22T10:00:00Z") },
+    { requestId: "future-thing", questionId: "generic", answer: "yes" },
+  );
+  assert.equal(result.ok, true);
+  const turns = chatHistory.turnsForDate("2026-08-22");
+  assert.deepEqual(turns.map((t) => [t.role, t.text]), [["user", "yes"], ["assistant", "Got it — thanks."]]);
+  store.close();
+});
+
+test("answerOpenItem still returns its Result when the chat store throws (E5)", async () => {
+  const store = tempStore();
+  const logged: string[] = [];
+  const chatHistory = { appendTurn() { throw new Error("disk full"); }, turnsForDate: () => [], clearAll() {} };
+  putOpenInteractionRequest(store, "future-thing", { requestKind: "some-future-kind", promptText: "x", createdAt: "x" });
+  const result = await answerOpenItem(
+    { ...fullDeps(store), chatHistory, timeZone: "UTC", now: () => new Date("2026-08-22T10:00:00Z"), log: (e: { event: string }) => { logged.push(e.event); } },
+    { requestId: "future-thing", questionId: "generic", answer: "yes" },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(logged.length > 0, true);
   store.close();
 });

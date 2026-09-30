@@ -128,13 +128,13 @@ test("chat: routine lines route before plan-edit and LLM steps", async () => {
     session: { recentMessages: [], lastSearchAnswer: undefined },
     getCompletedTaskIdsToday: () => new Set(),
   } as unknown as ChatTurnDeps;
-  const added = await chatTurn(deps, { message: "my commute is 3:00–3:30 on weekdays", history: [] });
+  const added = await chatTurn(deps, { message: "my commute is 3:00–3:30 on weekdays" });
   assert.ok(added.ok);
   assert.equal(added.value.reply, "Added your commute: weekdays, 3:00–3:30 PM.");
-  const listed = await chatTurn(deps, { message: "what are my routines", history: [] });
+  const listed = await chatTurn(deps, { message: "what are my routines" });
   assert.ok(listed.ok);
   assert.match(listed.value.reply, /commute: weekdays, 3:00–3:30 PM/);
-  const removed = await chatTurn(deps, { message: "remove my commute routine", history: [] });
+  const removed = await chatTurn(deps, { message: "remove my commute routine" });
   assert.ok(removed.ok);
   assert.equal(listRoutines(connection).length, 0);
 });

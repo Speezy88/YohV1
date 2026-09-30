@@ -9,6 +9,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { ChatPanel } from "./ChatPanel.tsx";
+import * as chatStoreModule from "../lib/chatStore.ts";
 import { __resetChatStoreForTests, appendStreamEntry } from "../lib/chatStore.ts";
 import { __resetChatPanelForTests, openChatPanel } from "../lib/chatPanel.ts";
 import * as chatStreamModule from "../lib/chatStream.ts";
@@ -47,6 +48,14 @@ describe("ChatPanel", () => {
     vi.spyOn(openItemsModule, "startOpenItemsStream").mockReturnValue(() => {});
   });
   afterEach(() => vi.restoreAllMocks());
+
+  it("hydrates today's conversation when the panel opens, not while closed (Story 13.1)", () => {
+    const hydrate = vi.spyOn(chatStoreModule, "hydrateChatHistory").mockResolvedValue();
+    render(<ChatPanel />);
+    expect(hydrate).not.toHaveBeenCalled();
+    act(() => openChatPanel());
+    expect(hydrate).toHaveBeenCalledTimes(1);
+  });
 
   it("renders nothing while closed", () => {
     render(<ChatPanel />);

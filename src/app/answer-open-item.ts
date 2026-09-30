@@ -8,6 +8,9 @@
  * still doesn't recognize keeps the pre-Epic-8 generic behavior.
  */
 import { clearInteractionRequest, getOpenInteractionRequest, type InteractionRequest, type MemoryStore, type StoredRecord } from "../adapters/memory-store.ts";
+import type { ChatStore } from "../adapters/chat-store.ts";
+import type { LogEntry } from "../adapters/logger.ts";
+import { localIsoDate } from "../rituals/ritual-shared.ts";
 import { errorCopy, serviceForProposalKind } from "../core/error-copy.ts";
 import { parseProposalAnswer } from "../core/open-item-answers.ts";
 import { PROPOSAL_QUESTION_ID } from "../core/open-item-questions.ts";
@@ -21,6 +24,10 @@ import type { AnswerOpenItemRequest, AnswerOpenItemResponse } from "../types/api
 
 export interface AnswerOpenItemDeps extends AnswerDataCompletenessDeps, AnswerNightCloseOutDeps, AnswerSelfCheckDeps {
   readonly store: MemoryStore;
+  /** E5: when set with `timeZone`, the answer and Yoh's reply are stored as today's chat turns. Store failures are logged, never surfaced. */
+  readonly chatHistory?: ChatStore;
+  readonly timeZone?: string;
+  readonly log?: (entry: LogEntry) => void;
   /** Needed only to approve an open `"reshuffle"` proposal: everything `approveReshuffle` needs besides `store`. */
   readonly reshuffle?: NonNullable<ConfirmProposalDeps["reshuffle"]>;
   /** `notion-adapter.ts`'s `createPage`, pre-bound — needed only if an open `"proposal"` item is a `"notion-page-draft"` kind (Story 8.4's first real user of this path). Widens this deps object so it also structurally satisfies `confirm-proposal.ts`'s `ConfirmProposalDeps`. */
@@ -106,7 +113,7 @@ async function answerGeneric(store: MemoryStore, requestId: string): Promise<Res
   return { ok: true, value: { message: "Got it — thanks.", receipts: [], next: "done" } };
 }
 
-export async function answerOpenItem(deps: AnswerOpenItemDeps, input: AnswerOpenItemRequest): Promise<Result<AnswerOpenItemResponse, YohError>> {
+async function dispatchAnswer(deps: AnswerOpenItemDeps, input: AnswerOpenItemRequest): Promise<Result<AnswerOpenItemResponse, YohError>> {
   const record = getOpenInteractionRequest(deps.store, input.requestId);
   if (!record) return { ok: false, error: { kind: "conflict", message: `answer-open-item: no open interaction request ${input.requestId}` } };
   switch (record.data.requestKind) {
@@ -121,4 +128,21 @@ export async function answerOpenItem(deps: AnswerOpenItemDeps, input: AnswerOpen
     default:
       return answerGeneric(deps.store, input.requestId);
   }
+}
+
+export async function answerOpenItem(deps: AnswerOpenItemDeps, input: AnswerOpenItemRequest): Promise<Result<AnswerOpenItemResponse, YohError>> {
+  const result = await dispatchAnswer(deps, input);
+  const store = deps.chatHistory;
+  if (!result.ok || !store || !deps.timeZone) return result;
+  try {
+    const at = (deps.now ?? (() => new Date()))();
+    const date = localIsoDate(at, deps.timeZone);
+    const { message, next } = result.value;
+    const reply = [message, next !== "done" ? next.text : undefined].filter((t): t is string => !!t && t.trim() !== "").join("\n\n");
+    store.appendTurn({ date, role: "user", text: input.answer.trim(), at: at.toISOString() });
+    if (reply !== "") store.appendTurn({ date, role: "assistant", text: reply, at: at.toISOString() });
+  } catch (error) {
+    deps.log?.({ level: "warn", event: "answer-open-item.history-write-failed", detail: error instanceof Error ? error.message : String(error) });
+  }
+  return result;
 }

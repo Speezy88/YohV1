@@ -44,7 +44,7 @@
  * is gone (nothing else used it); the server route/store it read stay.
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { appendPendingOpenItem, useChatStore } from "../lib/chatStore.ts";
+import { appendPendingOpenItem, hydrateChatHistory, useChatStore } from "../lib/chatStore.ts";
 import { useChatPanel, closeChatPanel } from "../lib/chatPanel.ts";
 import { useMissingDataCount, missingDataChipLabel, openMissingData } from "../lib/missingData.ts";
 import { startOpenItemsStream, useOpenItems } from "../lib/openItems.ts";
@@ -67,6 +67,11 @@ export function ChatPanel(): React.JSX.Element | null {
   const panelRef = useRef<HTMLDivElement>(null);
   const streamRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
+
+  // Story 13.1: restore today's Conversation on the first open (a no-op after).
+  useEffect(() => {
+    if (open) void hydrateChatHistory();
+  }, [open]);
 
   // Task 6 addendum: only fetch/subscribe while the panel is actually open.
   useEffect(() => {

@@ -398,8 +398,6 @@ export interface ConfirmProposalResponse {
  */
 export interface ChatTurnRequest {
   readonly message: string;
-  /** @deprecated ignored by the server (it owns chat history); T2 removes it */
-  readonly history?: readonly ChatTurn[];
 }
 
 /** `chatTurn`'s value: one reply, ready for any surface to render. */

@@ -359,7 +359,6 @@ test("Review Focus #4: a calendar-edit line whose draft is NONE falls through to
 
   const result = await chatTurn(deps, {
     message: "move on to the next topic",
-    history: [{ role: "user", content: "move on to the next topic" }],
   });
 
   assert.equal(result.ok, true);
@@ -390,7 +389,6 @@ test("an ordinary message classified as general-question never calls search(), a
 
   const result = await chatTurn(deps, {
     message: "what should I have for lunch",
-    history: [{ role: "user", content: "what should I have for lunch" }],
   });
 
   assert.equal(result.ok, true);
@@ -521,7 +519,6 @@ test("chatTurn's search pre-check never swallows a planning line that happens to
 
   const result = await chatTurn(deps, {
     message: "today's plan",
-    history: [{ role: "user", content: "today's plan" }],
   });
 
   assert.equal(result.ok, true);
@@ -558,7 +555,7 @@ test("general chat's capability text says web search isn't set up (never claims 
   const llmClient = makeFakeLlmClient("I can't do that yet.");
   const deps = baseDeps({ llmClient, webSearchAvailable: false });
 
-  await chatTurn(deps, { message: "what can you do", history: [{ role: "user", content: "what can you do" }] });
+  await chatTurn(deps, { message: "what can you do" });
 
   const lastCall = (llmClient as any).calls.at(-1);
   assert.ok(lastCall, "expected answerQuestion's own Claude call");
@@ -734,7 +731,6 @@ test("chatTurn's day-view recognizer never swallows a calendar-EDIT line ('move 
 
   const result = await chatTurn(deps, {
     message: "move my 3pm tomorrow to 4",
-    history: [{ role: "user", content: "move my 3pm tomorrow to 4" }],
   });
 
   assert.ok(result.ok);
@@ -770,7 +766,7 @@ test("chatTurn's day-view recognizer falls through to the ordinary chat path whe
     },
   });
 
-  const result = await chatTurn(deps, { message: "what's on your mind", history: [{ role: "user", content: "what's on your mind" }] });
+  const result = await chatTurn(deps, { message: "what's on your mind" });
 
   assert.ok(result.ok);
   if (!result.ok) return;
@@ -927,7 +923,6 @@ test("chatTurn does NOT capture a question — it falls through to the ordinary 
   const deps = baseDeps({ llmClient });
   const result = await chatTurn(deps, {
     message: "What's my next meeting?",
-    history: [{ role: "user", content: "What's my next meeting?" }],
   });
   assert.equal(result.ok, true);
   if (!result.ok) return;
@@ -939,7 +934,6 @@ test("chatTurn does NOT capture an ordinary statement", async () => {
   const deps = baseDeps({ llmClient });
   const result = await chatTurn(deps, {
     message: "That lecture ran long today.",
-    history: [{ role: "user", content: "That lecture ran long today." }],
   });
   assert.equal(result.ok, true);
   if (!result.ok) return;
@@ -1125,7 +1119,6 @@ test("classifyCapture's 'event' outcome falls through to general chat (never a b
 
   const result = await chatTurn(deps, {
     message: "dinner with Jamie tomorrow night",
-    history: [{ role: "user", content: "dinner with Jamie tomorrow night" }],
   });
 
   assert.equal(result.ok, true);

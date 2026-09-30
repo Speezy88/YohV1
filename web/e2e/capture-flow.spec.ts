@@ -27,6 +27,10 @@ function messageInput(page: Page) {
   return page.getByRole("textbox", { name: "Message Yoh" });
 }
 
+test.beforeEach(async ({ request }) => {
+  await request.post("/__fixture/reset");
+});
+
 test("fresh launch: no login, picker, or extra screen appears before a focused Chat Input", async ({ page }) => {
   await page.goto("/");
 

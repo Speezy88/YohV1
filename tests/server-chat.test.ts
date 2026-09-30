@@ -17,7 +17,7 @@ import type { ChatTurnDeps } from "../src/app/chat-turn.ts";
 import { createApp, runChatStream, startServer, type ChatSseStreamLike, type ChatTurnFn, type ServerDeps } from "../src/shell/server.ts";
 import type { ChatStreamEvent, ChatTurnRequest } from "../src/types/api.ts";
 
-const REQUEST: ChatTurnRequest = { message: "hi", history: [{ role: "user", content: "hi" }] };
+const REQUEST: ChatTurnRequest = { message: "hi" };
 
 function fakeChatStream(options: { rejectWrites?: boolean; aborted?: boolean } = {}) {
   const events: Array<{ event: string; data: string }> = [];

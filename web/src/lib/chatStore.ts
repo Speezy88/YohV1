@@ -14,13 +14,14 @@
  * ordinary turn, unchanged `ChatViewMessage` payload) or `"sandbox-card"` (a
  * Sandbox Card rendered inline, Story 9.2) — so a card genuinely interleaves
  * with turns in one ordered stream and "stays in chat history" once
- * settled. `history` sent to the server (`ChatTurnRequest.history`) is
- * still built from `"message"` entries only — a card is never appended to
- * the LLM-facing transcript. `appendStreamEntry`/`updateStreamEntry` are
+ * settled. The server owns the transcript for the model (Story 13.1); the
+ * client sends `{message}` only and restores today's turns on first open
+ * (`hydrateChatHistory`). `appendStreamEntry`/`updateStreamEntry` are
  * generic over any future `StreamEntry` kind (Story 9.3 adds a
  * `"sandbox-finale"` kind and reuses these two verbatim).
  */
 import { useSyncExternalStore } from "react";
+import { apiClient } from "./apiClient.ts";
 import { streamChat } from "./chatStream.ts";
 import { startSandbox } from "./sandbox.ts";
 import { addLocalFailureNotice } from "./notifications.ts";
@@ -178,12 +179,30 @@ function appendMessage(message: ChatViewMessage): void {
   set({ ...state, entries: [...state.entries, { kind: "message", id: message.id, message }] });
 }
 
-/** The transcript as `ChatTurnRequest.history` — "message" entries only, a card is never appended to the LLM-facing transcript. A turn with no text (a failed reply) is left out: the Messages API rejects empty content. */
-function historyOf(entries: readonly StreamEntry[]): readonly { role: "user" | "assistant"; content: string }[] {
-  return messageEntries(entries)
-    .map((e) => e.message)
-    .filter((m) => m.status !== "streaming" && m.text.trim() !== "")
-    .map((m) => ({ role: m.role, content: m.text }));
+let hydrateStarted = false;
+
+/**
+ * Story 13.1: restores today's Conversation from the server, once per page
+ * load (the first open of the Chat panel). Stored turns render as plain
+ * done messages, in front of anything already present (a pending open item
+ * may have been appended first). A stored question is text only — nothing
+ * here re-runs an action. A failed fetch leaves the panel as it was.
+ */
+export async function hydrateChatHistory(): Promise<void> {
+  if (hydrateStarted) return;
+  hydrateStarted = true;
+  try {
+    const res = await apiClient.api["chat-history"].today.$get();
+    const result = await res.json();
+    if (!result.ok || result.value.turns.length === 0) return;
+    const restored: StreamEntry[] = result.value.turns.map((turn) => {
+      const message: ChatViewMessage = { id: `stored-${turn.id}`, role: turn.role, text: turn.text, receipts: [], status: "done" };
+      return { kind: "message", id: message.id, message };
+    });
+    set({ ...state, entries: [...restored, ...state.entries] });
+  } catch {
+    // The panel simply starts empty.
+  }
 }
 
 /**
@@ -208,7 +227,7 @@ export async function send(message: string): Promise<void> {
 
   const userId = `chat-${++nextId}`;
   const assistantId = `chat-${++nextId}`;
-  const request: ChatTurnRequest = { message: trimmed, history: [...historyOf(state.entries), { role: "user", content: trimmed }] };
+  const request: ChatTurnRequest = { message: trimmed };
   appendMessage({ id: userId, role: "user", text: trimmed, receipts: [], status: "done" });
   appendMessage({ id: assistantId, role: "assistant", text: "", receipts: [], status: "streaming", statusText: INITIAL_STATUS_TEXT });
   set({ ...state, draft: "", sending: true });
@@ -332,4 +351,5 @@ export function __resetChatStoreForTests(): void {
   state = EMPTY;
   nextId = 0;
   shownPendingRequestIds.clear();
+  hydrateStarted = false;
 }

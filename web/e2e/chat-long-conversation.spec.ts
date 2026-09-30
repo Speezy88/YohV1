@@ -51,6 +51,10 @@ async function sendTurnAndAwaitReply(input: Locator, stream: Locator, line: stri
   }
 }
 
+test.beforeEach(async ({ request }) => {
+  await request.post("/__fixture/reset");
+});
+
 test("a long conversation never lets the stream or the last message overlap the Chat Input", async ({ page }) => {
   test.setTimeout(120_000);
   await openChat(page);

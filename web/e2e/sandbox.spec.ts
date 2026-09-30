@@ -81,6 +81,10 @@ async function fixtureTaskRow(page: Page, taskId: string): Promise<FixtureTaskRo
   return rows.find((r) => r.id === taskId);
 }
 
+test.beforeEach(async ({ request }) => {
+  await request.post("/__fixture/reset");
+});
+
 test("/sandbox: Skip on the first card writes nothing and advances; Save on the next writes to Notion and settles 'Saved'", async ({ page }) => {
   await openChatAndRunSandbox(page);
   const chat = page.getByTestId("chat-panel");

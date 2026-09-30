@@ -10,6 +10,7 @@ import {
   __resetChatStoreForTests,
   appendPendingOpenItem,
   appendStreamEntry,
+  hydrateChatHistory,
   recordAnsweredOpenItem,
   resolveMessageQuestion,
   send,
@@ -19,8 +20,18 @@ import {
 } from "./chatStore.ts";
 import type { ChatViewMessage, ChatStoreState } from "./chatStore.ts";
 import * as chatStreamModule from "./chatStream.ts";
+import { apiClient } from "./apiClient.ts";
 import * as notifications from "./notifications.ts";
 import type { ChatStreamEvent, ChatTurnRequest, OpenItem, OpenItemQuestion, SandboxCardView } from "../../../src/types/api.ts";
+
+vi.mock("./apiClient.ts", () => ({
+  apiClient: { api: { "chat-history": { today: { $get: vi.fn() } } } },
+}));
+const historyGet = apiClient.api["chat-history"].today.$get as unknown as ReturnType<typeof vi.fn>;
+const TURNS = [
+  { id: "t1", role: "user", text: "hello", truncated: false, createdAt: "2026-08-22T10:00:00Z" },
+  { id: "t2", role: "assistant", text: "hi there", truncated: true, createdAt: "2026-08-22T10:00:01Z" },
+];
 
 /** Every existing test in this file asserted on `result.current.messages` — the message-kind entries, in order, unwrapped back to the old shape so none of the existing assertions below need to change their own expected values. */
 function messagesOf(state: ChatStoreState): readonly ChatViewMessage[] {
@@ -75,25 +86,37 @@ describe("chatStore", () => {
     await stream.finish();
   });
 
-  it("sends the prior transcript plus this message as history, skipping turns with no text", async () => {
+  it("sends only { message } to the server (it owns history)", async () => {
     const stream = controllableStream();
     act(() => void send("first"));
     stream.emit({ type: "done", response: { reply: "one", receipts: [] } });
     await stream.finish();
     act(() => void send("second"));
-    stream.emit({ type: "error", error: { kind: "unreachable", message: "llm down" } });
+    expect(stream.requests[1]).toEqual({ message: "second" });
     await stream.finish();
-    act(() => void send("third"));
-    expect(stream.requests[2]).toEqual({
-      message: "third",
-      history: [
-        { role: "user", content: "first" },
-        { role: "assistant", content: "one" },
-        { role: "user", content: "second" },
-        { role: "user", content: "third" },
-      ],
-    });
-    await stream.finish();
+  });
+
+  it("hydrateChatHistory prepends today's stored turns as done messages, once per page load", async () => {
+    historyGet.mockReset();
+    historyGet.mockResolvedValue({ json: async () => ({ ok: true, value: { date: "2026-08-22", turns: TURNS } }) });
+    const { result } = renderHook(() => useChatStore());
+    act(() => appendPendingOpenItem({ requestId: "r", promptText: "Pending?", question: QUESTION } as OpenItem));
+    await act(async () => hydrateChatHistory());
+    await act(async () => hydrateChatHistory());
+    expect(historyGet).toHaveBeenCalledTimes(1);
+    expect(messagesOf(result.current).map((m) => [m.role, m.text, m.status])).toEqual([
+      ["user", "hello", "done"],
+      ["assistant", "hi there", "done"],
+      ["assistant", "Pending?", "done"],
+    ]);
+  });
+
+  it("a failed hydrate leaves the transcript empty", async () => {
+    historyGet.mockReset();
+    historyGet.mockRejectedValue(new Error("offline"));
+    const { result } = renderHook(() => useChatStore());
+    await act(async () => hydrateChatHistory());
+    expect(result.current.entries).toEqual([]);
   });
 
   it("a status event replaces the placeholder's status text; delta events append to its text", async () => {

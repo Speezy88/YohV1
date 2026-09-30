@@ -18,6 +18,10 @@ async function openChat(page: Page): Promise<void> {
   await expect(page.getByTestId("chat-panel")).toBeVisible();
 }
 
+test.beforeEach(async ({ request }) => {
+  await request.post("/__fixture/reset");
+});
+
 test("the Chat header's chip shows the sandbox queue count and never a 'Waiting on you' section", async ({ page }) => {
   await openChat(page);
   const chat = page.getByTestId("chat-panel");
