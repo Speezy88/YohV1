@@ -172,3 +172,15 @@ test("purgeChain removes exactly those rows with one outbox row; a forgotten cha
   store.purgeChain([]);
   assert.equal(outboxCount(connection), before + 1);
 });
+
+test("pattern state keeps confirmedAt and migrates an older table that lacks the column", () => {
+  const { store, connection } = fresh();
+  store.putPatternState({ kind: "area-overrun", area: "History", confirmedAt: T1 });
+  assert.deepEqual(store.getPatternState("area-overrun", "History"), { kind: "area-overrun", area: "History", confirmedAt: T1 });
+  connection.db.exec("DROP TABLE pattern_state; CREATE TABLE pattern_state (kind TEXT NOT NULL, area TEXT NOT NULL, pending_proposal_id TEXT, declined_at TEXT, last_offered_on TEXT, PRIMARY KEY (kind, area));");
+  initMemoryItemStoreSchema(connection.db);
+  initMemoryItemStoreSchema(connection.db);
+  const again = createMemoryItemStore(connection);
+  again.putPatternState({ kind: "area-slips", area: "Work", confirmedAt: T2 });
+  assert.equal(again.getPatternState("area-slips", "Work")?.confirmedAt, T2);
+});

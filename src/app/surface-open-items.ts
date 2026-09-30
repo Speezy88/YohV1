@@ -156,6 +156,8 @@ export async function surfaceOpenItems(deps: SurfaceOpenItemsDeps, _input: Recor
       }
       continue;
     }
+    // Story 13.13: Pattern proposals surface only through their own offer routes and the Memory page.
+    if (record.data.requestKind === "proposal" && proposal?.kind === "pattern") continue;
     const question = await buildForRecord(deps, record);
     items.push({
       requestId: record.id,

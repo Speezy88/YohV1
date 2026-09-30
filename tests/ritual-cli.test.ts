@@ -29,6 +29,7 @@ import {
   checkMorningPlanGenerationDegraded,
   createOperationalNotifier,
   runRitualCli,
+  withPatternDetection,
   DAILY_RITUAL_MISSED_RUN_GRACE_HOURS,
   type MissedRunCheckResult,
   type RitualCliDeps,
@@ -1629,4 +1630,24 @@ test("end-to-end: a real failed/missed/degraded morning run's alert bodies conta
     assertNoJargon(alert.message);
   }
   store.close();
+});
+
+test("withPatternDetection: runs detection after the morning; a detection failure never changes the result", async () => {
+  const order: string[] = [];
+  const logs: string[] = [];
+  const morning = async () => {
+    order.push("morning");
+    return { ok: true, value: "m" } as never;
+  };
+  const run = withPatternDetection(morning as never, async () => { order.push("detect"); throw new Error("boom"); }, (e) => logs.push(e.event));
+  assert.deepEqual(await run(), { ok: true, value: "m" });
+  assert.deepEqual(order, ["morning", "detect"]);
+  assert.deepEqual(logs, ["ritual-cli.pattern-detection-failed"]);
+});
+
+test("withPatternDetection: not called when the morning threw before running", async () => {
+  let detected = false;
+  const run = withPatternDetection((async () => { throw new Error("early"); }) as never, async () => { detected = true; }, () => {});
+  await assert.rejects(run(), /early/);
+  assert.equal(detected, false);
 });

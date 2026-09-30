@@ -35,6 +35,8 @@ export interface PatternState {
   pendingProposalId?: string;
   declinedAt?: IsoDateTime;
   lastOfferedOn?: IsoDate;
+  /** Story 13.13: when a Yes filed this pattern; only observations after it count toward a new proposal. */
+  confirmedAt?: IsoDateTime;
 }
 
 export interface MemoryReceipt {
@@ -128,6 +130,7 @@ interface PatternRow {
   pending_proposal_id: string | null;
   declined_at: string | null;
   last_offered_on: string | null;
+  confirmed_at: string | null;
 }
 
 export function initMemoryItemStoreSchema(db: Database.Database): void {
@@ -182,6 +185,9 @@ export function initMemoryItemStoreSchema(db: Database.Database): void {
       PRIMARY KEY (kind, area)
     );
   `);
+  // Databases created before Story 13.13 lack the column.
+  const patternColumns = db.prepare("PRAGMA table_info(pattern_state)").all() as { name: string }[];
+  if (!patternColumns.some((c) => c.name === "confirmed_at")) db.exec("ALTER TABLE pattern_state ADD COLUMN confirmed_at TEXT");
 }
 
 function toItem(r: ItemRow): MemoryItem {
@@ -209,6 +215,7 @@ function toPattern(r: PatternRow): PatternState {
   if (r.pending_proposal_id !== null) s.pendingProposalId = r.pending_proposal_id;
   if (r.declined_at !== null) s.declinedAt = r.declined_at;
   if (r.last_offered_on !== null) s.lastOfferedOn = r.last_offered_on;
+  if (r.confirmed_at !== null) s.confirmedAt = r.confirmed_at;
   return s;
 }
 
@@ -444,10 +451,10 @@ export function createMemoryItemStore(connection: SqliteConnection): MemoryItemS
     putPatternState(state) {
       connection.writeTx((tx) => {
         tx.prepare(
-          `INSERT INTO pattern_state (kind, area, pending_proposal_id, declined_at, last_offered_on)
-           VALUES (@kind, @area, @pending, @declined, @offered)
-           ON CONFLICT(kind, area) DO UPDATE SET pending_proposal_id = @pending, declined_at = @declined, last_offered_on = @offered`,
-        ).run({ kind: state.kind, area: state.area, pending: state.pendingProposalId ?? null, declined: state.declinedAt ?? null, offered: state.lastOfferedOn ?? null });
+          `INSERT INTO pattern_state (kind, area, pending_proposal_id, declined_at, last_offered_on, confirmed_at)
+           VALUES (@kind, @area, @pending, @declined, @offered, @confirmed)
+           ON CONFLICT(kind, area) DO UPDATE SET pending_proposal_id = @pending, declined_at = @declined, last_offered_on = @offered, confirmed_at = @confirmed`,
+        ).run({ kind: state.kind, area: state.area, pending: state.pendingProposalId ?? null, declined: state.declinedAt ?? null, offered: state.lastOfferedOn ?? null, confirmed: state.confirmedAt ?? null });
         hint(tx, `${state.kind}:${state.area}`);
       });
     },

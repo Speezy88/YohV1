@@ -195,3 +195,8 @@ test("buildProposalQuestion: a reshuffle proposal's chips read Approve / Discard
     { label: "Discard", value: "discard" },
   ]);
 });
+
+test("buildProposalQuestion: a pattern proposal is Yes/No only (no free text)", () => {
+  const q = buildProposalQuestion("proposal:pattern-1", "x", { id: "pattern-1", kind: "pattern", entityId: "k", entityVersion: "new", suggested: {}, reason: "x", createdAt: "2026-09-30T00:00:00.000Z" });
+  assert.equal(q.allowsFreeText, false);
+});

@@ -2,6 +2,8 @@
 import type { IsoDateTime } from "../types/domain.ts";
 
 export const RULE_PROPOSAL_TTL_DAYS = 7;
+/** A Pattern proposal unanswered this long is withdrawn and treated as declined (Story 13.13). */
+export const PATTERN_PROPOSAL_TTL_DAYS = 7;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 

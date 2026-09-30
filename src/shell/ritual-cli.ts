@@ -186,7 +186,9 @@ import { initRoutineStoreSchema } from "../adapters/routine-store.ts";
 import { createNotification, initNotificationStoreSchema } from "../adapters/notification-store.ts";
 import { getLastHeartbeatAt, initPlanStateStoreSchema, isHeartbeatStale } from "../adapters/plan-state-store.ts";
 import { initSettingsStoreSchema } from "../adapters/settings-store.ts";
-import { initMemoryItemStoreSchema } from "../adapters/memory-item-store.ts";
+import { createMemoryItemStore, initMemoryItemStoreSchema } from "../adapters/memory-item-store.ts";
+import { runPatternDetection } from "../rituals/pattern-ritual.ts";
+import { writeStructuredLog, type LogEntry } from "../adapters/logger.ts";
 import { loadPushoverConfigFromEnv, sendPushoverNotification } from "../adapters/notification-adapter.ts";
 import {
   PLAN_GENERATION_DEGRADED_THRESHOLD_MS,
@@ -668,6 +670,26 @@ function titleSubject(subcommand: string): string {
 }
 
 /** The "this run failed" alert's title — e.g. "Morning Plan failed". */
+/**
+ * Story 13.13 (E7): runs pattern detection after the morning ritual. Detection is non-fatal: a failure
+ * is logged and never changes the morning's result, exit code or notification. Never a push.
+ */
+export function withPatternDetection<T>(
+  runMorning: () => Promise<T>,
+  detect: () => Promise<unknown>,
+  log: (entry: LogEntry) => void,
+): () => Promise<T> {
+  return async () => {
+    const result = await runMorning();
+    try {
+      await detect();
+    } catch (err) {
+      log({ level: "error", event: "ritual-cli.pattern-detection-failed", detail: err instanceof Error ? err.message : String(err) });
+    }
+    return result;
+  };
+}
+
 export function buildFailedAlertTitle(subcommand: string): string {
   return `${titleSubject(subcommand)} failed`;
 }
@@ -1251,7 +1273,19 @@ export async function main(
     }
     return await runRitualCli(argv, {
       io,
-      runMorning: () => runMorningRitual(deps),
+      runMorning: withPatternDetection(
+        () => runMorningRitual(deps),
+        () =>
+          runPatternDetection({
+            store,
+            connection,
+            memoryItems: createMemoryItemStore(connection),
+            now: () => new Date(),
+            timeZone: env["YOH_TIMEZONE"] ?? "UTC",
+            log: (entry) => writeStructuredLog(entry),
+          }),
+        (entry) => writeStructuredLog(entry),
+      ),
       runNightPrompt: unreachableRunner("runNightPrompt"),
       runNightEscalate: unreachableRunner("runNightEscalate"),
       sendFailureAlert,

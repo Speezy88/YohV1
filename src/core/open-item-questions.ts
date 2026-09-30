@@ -237,7 +237,7 @@ export function buildProposalQuestion(requestId: string, promptText: string, pro
         : proposal.kind === "reshuffle"
           ? APPROVE_DISCARD_OPTIONS
           : YES_NO_OPTIONS,
-    allowsFreeText: proposal.kind !== "rule-change",
+    allowsFreeText: proposal.kind !== "rule-change" && proposal.kind !== "pattern",
     proposal,
   };
 }

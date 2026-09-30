@@ -114,6 +114,25 @@ export function listSlipEvents(connection: SqliteConnection): SlipEvent[] {
   return rows.map((r) => ({ taskId: r.task_id, area: r.area, date: r.date }));
 }
 
+export interface PlannedCheckOff {
+  readonly taskId: ExternalId;
+  readonly area: Area | null;
+  readonly plannedEnd: IsoDateTime;
+  readonly completedAt: IsoDateTime;
+}
+
+/** Story 13.13: check-offs that found a planned window, completed at or after `sinceIso`. Close-out rows and rows without a plan are never returned. Read-only. */
+export function listPlannedCheckOffs(connection: SqliteConnection, sinceIso: IsoDateTime): PlannedCheckOff[] {
+  const rows = connection.db
+    .prepare(
+      `SELECT task_id, area, planned_end, completed_at FROM completions
+       WHERE source = 'check-off' AND planned_start IS NOT NULL AND planned_end IS NOT NULL AND completed_at >= ?
+       ORDER BY completed_at`,
+    )
+    .all(sinceIso) as { task_id: string; area: Area | null; planned_end: string; completed_at: string }[];
+  return rows.map((r) => ({ taskId: r.task_id, area: r.area, plannedEnd: r.planned_end, completedAt: r.completed_at }));
+}
+
 /** Inserts one completion row. Call inside a `writeTx` when it must commit atomically alongside another owner's write (Story 7.10's check-off commit is the first such caller). */
 export function recordCompletionInTx(db: Database.Database, input: RecordCompletionInput): void {
   db.prepare(

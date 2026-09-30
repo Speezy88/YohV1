@@ -767,4 +767,22 @@ export interface RuleChange {
   readonly memoryItemId: string;
 }
 
+/** The recurring behaviors Yoh can notice (Story 13.13). */
+export type PatternKind = "area-slips" | "area-overrun";
+
+/** Payload of a `"pattern"` Proposal (Story 13.13): what was noticed, where, and (overruns only) the padding to plan. */
+export interface PatternProposal {
+  readonly kind: PatternKind;
+  readonly area: Area;
+  readonly occurrences: number;
+  readonly firstSeen: IsoDate;
+  readonly lastSeen: IsoDate;
+  /** Up to 5 occurrence dates, oldest first. */
+  readonly sampleDates: readonly IsoDate[];
+  /** `area-overrun` only: the median overrun rounded to 5 minutes. */
+  readonly paddingMinutes?: number;
+  /** The one-line evidence ("5 times since Sep 3: ..."); the web's pending-patterns pane reads it. */
+  readonly evidence?: string;
+}
+
 export type RuleSettingKey = "schoolDayWorkStart" | "otherDayWorkStart" | "lunchWindow" | "communityWindow" | "areaDurationPadding";

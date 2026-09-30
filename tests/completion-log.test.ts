@@ -20,6 +20,7 @@ import {
   recordCompletionInTx,
   recordSlipEventInTx,
   listSlipEvents,
+  listPlannedCheckOffs,
   type RecordCompletionInput,
 } from "../src/adapters/completion-log.ts";
 
@@ -223,6 +224,19 @@ test("Story 13.2: recordSlipEventInTx appends {taskId, area, date} once per task
   assert.deepEqual(listSlipEvents(connection), [
     { taskId: "t1", area: "Work", date: "2026-09-25" },
     { taskId: "t1", area: null, date: "2026-09-26" },
+  ]);
+  connection.close();
+});
+
+test("listPlannedCheckOffs returns only check-offs with a planned window, since the given instant", () => {
+  const connection = tempStore();
+  const base = { taskName: "T", area: "History", dueDate: null, estimatedMinutes: 60 } as const;
+  recordCompletion(connection, { ...base, taskId: "a", completedAt: "2026-09-20T15:00:00.000Z", source: "check-off", plannedStart: "2026-09-20T13:00:00.000Z", plannedEnd: "2026-09-20T14:00:00.000Z" });
+  recordCompletion(connection, { ...base, taskId: "b", completedAt: "2026-09-20T15:00:00.000Z", source: "close-out", plannedStart: "2026-09-20T13:00:00.000Z", plannedEnd: "2026-09-20T14:00:00.000Z" });
+  recordCompletion(connection, { ...base, taskId: "c", completedAt: "2026-09-20T15:00:00.000Z", source: "check-off" });
+  recordCompletion(connection, { ...base, taskId: "d", completedAt: "2026-07-01T15:00:00.000Z", source: "check-off", plannedStart: "2026-07-01T13:00:00.000Z", plannedEnd: "2026-07-01T14:00:00.000Z" });
+  assert.deepEqual(listPlannedCheckOffs(connection, "2026-09-01T00:00:00.000Z"), [
+    { taskId: "a", area: "History", plannedEnd: "2026-09-20T14:00:00.000Z", completedAt: "2026-09-20T15:00:00.000Z" },
   ]);
   connection.close();
 });
