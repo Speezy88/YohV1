@@ -358,7 +358,7 @@ export async function send(message: string): Promise<void> {
  */
 export function recordAnsweredOpenItem(
   youText: string,
-  yoh: { message?: string; receipts: readonly string[]; next?: OpenItemQuestion },
+  yoh: { message?: string; receipts: readonly string[]; next?: OpenItemQuestion; receipt?: RememberedReceipt },
 ): void {
   const userId = `chat-${++nextId}`;
   const assistantId = `chat-${++nextId}`;
@@ -371,6 +371,8 @@ export function recordAnsweredOpenItem(
     receipts: yoh.receipts,
     status: "done",
     ...(yoh.next ? { question: yoh.next } : {}),
+    // A pattern receipt is not persisted server-side, so it settles at once (no Undo).
+    ...(yoh.receipt ? { receipt: yoh.receipt, receiptState: "settled" as const } : {}),
   });
 }
 

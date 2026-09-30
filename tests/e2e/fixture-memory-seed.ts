@@ -6,6 +6,9 @@
 import type { ChatStore } from "../../src/adapters/chat-store.ts";
 import type { MemoryItemStore } from "../../src/adapters/memory-item-store.ts";
 import type { SqliteConnection } from "../../src/adapters/sqlite.ts";
+import { clearInteractionRequest, listOpenInteractionRequests, putOpenInteractionRequest, type MemoryStore } from "../../src/adapters/memory-store.ts";
+import { describePattern, patternKey } from "../../src/core/pattern-detect.ts";
+import type { PatternProposal, Proposal } from "../../src/types/domain.ts";
 import { writeSetting } from "../../src/adapters/settings-store.ts";
 import type { IsoDate, MemoryFolder } from "../../src/types/domain.ts";
 
@@ -108,4 +111,53 @@ export function seedFixtureMemory(
     });
   });
   writeSetting(connection, "schoolDayWorkStart", "16:00");
+}
+
+/** Story 13.13: the seeded Pattern proposal ("History essays run about 30 min over"). */
+export const FIXTURE_PATTERN: PatternProposal = {
+  kind: "area-overrun",
+  area: "History essays" as PatternProposal["area"],
+  occurrences: 5,
+  firstSeen: "2026-09-03" as IsoDate,
+  lastSeen: "2026-09-24" as IsoDate,
+  sampleDates: ["2026-09-03", "2026-09-08", "2026-09-15", "2026-09-19", "2026-09-24"] as IsoDate[],
+  paddingMinutes: 30,
+};
+export const FIXTURE_PATTERN_HEADLINE = describePattern(FIXTURE_PATTERN).headline;
+export const FIXTURE_PATTERN_EVIDENCE = describePattern(FIXTURE_PATTERN).evidence;
+export const FIXTURE_PATTERN_QUESTION = describePattern(FIXTURE_PATTERN).question;
+
+/** Clears every open Pattern proposal and all pattern_state rows (the request half of `resetFixturePlan`). */
+export function clearFixturePatterns(store: MemoryStore, memoryItems: MemoryItemStore): void {
+  for (const open of listOpenInteractionRequests(store)) {
+    if (open.id.startsWith("proposal:pattern-")) clearInteractionRequest(store, open.id, open.version);
+  }
+  for (const st of memoryItems.listPatternStates()) memoryItems.putPatternState({ kind: st.kind, area: st.area });
+}
+
+/** Opens one pending Pattern proposal (created now) exactly as `runPatternDetection` would. */
+export function seedFixturePattern(deps: { readonly connection: SqliteConnection; readonly store: MemoryStore; readonly memoryItems: MemoryItemStore }): void {
+  const { connection, store, memoryItems } = deps;
+  clearFixturePatterns(store, memoryItems);
+  const desc = describePattern(FIXTURE_PATTERN);
+  const nowIso = new Date().toISOString();
+  const id = "pattern-fixture-1";
+  const proposal: Proposal<PatternProposal> = {
+    id,
+    kind: "pattern",
+    entityId: patternKey(FIXTURE_PATTERN.kind, FIXTURE_PATTERN.area),
+    entityVersion: "new",
+    suggested: { ...FIXTURE_PATTERN, evidence: desc.evidence },
+    reason: [desc.headline, desc.evidence, desc.question].join("\n"),
+    createdAt: nowIso,
+  };
+  connection.writeTx(() => {
+    putOpenInteractionRequest(store, `proposal:${id}`, {
+      requestKind: "proposal",
+      promptText: proposal.reason,
+      detail: { proposal, cursor: { questionId: "confirm" } },
+      createdAt: nowIso,
+    });
+    memoryItems.putPatternState({ kind: FIXTURE_PATTERN.kind, area: FIXTURE_PATTERN.area, pendingProposalId: id });
+  });
 }

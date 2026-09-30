@@ -15,6 +15,7 @@ import { __resetChatPanelForTests, openChatPanel } from "../lib/chatPanel.ts";
 import * as chatStreamModule from "../lib/chatStream.ts";
 import * as missingDataModule from "../lib/missingData.ts";
 import * as openItemsModule from "../lib/openItems.ts";
+import * as patternOfferModule from "../lib/patternOffer.ts";
 import * as readiness from "../lib/readiness.ts";
 import * as reducedMotionModule from "../hooks/useReducedMotion.ts";
 import type { ChatStreamEvent, OpenItem } from "../../../src/types/api.ts";
@@ -55,6 +56,14 @@ describe("ChatPanel", () => {
     expect(hydrate).not.toHaveBeenCalled();
     act(() => openChatPanel());
     expect(hydrate).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks the server for today's pattern offer when the panel opens, not while closed (Story 13.13)", () => {
+    const offer = vi.spyOn(patternOfferModule, "offerTodaysPattern").mockResolvedValue();
+    render(<ChatPanel />);
+    expect(offer).not.toHaveBeenCalled();
+    act(() => openChatPanel());
+    expect(offer).toHaveBeenCalledTimes(1);
   });
 
   it("renders nothing while closed", () => {

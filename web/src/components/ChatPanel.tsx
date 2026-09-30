@@ -52,6 +52,7 @@ import { useReducedMotion } from "../hooks/useReducedMotion.ts";
 import { ChatMessage } from "./ChatMessage.tsx";
 import { ChatInput } from "./ChatInput.tsx";
 import { SandboxCard } from "./SandboxCard.tsx";
+import { offerTodaysPattern } from "../lib/patternOffer.ts";
 import { SandboxFinale } from "./SandboxFinale.tsx";
 import { YohMark } from "./YohMark.tsx";
 
@@ -85,6 +86,11 @@ export function ChatPanel(): React.JSX.Element | null {
     if (!open || openItems.status !== "loaded") return;
     for (const item of openItems.items) appendPendingOpenItem(item);
   }, [open, openItems]);
+
+  // Story 13.13: the day's one Pattern card (the server enforces once per day across /morning and this).
+  useEffect(() => {
+    if (open) void offerTodaysPattern();
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;

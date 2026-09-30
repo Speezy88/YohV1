@@ -157,7 +157,11 @@ export function ChatMessage({ message }: ChatMessageProps): React.JSX.Element | 
     if (next === "done") {
       setAnswered(true);
       resolveMessageQuestion(message.id);
-      recordAnsweredOpenItem(answerText, { message: outcome.value.message, receipts: outcome.value.receipts });
+      recordAnsweredOpenItem(answerText, {
+        message: outcome.value.message,
+        receipts: outcome.value.receipts,
+        ...(outcome.value.receipt ? { receipt: outcome.value.receipt } : {}),
+      });
       return;
     }
     if (next.requestId === question.requestId && next.questionId === question.questionId) {
@@ -168,7 +172,12 @@ export function ChatMessage({ message }: ChatMessageProps): React.JSX.Element | 
     // A genuinely different question: this card is done, and the new one is appended as its own turn.
     setAnswered(true);
     resolveMessageQuestion(message.id);
-    recordAnsweredOpenItem(answerText, { message: outcome.value.message, receipts: outcome.value.receipts, next });
+    recordAnsweredOpenItem(answerText, {
+      message: outcome.value.message,
+      receipts: outcome.value.receipts,
+      next,
+      ...(outcome.value.receipt ? { receipt: outcome.value.receipt } : {}),
+    });
   };
 
   if (!hasVisibleContent) return null;

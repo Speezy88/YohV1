@@ -162,4 +162,22 @@ describe("StructuredQuestion", () => {
     );
     expect(screen.getByRole("button", { name: "Create" })).toHaveFocus();
   });
+
+  it("renders 3-line text as body, caption evidence, then body 600; 1-2 line text stays one paragraph", () => {
+    render(<StructuredQuestion text={"Yoh noticed X.\n5 times since Sep 3\nPlan for that?"} options={[]} allowsFreeText={false} onAnswer={vi.fn()} />);
+    expect(screen.getByText("Yoh noticed X.")).toHaveClass("text-body", "font-normal");
+    expect(screen.getByText("5 times since Sep 3")).toHaveClass("text-small", "text-ink-secondary");
+    expect(screen.getByText("Plan for that?")).toHaveClass("text-body", "font-semibold");
+    cleanup();
+    render(<StructuredQuestion text={"Line one\nLine two"} options={[]} allowsFreeText={false} onAnswer={vi.fn()} />);
+    expect(screen.getByText(/Line one/)).toHaveClass("font-normal");
+  });
+
+  it("autoFocus={false} leaves focus alone", () => {
+    render(<StructuredQuestion text="Q" options={[{ label: "Yes", value: "yes" }]} allowsFreeText={false} autoFocus={false} onAnswer={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "Yes" })).not.toHaveFocus();
+    cleanup();
+    render(<StructuredQuestion text="Q" options={[{ label: "Yes", value: "yes" }]} allowsFreeText={false} onAnswer={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "Yes" })).toHaveFocus();
+  });
 });

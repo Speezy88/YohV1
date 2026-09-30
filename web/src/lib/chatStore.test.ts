@@ -227,6 +227,13 @@ describe("chatStore", () => {
     expect(messagesOf(result.current)[1]).toMatchObject({ role: "assistant", text: "Got it — Work.", receipts: ["Set area to Work"], status: "done" });
   });
 
+  it("recordAnsweredOpenItem stores a receipt on the reply as settled (no Undo)", () => {
+    const { result } = renderHook(() => useChatStore());
+    const receipt = { receiptId: "r1", kind: "remembered" as const, items: [{ id: "m1", text: "Plan 30 extra min", folder: "patterns" as const }] };
+    act(() => recordAnsweredOpenItem("yes", { message: "Planning.", receipts: [], receipt }));
+    expect(messagesOf(result.current)[1]).toMatchObject({ receipt, receiptState: "settled" });
+  });
+
   it("recordAnsweredOpenItem with no message still appends Yoh's turn, as an empty reply", () => {
     const { result } = renderHook(() => useChatStore());
     act(() => recordAnsweredOpenItem("no", { receipts: [] }));

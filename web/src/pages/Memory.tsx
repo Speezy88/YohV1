@@ -71,16 +71,17 @@ function Pane({ view, selection, pendingScrollId, del }: { readonly view: Memory
   const folder = view.folders.find((f) => f.folder === folderId) ?? view.folders[0];
   if (!folder) return <p className={MUTED}>Nothing here yet. Say "remember that ..." in Chat.</p>;
   const patterns = folder.folder === "patterns" ? view.pendingPatterns : [];
-  if (folder.items.length === 0 && patterns.length === 0) {
+  // The Patterns folder always mounts PendingPatterns, so an answered card's reply survives the refetch that empties it.
+  if (folder.items.length === 0 && patterns.length === 0 && folder.folder !== "patterns") {
     return (
       <p className={MUTED}>
-        {folder.folder === "patterns" ? "No patterns yet. Yoh will ask before adding one." : 'Nothing here yet. Say "remember that ..." in Chat.'}
+        Nothing here yet. Say "remember that ..." in Chat.
       </p>
     );
   }
   return (
     <ul aria-label={folder.label} className="m-0 flex flex-col gap-2 p-0">
-      <PendingPatterns questions={patterns} />
+      <PendingPatterns key={folder.folder} questions={patterns} {...(folder.folder === "patterns" && folder.items.length === 0 ? { emptyNote: "No patterns yet. Yoh will ask before adding one." } : {})} />
       {folder.items.map((i) => (
         <MemoryItemRow key={i.id} item={i} onOpenSource={openSource} {...rowProps(i.id)} />
       ))}

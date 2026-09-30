@@ -47,8 +47,9 @@ import {
   type NotionCreatePageConfig,
 } from "../../src/adapters/notion-adapter.ts";
 import { draftItem, type CreateItemDeps } from "../../src/app/create-item.ts";
+import { offerPattern } from "../../src/app/pattern-offer.ts";
 import { sandboxQueue, type SandboxQueueDeps } from "../../src/app/sandbox-queue.ts";
-import { FIXTURE_RULE_TEXT, seedFixtureMemory } from "./fixture-memory-seed.ts";
+import { clearFixturePatterns, FIXTURE_RULE_TEXT, seedFixtureMemory, seedFixturePattern } from "./fixture-memory-seed.ts";
 import { recognizeMemoryCommand } from "../../src/core/memory-commands.ts";
 import { firstCardView } from "../../src/core/sandbox-card-view.ts";
 import { localIsoDate } from "../../src/rituals/ritual-shared.ts";
@@ -161,6 +162,7 @@ function resetFixturePlan(scenario: boolean): void {
   reshuffleScenario = scenario;
   chatHistory.clearAll();
   memoryItems.clearAll();
+  clearFixturePatterns(store, memoryItems);
   ratings.clearAll();
   for (const open of listOpenReshuffleProposals(store)) clearInteractionRequest(store, open.requestId, open.requestVersion);
   connection.db.prepare("DELETE FROM planning_settings").run();
@@ -290,6 +292,7 @@ const draftFieldsLlmClient: AnthropicMessagesClient = {
  * suggestions). Returns one Corrections candidate ONLY for the Chem club fixture text, otherwise `[]`,
  * so unrelated fixture turns never file.
  */
+export { FIXTURE_PATTERN, FIXTURE_PATTERN_EVIDENCE, FIXTURE_PATTERN_HEADLINE, FIXTURE_PATTERN_QUESTION } from "./fixture-memory-seed.ts";
 export { FIXTURE_CONVERSATIONS, FIXTURE_MEMORY_ITEMS, FIXTURE_RATING_NOTE, FIXTURE_RULE_TEXT } from "./fixture-memory-seed.ts";
 export const FIXTURE_MEMORY_TEXT = "Chem club is a club, not a class";
 /** Story 13.11: the "What was off?" note the rating spec sends; the memory LLM files it to Feedback. */
@@ -361,7 +364,10 @@ const runChatTurn: ChatTurnFn = async (deps, input) => {
   }
   // Story 13.11: `/morning` is a substantive turn, so the rating schedule may prompt after it.
   if (input.message.trim() === "/morning") {
-    return { ok: true, value: { reply: "Fixture morning.", receipts: [], substantive: true } };
+    // Story 13.13: the REAL offerPattern, so the once-per-day rule is the server's own.
+    const offer = await offerPattern({ memoryItems, store, now: () => new Date(), timeZone: TIME_ZONE }, {});
+    const question = offer.ok ? offer.value.question : undefined;
+    return { ok: true, value: { reply: "Fixture morning.", receipts: [], substantive: true, ...(question ? { question } : {}) } };
   }
   const memoryCommand = recognizeMemoryCommand(input.message);
   if (memoryCommand?.kind === "remember") {
@@ -510,6 +516,11 @@ const handle = startServer(
         if (request.method === "POST" && url.pathname === "/__fixture/seed-memory") {
           connection.db.prepare("DELETE FROM planning_settings").run();
           seedFixtureMemory({ connection, chatHistory, memoryItems }, today);
+          return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
+        }
+        // Story 13.13: one pending Pattern proposal (History essays run about 30 min over).
+        if (request.method === "POST" && url.pathname === "/__fixture/seed-pattern") {
+          seedFixturePattern({ connection, store, memoryItems });
           return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
         }
         if (url.pathname === "/__fixture/yoh-plan-events") {

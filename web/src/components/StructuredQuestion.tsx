@@ -39,16 +39,19 @@ export interface StructuredQuestionProps {
   readonly allowsFreeText: boolean;
   /** True while a pick is in flight — disables every chip and the Other field so a second pick can't race the first (AD-5's conflict rule). */
   readonly busy?: boolean;
+  /** Pre-focus the first chip on mount (default true). The Memory page passes false so a card never steals focus. */
+  readonly autoFocus?: boolean;
   onAnswer(answer: string): void;
 }
 
-export function StructuredQuestion({ text, options, allowsFreeText, busy = false, onAnswer }: StructuredQuestionProps): React.JSX.Element {
+export function StructuredQuestion({ text, options, allowsFreeText, busy = false, autoFocus = true, onAnswer }: StructuredQuestionProps): React.JSX.Element {
   const [picked, setPicked] = useState<string | undefined>(undefined);
   const [freeText, setFreeText] = useState("");
+  const lines = text.split("\n");
   const firstChipRef = useRef<HTMLButtonElement>(null);
 
   useLayoutEffect(() => {
-    firstChipRef.current?.focus();
+    if (autoFocus) firstChipRef.current?.focus();
     // Mount-only, intentionally: see this component's own doc comment above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -68,7 +71,17 @@ export function StructuredQuestion({ text, options, allowsFreeText, busy = false
 
   return (
     <div data-testid="structured-question" className="flex flex-col gap-3 rounded-lg bg-surface-sunken p-4 font-body text-body text-ink-primary shadow-inset">
-      <p className="m-0 font-body text-body font-normal">{text}</p>
+      {lines.length >= 3 ? (
+        <>
+          <p className="m-0 font-body text-body font-normal">{lines[0]}</p>
+          {lines.slice(1, -1).map((line, i) => (
+            <p key={i} className="m-0 font-body text-small text-ink-secondary">{line}</p>
+          ))}
+          <p className="m-0 font-body text-body font-semibold">{lines[lines.length - 1]}</p>
+        </>
+      ) : (
+        <p className="m-0 font-body text-body font-normal">{text}</p>
+      )}
       {options.length > 0 && (
         <div className="flex flex-wrap gap-2" role="group" aria-label="Answer options">
           {options.map((option, i) => {
