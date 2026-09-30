@@ -11,6 +11,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { createChatStore, initChatStoreSchema } from "../src/adapters/chat-store.ts";
+import { createMemoryItemStore, initMemoryItemStoreSchema } from "../src/adapters/memory-item-store.ts";
 import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
 import type { ChatSession } from "../src/app/chat-session.ts";
 import type { ChatTurnDeps } from "../src/app/chat-turn.ts";
@@ -423,4 +424,25 @@ test("an error thrown after done is logged and never sent as an error event", as
   });
   assert.deepEqual(written, ["done"]);
   assert.deepEqual(logged, ["server.chat-stream-failed"]);
+});
+
+test("POST /api/memory/undo validates, undoes, and refuses a repeat", async () => {
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db);
+  initChatStoreSchema(connection.db);
+  initMemoryItemStoreSchema(connection.db);
+  const chatHistory = createChatStore(connection);
+  const memoryItems = createMemoryItemStore(connection);
+  const app = createApp({ connection, log: () => {}, chatHistory, memoryItems });
+  const post = (body: unknown) => app.request("/api/memory/undo", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  assert.equal((await post({})).status, 400);
+  const u = chatHistory.appendTurn({ date: "2026-09-29", role: "user", text: "remember x", at: "2026-09-29T10:00:00.000Z" });
+  const item = memoryItems.insert({ folder: "about-you", text: "x", origin: "stated" });
+  memoryItems.putReceipt({ receiptId: "r1", conversationId: u.conversationId, userTurnId: u.id, kind: "remembered", itemIds: [item.id], chainIds: [item.id], createdAt: "2026-09-29T10:00:00.000Z" });
+  const ok = await post({ receiptId: "r1" });
+  assert.equal(ok.status, 200);
+  assert.equal(((await ok.json()) as { value: { message: string } }).value.message, "Removed from memory.");
+  assert.equal((await post({ receiptId: "r1" })).status, 409);
+  assert.equal((await createApp({ connection, log: () => {} }).request("/api/memory/undo", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ receiptId: "r1" }) })).status, 503);
+  connection.close();
 });

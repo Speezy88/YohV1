@@ -463,7 +463,7 @@ const handle = startServer(
         return url.pathname === "/__fixture/state" ? fixtureState(url) : options.fetch(request);
       },
     }),
-  { homeView, calendarDay, checkOff, plan: reshufflePlanDeps, planSync: planSyncDeps, chat, chatHistory, tasks: tasksPage, research, sandbox },
+  { homeView, calendarDay, checkOff, plan: reshufflePlanDeps, planSync: planSyncDeps, chat, chatHistory, memoryItems, tasks: tasksPage, research, sandbox },
 );
 const sweep = startCheckOffCommitSweep({ connection, ...checkOff, now: () => new Date() }, { log: quiet });
 

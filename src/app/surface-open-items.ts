@@ -12,8 +12,11 @@
 import { getOpenInteractionRequest, getTaskFieldOverride, listOpenInteractionRequests, type MemoryStore, type StoredRecord } from "../adapters/memory-store.ts";
 import { suggestFieldValue, type AnthropicMessagesClient } from "../adapters/llm-adapter.ts";
 import type { SqliteConnection } from "../adapters/sqlite.ts";
+import type { MemoryItemStore } from "../adapters/memory-item-store.ts";
+import { memoryFolderLabel } from "../core/memory-folders.ts";
 import { isProposalExpired } from "../core/reshuffle-preview.ts";
 import { parsePlanningFieldValue } from "../core/planning-field-value.ts";
+import { buildMemoryForgetQuestion } from "../core/open-item-questions.ts";
 import {
   buildDataCompletenessQuestion,
   buildGenericQuestion,
@@ -35,6 +38,8 @@ export interface SurfaceOpenItemsDeps {
   readonly store: MemoryStore;
   readonly session: ChatSession;
   readonly llmClient?: AnthropicMessagesClient;
+  /** Story 13.4: resolves a `memory-forget` request's candidate items into option labels. */
+  readonly memoryItems?: MemoryItemStore;
   /** Real-use fixes plan, Task 9: passed straight through to `suggestFieldValue`'s own trailing `connection` argument so its usage gets recorded. */
   readonly connection?: SqliteConnection;
   /** Clock seam for hiding expired reshuffle previews; defaults to the real time. */
@@ -101,6 +106,16 @@ async function buildForRecord(deps: SurfaceOpenItemsDeps, record: StoredRecord<I
     }
     case "self-check":
       return buildSelfCheckQuestion(record.id);
+    case "memory-forget": {
+      const ids = (record.data.detail as { readonly itemIds?: readonly string[] } | undefined)?.itemIds ?? [];
+      const store = deps.memoryItems;
+      if (!store) return buildGenericQuestion(record.id);
+      const candidates = ids.flatMap((id) => {
+        const item = store.getItem(id);
+        return item && item.status === "current" ? [{ id, label: `${item.text} \u00b7 ${memoryFolderLabel(item.folder)}` }] : [];
+      });
+      return candidates.length === 0 ? "done" : buildMemoryForgetQuestion(record.id, record.data.promptText, candidates);
+    }
     case "proposal": {
       // Story 8.2 (Important fix): a stored Proposal request previously fell
       // through to the generic fallback (blank text, no options, no

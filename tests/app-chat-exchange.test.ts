@@ -75,7 +75,7 @@ test("a failed inner Result is returned without a done event or Yoh turn", async
 });
 
 test("store write failure is logged and the answer still streams", async () => {
-  const broken = { appendTurn: () => { throw new Error("disk"); }, turnsForDate: () => [], clearAll: () => {} } as ChatStore;
+  const broken = { appendTurn: () => { throw new Error("disk"); }, turnsForDate: () => [], clearAll: () => {}, hasUserTurnAfter: () => false } as ChatStore;
   const h = makeDeps(async () => ok("fine"), { chatHistory: broken });
   const result = await chatExchange(h.deps, { message: "x" });
   assert.equal(result.ok, true);

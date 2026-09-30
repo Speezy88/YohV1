@@ -251,3 +251,25 @@ export function buildProposalQuestion(requestId: string, promptText: string, pro
     proposal,
   };
 }
+
+// ---- memory-forget disambiguation (Story 13.4) -----------------------------
+
+/** The one question a `requestKind: "memory-forget"` item carries. */
+export const MEMORY_FORGET_QUESTION_ID = "pick";
+/** The option value that clears a memory-forget request without deleting anything. */
+export const MEMORY_FORGET_NONE = "none";
+
+/** Options are `{label, value: itemId}` per candidate, then "None of these"; no free text. */
+export function buildMemoryForgetQuestion(
+  requestId: string,
+  text: string,
+  candidates: readonly { readonly id: string; readonly label: string }[],
+): OpenItemQuestion {
+  return {
+    requestId,
+    questionId: MEMORY_FORGET_QUESTION_ID,
+    text,
+    options: [...candidates.map((c) => ({ label: c.label, value: c.id })), { label: "None of these", value: MEMORY_FORGET_NONE }],
+    allowsFreeText: false,
+  };
+}

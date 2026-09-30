@@ -5,6 +5,7 @@ import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
 import { createMemoryItemStore, initMemoryItemStoreSchema, type MemoryItemStore } from "../src/adapters/memory-item-store.ts";
 import { chatTurn, type ChatTurnDeps } from "../src/app/chat-turn.ts";
+import { createMemoryStore, getOpenInteractionRequest } from "../src/adapters/memory-store.ts";
 import { COMMANDS } from "../src/app/commands.ts";
 
 function memory(): MemoryItemStore {
@@ -111,4 +112,26 @@ test("registry lists /remember and /forget with description and example", () => 
     const c = COMMANDS.find((x) => x.name === name);
     assert.ok(c && c.description.length > 0 && c.example.startsWith(name));
   }
+});
+
+test("forget with several matches stores a memory-forget request and returns a disambiguation question", async () => {
+  const m = memory();
+  const conn = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(conn.db);
+  const store = createMemoryStore(conn);
+  const a = m.insert(NEW({ text: "AP Bio deadline is Friday" }));
+  const b = m.insert(NEW({ folder: "ideas-notes", text: "AP Bio poster idea" }));
+  const r = await chatTurn(deps(m, { store } as never), { message: "forget AP Bio" });
+  assert.ok(r.ok);
+  const q = r.value.question;
+  assert.ok(q);
+  assert.equal(q.allowsFreeText, false);
+  assert.deepEqual(q.options.at(-1), { label: "None of these", value: "none" });
+  const values = q.options.slice(0, -1).map((o) => o.value).sort();
+  assert.deepEqual(values, [a.id, b.id].sort());
+  assert.ok(q.options.some((o) => o.label === "AP Bio poster idea · Ideas & notes"));
+  assert.equal(m.getItem(a.id)?.status, "current");
+  assert.equal(m.getItem(b.id)?.status, "current");
+  const rec = getOpenInteractionRequest(store, q.requestId);
+  assert.equal(rec?.data.requestKind, "memory-forget");
 });

@@ -84,7 +84,8 @@ import type { ChatStore } from "../adapters/chat-store.ts";
 import type { MemoryItemStore } from "../adapters/memory-item-store.ts";
 import type { LogEntry } from "../adapters/logger.ts";
 import type { AnthropicMessagesClient } from "../adapters/llm-adapter.ts";
-import { getPlan, type MemoryStore } from "../adapters/memory-store.ts";
+import { getPlan, putOpenInteractionRequest, type MemoryStore } from "../adapters/memory-store.ts";
+import { buildMemoryForgetQuestion } from "../core/open-item-questions.ts";
 import { errorCopyForThrown } from "../core/error-copy.ts";
 import type { ChatStreamEvent, ChatTurnRequest, ChatTurnResponse, MorningViewResponse } from "../types/api.ts";
 import type { CalendarEvent, ChatIntent, ChatTurn, ExternalId, IsoDate, MemoryItem, PlanBlock, Result, Task, YohError } from "../types/domain.ts";
@@ -675,10 +676,21 @@ function forgetMemory(deps: ChatTurnDeps, store: MemoryItemStore, words: string)
   } else {
     targets = store.searchRelevant(words, MEMORY_FOLDERS_IN_ORDER, 10);
     if (targets.length === 0) return reply(`Nothing in memory matches '${words}'.`);
-    // TODO(T6a Part 3): several matches become a disambiguation Structured Question ("memory-forget").
     if (targets.length > 1) {
-      const list = targets.map((i) => `- ${i.text} (${memoryFolderLabel(i.folder)})`).join("\n");
-      return reply(`Several items match '${words}'. Say which one to forget, using more of its words:\n${list}`);
+      const requestId = `memory-forget:${randomUUID()}`;
+      const promptText = `Which one should I forget for '${words}'?`;
+      putOpenInteractionRequest(deps.store, requestId, {
+        requestKind: "memory-forget",
+        promptText,
+        detail: { itemIds: targets.map((i) => i.id) },
+        createdAt: deps.now().toISOString(),
+      });
+      const question = buildMemoryForgetQuestion(
+        requestId,
+        promptText,
+        targets.map((i) => ({ id: i.id, label: `${i.text} \u00b7 ${memoryFolderLabel(i.folder)}` })),
+      );
+      return reply(`Several items match '${words}'.`, { question });
     }
   }
   const chainIds = targets.flatMap((item) => store.forget(item.id).chainIds);

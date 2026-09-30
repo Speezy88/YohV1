@@ -1429,6 +1429,7 @@ test("chatTurn falls back to just the current message when the chat store throws
     appendTurn: () => { throw new Error("boom"); },
     turnsForDate: () => { throw new Error("boom"); },
     clearAll: () => {},
+    hasUserTurnAfter: () => false,
   } as ChatStore;
   const result = await chatTurn(baseDeps({ llmClient, chatHistory, log: (e) => logged.push(e.event) }), { message: "what should I do about the dishes" });
   assert.equal(result.ok, true);
@@ -1448,7 +1449,7 @@ test("chatTurn without a chat store sends just the current message as history", 
 test("history for the model always ends with the current message, even when the user-turn write failed", async () => {
   const llmClient = makeFakeLlmClient("answer");
   const prior = seededChatStore([{ role: "user", text: "earlier" }, { role: "assistant", text: "reply" }]);
-  const chatHistory = { appendTurn: () => { throw new Error("boom"); }, turnsForDate: prior.turnsForDate, clearAll: () => {} } as ChatStore;
+  const chatHistory = { appendTurn: () => { throw new Error("boom"); }, turnsForDate: prior.turnsForDate, clearAll: () => {}, hasUserTurnAfter: () => false } as ChatStore;
   await chatTurn(baseDeps({ llmClient, chatHistory }), { message: "what should I do about the dishes" });
   const sent = (llmClient as any).calls[2].messages as ReadonlyArray<{ role: string; content: string | ReadonlyArray<{ text: string }> }>;
   const norm = sent.map((m) => ({ role: m.role, content: typeof m.content === "string" ? m.content : m.content[0]!.text }));

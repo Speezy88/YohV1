@@ -29,6 +29,8 @@ export interface ChatStore {
     at: IsoDateTime;
   }): StoredChatTurn;
   turnsForDate(date: IsoDate, limit?: number): StoredChatTurn[];
+  /** True when a user turn was stored after `turnId` in that Conversation (insertion order). */
+  hasUserTurnAfter(conversationId: string, turnId: string): boolean;
   clearAll(): void;
 }
 
@@ -113,6 +115,14 @@ export function createChatStore(connection: SqliteConnection): ChatStore {
         .prepare("SELECT id, conversation_id, role, text, truncated, created_at FROM chat_turns WHERE conversation_id = ? ORDER BY rowid DESC LIMIT ?")
         .all(conv.id, limit ?? -1) as TurnRow[];
       return rows.reverse().map(toTurn);
+    },
+    hasUserTurnAfter(conversationId, turnId) {
+      const row = connection.db
+        .prepare(
+          "SELECT 1 AS hit FROM chat_turns WHERE conversation_id = ? AND role = 'user' AND rowid > (SELECT rowid FROM chat_turns WHERE id = ? AND conversation_id = ?) LIMIT 1",
+        )
+        .get(conversationId, turnId, conversationId);
+      return row !== undefined;
     },
     clearAll() {
       connection.writeTx((db) => {

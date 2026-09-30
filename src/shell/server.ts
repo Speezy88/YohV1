@@ -59,7 +59,7 @@ import {
 } from "../adapters/notification-store.ts";
 import { createChatStore, initChatStoreSchema, type ChatStore } from "../adapters/chat-store.ts";
 import { initSettingsStoreSchema } from "../adapters/settings-store.ts";
-import { initMemoryItemStoreSchema } from "../adapters/memory-item-store.ts";
+import { createMemoryItemStore, initMemoryItemStoreSchema, type MemoryItemStore } from "../adapters/memory-item-store.ts";
 import { chatExchange, type ChatTurnFn } from "../app/chat-exchange.ts";
 import { todaysChatHistory } from "../app/chat-history.ts";
 import { initRoutineStoreSchema } from "../adapters/routine-store.ts";
@@ -122,6 +122,7 @@ import {
   undoCheckOff,
   type CheckOffDeps,
 } from "../app/check-off.ts";
+import { undoMemoryReceipt } from "../app/memory-undo.ts";
 import { surfaceOpenItems } from "../app/surface-open-items.ts";
 import { answerOpenItem, type AnswerOpenItemDeps } from "../app/answer-open-item.ts";
 import { approveReshuffleById, discardReshuffleById, requestReshuffleView } from "../app/decide-reshuffle.ts";
@@ -138,6 +139,7 @@ import { finishSandboxSession, saveSandboxCardAndAdvance, type SandboxSubmitDeps
 import { firstCardView } from "../core/sandbox-card-view.ts";
 import type {
   AnswerOpenItemRequest,
+  UndoMemoryRequest,
   ApiResult,
   PlanSyncResponse,
   CalendarDayRequest,
@@ -603,6 +605,8 @@ export interface ServerDeps {
   };
   /** Story 13.1: the server-owned chat store (history for the model, `GET /api/chat-history/today`). */
   readonly chatHistory?: ChatStore;
+  /** Story 13.4: the memory item store (commands, receipts, Undo). */
+  readonly memoryItems?: MemoryItemStore;
   /**
    * Story 8.5, contract C3: the ONE `ChatSession` every chat route in this
    * process shares (`startServer` builds it; Stories 8.6/8.7's routes reuse
@@ -655,6 +659,11 @@ const PLAN_NOT_CONFIGURED: ApiFailure = {
 const CHAT_HISTORY_NOT_CONFIGURED: ApiFailure = {
   ok: false,
   error: { kind: "unreachable", message: errorCopyForWire({ kind: "unreachable", message: "server: chat history not configured" }) },
+};
+
+const MEMORY_NOT_CONFIGURED: ApiFailure = {
+  ok: false,
+  error: { kind: "unreachable", message: errorCopyForWire({ kind: "unreachable", message: "server: memory not configured" }) },
 };
 
 function validateReshuffleDecision(value: unknown, c: Context): ReshuffleDecisionRequest | Response {
@@ -781,6 +790,7 @@ export function createApp(deps: ServerDeps) {
     chatDeps = {
       ...rest,
       ...(deps.chatHistory ? { chatHistory: deps.chatHistory } : {}),
+      ...(deps.memoryItems ? { memoryItems: deps.memoryItems } : {}),
       session: chatSession,
       get today(): IsoDate {
         return currentIsoDate(new Date(), rest.timeZone);
@@ -1267,6 +1277,23 @@ export function createApp(deps: ServerDeps) {
         const result = wire(await todaysChatHistory({ chatHistory: deps.chatHistory, timeZone, now: () => new Date() }, {}));
         return c.json(result, httpStatus(result));
       })
+      // Story 13.4: Undo for a Remembered Receipt; refused after Spencer's next message.
+      .post(
+        "/api/memory/undo",
+        validator("json", (value, c) => {
+          const receiptId = (value as { receiptId?: unknown } | null)?.receiptId;
+          if (typeof receiptId !== "string" || receiptId === "") {
+            const invalid: ApiFailure = { ok: false, error: { kind: "validation", message: "memory/undo: missing receiptId" } };
+            return c.json(invalid, httpStatus(invalid));
+          }
+          return { receiptId } as UndoMemoryRequest;
+        }),
+        async (c) => {
+          if (!deps.memoryItems || !deps.chatHistory) return c.json(MEMORY_NOT_CONFIGURED, httpStatus(MEMORY_NOT_CONFIGURED));
+          const result = wire(await undoMemoryReceipt({ memoryItems: deps.memoryItems, chatHistory: deps.chatHistory }, c.req.valid("json")));
+          return c.json(result, httpStatus(result));
+        },
+      )
       // Story 8.6 (Task 7), AD-16: pure transport over `app/surface-
       // open-items.ts`'s `surfaceOpenItems` — every open interaction
       // request/Proposal, each with its current pending question already
@@ -1347,7 +1374,7 @@ export function startServer(
   env: Readonly<Record<string, string | undefined>> = process.env,
   serveFn: ServeFn = (options) => serve({ ...options }),
   /** Story 7.8's `homeView`, Story 7.10's `checkOff`, Story 8.5's `chat`, Task 6C's `research`, Task 4's `calendarDay`, and Story 9.2's `sandbox`, threaded through the same way `connection` already is. */
-  features: Pick<ServerDeps, "homeView" | "calendarDay" | "checkOff" | "plan" | "planSync" | "chat" | "chatHistory" | "tasks" | "research" | "sandbox"> = {},
+  features: Pick<ServerDeps, "homeView" | "calendarDay" | "checkOff" | "plan" | "planSync" | "chat" | "chatHistory" | "memoryItems" | "tasks" | "research" | "sandbox"> = {},
 ): ServerHandle {
   const port = parsePort(env["YOH_SERVER_PORT"]);
   // Contract C3: one ChatSession per server process, shared by every chat route.
@@ -1362,6 +1389,7 @@ export function startServer(
     ...(features.planSync ? { planSync: features.planSync } : {}),
     ...(features.chat ? { chat: features.chat } : {}),
     ...(features.chatHistory ? { chatHistory: features.chatHistory } : {}),
+    ...(features.memoryItems ? { memoryItems: features.memoryItems } : {}),
     ...(features.tasks ? { tasks: features.tasks } : {}),
     ...(features.research ? { research: features.research } : {}),
     ...(features.sandbox ? { sandbox: features.sandbox } : {}),
@@ -1906,6 +1934,7 @@ if (import.meta.main) {
     ...(checkOff ? { checkOff } : {}),
     ...(chat ? { chat } : {}),
     chatHistory: createChatStore(connection),
+    memoryItems: createMemoryItemStore(connection),
     ...(tasks ? { tasks } : {}),
     ...(research ? { research } : {}),
     ...(sandbox ? { sandbox } : {}),

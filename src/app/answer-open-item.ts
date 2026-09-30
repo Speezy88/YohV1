@@ -9,11 +9,12 @@
  */
 import { clearInteractionRequest, getOpenInteractionRequest, type InteractionRequest, type MemoryStore, type StoredRecord } from "../adapters/memory-store.ts";
 import type { ChatStore } from "../adapters/chat-store.ts";
+import type { MemoryItemStore } from "../adapters/memory-item-store.ts";
 import type { LogEntry } from "../adapters/logger.ts";
 import { localIsoDate } from "../rituals/ritual-shared.ts";
 import { errorCopy, serviceForProposalKind } from "../core/error-copy.ts";
 import { parseProposalAnswer } from "../core/open-item-answers.ts";
-import { PROPOSAL_QUESTION_ID } from "../core/open-item-questions.ts";
+import { MEMORY_FORGET_NONE, MEMORY_FORGET_QUESTION_ID, PROPOSAL_QUESTION_ID } from "../core/open-item-questions.ts";
 import { answerDataCompleteness, type AnswerDataCompletenessDeps } from "./answer-data-completeness.ts";
 import { answerNightCloseOut, type AnswerNightCloseOutDeps } from "./answer-night-close-out.ts";
 import { answerSelfCheck, type AnswerSelfCheckDeps } from "./answer-self-check.ts";
@@ -27,6 +28,8 @@ export interface AnswerOpenItemDeps extends AnswerDataCompletenessDeps, AnswerNi
   /** E5: when set with `timeZone`, the answer and Yoh's reply are stored as today's chat turns. Store failures are logged, never surfaced. */
   readonly chatHistory?: ChatStore;
   readonly timeZone?: string;
+  /** Story 13.4: needed only to answer an open `"memory-forget"` request. */
+  readonly memoryItems?: MemoryItemStore;
   readonly log?: (entry: LogEntry) => void;
   /** Needed only to approve an open `"reshuffle"` proposal: everything `approveReshuffle` needs besides `store`. */
   readonly reshuffle?: NonNullable<ConfirmProposalDeps["reshuffle"]>;
@@ -113,6 +116,32 @@ async function answerGeneric(store: MemoryStore, requestId: string): Promise<Res
   return { ok: true, value: { message: "Got it — thanks.", receipts: [], next: "done" } };
 }
 
+async function answerMemoryForget(deps: AnswerOpenItemDeps, input: AnswerOpenItemRequest, record: StoredRecord<InteractionRequest>): Promise<Result<AnswerOpenItemResponse, YohError>> {
+  if (input.questionId !== MEMORY_FORGET_QUESTION_ID) return { ok: false, error: { kind: "conflict", message: "answer-open-item: not the pending question" } };
+  const answer = input.answer.trim();
+  const itemIds = (record.data.detail as { readonly itemIds?: readonly string[] } | undefined)?.itemIds ?? [];
+  if (answer !== MEMORY_FORGET_NONE && !itemIds.includes(answer)) return { ok: false, error: { kind: "validation", message: "answer-open-item: not one of the offered items" } };
+  let message = "Okay, nothing removed.";
+  if (answer !== MEMORY_FORGET_NONE) {
+    const store = deps.memoryItems;
+    if (!store) return { ok: false, error: { kind: "unreachable", message: "Couldn't reach memory right now." } };
+    try {
+      const item = store.getItem(answer);
+      if (item && item.status === "current") {
+        store.forget(answer);
+        message = `Forgot: ${item.text}.`;
+      } else {
+        message = "That item is already gone.";
+      }
+    } catch (error) {
+      deps.log?.({ level: "warn", event: "answer-open-item.memory-forget-failed", detail: error instanceof Error ? error.message : String(error) });
+      return { ok: false, error: { kind: "unreachable", message: "Couldn't reach memory right now." } };
+    }
+  }
+  clearInteractionRequest(deps.store, input.requestId, record.version);
+  return { ok: true, value: { message, receipts: [], next: "done" } };
+}
+
 async function dispatchAnswer(deps: AnswerOpenItemDeps, input: AnswerOpenItemRequest): Promise<Result<AnswerOpenItemResponse, YohError>> {
   const record = getOpenInteractionRequest(deps.store, input.requestId);
   if (!record) return { ok: false, error: { kind: "conflict", message: `answer-open-item: no open interaction request ${input.requestId}` } };
@@ -125,6 +154,8 @@ async function dispatchAnswer(deps: AnswerOpenItemDeps, input: AnswerOpenItemReq
       return answerSelfCheck(deps, input);
     case "proposal":
       return answerProposalOpenItem(deps, input, record);
+    case "memory-forget":
+      return answerMemoryForget(deps, input, record);
     default:
       return answerGeneric(deps.store, input.requestId);
   }
