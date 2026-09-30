@@ -52,6 +52,7 @@ import { StructuredQuestion } from "./StructuredQuestion.tsx";
 import { HONEST_REJECTION, submitOpenItemAnswer } from "../lib/openItems.ts";
 import { recordAnsweredOpenItem, resolveMessageQuestion } from "../lib/chatStore.ts";
 import type { ChatViewMessage } from "../lib/chatStore.ts";
+import { RememberedReceipt } from "./RememberedReceipt.tsx";
 import type { OpenItemQuestion } from "../../../src/types/api.ts";
 
 export interface ChatMessageProps {
@@ -87,7 +88,7 @@ export function ChatMessage({ message }: ChatMessageProps): React.JSX.Element | 
   // `message`/`receipts: []`, appends an assistant turn with nothing to
   // show. A turn with no visible text, receipt, question, or error renders
   // nothing at all, rather than an empty styled row.
-  const hasVisibleContent = thinking || message.text !== "" || message.receipts.length > 0 || showQuestion || message.status === "error";
+  const hasVisibleContent = thinking || message.text !== "" || message.receipts.length > 0 || message.receipt !== undefined || showQuestion || message.status === "error";
 
   const answerInline = async (question: OpenItemQuestion, answerText: string): Promise<void> => {
     setBusy(true);
@@ -152,6 +153,9 @@ export function ChatMessage({ message }: ChatMessageProps): React.JSX.Element | 
             {receipt}
           </p>
         ))}
+        {!isUser && message.status === "done" && (
+          <RememberedReceipt messageId={message.id} receipt={message.receipt} state={message.receiptState ?? "settled"} note={message.receiptNote} />
+        )}
         {showQuestion && (
           <>
             <StructuredQuestion

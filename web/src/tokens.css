@@ -193,6 +193,9 @@
   --duration-thinking-shimmer: 2800ms;
   --duration-thinking-dot-pulse: 1200ms;
   --thinking-shimmer-opacity: 0.55;
+
+  /* Story 13.4: the Remembered Receipt line fades in after the reply has streamed. */
+  --duration-receipt-fade: 300ms;
 }
 
 :root {
@@ -512,5 +515,18 @@ body {
   }
   50% {
     transform: translateY(-2px);
+  }
+}
+
+/* Story 13.4: the Remembered Receipt fades in when filing finishes; the component omits the class under reduced motion. */
+.receipt-fade {
+  animation: receipt-fade-in var(--duration-receipt-fade) ease-out;
+}
+@keyframes receipt-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
   }
 }

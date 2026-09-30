@@ -25,7 +25,10 @@ import { apiClient } from "./apiClient.ts";
 import { streamChat } from "./chatStream.ts";
 import { startSandbox } from "./sandbox.ts";
 import { addLocalFailureNotice } from "./notifications.ts";
-import type { ChatStreamEvent, ChatTurnRequest, OpenItem, OpenItemQuestion, SandboxCardView } from "../../../src/types/api.ts";
+import type { ChatStreamEvent, ChatTurnRequest, OpenItem, OpenItemQuestion, RememberedReceipt, SandboxCardView } from "../../../src/types/api.ts";
+
+/** Story 13.4: a Remembered Receipt offers Undo (`undoable`) until Spencer's next message (`settled`), or shows the outcome of an Undo (`removed`). */
+export type ReceiptState = "undoable" | "removed" | "settled";
 
 export interface ChatViewMessage {
   readonly id: string;
@@ -39,6 +42,11 @@ export interface ChatViewMessage {
   readonly statusText?: string;
   /** Why the turn failed (`status === "error"`): the server's error message, when it sent one. */
   readonly errorText?: string;
+  /** Story 13.4: the `remembered` event's receipt, rendered as the muted line under the reply. */
+  readonly receipt?: RememberedReceipt;
+  readonly receiptState?: ReceiptState;
+  /** The server's message after an Undo, or a refusal. */
+  readonly receiptNote?: string;
 }
 
 /** One entry in the chat stream: an ordinary turn, (Story 9.2) an inline Sandbox Card, or (Story 9.3) the session-ending Finale. */
@@ -175,6 +183,22 @@ function patchMessage(id: string, patch: (message: ChatViewMessage) => Partial<C
   });
 }
 
+/** Story 13.4: Spencer's next message closes the Undo window locally: every undoable receipt becomes settled. */
+function settleUndoableReceipts(): void {
+  if (!messageEntries(state.entries).some((e) => e.message.receiptState === "undoable")) return;
+  set({
+    ...state,
+    entries: state.entries.map((e) =>
+      e.kind === "message" && e.message.receiptState === "undoable" ? { ...e, message: { ...e.message, receiptState: "settled" as const } } : e,
+    ),
+  });
+}
+
+/** Story 13.4: records the outcome of an Undo attempt on one message's receipt. */
+export function setReceiptOutcome(messageId: string, receiptState: ReceiptState, receiptNote?: string): void {
+  patchMessage(messageId, () => ({ receiptState, ...(receiptNote !== undefined ? { receiptNote } : {}) }));
+}
+
 function appendMessage(message: ChatViewMessage): void {
   set({ ...state, entries: [...state.entries, { kind: "message", id: message.id, message }] });
 }
@@ -228,6 +252,7 @@ export async function send(message: string): Promise<void> {
   const userId = `chat-${++nextId}`;
   const assistantId = `chat-${++nextId}`;
   const request: ChatTurnRequest = { message: trimmed };
+  settleUndoableReceipts();
   appendMessage({ id: userId, role: "user", text: trimmed, receipts: [], status: "done" });
   appendMessage({ id: assistantId, role: "assistant", text: "", receipts: [], status: "streaming", statusText: INITIAL_STATUS_TEXT });
   set({ ...state, draft: "", sending: true });
@@ -249,6 +274,9 @@ export async function send(message: string): Promise<void> {
         }));
         if (event.response.sandboxCard) startSandbox(event.response.sandboxCard);
         set({ ...state, sending: false });
+        return;
+      case "remembered":
+        patchMessage(assistantId, () => ({ receipt: event.receipt, receiptState: "undoable" as const }));
         return;
       case "error":
         patchMessage(assistantId, () => ({ status: "error", errorText: event.error.message }));
@@ -293,6 +321,7 @@ export function recordAnsweredOpenItem(
 ): void {
   const userId = `chat-${++nextId}`;
   const assistantId = `chat-${++nextId}`;
+  settleUndoableReceipts();
   appendMessage({ id: userId, role: "user", text: youText, receipts: [], status: "done" });
   appendMessage({
     id: assistantId,

@@ -8,6 +8,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 import {
   __resetChatStoreForTests,
+  setReceiptOutcome,
   appendPendingOpenItem,
   appendStreamEntry,
   hydrateChatHistory,
@@ -339,6 +340,42 @@ describe("chatStore", () => {
         updateStreamEntry(id, "sandbox-finale", { status: "done" });
       });
       expect(result.current.entries.find((e) => e.id === id)).toMatchObject({ kind: "sandbox-card", status: "pending" });
+    });
+  });
+  describe("Remembered Receipt (Story 13.4)", () => {
+    const RECEIPT = { receiptId: "r1", kind: "remembered" as const, items: [{ id: "i1", text: "Chem club is a club", folder: "corrections" as const }] };
+
+    it("a remembered event after done attaches an undoable receipt to the assistant message", async () => {
+      const stream = controllableStream();
+      const { result } = renderHook(() => useChatStore());
+      act(() => void send("remember that Chem club is a club"));
+      stream.emit({ type: "done", response: { reply: "Got it.", receipts: [] } });
+      stream.emit({ type: "remembered", receipt: RECEIPT });
+      await stream.finish();
+      expect(messagesOf(result.current)[1]).toMatchObject({ status: "done", receipt: RECEIPT, receiptState: "undoable" });
+    });
+
+    it("the next send() settles every undoable receipt", async () => {
+      const stream = controllableStream();
+      const { result } = renderHook(() => useChatStore());
+      act(() => void send("remember that Chem club is a club"));
+      stream.emit({ type: "done", response: { reply: "Got it.", receipts: [] } });
+      stream.emit({ type: "remembered", receipt: RECEIPT });
+      await stream.finish();
+      act(() => void send("thanks"));
+      expect(messagesOf(result.current)[1]!.receiptState).toBe("settled");
+    });
+
+    it("setReceiptOutcome records the state and the server's note", async () => {
+      const stream = controllableStream();
+      const { result } = renderHook(() => useChatStore());
+      act(() => void send("remember x"));
+      stream.emit({ type: "done", response: { reply: "Got it.", receipts: [] } });
+      stream.emit({ type: "remembered", receipt: RECEIPT });
+      await stream.finish();
+      const id = messagesOf(result.current)[1]!.id;
+      act(() => setReceiptOutcome(id, "removed", "Removed from memory."));
+      expect(messagesOf(result.current)[1]).toMatchObject({ receiptState: "removed", receiptNote: "Removed from memory." });
     });
   });
 });

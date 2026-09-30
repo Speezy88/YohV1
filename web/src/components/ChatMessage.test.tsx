@@ -169,4 +169,19 @@ describe("ChatMessage", () => {
     expect(screen.getByText("Sure, I")).toBeInTheDocument();
     expect(screen.getByText("The reply was interrupted.")).toHaveClass("text-small");
   });
+  describe("Remembered Receipt (Story 13.4)", () => {
+    const receipt = { receiptId: "r1", kind: "remembered" as const, items: [{ id: "i1", text: "Chem club is a club", folder: "corrections" as const }] };
+
+    it("renders the receipt line under a finished reply, even with no reply text", () => {
+      render(<ChatMessage message={msg({ text: "Got it.", receipt, receiptState: "undoable" })} />);
+      expect(screen.getByTestId("remembered-receipt")).toHaveTextContent("Remembered: Chem club is a club · Corrections · Undo");
+    });
+
+    it("always mounts the polite live region on a finished assistant turn, and not on a user turn", () => {
+      const { container, rerender } = render(<ChatMessage message={msg({ text: "Hi" })} />);
+      expect(container.querySelector("[aria-live='polite']")).not.toBeNull();
+      rerender(<ChatMessage message={msg({ role: "user", text: "Hi" })} />);
+      expect(container.querySelector("[aria-live='polite']")).toBeNull();
+    });
+  });
 });

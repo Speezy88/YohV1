@@ -46,6 +46,7 @@ import {
 } from "../../src/adapters/notion-adapter.ts";
 import { draftItem, type CreateItemDeps } from "../../src/app/create-item.ts";
 import { sandboxQueue, type SandboxQueueDeps } from "../../src/app/sandbox-queue.ts";
+import { recognizeMemoryCommand } from "../../src/core/memory-commands.ts";
 import { firstCardView } from "../../src/core/sandbox-card-view.ts";
 import { localIsoDate } from "../../src/rituals/ritual-shared.ts";
 import { startCheckOffCommitSweep, startServer, type ChatTurnFn, type ServerDeps } from "../../src/shell/server.ts";
@@ -277,6 +278,33 @@ const draftFieldsLlmClient: AnthropicMessagesClient = {
     }) as unknown as AnthropicMessagesClient["messages"]["create"],
   },
 };
+/**
+ * Story 13.4 (Ruling E13): the memory LLM seam, separate from `llmClient` (which would feed FR-25
+ * suggestions). Returns one Corrections candidate ONLY for the Chem club fixture text, otherwise `[]`,
+ * so unrelated fixture turns never file.
+ */
+export const FIXTURE_MEMORY_TEXT = "Chem club is a club, not a class";
+const memoryLlmClient: AnthropicMessagesClient = {
+  messages: {
+    create: (async (params: { readonly messages: unknown }) => {
+      const reply = /Chem club/.test(JSON.stringify(params.messages))
+        ? JSON.stringify([{ folder: "corrections", text: FIXTURE_MEMORY_TEXT, origin: "stated" }])
+        : "[]";
+      return {
+        id: "msg_fixture_memory",
+        container: null,
+        content: [{ type: "text", text: reply, citations: null }],
+        model: "fixture-model",
+        role: "assistant",
+        stop_details: null,
+        stop_reason: "end_turn",
+        stop_sequence: null,
+        type: "message",
+        usage: { input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: null, cache_read_input_tokens: null, server_tool_use: null, service_tier: null },
+      };
+    }) as unknown as AnthropicMessagesClient["messages"]["create"],
+  },
+};
 const captureDeps: CreateItemDeps = {
   store,
   now: () => new Date(),
@@ -315,6 +343,10 @@ const runChatTurn: ChatTurnFn = async (deps, input) => {
     if (!card) return { ok: true, value: { reply: "Nothing's missing a Due Date or Duration.", receipts: [] } };
     return { ok: true, value: { reply: "", receipts: [], sandboxCard: card } };
   }
+  const memoryCommand = recognizeMemoryCommand(input.message);
+  if (memoryCommand?.kind === "remember") {
+    return { ok: true, value: { reply: "Got it.", receipts: [], memory: { kind: "remember", text: memoryCommand.text } } };
+  }
   if (CAPTURE_TRIGGER.test(input.message)) {
     return draftItem(captureDeps, { database: "Tasks", request: input.message });
   }
@@ -339,6 +371,7 @@ const chat = {
   timeZone: TIME_ZONE,
   now: () => new Date(),
   runChatTurn,
+  memoryLlmClient,
   createPage: (database: string, properties: Record<string, string>) =>
     notionCreatePage(notionCreate.client, NOTION_CREATE_CONFIG, database as never, properties),
 } as unknown as NonNullable<ServerDeps["chat"]>;
