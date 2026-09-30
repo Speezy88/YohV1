@@ -48,3 +48,16 @@ The final whole-branch review triaged every item below as "defer": none blocks m
 - 7.10: the `completion-log.ts` header comment is stale (the Task lookup now happens at commit time). `addLocalFailureNotice` has no dedup. `retryAt` calls `deps.now()` twice per sweep pass.
 - Epic 6 retro: `updateTaskField`'s rich_text (Area) path is unchunked. There's no guard for Notion's ~100-segment rich_text cap.
 - Tests: a few server/ritual tests still write real structured log lines to stderr, so test output isn't pristine.
+
+## Epic 13 (final review, 2026-09-30)
+
+- Partial filing after a timeout: file-memory with 2 candidates where the 2nd needs readTasks — a mid-way timeout leaves item 1 filed with no receipt (visible on the Memory page). Rare.
+- Undo window stays open server-side after the Conversation is deleted or after midnight (chat-store undo subquery); web already settles the receipt — reachable only by a hand-crafted request.
+- ALTER race: ALTER TABLE ADD COLUMN (completions.planned_*, pattern_state.confirmed_at) can error "duplicate column" if server and ritual-cli first-start at the same instant.
+- FTS rowid mapping: both FTS tables use external content over TEXT-PK tables (implicit rowid). Never VACUUM without rebuilding the FTS tables.
+- Settings revert leaves the memory item `confirmed` and pattern_state `confirmedAt` set. Cosmetic.
+- Pattern overrun Yes doesn't check whether padding changed since the proposal; can overwrite newer padding.
+- Rule-change: only the first proposal of a filing is emitted on the stream (others surface as open items); undo+withdraw not one tx; settings read outside the tx.
+- History items on the Memory page show no Not-loaded reason.
+- Other e2e specs' settleAnimations helpers may await infinite animations; Renew/Keep show no success text (the refetch moves the item).
+- T1 minors 5–6, T3 bare `{}` block + slip_events DDL per call, T4 minor 3 (lunch/community overlap), T6b minors, T7 missing tests, T14a minors 1/3/4 (request clear after Yes tx; 3 outbox rows per overrun Yes; windowStart DST edge).

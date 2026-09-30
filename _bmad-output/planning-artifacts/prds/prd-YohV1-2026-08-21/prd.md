@@ -123,7 +123,7 @@ Yoh has exactly one user, permanently — not a v1 scoping choice (see §8 Non-G
 - **Conversation** — One continuous chat thread in the Chat panel, from its first turn until Spencer starts a new one. The unit of "delete one conversation" (FR-52).
 - **Chat History** — The stored transcripts of all Conversations (FR-52). Not Memory: deleting it does not delete Memory Items.
 - **Stated / Inferred** — A Memory Item is stated when Spencer said it outright (including via "remember that …"), and inferred when Yoh concluded it from context. Editing an inferred item makes it stated (FR-59).
-- **Always-loaded** — A Memory Folder whose items go into every model call that answers, captures, or writes Plan reasoning (FR-53, FR-56). Never into routing or classification calls.
+- **Always-loaded** — A Memory Folder whose items go into every model call that answers or drafts a Notion item (FR-53, FR-56). Never into routing or classification calls.
 - **Superseded** — A Memory Item replaced by a newer one that contradicts it. It stays viewable as history under the current item (FR-54).
 - **Needs review** — The Memory page list of expired items, items not loaded because an always-loaded folder is over its cap, always-loaded items not used or confirmed in 120 days, items that conflict with live Notion, Calendar or Plan data, and items awaiting a renew/edit/delete/keep-as-history decision (FR-53, FR-56, FR-59).
 - **Ratings log** — The store of Rating scores (FR-60). Never loaded into a model call and never part of Memory.
@@ -805,14 +805,14 @@ Spencer can manage memory in plain words. Yoh recognizes these deterministically
 - `/remember` and `/forget` are slash-command forms of the same commands and appear in the Command Palette (FR-42). The plain-word forms keep working.
 - A memory command shows the same receipt shape as FR-54.
 
-#### FR-56: Recall in answers and planning
+#### FR-56: Recall in answers and drafts
 
-Yoh uses memory whenever it answers, captures, or explains a Plan. The deterministic scheduler never reads memory text.
+Yoh uses memory when it answers and when it drafts a Notion item. The deterministic scheduler never reads memory text.
 
 **Consequences (testable):**
-- Every model call that answers Spencer, captures, or writes Plan reasoning includes the always-loaded folders (FR-53), subject to the cap below. Items from the when-relevant folders are included only when they match the request. Memory never goes into routing or classification calls.
-- Planning preferences affect only AI-written parts: the Plan reasoning line, answers, and chat moves. A preference that maps to a real scheduler setting goes through FR-57.
-- Live Notion, Calendar and Plan data always win over memory. When they conflict with a memory item, that item goes to Needs review.
+- Every model call that answers Spencer or drafts a Notion item (never capture, routing, classification, or Plan reasoning; Plan reasoning is deterministic and cites only confirmed padding, FR-58) includes the always-loaded folders (FR-53), subject to the cap below. Items from the when-relevant folders are included only when they match the request.
+- Planning preferences affect only AI-written parts: answers. A preference that maps to a real scheduler setting goes through FR-57.
+- Live Notion, Calendar and Plan data always win over memory. When they conflict with a memory item (entity_ref Tasks now Done or missing), that item goes to Needs review.
 - No memory item can weaken or skip a confirmation step. Proposals still need an explicit yes.
 - An always-loaded item not used or confirmed in 120 days goes to Needs review. It is a list on the Memory page, not a notification.
 - The always-loaded set has a fixed size cap. Past the cap, the newest items are loaded and the oldest spill to Needs review: they are not loaded and never deleted. The Memory page marks which items are not loaded, so nothing is dropped silently. `[ASSUMPTION: the cap value is set in architecture]`
