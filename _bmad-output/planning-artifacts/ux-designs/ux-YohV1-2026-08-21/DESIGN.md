@@ -3,7 +3,7 @@ name: Yoh
 description: A personal daily-planning assistant whose primary surface is a single-user laptop web app — brighter cool-white neumorphism (amended 2026-09-27, was warm off-white), glass only on what floats, one blue accent with expanded gradient use (amended 2026-09-27; the earlier two-moment limit is lifted), motion tied to state. The Phase 1 CLI is kept as a short legacy section until FR-50 retires it.
 status: draft
 created: 2026-08-21
-updated: 2026-09-27
+updated: 2026-09-29
 sources:
   - _bmad-output/planning-artifacts/prds/prd-YohV1-2026-08-21/prd.md
   - _bmad-output/brainstorming/brainstorm-phase2-web-app-ui-2026-09-24/brainstorm-intent.md
@@ -200,6 +200,28 @@ components:
     material: '{components.glass-surface}'
     accent-bar: '3px left, {colors.accent-solid}'
     radius: '{rounded.md}'
+  # ADDED 2026-09-29 (Epic 13 Memory). [ASSUMPTION] values; confirm against a mockup before build.
+  remembered-receipt:
+    typography: '{typography.caption}'
+    foreground: '{colors.ink-secondary}'
+    icon: 'memory glyph, 1.8px stroke, {colors.ink-secondary}'
+    undo: 'text button, {colors.ink-primary}, underlined'
+  rating-prompt:
+    chips: '{components.button-secondary}, selected -> {components.button-primary}'
+    dismiss: 'text button, {colors.ink-secondary}'
+  memory-proposal-card:
+    background: '{colors.surface-raised}'
+    radius: '{rounded.md}'
+    evidence: '{typography.caption}, {colors.ink-secondary}'
+  memory-rail:
+    well: '{colors.surface-sunken}, {rounded.lg}'
+    active-item: '{colors.surface-raised} + 1.5px {colors.accent-solid} rim (not the gradient pill, which stays the nav sidebar's)'
+    count: '{typography.numerals}, {colors.ink-secondary}'
+  memory-item:
+    background: '{colors.surface-raised}'
+    radius: '{rounded.lg}'
+    shadow: 'extruded-sm, extruded-md on hover (as Research Hub rows)'
+    badge: '{colors.surface-sunken} pill, {typography.caption}, {colors.ink-secondary}'
   icon:
     stroke: '1.8px'
     neutral: '{colors.ink-secondary}'
@@ -324,7 +346,7 @@ Visual anatomy only. Behavior lives in EXPERIENCE.md Component Patterns, which u
 
 | Component | Visual spec |
 |---|---|
-| ~~Page Indicator~~ **Nav Sidebar + arrow buttons** *(amended 2026-09-27: swipe/Page Indicator retired)* | A left sidebar: wordmark, then Home / Tasks / Desk / Research Hub as icon+label rows, active item in a `{rounded.full}` pill filled with the accent gradient, then the Theme Toggle. On-screen up/down arrow buttons (44-64px, bigger-scale control range) move one page with a smooth transition. |
+| ~~Page Indicator~~ **Nav Sidebar + arrow buttons** *(amended 2026-09-27: swipe/Page Indicator retired)* | A left sidebar: wordmark, then Home / Tasks / Desk / Research Hub / Memory *(Memory added 2026-09-29)* as icon+label rows, active item in a `{rounded.full}` pill filled with the accent gradient, then the Theme Toggle. On-screen up/down arrow buttons (44-64px, bigger-scale control range) move one page with a smooth transition. |
 | **Theme Toggle** | 30px circle, 1px `{colors.accent-solid}` border, Extruded-sm. Sun glyph in light mode, moon glyph in dark, stroked in `{colors.ink-primary}`. |
 | **Plan Row** | `{components.plan-row}`: Checkbox, Task label in `{typography.body}`, optional Pin Control badge. Checked: checkmark + strikethrough + 50% opacity, then it fades out. |
 | **Checkbox** | 17px, `{rounded.xs}`, inset well, `{spacing.rim-width}` `{colors.rim-interactive}` rim. Checked: `{colors.accent-solid}` fill with a `{colors.on-accent-solid}` checkmark. |
@@ -348,6 +370,11 @@ Visual anatomy only. Behavior lives in EXPERIENCE.md Component Patterns, which u
 | **Task Group** | A Tasks page section: `{typography.caption}` group header (e.g. "AREA: SCHOOL") over Task rows (name + due date in `{typography.body}`). |
 | **Grouping Control** | `[ASSUMPTION]` A segmented control, reusing the explorations' inset nav-pill styling, in a `{colors.surface-sunken}` well: Area · Due Date · Energy · Status. The active segment is a `{colors.accent-solid}` pill with an `{colors.on-accent-solid}` label (it carries text). |
 | **Research Box** | ~~A card on Tasks~~ *(moved 2026-09-27 to the Research Hub page)*: the latest research output up front (`{typography.title}` heading, body text, source list), then the Research Vault library as rows below, plus an "ask a research question" box. |
+| **Remembered Receipt** *(2026-09-29)* | One line under Yoh's reply in `{typography.caption}` `{colors.ink-secondary}`, led by a small memory glyph (1.8px stroke). The folder and scope read as plain text after a middle dot. Undo is an underlined `{colors.ink-primary}` text button (accent-solid text would fail contrast, as on the Undo Toast). No card, no glass, no accent bar: it should read as a footnote to the reply. Fade-in on arrival. |
+| **Rating Prompt** *(2026-09-29)* | Structured Question styling: "How is Yoh doing?" in `{typography.body}`, three chips ("1 Poor", "2 Okay", "3 Good") as Secondary buttons that flip to Primary when picked, and a "Not now" text button in `{colors.ink-secondary}`. Answered: a single `{typography.caption}` line, "Rated 3 (good)". No stars, faces, or color scale. |
+| **Memory Proposal Card** *(2026-09-29)* | `{components.memory-proposal-card}`: question in `{typography.body}` 600; for Patterns an evidence line in `{typography.caption}` `{colors.ink-secondary}`; Primary "Yes" and Secondary "No". Same shape as a Structured Question with two chips. |
+| **Memory page** *(2026-09-29)* | Page title "Memory" in `{typography.display}`, the Memory Search box under it (Research Hub's ask-box material: raised, `{rounded.xl}`, Extruded-lg), then two panes. **Memory Rail** (left, ~240px): a `{colors.surface-sunken}` well; group captions ("ALWAYS USED", "USED WHEN RELEVANT", "ONLY WHEN ASKED") in `{typography.caption}`; rows of icon + label + count; the active row is raised with a 1.5px `{colors.accent-solid}` rim, leaving the gradient pill to the main sidebar. **List pane** (right): Memory Item rows. |
+| **Memory Item** *(2026-09-29)* | A Research-Hub-style row: `{colors.surface-raised}`, `{rounded.lg}`, Extruded-sm (md on hover). Text in `{typography.body}`; the meta line in `{typography.caption}` `{colors.ink-secondary}`; "Not loaded" and "Declined" badges as `{colors.surface-sunken}` caption pills. The overflow menu is a 1.8px "more" glyph button. Editing turns the text into an inset field with the 2px focus ring. Superseded versions indent under the item, text in `{colors.ink-secondary}`, no shadow. Needs Review rows add the reason in caption and the four actions as small Secondary buttons. |
 | **Desk Widget** | A `{components.neumorphic-card}` with a `{typography.caption}` header and a value in `{typography.numerals}` (larger values may use `{typography.display}` size with tabular figures). Variants: Tasks Completed (a scrollable list of checked, struck-through rows), Worked (a single widget: today's minutes as the primary figure, all-time hours with Yoh as a secondary `{typography.caption}` line), On-Time Rate, Streak ("Streak: 1 day" / "Longest: 12 days"), Usage Heatmap (weeks × 7 days; `[ASSUMPTION]` accent-solid at stepped opacities, not yet rendered), *(added 2026-09-27)* Claude API spend this month (computed locally from Task 9's per-call usage records × one price table), and Feed widgets (BTC/ETH/SOL tickers, Seattle-WA weather, biggest-business-stories-with-AI-emphasis news). An unavailable feed shows "Unavailable · last updated 2:14 PM" in `{colors.ink-secondary}`. |
 | **Screensaver** | Full-bleed `{colors.surface-base}` field of drifting gradient dots at varied transparency (FR-45; `[ASSUMPTION]` colored from the accent stops), with the "Yoh Meeseek" wordmark centered in `{typography.wordmark}`. Shows no data. |
 | **Birthday Confetti** | On Feb 19 only: a one-shot confetti burst on Home. `[ASSUMPTION]` Confetti uses `{colors.accent-solid}` plus neutral inks. No emoji. |

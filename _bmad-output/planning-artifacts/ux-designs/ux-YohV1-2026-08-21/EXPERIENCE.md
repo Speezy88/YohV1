@@ -3,6 +3,7 @@ name: Yoh
 status: draft
 sources:
   - _bmad-output/planning-artifacts/prds/prd-YohV1-2026-08-21/prd.md
+  - _bmad-output/planning-artifacts/prds/prd-YohV1-2026-08-21/.memlog.md
   - _bmad-output/brainstorming/brainstorm-phase2-web-app-ui-2026-09-24/brainstorm-intent.md
   - _bmad-output/brainstorming/brainstorm-phase2-web-app-ui-2026-09-24/.memlog.md
   - _bmad-output/planning-artifacts/ux-designs/ux-YohV1-2026-08-21/.memlog.md
@@ -15,7 +16,7 @@ sources:
   - _bmad-output/planning-artifacts/research/technical-yoh-voice-pipeline-and-notion-calendar-a-2026-08-21/research.md
   - _bmad-output/brainstorming/brainstorm-yoh-notion-daily-assistant-2026-08-21/brainstorm-intent.md
 created: 2026-08-21
-updated: 2026-09-27
+updated: 2026-09-29
 ---
 
 # Yoh — Experience Spine
@@ -31,6 +32,16 @@ updated: 2026-09-27
 - **Morning Plan delivery:** in-app only, no Pushover push. Pushover stays for the Night Ritual's push/email escalation and for operational/failure alerts. `/plan` builds today's Plan on demand; `/morning` still never generates one.
 - **Tasks page** is pulled forward from Epic 11 and ships in this plan; a Task Spencer types himself there is a direct write (no confirm), same tier as FR-24. The single Research Box described below moves to the new **Research Hub** page; the async `/research` job and its offer stay Epic 11.
 - **Chat transcript persistence:** OQ13 below is superseded — see PRD/ARCHITECTURE-SPINE and `epics.md`'s "Yoh remembers you" epic (persistent history plus Facts/Decisions/Ideas folders, queued after Epic 9).
+
+## Amendments (2026-09-29, Epic 13 "Yoh remembers you") — read with the 2026-09-27 list
+
+- **Pages, in order: Home, Tasks, Desk, Research Hub, Memory** (FR-59). The sidebar gains Memory; page announcements count five.
+- **Chat history persists** (FR-52). The Chat panel opens on today's Conversation `[ASSUMPTION: one Conversation per calendar day in YOH_TIMEZONE; architecture may refine]`. Earlier Conversations are browsed, searched, and deleted on the Memory page. This supersedes OQ13.
+- **New Chat-stream elements:** the Remembered Receipt (FR-54/55), the Rating Prompt (FR-60, replaces FR-17 Self-Check), and the Memory Proposal Card for rule changes (FR-57) and Patterns (FR-58). All three reuse existing shapes (receipt line, Structured Question); no new overlay type.
+- **Commands:** `/remember` and `/forget` join the Command Palette (FR-55); the plain-word forms work too.
+- Everything below that mentions Self-Check now means the Rating Prompt.
+
+→ Key-screen mock for these surfaces: `mockups/memory-key-screens-2026-09-29.html` (Memory page; Chat panel with receipt, rule-change card, Pattern card, Rating). The spines win on conflict; the mock's Needs review preview panel is illustrative only (it is a Memory Rail entry).
 
 ## Foundation
 
@@ -48,17 +59,18 @@ updated: 2026-09-27
 | Surface | Reached from | Job | Key components | Journey |
 |---|---|---|---|---|
 | **Home** | Launch (after splash); sidebar / ↑↓ / wheel | What, in what order, and when | Plan Row + Checkbox, Calendar Day View + Calendar Block + Pin Control, Reshuffle Preview, Time Budget, mini month, Ask Yoh pill, Undo Toast | UJ-4, UJ-5 |
-| **Chat panel** *(not a page — amended 2026-09-27)* | Ask Yoh pill / ⌘K, from any page; notification deep-links | Talk to Yoh; run commands | Chat Message, Chat Input, Command Palette, Thinking Indicator, Structured Question, Sandbox Card, Sandbox Finale; Skill Switcher (hidden in Phase 2, space reserved) | UJ-5, UJ-6 |
+| **Chat panel** *(not a page — amended 2026-09-27)* | Ask Yoh pill / ⌘K, from any page; notification deep-links | Talk to Yoh; run commands; see what Yoh just remembered | Chat Message, Chat Input, Command Palette, Thinking Indicator, Structured Question, Sandbox Card, Sandbox Finale, Remembered Receipt, Rating Prompt, Memory Proposal Card *(2026-09-29)*; Skill Switcher (hidden in Phase 2, space reserved) | UJ-5, UJ-6, UJ-7 |
 | **Tasks** | Sidebar / ↑↓ / wheel; research-ready deep-link | Find things | Task Group, Grouping Control, Needs-Data Indicator, quick-add | UJ-5 |
 | **Desk** | Sidebar / ↑↓ / wheel | Reflect at the desk | Desk Widget (all variants) | UJ-6 |
 | **Research Hub** *(new page, 2026-09-27)* | Sidebar / ↑↓ / wheel; research-ready deep-link | Find saved research | Research Box (moved from Tasks) | UJ-5 |
+| **Memory** *(new page, 2026-09-29, FR-59)* | Sidebar / ↑↓ / wheel; "View in Memory" on a Remembered Receipt; links in "what do you remember about …" answers | See, fix, and search what Yoh remembers; browse chat history | Memory Rail, Memory Search, Memory Item, Needs Review List, Changed Settings, Chat History | UJ-7 |
 | **Screensaver** | App launch (splash); 10 min idle | Aesthetic only; shows no data | Screensaver | UJ-5 (splash) |
 | **Overlays** | Any page | Cross-cutting feedback | In-App Notification, Undo Toast, Command Palette, Birthday Confetti | UJ-4, UJ-5 |
 | **Push / email** (outside the app) | Rituals, on schedule | Night close-out escalation, operational alerts *(Morning Plan removed 2026-09-27: in-app only)* | Push Notification | CLI legacy UJ-1, UJ-3 |
 
 **Navigation.** ~~Horizontal trackpad swipe moves between adjacent pages (primary). The non-swipe fallback is a clickable Page Indicator plus the ← → arrow keys `[ASSUMPTION, per memlog; exact form pending]`.~~ *Swipe navigation retired 2026-09-27 (Spencer).* Pages sit in a vertical stack, moved between with smooth up/down arrow buttons, the ↑/↓ keys (and Page Up/Page Down) when no text field has focus, an edge-aware mouse wheel, and a left nav sidebar that jumps directly to any page. Every page is one gesture or click from every other (FR-39). The Theme Toggle sits in a corner of every page. Modal depth is one: the Command Palette is the only layered panel, and toasts never stack a modal.
 
-**Need → surface closure.** FR-30–FR-35 → Home. FR-36–FR-38 → Chat panel. FR-39 → Screensaver → Home → Ask Yoh pill. FR-40/41 → Home. FR-42 → Chat panel. FR-43 → Tasks (Research Hub gets the former Research Box, 2026-09-27). FR-44/47 → Desk. FR-45 → Screensaver. FR-46 → all. FR-48 → Home (Approve), Chat panel (confirmations). FR-49 → overlays. FR-50 → CLI legacy. FR-51 → Chat panel → Research Hub. Every surface above has at least one journey.
+**Need → surface closure.** FR-30–FR-35 → Home. FR-36–FR-38 → Chat panel. FR-39 → Screensaver → Home → Ask Yoh pill. FR-40/41 → Home. FR-42 → Chat panel. FR-43 → Tasks (Research Hub gets the former Research Box, 2026-09-27). FR-44/47 → Desk. FR-45 → Screensaver. FR-46 → all. FR-48 → Home (Approve), Chat panel (confirmations). FR-49 → overlays. FR-50 → CLI legacy. FR-51 → Chat panel → Research Hub. FR-52 → Chat panel (today) + Memory (history). FR-53, FR-56, FR-59 → Memory. FR-54, FR-55, FR-57 → Chat panel (receipt, commands, rule-change card) + Memory (Changed Settings). FR-58 → Chat panel (Pattern card) + Memory (Patterns folder). FR-60 → Chat panel. Every surface above has at least one journey.
 
 ## Voice and Tone
 
@@ -74,6 +86,11 @@ Governed by the PRD Glossary **Tone** and FR-18–FR-19: casual and peer-level b
 | "Research ready: AP Bio registration deadline" | "Your research has been completed successfully." |
 | "Do you want to do research on this?" (offered once) | Running a search nobody asked for |
 | "News unavailable · last updated 2:14 PM" | A blank widget, or an error stack |
+| "Remembered: Chem club is a club, not a class · Corrections · Undo" | "Got it! I'll remember that forever." |
+| "Removed from memory." | "Okay, I've forgotten all about it!" |
+| "Change school-day work start from 3:15 PM to 2:30 PM?" | Quietly planning from 2:30 because a memory said so |
+| "Yoh noticed History essays run about 30 min over. 5 times since Sep 3. Plan for that?" | "It looks like you're always late on essays." |
+| "How is Yoh doing?" · "What was off?" | "We'd love your feedback!" / a star rating |
 | Words and icons | Emoji, anywhere |
 
 ## Component Patterns
@@ -82,7 +99,7 @@ Behavioral rules. Visual specs are in `DESIGN.md` Components, under identical na
 
 | Component | Where | Behavioral rules |
 |---|---|---|
-| ~~Page Indicator~~ **Nav Sidebar + arrow buttons** *(amended 2026-09-27, swipe/indicator retired)* | Every page | Left sidebar (wordmark, Home/Tasks/Desk/Research Hub, theme toggle) shows and sets the current page; the active item sits in a gradient pill. On-screen up/down arrow buttons, the ↑/↓ keys (no text field focused), and an edge-aware mouse wheel move one page in the vertical stack. Announces "Tasks, page 2 of 4". |
+| ~~Page Indicator~~ **Nav Sidebar + arrow buttons** *(amended 2026-09-27, swipe/indicator retired)* | Every page | Left sidebar (wordmark, Home/Tasks/Desk/Research Hub/Memory *(Memory added 2026-09-29)*, theme toggle) shows and sets the current page; the active item sits in a gradient pill. On-screen up/down arrow buttons, the ↑/↓ keys (no text field focused), and an edge-aware mouse wheel move one page in the vertical stack. Announces "Tasks, page 2 of 5". |
 | **Theme Toggle** | Every page, corner | One click flips light and dark. The first launch follows the OS; after a manual toggle, the choice persists `[ASSUMPTION]`. |
 | **Plan Row** | Home | Ordered exactly as the Plan (FR-2). It reflects an approved reshuffle without a reload (FR-40). A pinned Task shows a Pin Control badge. |
 | **Checkbox** | Plan Row | Click → checkmark + strikethrough, the row dissolves immediately (§6 Latency), and an Undo Toast appears. The Notion Status write and Completion Log entry are **deferred until the toast closes**, and dropped if Undo is pressed (FR-41). The write is Status-only. |
@@ -95,7 +112,7 @@ Behavioral rules. Visual specs are in `DESIGN.md` Components, under identical na
 | **Chat Input** | Chat panel | Enter sends. "/" as the first character opens the Command Palette. Unsent text survives the Screensaver and panel close (FR-45); ~~and page swipes~~ *(swipe retired 2026-09-27)*. |
 | **Chat Message** | Chat | Yoh's turns stream as they generate. A write triggered in Chat echoes a one-line receipt in the stream (§6). Yoh ends a conversation naturally and doesn't fish for more. |
 | **Thinking Indicator** | Chat | Appears within a fraction of a second of sending, naming what Yoh is doing ("Searching Notion…"). It gives way to streaming text. |
-| **Command Palette** | Chat Input, Ask Yoh pill | Lists `/morning`, `/plan` *(added 2026-09-27: builds today's Plan on demand; `/morning` never does)*, `/night`, `/sandbox`, `/research`, each with a one-line description and an example. Filters as Spencer types. ↑↓ moves, Enter runs, Esc closes `[ASSUMPTION]`. It is the only command-discovery surface (FR-42). |
+| **Command Palette** | Chat Input, Ask Yoh pill | Lists `/morning`, `/plan` *(added 2026-09-27: builds today's Plan on demand; `/morning` never does)*, `/night`, `/sandbox`, `/research`, `/remember`, `/forget` *(added 2026-09-29, FR-55)*, each with a one-line description and an example. Filters as Spencer types. ↑↓ moves, Enter runs, Esc closes `[ASSUMPTION]`. It is the only command-discovery surface (FR-42). |
 | **Structured Question** | Chat stream | Yoh asks a question with selectable options plus a free-text "Other". One pick answers it, and the answer is recorded as Spencer's turn. Used for clarifying questions, the one-time /research offer, and Proposal confirmations (FR-16/25/26/27, via FR-48) `[ASSUMPTION for Proposals]`. An unanswered question blocks conflicting writes but not unrelated chat `[ASSUMPTION]`. *Flagged for PRD update.* |
 | **Skill Switcher** | Chat left bar | **Hidden in Phase 2**: only General chat exists, and Research is *not* a skill (`/research` is its only trigger, per FR-46's no-redundant-controls rule). The IA reserves the left-bar space. The switcher appears once a second real skill (Goals) exists: click to switch, with the active skill always indicated. It is a sanctioned nav element, not an FR-46 violation. *Flagged for PRD update.* |
 | **Sandbox Card** | Chat stream | One Yoh message per Task missing a Required Field, soonest-due first (PRD `[ASSUMPTION]`, FR-36). Required fields: Due Date, Estimated Duration (Save stays disabled until both are filled). Refining fields are optional. Skip writes nothing and keeps the Task in the count. Save writes directly (FR-38), plays a visual pulse on that card (respecting reduced motion), and decrements the remaining counter live. The reward **sound plays once, when the batch is cleared**, not per card (respecting system mute). The next card appears below. Cards stay in chat history. An unresolvable select value re-prompts on that card. |
@@ -106,6 +123,15 @@ Behavioral rules. Visual specs are in `DESIGN.md` Components, under identical na
 | **Task Group** | Tasks | Groups every Notion Task by the active grouping. Every Task is findable (FR-43). A checked-off Task shows as completed, not deleted. |
 | **Grouping Control** | Tasks | ~~Area (default), Due Date, Energy, or Status.~~ *Amended 2026-09-27 (Spencer, Task 6B, approved Tasks mockup):* **Due (default: Overdue / Today / This week / Later / No date)**, Area, or Status. `[ASSUMPTION]` The choice persists across visits. |
 | **Research Box** | ~~Tasks~~ **Research Hub** *(moved 2026-09-27, Spencer: Tasks page ships standalone; a fourth Research Hub page holds this)* | The latest research output up front, with the Research Vault library browsable below, plus an "ask a research question" box that sends into the Chat panel. It is the only research surface (FR-43). A research-ready notification opens the new doc here. Output follows the dedicated research prompt's consistent, focused shape (FR-51). The async `/research` job and its offer stay Epic 11; only the page shell ships now. |
+| **Remembered Receipt** *(2026-09-29, FR-54/55)* | Chat stream | One muted line directly under the Yoh reply of the turn it came from: "Remembered: {text} · {folder}", plus " · for {scope}" on Feedback items and " · until {date}" on items with an expiry, then Undo. Two items from one turn share the line, separated by " ; ". It fades in when filing finishes, after the reply has streamed; the reply never waits for it. Undo stays until Spencer sends his next message, then gives way to "View in Memory" (opens the item on the Memory page). Undo removes the item (or restores the version it replaced) and the line reads "Removed from memory." A memory command uses the same line ("Forgot: {text} · Undo"). `[ASSUMPTION]` placement, wording, and the " ; " join. |
+| **Rating Prompt** *(2026-09-29, FR-60)* | Chat stream | A Structured Question variant after a substantive chat turn's reply (and after its receipt, if any): "How is Yoh doing?" with three chips, "1 Poor", "2 Okay", "3 Good", and a "Not now" text button. No free-text Other. One pick answers it and it collapses to "Rated 3 (good)". "Not now", or sending another message, dismisses it with no effect. A 1 adds one optional field, "What was off?", with Send and Skip; a sent answer files to Feedback and shows a Remembered Receipt. Substantive = a plan change or re-fit asked in chat, a researched answer, `/morning`, or `/night` `[ASSUMPTION: chat turns only; an Approve on Home doesn't trigger it]`. Frequency and pause rules are FR-60's. Never in a push. |
+| **Memory Proposal Card** *(2026-09-29, FR-57/58)* | Chat stream; Patterns folder | A Yes/No Structured Question (no Other). **Rule change:** follows the Remembered Receipt in the same turn: "Change school-day work start from 3:15 PM to 2:30 PM?". Yes applies through the normal confirm path and replies "Changed school-day work start to 2:30 PM. Revert it on the Memory page."; No replies "Kept 3:15 PM. Your preference stays saved, marked declined." **Pattern:** the pattern in one line ("Yoh noticed History essays run about 30 min over."), then an evidence line in caption ("5 times since Sep 3: …"), then "Plan for that?". Yes files it to Patterns with a receipt; No files nothing. `[ASSUMPTION]` Pattern cards surface at most one per day: in the `/morning` view, else the next time Spencer opens the Chat panel that day. Never a push or In-App Notification. Pending Pattern cards also sit at the top of the Patterns folder, so an ignored one isn't lost. |
+| **Memory Rail** *(2026-09-29, FR-59)* | Memory, left | `[ASSUMPTION: layout]` A vertical list: **Needs review** (with its count; hidden at zero), then the eight folders in PRD order (Feedback, Planning preferences, Corrections, About you, Patterns, Goals & projects, Decisions & commitments, Ideas & notes), each with a count, then **Changed settings** and **Chat history**. A small caption groups them: "Always used", "Used when relevant", "Only when asked". Selecting one shows its list on the right. The selection persists across visits. |
+| **Memory Search** | Memory, top | One box searching memories and chat history by keyword (FR-59). Results replace the right-hand list while the box has text; each result shows its folder or Conversation date and opens in place (an item scrolls into view in its folder; a chat hit opens that Conversation at the turn). Esc or clearing the box returns to the selected folder. |
+| **Memory Item** | Memory lists | The item's text, then a caption meta line: "Stated" or "Inferred" · last changed date · scope (Feedback) · "until {date}" (if it expires) · Source link (opens the Conversation at that turn; "source deleted" when gone). A "Not loaded" badge marks items over the cap or expired. "{n} earlier versions" expands the superseded history (read-only). Clicking the text edits it in place: Enter saves, Esc cancels; saving an inferred item makes it Stated; an edit that duplicates another item offers "Merge with '{other}'?" Yes/No. An overflow menu holds Move to folder, Set expiry / Clear expiry, and Delete. Edits and moves are direct writes that show "Saved" in the meta line or fail in place with the old text restored. Delete dissolves the row with an Undo Toast ("Deleted '{text}' · Undo"); the delete commits when the toast closes, same as check-off. |
+| **Needs Review List** | Memory | Items that are expired, over the always-loaded cap, unused for 120 days, or in conflict with live data (FR-56). Each row says why ("Expired Dec 19", "Not loaded: over the cap", "Unused since May 2", "Notion now says Due Oct 4") and offers Renew, Edit, Delete, Keep as history. Renew is offered only where it applies (expiry, 120-day). Not a notification; it never badges the sidebar `[ASSUMPTION]`. |
+| **Changed Settings** | Memory | Confirmed rule changes (FR-57): "School-day work start: 2:30 PM (was 3:15 PM) · changed Sep 29" with a Revert button. Revert is a direct write that restores the built-in value and replies in place "Reverted to 3:15 PM." Empty: "No planning rules changed." |
+| **Chat History** | Memory | Conversations newest first, one row per day ("Tue Sep 29 · 14 turns · first line…"). Opening one shows the read-only transcript in the right pane, receipts included, with Delete conversation (Undo Toast, as for items). "Clear all history" sits at the bottom and asks inline: "Clear all chat history? This can't be undone. Memories stay." Clear / Cancel. Nothing in a stored transcript is clickable into an action: past Structured Questions and Proposals render as answered text. |
 | **Desk Widget** | Desk | Yoh-data widgets read the Completion/Activity Log only (FR-47). **Worked** is a single merged widget. Its primary figure is today's minutes (sum of Estimated Duration of Tasks completed today); a secondary line shows all-time hours with Yoh on the same Completion Log basis (resolves OQ10). **Streak** shows current and longest, in neutral wording. **On-Time Rate** follows FR-44's definition. **Usage Heatmap** is weeks × 7 days with hover tooltips. **Feed widgets** fail independently, showing "Unavailable" plus the last value and timestamp. |
 | **Screensaver** | Launch; 10-min idle | Launch: plays briefly and auto-fades into Home with no click (FR-39). Idle: any input dismisses it and returns to the prior page with unsent chat text intact. It never shows data or notifications. |
 | **Birthday Confetti** | Home, Feb 19 | Plays once per Feb 19 `[ASSUMPTION: once per day]`. Skipped under reduced motion. It is the only named celebration. |
@@ -141,6 +167,15 @@ Copy shown is proposed wording `[ASSUMPTION]`; the rule is binding.
 | No completions yet | Desk | Widgets show 0 / "Streak: 0 days". No guilt copy. |
 | Feed down | Desk | That widget shows "Unavailable" plus the last value and timestamp. The rest of Desk is unaffected (FR-44). |
 | Idle 10 min | Any | Screensaver. Scroll and pointer movement count as input. Any input returns to the same page, scroll position, and state. |
+| Receipt pending | Chat | Nothing shown while filing runs; the reply is already complete. |
+| Filing failed / Memory down | Chat | Auto-filing: no receipt, nothing else. `/remember` or "forget …": "Couldn't save that to memory." / "Couldn't forget that right now." Chat itself keeps working (FR-54, FR-56). |
+| Forget: several matches | Chat | A Structured Question listing the matches with their folders, plus "None of these". Nothing is deleted until Spencer picks. |
+| Forget: no match | Chat | "Nothing in memory matches '{words}'." |
+| Memory cold load | Memory | Skeleton rail counts and skeleton rows. |
+| Empty folder | Memory | One neutral line per folder, e.g. "Nothing here yet. Say "remember that …" in Chat." Patterns: "No patterns yet. Yoh will ask before adding one." |
+| Memory store or search down | Memory | "Couldn't load memory right now." in the list area; edits disabled; nothing shown as saved (FR-59). Chat history shows the same error state separately (FR-52). |
+| No search results | Memory | "No memories or chats match '{words}'." |
+| Chat history cleared | Memory, Chat panel | Chat History is empty ("No saved conversations."); the Chat panel opens empty. Memory items stay, their Source reads "source deleted". |
 | Focus | Any | A `{spacing.focus-ring-width}` `{colors.accent-solid}` ring on the focused control, plus `{colors.accent-glow}` on the Ask Yoh pill *(was Chat Bubble)* / Chat Input. |
 
 ## Interaction Primitives
@@ -165,6 +200,7 @@ Visual contrast values live in `DESIGN.md` Colors.
 - **Dragging alternative (WCAG 2.5.7):** `[ASSUMPTION]` A typed Chat request ("move my study block to 4") via Mid-Day Re-Flow is the non-drag path to the same Reshuffle Preview. See Open Questions.
 - **Timing (WCAG 2.2.1):** `[ASSUMPTION]` The Undo Toast's ~5s timer pauses while it is hovered or focused.
 - **Keyboard:** every control is reachable, and the Command Palette and Structured Question options are fully keyboard-operable.
+- **Memory (2026-09-29):** the Remembered Receipt and "Removed from memory." are announced via `aria-live="polite"`; the Receipt's Undo is a real button reachable by Tab. Rating chips are a labeled radio-style group ("How is Yoh doing? 1 Poor, 2 Okay, 3 Good") answerable with keys 1–3 or arrows + Enter while focused. Memory Item inline edit has a visible "Edit" affordance on focus and hover, not click-only; the overflow menu is a proper menu button. Stated/Inferred and Not loaded are words, never color alone.
 
 ## Key Flows
 
@@ -212,6 +248,17 @@ Mirrors PRD UJ-4–UJ-6 (§3.3), with this pass's decisions layered in. Protagon
 
 **Failure path:** the news feed is down → that widget reads "Unavailable · last updated 2:14 PM", and the rest of Desk is unaffected.
 
+### UJ-7. Spencer corrects Yoh once, and it sticks. *(2026-09-29, Epic 13; UX journey `[ASSUMPTION]`, built from PRD §5.14's examples)*
+
+Spencer, at his desk after school, Chat panel open.
+
+1. He types "Chem club is a club, not a class. Don't plan homework for it." Yoh answers and fixes today's Plan reasoning.
+2. A beat after the reply lands, one quiet line appears under it: "Remembered: Chem club is a club, not a class · Corrections · Undo".
+3. He adds "and start my work at 2:30 on school days". The reply lands, then "Remembered: start work at 2:30 PM on school days · Planning preferences · Undo", then a card: "Change school-day work start from 3:15 PM to 2:30 PM?" He clicks Yes. "Changed school-day work start to 2:30 PM. Revert it on the Memory page."
+4. Because this was a plan change, a small prompt follows: "How is Yoh doing?" He clicks 3. It folds to "Rated 3 (good)".
+5. **Climax:** next week he asks Yoh to plan Thursday. The reasoning line doesn't mention Chem club homework, work starts at 2:30, and he never had to say either again.
+6. Curious, he opens Memory (fifth page). Corrections shows the club item, Stated, with a link back to the Tuesday chat. Changed settings shows "School-day work start: 2:30 PM (was 3:15 PM)" with Revert. Needs review is empty, so it isn't shown.
+
 ## Chat Skills & Commands
 
 | Command | Does | Example |
@@ -220,6 +267,8 @@ Mirrors PRD UJ-4–UJ-6 (§3.3), with this pass's decisions layered in. Protagon
 | `/plan` *(added 2026-09-27, Spencer)* | Builds today's Plan on demand. `/morning` still never generates one (FR-1 stands). | `/plan` |
 | `/night` | Runs the Night Ritual close-out interactively, and cancels that night's scheduled prompt and escalation. | `/night` |
 | `/sandbox` | Starts the inline Sandbox Card flow. | `/sandbox` |
+| `/remember <fact>` *(2026-09-29, FR-55)* | Files the fact now, as Stated, even if auto-filing would skip it. Shows a Remembered Receipt. Plain-word forms: "remember that …", "remember: …". "remember to …" and "remind me to …" still create Tasks. | `/remember Chem club is a club, not a class` |
+| `/forget <what>` *(2026-09-29, FR-55)* | Deletes the matching item and its history, or the last one filed when nothing follows. Several matches → a Structured Question. Plain-word form: "forget …", "forget that". | `/forget the AP Bio deadline` |
 | `/research <question>` | Queues research immediately. The result files to the Research Vault, and a notification follows. This is the only way research runs. | `/research AP Bio registration deadline` |
 
 | Skill (Skill Switcher) | Status |
@@ -228,6 +277,8 @@ Mirrors PRD UJ-4–UJ-6 (§3.3), with this pass's decisions layered in. Protagon
 | Goals | Future. When it arrives, the switcher appears; the Goals hub stays deferred (§9.4). |
 
 Research is **not** a skill. `/research` is its only trigger (memlog subtraction; supersedes the earlier General chat + Research listing).
+
+"what do you remember about …" (plain words only) replies with the matching items grouped by folder, each linking to it on the Memory page.
 
 **Research trigger rule:** research never starts without Spencer's explicit confirmation. It runs on an explicit `/research`, or, for an obviously big task, after Yoh offers through a Structured Question ("Do you want to do research on this?") and Spencer accepts. Declining or ignoring the offer runs nothing (Propose-Don't-Impose, FR-16/FR-48).
 
@@ -273,7 +324,7 @@ Rules: notifications appear only as a result of something Spencer started, or a 
 
 - **Morning Ritual:** runs unattended and builds the Plan with its reasoning line (FR-1). ~~sends one Pushover push~~ *Amended 2026-09-27 (Spencer): delivery is in-app only, no Pushover push.* In the web app, `/morning` views the same Plan in the Chat panel, and `/plan` (added 2026-09-27) builds it on demand.
 - **Night Ritual:** a push first, then a single email escalation, and never a third attempt (FR-13). An unacknowledged night is marked unchecked, and mandatory Blockers roll into tomorrow (FR-14). `/night` in Chat pre-empts both.
-- **Self-Check** (FR-17) and **Ritual-created Proposals** (FR-48/FR-50) must be resolvable in the web app once the CLI is retired. Where they surface is open (see Open Questions).
+- ~~**Self-Check** (FR-17)~~ *(superseded 2026-09-29 by the Rating Prompt, FR-60: Chat stream only)* and **Ritual-created Proposals** (FR-48/FR-50) must be resolvable in the web app once the CLI is retired. Where they surface is open (see Open Questions).
 - Silence is still a feature: nothing appears between the Morning Plan and whatever Spencer starts next.
 
 ## Open Questions
@@ -286,17 +337,21 @@ Rules: notifications appear only as a result of something Spencer started, or a 
 6. **Home reaction on check-off** beyond fade/dissolve: unanswered (memlog).
 7. **Rapid multiple check-offs:** does the Undo Toast queue, merge, or restart the timer? And does its timer pause on hover or focus?
 8. **In-App Notification** duration, stacking, and manual dismissal.
-9. **Where Ritual-created Proposals, Self-Check prompts, and the unchecked-day flag surface** when Spencer isn't in Chat. There is no FR-49 consumer for them.
+9. **Where Ritual-created Proposals ~~, Self-Check prompts,~~ and the unchecked-day flag surface** *(Self-Check retired 2026-09-29; Pattern proposals resolved in Memory Proposal Card)* when Spencer isn't in Chat. There is no FR-49 consumer for them.
 10. **/sandbox "batch cleared":** does the sound play when every card has been saved or skipped, or only when the needs-data count reaches zero?
 11. **Non-drag reshuffle path (WCAG 2.5.7):** is the Chat request enough, or is a dedicated control needed?
 12. **Narrow-window behavior:** there are no breakpoints yet.
-13. ~~Chat history persistence across launches (Sandbox Cards "remain in history").~~ *Superseded 2026-09-27 (Spencer): persistent chat history is now planned — the "Yoh remembers you" epic (persistent history plus Facts about me / Decisions & commitments / Ideas & notes folders), queued after Epic 9. See `epics.md`.*
+13. ~~Chat history persistence across launches (Sandbox Cards "remain in history").~~ *Resolved 2026-09-29 by FR-52 (see the 2026-09-29 Amendments). Earlier note: superseded 2026-09-27 (Spencer): persistent chat history is now planned — the "Yoh remembers you" epic (persistent history plus Facts about me / Decisions & commitments / Ideas & notes folders), queued after Epic 9. See `epics.md`.*
 14. **Routine declaration UI:** Chat only (PRD `[ASSUMPTION]`) or also a /sandbox step?
 15. **Screensaver parameters and wordmark size:** dot count, speed, and size are unspecified.
 16. **Reward sound asset** and its volume.
 17. **Thinking shimmer legibility:** the gradient fills the status text, and its light stop measures 1.49:1 on the light surface. Is the shimmer decorative over already-legible text, or does it need a floor?
+18. **Conversation boundary** (2026-09-29): one Conversation per calendar day is a UX `[ASSUMPTION]`; architecture confirms or replaces it (idle gap, explicit "new chat").
+19. **Memory Rail at narrow widths:** the two-pane Memory page has no narrow layout yet (see OQ12).
 
 **Flags for PRD update**
+
+- **2026-09-29 (Epic 13):** the Rating Prompt fires only on chat turns (an Approve on Home is not a "plan change" for FR-60); Pattern proposals surface in `/morning` or the next Chat-panel open, at most one per day (FR-58 is silent on where). Both `[ASSUMPTION]` until Spencer confirms.
 
 - **Structured Question** (Chat clarifying questions with selectable options): not in FR-42.
 - **Skill switching in Chat's left bar:** hidden in Phase 2 but reserved in the IA. It appears with a second skill (Goals). This refines FR-42 ("ships empty as a placeholder") and §9.4 into "hidden until a second skill exists".

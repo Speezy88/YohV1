@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Yoh Memory key screens (mock)</title>
+<style>
+:root{
+--color-surface-base:light-dark(#eef2f8,#1a1f29);--color-surface-raised:light-dark(#eef2f8,#1e2430);--color-surface-sunken:light-dark(#e3e9f2,#161b24);
+--color-ink-primary:light-dark(#20242c,#edf1f8);--color-ink-secondary:light-dark(#5b6472,#a8b3c4);
+--color-rim-interactive:light-dark(#7c8798,#7a8699);--color-rim-structural:light-dark(#7c8798,#6a7688);
+--color-shadow-light:light-dark(rgba(255,255,255,.8),rgba(255,255,255,.07));--color-shadow-dark:light-dark(rgba(163,177,198,.5),rgba(0,0,0,.6));
+--color-glass-fill:light-dark(rgba(238,242,248,1),rgba(30,36,48,1));
+--color-accent-gradient-start:light-dark(#7fc1f5,#8fcbfa);--color-accent-gradient-end:light-dark(#1e6fd9,#3e8cf0);
+--color-accent-solid:light-dark(#1e6fd9,#3e8cf0);--color-on-accent-solid:light-dark(#fff,#14120f);--color-accent-glow:light-dark(rgba(30,111,217,.35),rgba(62,140,240,.35));
+--color-ink-accent:light-dark(#1963c4,#6aa8f5);--color-ink-danger:light-dark(#b3261e,#ff8a80);
+--radius-xs:5px;--radius-sm:8px;--radius-md:10px;--radius-lg:16px;--radius-xl:24px;--radius-2xl:28px;--radius-full:9999px;
+--text-display:40px;--text-heading:24px;--text-title:20px;--text-label:11.5px;--text-numerals:13.6px;--text-caption:10.6px;--text-caption-lg:12.5px;--text-body:17.5px;--text-small:15px;
+--spacing-1:4px;--spacing-2:8px;--spacing-3:12px;--spacing-4:16px;--spacing-5:24px;--spacing-6:32px;--rim-width:1.5px;--focus-ring-width:2px;
+--font-body:"Figtree","Figtree Fallback",sans-serif;--font-wordmark:"Montserrat","Figtree Fallback",sans-serif;
+--shadow-inset:inset 5px 5px 11px light-dark(var(--color-shadow-dark),rgba(0,0,0,.5)),inset -5px -5px 11px light-dark(var(--color-shadow-light),rgba(255,255,255,.04));
+--shadow-extruded-sm:-5px -5px 12px var(--color-shadow-light),5px 5px 14px var(--color-shadow-dark);
+--shadow-extruded-md:-7px -7px 18px var(--color-shadow-light),7px 7px 20px var(--color-shadow-dark);
+--shadow-extruded-lg:-10px -10px 24px var(--color-shadow-light),10px 10px 26px var(--color-shadow-dark);
+--shadow-focus-glow:0 0 0 var(--focus-ring-width) var(--color-accent-solid),0 0 16px var(--color-accent-glow);
+--blur-glass:16px;--glass-saturate:140%;
+color-scheme:light dark}
+:root[data-theme=light]{color-scheme:light}
+:root[data-theme=dark]{color-scheme:dark;
+--shadow-extruded-sm:-3px -3px 9px var(--color-shadow-light),5px 5px 16px var(--color-shadow-dark);
+--shadow-extruded-md:-4px -4px 14px var(--color-shadow-light),6px 6px 20px var(--color-shadow-dark);
+--shadow-extruded-lg:-5px -5px 18px var(--color-shadow-light),10px 10px 28px var(--color-shadow-dark);--blur-glass:18px}
+*{box-sizing:border-box;margin:0}
+body{background:var(--color-surface-base);color:var(--color-ink-primary);font-family:var(--font-body);font-size:var(--text-body);line-height:1.4}
+button{font:inherit;color:inherit;cursor:pointer;background:none;border:0}
+svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.cap{font-size:var(--text-caption-lg);color:var(--color-ink-secondary)}
+.tabs{display:flex;gap:var(--spacing-2);padding:var(--spacing-3) var(--spacing-5);background:var(--color-surface-sunken)}
+.tab{padding:6px 16px;border-radius:var(--radius-full);font-size:var(--text-small);color:var(--color-ink-secondary);border:var(--rim-width) solid transparent}
+.tab[aria-selected=true]{background:var(--color-surface-raised);color:var(--color-ink-primary);border-color:var(--color-accent-solid);box-shadow:var(--shadow-extruded-sm)}
+.app{display:flex;height:calc(100vh - 56px);min-height:760px;position:relative;overflow:hidden}
+nav.side{width:248px;flex:none;display:flex;flex-direction:column;gap:10px;padding:32px}
+.brand{display:flex;align-items:center;gap:12px;padding:0 10px 28px}
+.mark{width:40px;height:40px;border-radius:var(--radius-lg);box-shadow:var(--shadow-extruded-sm);background:linear-gradient(135deg,var(--color-accent-gradient-start),var(--color-accent-gradient-end))}
+.word{font-family:var(--font-wordmark);font-size:26px;font-weight:800;letter-spacing:-.02em}
+.nav{display:flex;align-items:center;gap:14px;height:54px;padding:0 16px;border-radius:var(--radius-lg);color:var(--color-ink-secondary);font-weight:500;white-space:nowrap}
+.nav.on{background:linear-gradient(135deg,var(--color-accent-gradient-start),var(--color-accent-gradient-end));color:var(--color-on-accent-solid);font-weight:700;box-shadow:var(--shadow-extruded-sm)}
+.grow{flex:1}
+.theme{display:flex;align-items:center;gap:10px;height:44px;padding:0 16px;border-radius:var(--radius-md);border:var(--rim-width) solid var(--color-rim-interactive);box-shadow:var(--shadow-extruded-sm);color:var(--color-ink-secondary);font-size:var(--text-small)}
+main{flex:1;min-width:0;padding:32px 32px 32px 0;overflow:auto}
+h1{font-size:var(--text-display);font-weight:700;line-height:1.1;margin-bottom:var(--spacing-4)}
+.ask{background:var(--color-surface-raised);border-radius:var(--radius-xl);box-shadow:var(--shadow-extruded-lg);padding:16px 18px;margin-bottom:var(--spacing-5)}
+.field{display:flex;align-items:center;gap:14px;height:58px;padding:0 16px;border-radius:var(--radius-lg);background:var(--color-surface-sunken);box-shadow:var(--shadow-inset);border:var(--rim-width) solid transparent;color:var(--color-ink-secondary)}
+.chipi{display:flex;width:28px;height:28px;align-items:center;justify-content:center;border-radius:var(--radius-sm);background:linear-gradient(135deg,var(--color-accent-gradient-start),var(--color-accent-gradient-end));color:var(--color-on-accent-solid)}
+.chipi svg{width:16px;height:16px}
+.panes{display:grid;grid-template-columns:240px 1fr;gap:var(--spacing-5);align-items:start}
+.rail{background:var(--color-surface-sunken);border-radius:var(--radius-lg);padding:var(--spacing-3);display:flex;flex-direction:column;gap:2px}
+.rc{font-size:var(--text-caption);letter-spacing:.08em;text-transform:uppercase;color:var(--color-ink-secondary);padding:12px 10px 4px}
+.rr{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:var(--radius-md);font-size:var(--text-small);color:var(--color-ink-primary);border:var(--rim-width) solid transparent}
+.rr svg{width:18px;height:18px;color:var(--color-ink-secondary)}
+.rr .n{margin-left:auto;font-size:var(--text-numerals);color:var(--color-ink-secondary)}
+.rr.on{background:var(--color-surface-raised);border-color:var(--color-accent-solid);box-shadow:var(--shadow-extruded-sm)}
+.rr.on svg{color:var(--color-accent-solid)}
+.list{display:flex;flex-direction:column;gap:14px}
+.item{background:var(--color-surface-raised);border-radius:var(--radius-lg);box-shadow:var(--shadow-extruded-sm);padding:16px 18px;transition:box-shadow .2s}
+.item:hover{box-shadow:var(--shadow-extruded-md)}
+.top{display:flex;align-items:flex-start;gap:12px}
+.top .t{flex:1;font-weight:500}
+.meta{font-size:var(--text-small);color:var(--color-ink-secondary);margin-top:4px}
+.meta a{color:var(--color-ink-primary);text-decoration:underline}
+.more{width:36px;height:36px;display:flex;align-items:center;justify-content:center;border-radius:var(--radius-md);color:var(--color-ink-secondary)}
+.more:hover,.more:focus-visible{outline:var(--focus-ring-width) solid var(--color-accent-solid)}
+.badge{display:inline-block;font-size:var(--text-caption-lg);padding:1px 10px;border-radius:var(--radius-full);background:var(--color-surface-sunken);color:var(--color-ink-secondary);margin-left:6px}
+.sup{margin:10px 0 0 22px;padding-left:14px;border-left:var(--rim-width) solid var(--color-rim-structural);color:var(--color-ink-secondary);font-size:var(--text-small)}
+.sup .cap{display:block;margin-top:2px}
+.link{text-decoration:underline;color:var(--color-ink-primary);font-size:var(--text-small)}
+.sub{font-size:var(--text-title);font-weight:700;margin:var(--spacing-5) 0 var(--spacing-3)}
+.btn{height:36px;padding:0 14px;border-radius:var(--radius-md);font-size:var(--text-small);font-weight:600;border:var(--rim-width) solid var(--color-rim-interactive);background:var(--color-surface-base);box-shadow:var(--shadow-extruded-sm);color:var(--color-ink-primary)}
+.btn.p{background:linear-gradient(135deg,var(--color-accent-gradient-start),var(--color-accent-gradient-end));border-color:transparent;color:var(--color-on-accent-solid)}
+.btn.s{height:32px;padding:0 12px;font-weight:500}
+.acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.row2{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.row2 .grow{min-width:200px}
+.chat{position:absolute;top:16px;bottom:16px;left:264px;right:16px;display:flex;flex-direction:column;border-radius:var(--radius-2xl);background:var(--color-glass-fill);box-shadow:var(--shadow-extruded-lg);border:var(--rim-width) solid var(--color-rim-structural);overflow:hidden}
+@supports (backdrop-filter:blur(1px)){.chat{backdrop-filter:blur(var(--blur-glass)) saturate(var(--glass-saturate))}}
+.home{position:absolute;inset:0 0 0 264px;padding:32px;color:var(--color-ink-secondary)}
+.chead{display:flex;align-items:center;justify-content:space-between;padding:16px 24px;border-bottom:var(--rim-width) solid var(--color-rim-structural)}
+.stream{flex:1;overflow:auto;padding:24px;display:flex;flex-direction:column;gap:12px}
+.msg{max-width:74%;padding:12px 16px;border-radius:var(--radius-lg);font-size:var(--text-body)}
+.msg.me{align-self:flex-end;background:linear-gradient(135deg,var(--color-accent-gradient-start),var(--color-accent-gradient-end));color:var(--color-on-accent-solid);box-shadow:var(--shadow-extruded-sm)}
+.msg.yoh{align-self:flex-start;background:var(--color-surface-raised);box-shadow:var(--shadow-extruded-sm)}
+.rcpt{align-self:flex-start;display:flex;align-items:center;gap:6px;margin:-4px 0 4px 6px;font-size:var(--text-caption-lg);color:var(--color-ink-secondary)}
+.rcpt svg{width:14px;height:14px}
+.rcpt button{text-decoration:underline;color:var(--color-ink-primary);font-size:inherit}
+.card{align-self:flex-start;max-width:74%;background:var(--color-surface-raised);border-radius:var(--radius-md);box-shadow:var(--shadow-extruded-sm);padding:14px 16px}
+.card .q{font-weight:600}
+.card .ev{font-size:var(--text-caption-lg);color:var(--color-ink-secondary);margin-top:4px}
+.card .acts{margin-top:10px}
+.ans{align-self:flex-start;font-size:var(--text-caption-lg);color:var(--color-ink-secondary);margin-left:6px}
+.txt{background:none;font-size:var(--text-small);color:var(--color-ink-secondary);padding:0 8px;height:36px}
+.cin{margin:0 24px 24px;display:flex;align-items:center;gap:12px;height:58px;padding:0 16px;border-radius:var(--radius-xl);background:var(--color-surface-raised);box-shadow:var(--shadow-extruded-md);color:var(--color-ink-secondary)}
+.cin .chipi{width:34px;height:34px;margin-left:auto;border-radius:var(--radius-full)}
+.cin .chipi svg{width:18px;height:18px}
+.hide{display:none}
+.note{font-size:var(--text-caption-lg);color:var(--color-ink-secondary);padding:0 0 6px}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute"><defs>
+<symbol id="mem" viewBox="0 0 24 24"><path d="M6 4h10a3 3 0 0 1 3 3v13H8a2 2 0 0 1-2-2z M6 18a2 2 0 0 1 2-2h11 M10 8h5"/></symbol>
+<symbol id="more" viewBox="0 0 24 24"><path d="M5 12h.01 M12 12h.01 M19 12h.01" stroke-width="3"/></symbol>
+<symbol id="folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+<symbol id="flag" viewBox="0 0 24 24"><path d="M6 21V4 M6 5h11l-2 4 2 4H6"/></symbol>
+<symbol id="clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></symbol>
+<symbol id="edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/></symbol>
+<symbol id="user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20a8 8 0 0 1 16 0"/></symbol>
+<symbol id="trend" viewBox="0 0 24 24"><path d="M3 17l6-6 4 4 8-8 M15 7h6v6"/></symbol>
+<symbol id="target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/></symbol>
+<symbol id="scale" viewBox="0 0 24 24"><path d="M12 4v16 M6 20h12 M5 8h14 M5 8l-3 7h6z M19 8l-3 7h6z"/></symbol>
+<symbol id="bulb" viewBox="0 0 24 24"><path d="M9 18h6 M10 21h4 M12 3a6 6 0 0 0-4 10.5c.7.7 1 1.5 1 2.5h6c0-1 .3-1.800 1-2.500A6 6 0 0 0 12 3z"/></symbol>
+<symbol id="sliders" viewBox="0 0 24 24"><path d="M4 7h10 M18 7h2 M4 17h2 M10 17h10 M14 5v4 M6 15v4"/></symbol>
+<symbol id="chat" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/></symbol>
+<symbol id="alert" viewBox="0 0 24 24"><path d="M12 4l9 16H3z M12 10v4 M12 17h.01"/></symbol>
+<symbol id="home" viewBox="0 0 24 24"><path d="M3 11l9-7 9 7 M5 10v10h14V10"/></symbol>
+<symbol id="tasks" viewBox="0 0 24 24"><path d="M9 6h11 M9 12h11 M9 18h11 M4 6l1 1 2-2 M4 12l1 1 2-2 M4 18l1 1 2-2"/></symbol>
+<symbol id="desk" viewBox="0 0 24 24"><path d="M3 4h18v12H3z M8 20h8 M12 16v4"/></symbol>
+<symbol id="search" viewBox="0 0 24 24"><path d="M11 17a6 6 0 1 0 0-12 6 6 0 0 0 0 12z M20 20l-4.5-4.5"/></symbol>
+<symbol id="moon" viewBox="0 0 24 24"><path d="M20 14A8 8 0 0 1 10 4a8 8 0 1 0 10 10z"/></symbol>
+<symbol id="send" viewBox="0 0 24 24"><path d="M5 12h14 M13 6l6 6-6 6"/></symbol>
+<symbol id="x" viewBox="0 0 24 24"><path d="M6 6l12 12 M18 6L6 18"/></symbol>
+</defs></svg>
+
+<div class="tabs" role="tablist">
+  <button class="tab" role="tab" id="t-a" aria-selected="true" data-s="a">A. Memory page</button>
+  <button class="tab" role="tab" id="t-b" aria-selected="false" data-s="b">B. Chat panel over Home</button>
+</div>
+
+<div class="app">
+<nav class="side" aria-label="Pages">
+  <div class="brand"><div class="mark"></div><span class="word">Yoh</span></div>
+  <button class="nav" id="n-home"><svg class="i"><use href="#home"/></svg>Home</button>
+  <button class="nav"><svg class="i"><use href="#tasks"/></svg>Tasks</button>
+  <button class="nav"><svg class="i"><use href="#desk"/></svg>Desk</button>
+  <button class="nav"><svg class="i"><use href="#search"/></svg>Research Hub</button>
+  <button class="nav on" id="n-mem" aria-current="page"><svg class="i"><use href="#mem"/></svg>Memory</button>
+  <div class="grow"></div>
+  <button class="theme" id="theme" aria-label="Toggle light or dark theme"><svg class="i"><use href="#moon"/></svg><span id="tl">Dark</span></button>
+</nav>
+
+<!-- Screen A -->
+<main id="s-a">
+  <h1>Memory</h1>
+  <section class="ask" aria-label="Memory search">
+    <label class="field"><span class="chipi"><svg class="i"><use href="#search"/></svg></span>Search memories and chat history</label>
+  </section>
+  <div class="panes">
+    <aside class="rail" aria-label="Memory Rail">
+      <button class="rr"><svg class="i"><use href="#alert"/></svg>Needs review<span class="n">2</span></button>
+      <div class="rc">Always used</div>
+      <button class="rr"><svg class="i"><use href="#flag"/></svg>Feedback<span class="n">3</span></button>
+      <button class="rr"><svg class="i"><use href="#clock"/></svg>Planning preferences<span class="n">2</span></button>
+      <button class="rr on" aria-current="true"><svg class="i"><use href="#edit"/></svg>Corrections<span class="n">4</span></button>
+      <button class="rr"><svg class="i"><use href="#user"/></svg>About you<span class="n">5</span></button>
+      <button class="rr"><svg class="i"><use href="#trend"/></svg>Patterns<span class="n">1</span></button>
+      <div class="rc">Used when relevant</div>
+      <button class="rr"><svg class="i"><use href="#target"/></svg>Goals &amp; projects<span class="n">3</span></button>
+      <button class="rr"><svg class="i"><use href="#scale"/></svg>Decisions &amp; commitments<span class="n">2</span></button>
+      <div class="rc">Only when asked</div>
+      <button class="rr"><svg class="i"><use href="#bulb"/></svg>Ideas &amp; notes<span class="n">6</span></button>
+      <div class="rc" style="padding-top:8px"></div>
+      <button class="rr"><svg class="i"><use href="#sliders"/></svg>Changed settings<span class="n">1</span></button>
+      <button class="rr"><svg class="i"><use href="#chat"/></svg>Chat history</button>
+    </aside>
+
+    <div>
+      <div class="list" aria-label="Corrections">
+        <article class="item"><div class="top"><div class="t">Chem club is a club, not a class</div><button class="more" aria-label="More actions"><svg class="i"><use href="#more"/></svg></button></div>
+          <div class="meta">Stated · Sep 29 · Source: <a href="#">Tue Sep 29 chat</a></div></article>
+        <article class="item"><div class="top"><div class="t">Mr. Alvarez's Spanish quizzes are announced a day ahead, not a week</div><button class="more" aria-label="More actions"><svg class="i"><use href="#more"/></svg></button></div>
+          <div class="meta">Inferred · Sep 24 · Source: <a href="#">Thu Sep 24 chat</a></div></article>
+        <article class="item"><div class="top"><div class="t">AP Bio reading is due Fridays, not Mondays</div><button class="more" aria-label="More actions"><svg class="i"><use href="#more"/></svg></button></div>
+          <div class="meta">Stated · Sep 18 · Source: <a href="#">Fri Sep 18 chat</a></div>
+          <div class="meta"><button class="link" aria-expanded="true">2 earlier versions</button></div>
+          <div class="sup">AP Bio reading is due Mondays<span class="cap">Superseded Sep 18 · read-only</span></div>
+          <div class="sup">AP Bio reading is due Wednesdays<span class="cap">Superseded Sep 4 · read-only</span></div></article>
+        <article class="item"><div class="top"><div class="t">Robotics practice runs until 5:30 PM on Tuesdays<span class="badge">Not loaded</span></div><button class="more" aria-label="More actions"><svg class="i"><use href="#more"/></svg></button></div>
+          <div class="meta">Stated · Aug 30 · until Oct 15 · Source: <a href="#">Sun Aug 30 chat</a></div></article>
+      </div>
+
+      <div class="sub">Needs review <span class="cap">preview</span></div>
+      <div class="list">
+        <article class="item"><div class="t">Junior Retreat forms are due Dec 19</div>
+          <div class="meta">Expired Dec 19</div>
+          <div class="acts"><button class="btn s">Renew</button><button class="btn s">Edit</button><button class="btn s">Delete</button><button class="btn s">Keep as history</button></div></article>
+        <article class="item"><div class="t">History essay 2 is due Oct 2</div>
+          <div class="meta">Notion now says Due Oct 4</div>
+          <div class="acts"><button class="btn s">Edit</button><button class="btn s">Delete</button><button class="btn s">Keep as history</button></div></article>
+      </div>
+
+      <div class="sub">Changed settings</div>
+      <article class="item"><div class="row2"><div class="t grow" style="font-weight:500">School-day work start: 2:30 PM (was 3:15 PM) · changed Sep 29</div><button class="btn">Revert</button></div></article>
+    </div>
+  </div>
+</main>
+
+<!-- Screen B -->
+<div id="s-b" class="hide">
+  <div class="home"><h1 style="color:var(--color-ink-primary)">Home</h1>Today's Plan sits behind the Chat panel.</div>
+  <section class="chat" aria-label="Chat">
+    <div class="chead"><strong style="font-size:var(--text-title)">Chat</strong><button class="more" aria-label="Close chat"><svg class="i"><use href="#x"/></svg></button></div>
+    <div class="stream">
+      <div class="msg me">Chem club is a club, not a class. Don't plan homework for it.</div>
+      <div class="msg yoh">Got it. I've taken Chem club out of today's homework blocks and re-fit the evening.</div>
+      <div class="rcpt" aria-live="polite"><svg class="i"><use href="#mem"/></svg><span>Remembered: Chem club is a club, not a class · Corrections</span><button>Undo</button></div>
+
+      <div class="msg me">and start my work at 2:30 on school days</div>
+      <div class="msg yoh">Done. Your school-day work now starts at 2:30 PM in the Plan.</div>
+      <div class="rcpt"><svg class="i"><use href="#mem"/></svg><span>Remembered: start work at 2:30 PM on school days · Planning preferences</span><button>Undo</button></div>
+      <div class="card"><div class="q">Change school-day work start from 3:15 PM to 2:30 PM?</div>
+        <div class="acts"><button class="btn p s">Yes</button><button class="btn s">No</button></div></div>
+      <div class="ans">Yes</div>
+      <div class="msg yoh">Changed school-day work start to 2:30 PM. Revert it on the Memory page.</div>
+
+      <div class="card"><div class="q">How is Yoh doing?</div>
+        <div class="acts" role="radiogroup" aria-label="How is Yoh doing? 1 Poor, 2 Okay, 3 Good"><button class="btn s" role="radio">1 Poor</button><button class="btn s" role="radio">2 Okay</button><button class="btn s" role="radio">3 Good</button><button class="txt">Not now</button></div></div>
+      <div class="ans">Answered state: Rated 3 (good)</div>
+
+      <div class="note" style="margin-top:8px">Pattern proposal (shown in /morning or the next Chat-panel open, at most one per day)</div>
+      <div class="card"><div class="q">You tend to give History essays about 30 minutes less than they take.</div>
+        <div class="ev">5 times since Sep 3: History essays ran 25–40 min over</div>
+        <div class="q" style="margin-top:8px">Plan for that?</div>
+        <div class="acts"><button class="btn p s">Yes</button><button class="btn s">No</button></div></div>
+    </div>
+    <div class="cin"><span>Ask Yoh, or type / for commands</span><span class="chipi"><svg class="i"><use href="#send"/></svg></span></div>
+  </section>
+</div>
+</div>
+
+<script>
+var r=document.documentElement,a=document.getElementById('s-a'),b=document.getElementById('s-b'),
+tabs=[document.getElementById('t-a'),document.getElementById('t-b')],mem=document.getElementById('n-mem'),home=document.getElementById('n-home');
+function show(s){var A=s==='a';a.classList.toggle('hide',!A);b.classList.toggle('hide',A);
+tabs[0].setAttribute('aria-selected',A);tabs[1].setAttribute('aria-selected',!A);
+mem.classList.toggle('on',A);home.classList.toggle('on',!A);}
+tabs.forEach(function(t){t.onclick=function(){show(t.dataset.s)}});
+document.getElementById('theme').onclick=function(){var d=(r.getAttribute('data-theme')==='dark');r.setAttribute('data-theme',d?'light':'dark');document.getElementById('tl').textContent=d?'Dark':'Light';};
+show('a');
+</script>
+</body>
+</html>
