@@ -409,6 +409,24 @@ export interface ChatTurnResponse {
   readonly question?: OpenItemQuestion;
   /** `/sandbox`'s first card (Story 9.2) — a fifth kind of follow-up alongside `question`, never both on the same turn. */
   readonly sandboxCard?: SandboxCardView;
+  /** Server-internal (Story 13.4): a memory command's post-`done` work. `chatExchange` strips it before `done`. */
+  readonly memory?: MemoryTurnDirective;
+}
+
+/** What `chatTurn` asks `chatExchange` to do after `done` for a memory command (E2: `chatTurn` never files). */
+export type MemoryTurnDirective =
+  | { readonly kind: "remember"; readonly text: string }
+  | { readonly kind: "forgot"; readonly receipt: RememberedReceipt; readonly chainIds: readonly string[] };
+
+/** `POST /api/memory/undo` request. */
+export interface UndoMemoryRequest {
+  readonly receiptId: string;
+}
+
+/** `POST /api/memory/undo` value. */
+export interface UndoMemoryResponse {
+  readonly receiptId: string;
+  readonly message: string;
 }
 
 /**

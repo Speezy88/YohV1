@@ -12,6 +12,8 @@ export const NARROWEST_FEEDBACK_SCOPE = "this kind of request";
 
 export interface FilingContext {
   now: Date;
+  /** Host `YOH_TIMEZONE`: "today" for expiry is the local date, never UTC. */
+  timeZone: string;
   forceStated?: boolean;
   forceFolder?: MemoryFolder;
 }
@@ -19,6 +21,12 @@ export interface FilingContext {
 export interface FilingResult {
   accepted: MemoryCandidate[];
   dropped: { candidate: MemoryCandidate; reason: string }[];
+}
+
+function localDate(instant: Date, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(instant);
+  const get = (type: string): string => parts.find((p) => p.type === type)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")}`;
 }
 
 function validDate(s: string): boolean {
@@ -30,7 +38,7 @@ function validDate(s: string): boolean {
 export function validateFiling(candidates: readonly MemoryCandidate[], ctx: FilingContext): FilingResult {
   const accepted: MemoryCandidate[] = [];
   const dropped: FilingResult["dropped"] = [];
-  const today = ctx.now.toISOString().slice(0, 10);
+  const today = localDate(ctx.now, ctx.timeZone);
   for (const raw of candidates) {
     if (accepted.length >= MEMORY_FILING_MAX_ITEMS) {
       dropped.push({ candidate: raw, reason: "over-limit" });

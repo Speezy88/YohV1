@@ -32,6 +32,16 @@ export const COMMANDS: readonly CommandDescriptor[] = [
     description: "Walks through every Task missing a Due Date or Estimated Duration, one card at a time, with a live count.",
     example: "/sandbox",
   },
+  {
+    name: "/remember",
+    description: "Files the fact now, as Stated, even if auto-filing would skip it. Shows a Remembered Receipt.",
+    example: "/remember Chem club is a club, not a class",
+  },
+  {
+    name: "/forget",
+    description: "Deletes the matching item and its history, or the last one filed when nothing follows. Several matches ask you to pick.",
+    example: "/forget the AP Bio deadline",
+  },
 ];
 
 /** `GET /api/commands` (C5) and `chatTurn`'s slash-dispatch both call this — the registry, verbatim, wrapped in a `Result`. */

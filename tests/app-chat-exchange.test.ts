@@ -107,3 +107,114 @@ test("without a chat store it neither needs timeZone/now nor stores anything", a
   assert.equal(result.ok, true);
   assert.deepEqual(events.map((e) => e.type), ["done"]);
 });
+
+// ---- Story 13.4 Part 2: memory directives (post-done seam) ----
+import { createMemoryItemStore, initMemoryItemStoreSchema, type MemoryItemStore } from "../src/adapters/memory-item-store.ts";
+
+function memoryHarness(runChatTurn: ChatTurnFn, extra: Partial<ChatExchangeDeps> = {}) {
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db);
+  initChatStoreSchema(connection.db);
+  initMemoryItemStoreSchema(connection.db);
+  const memoryItems = createMemoryItemStore(connection);
+  const chatHistory = createChatStore(connection);
+  const events: ChatStreamEvent[] = [];
+  const logged: string[] = [];
+  const deps = {
+    chatHistory,
+    memoryItems,
+    timeZone: "America/New_York",
+    now: () => NOW,
+    emit: (e: ChatStreamEvent) => events.push(e),
+    log: (e: { event: string }) => logged.push(e.event),
+    runChatTurn,
+    ...extra,
+  } as unknown as ChatExchangeDeps;
+  return { deps, events, logged, memoryItems, chatHistory };
+}
+
+function fakeFiler(text: string | Error | "hang") {
+  const calls: unknown[] = [];
+  return {
+    calls,
+    messages: {
+      create: async (params: unknown) => {
+        calls.push(params);
+        if (text === "hang") return new Promise(() => {});
+        if (text instanceof Error) throw text;
+        return { content: [{ type: "text", text }], usage: { input_tokens: 1, output_tokens: 1 } };
+      },
+    },
+  } as unknown as ChatExchangeDeps["llmClient"];
+}
+
+const rememberTurn: ChatTurnFn = async () => ok("Got it.", { memory: { kind: "remember", text: "Chem club is a club" } });
+
+test("remember: files as Stated after done, then emits remembered; memory is stripped from done", async () => {
+  const client = fakeFiler('[{"folder":"about-you","text":"Chem club is a club, not a class","origin":"inferred"}]');
+  const h = memoryHarness(rememberTurn, { memoryLlmClient: client });
+  const result = await chatExchange(h.deps, { message: "remember that Chem club is a club" });
+  assert.equal(result.ok, true);
+  assert.deepEqual(h.events.map((e) => e.type), ["done", "remembered"]);
+  const done = h.events[0];
+  assert.ok(done?.type === "done" && done.response.memory === undefined);
+  const rem = h.events[1];
+  assert.ok(rem?.type === "remembered");
+  assert.equal(rem.receipt.kind, "remembered");
+  assert.equal(rem.receipt.items.length, 1);
+  const item = h.memoryItems.getItem(rem.receipt.items[0]!.id);
+  assert.equal(item?.origin, "stated");
+  const userTurn = h.chatHistory.turnsForDate("2026-08-22")[0]!;
+  assert.equal(item?.sourceTurnId, userTurn.id);
+  const stored = h.memoryItems.getReceipt(rem.receipt.receiptId);
+  assert.deepEqual([stored?.conversationId, stored?.userTurnId], [userTurn.conversationId, userTurn.id]);
+});
+
+test("remember: a restated item supersedes the current one", async () => {
+  const h = memoryHarness(rememberTurn, {});
+  const old = h.memoryItems.insert({ folder: "about-you", text: "Runs at 6", origin: "stated" });
+  (h.deps as { memoryLlmClient?: unknown }).memoryLlmClient = fakeFiler(`[{"folder":"about-you","text":"Runs at 7","origin":"stated","contradictsId":"${old.id}"}]`);
+  await chatExchange(h.deps, { message: "remember that I run at 7" });
+  assert.equal(h.memoryItems.getItem(old.id)?.status, "superseded");
+  assert.equal(h.memoryItems.listItems({ status: ["current"] }).map((i) => i.text).join(), "Runs at 7");
+});
+
+test("remember: failure, nothing accepted, and timeout each emit remembered with no items", async () => {
+  for (const client of [fakeFiler(new Error("net")), fakeFiler("[]"), fakeFiler("hang")]) {
+    const h = memoryHarness(rememberTurn, { memoryLlmClient: client, memoryFilingTimeoutMs: 20 } as Partial<ChatExchangeDeps>);
+    const result = await chatExchange(h.deps, { message: "remember that x" });
+    assert.equal(result.ok, true);
+    assert.deepEqual(h.events.map((e) => e.type), ["done", "remembered"]);
+    const rem = h.events[1];
+    assert.ok(rem?.type === "remembered" && rem.receipt.items.length === 0);
+    assert.equal(h.events.some((e) => e.type === "error"), false);
+  }
+});
+
+test("remember: an aborted stream files nothing and emits no remembered", async () => {
+  const client = fakeFiler('[{"folder":"about-you","text":"x","origin":"stated"}]');
+  const h = memoryHarness(rememberTurn, { memoryLlmClient: client, isAborted: () => true });
+  await chatExchange(h.deps, { message: "remember that x" });
+  assert.deepEqual(h.events.map((e) => e.type), ["done"]);
+  assert.equal(h.memoryItems.listItems().length, 0);
+});
+
+test("forgot directive emits remembered with the forgot receipt after done", async () => {
+  const receipt = { receiptId: "r9", kind: "forgot" as const, items: [{ id: "i", text: "t", folder: "about-you" as const }] };
+  const h = memoryHarness(async () => ok("Done.", { memory: { kind: "forgot", receipt, chainIds: ["i"] } }));
+  await chatExchange(h.deps, { message: "forget t" });
+  assert.deepEqual(h.events.map((e) => e.type), ["done", "remembered"]);
+  const rem = h.events[1];
+  assert.ok(rem?.type === "remembered" && rem.receipt.receiptId === "r9");
+});
+
+test("the inner turn gets turn ids, and purgeDeleted runs after the user turn is stored", async () => {
+  let seen: unknown;
+  let purged = 0;
+  const h = memoryHarness(async (d) => { seen = d.turn; return ok("hi"); });
+  (h.memoryItems as MemoryItemStore).purgeDeleted = () => { purged++; return 0; };
+  await chatExchange(h.deps, { message: "hello" });
+  const t = h.chatHistory.turnsForDate("2026-08-22")[0]!;
+  assert.deepEqual(seen, { conversationId: t.conversationId, userTurnId: t.id });
+  assert.equal(purged, 1);
+});

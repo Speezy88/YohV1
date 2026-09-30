@@ -35,6 +35,7 @@
  * before this function ever sees the array) — the one behavior only this
  * function can be credited or blamed for.
  */
+import { randomUUID } from "node:crypto";
 import {
   isBlockerReportCommand,
   isCalendarDeleteRequestCommand,
@@ -53,6 +54,8 @@ import { parseRoutineCommand } from "../core/routine-commands.ts";
 import { resolveRelativeDate } from "../core/relative-date.ts";
 import { firstCardView } from "../core/sandbox-card-view.ts";
 import { parseSearchIntent } from "../core/search-intent.ts";
+import { parseSlashMemoryCommand, recognizeMemoryCommand, type MemoryCommand } from "../core/memory-commands.ts";
+import { MEMORY_FOLDERS_IN_ORDER, memoryFolderLabel } from "../core/memory-folders.ts";
 import { classifyCapture, classifyChatIntent } from "../adapters/llm-adapter.ts";
 import { reportBlocker } from "./blocker-report.ts";
 import { RECENT_MESSAGES_WINDOW, type ChatSession } from "./chat-session.ts";
@@ -78,12 +81,13 @@ import { searchWeb, type WebSearchDeps } from "./web-search.ts";
 import { explainPriority } from "./why-prioritized.ts";
 import { localIsoDate } from "../rituals/ritual-shared.ts";
 import type { ChatStore } from "../adapters/chat-store.ts";
+import type { MemoryItemStore } from "../adapters/memory-item-store.ts";
 import type { LogEntry } from "../adapters/logger.ts";
 import type { AnthropicMessagesClient } from "../adapters/llm-adapter.ts";
 import { getPlan, type MemoryStore } from "../adapters/memory-store.ts";
 import { errorCopyForThrown } from "../core/error-copy.ts";
 import type { ChatStreamEvent, ChatTurnRequest, ChatTurnResponse, MorningViewResponse } from "../types/api.ts";
-import type { CalendarEvent, ChatIntent, ChatTurn, ExternalId, IsoDate, PlanBlock, Result, Task, YohError } from "../types/domain.ts";
+import type { CalendarEvent, ChatIntent, ChatTurn, ExternalId, IsoDate, MemoryItem, PlanBlock, Result, Task, YohError } from "../types/domain.ts";
 
 /**
  * The largest number of `ChatTurn`s `chatTurn` will ever send to Claude —
@@ -128,6 +132,12 @@ export interface ChatTurnDeps extends CreateItemDeps, CalendarEditDeps, WebSearc
   readonly store: MemoryStore;
   /** Server-owned chat history (Story 13.1); absent -> the model sees only the current message. */
   readonly chatHistory?: ChatStore;
+  /** Versioned memory (Story 13.4); absent -> memory commands answer "Couldn't reach memory right now." */
+  readonly memoryItems?: MemoryItemStore;
+  /** Set by `chatExchange` for the inner turn: the Conversation and Spencer's stored turn. */
+  readonly turn?: { readonly conversationId: string; readonly userTurnId: string };
+  /** Test/fixture seam for the memory filer's Haiku call; defaults to `llmClient`. */
+  readonly memoryLlmClient?: AnthropicMessagesClient;
   readonly timeZone: string;
   readonly now: () => Date;
   readonly readTasks: () => Promise<readonly Task[]>;
@@ -265,6 +275,10 @@ export async function chatTurn(deps: ChatTurnDeps, input: ChatTurnRequest): Prom
   if (line.startsWith("/")) {
     return dispatchSlashCommand(deps, line);
   }
+
+  // Story 13.4: memory commands are deterministic and sit before every LLM step.
+  const memoryCommand = recognizeMemoryCommand(line);
+  if (memoryCommand) return runMemoryCommand(deps, memoryCommand);
 
   // M6 (final-review): the explicit "search:" prefix — what Research Hub's
   // ask box always sends — is checked here, at the very top, next to the
@@ -561,7 +575,8 @@ function historyForModel(deps: ChatTurnDeps, message: string): readonly ChatTurn
  * listing every real command, never an error (AC).
  */
 async function dispatchSlashCommand(deps: ChatTurnDeps, line: string): Promise<Result<ChatTurnResponse, YohError>> {
-  const [name] = line.split(/\s+/);
+  const [name, ...rest] = line.split(/\s+/);
+  const args = rest.join(" ");
   const match = COMMANDS.find((c) => c.name.toLowerCase() === name?.toLowerCase());
   if (!match) {
     const list = COMMANDS.map((c) => `${c.name} — ${c.description}`).join("\n");
@@ -583,6 +598,12 @@ async function dispatchSlashCommand(deps: ChatTurnDeps, line: string): Promise<R
       const card = firstCardView(queue.value.items, queue.value.options);
       if (!card) return { ok: true, value: { reply: "Nothing's missing a Due Date or Duration.", receipts: [] } };
       return { ok: true, value: { reply: "", receipts: [], sandboxCard: card } };
+    }
+    case "/remember":
+    case "/forget": {
+      const command = parseSlashMemoryCommand(match.name, args);
+      if (!command) return { ok: true, value: { reply: `Say what to remember, like ${match.example}.`, receipts: [] } };
+      return runMemoryCommand(deps, command);
     }
     default:
       // Unreachable while COMMANDS lists only /morning and /night — a
@@ -606,4 +627,82 @@ function formatMorningView(view: MorningViewResponse): string {
       ? "Nothing else open."
       : `${view.openItems.length} open item${view.openItems.length === 1 ? "" : "s"}: ` + view.openItems.map((i) => i.promptText).join("; ");
   return [view.plan.text, "", view.plan.reasoning, "", openItemsLine].filter((l) => l.length > 0).join("\n");
+}
+
+const MEMORY_UNREACHABLE_REPLY = "Couldn't reach memory right now.";
+
+function reply(text: string, extra: Partial<ChatTurnResponse> = {}): Result<ChatTurnResponse, YohError> {
+  return { ok: true, value: { reply: text, receipts: [], ...extra } };
+}
+
+/**
+ * Story 13.4: a recognized memory command. `chatTurn` never files (E2): "remember"
+ * only directs `chatExchange` (`memory`), which files after `done`. A store failure
+ * is logged and answered; it never blocks the turn.
+ */
+function runMemoryCommand(deps: ChatTurnDeps, command: MemoryCommand): Result<ChatTurnResponse, YohError> {
+  if (command.kind === "remember") return reply("Got it.", { memory: { kind: "remember", text: command.text } });
+  const store = deps.memoryItems;
+  if (!store) return reply(MEMORY_UNREACHABLE_REPLY);
+  try {
+    if (command.kind === "recall") return recallMemory(store, command.topic);
+    return forgetMemory(deps, store, command.words);
+  } catch (error) {
+    deps.log?.({ level: "warn", event: "chat-turn.memory-command-failed", detail: error instanceof Error ? error.message : String(error) });
+    return reply(MEMORY_UNREACHABLE_REPLY);
+  }
+}
+
+function recallMemory(store: MemoryItemStore, topic: string): Result<ChatTurnResponse, YohError> {
+  const items = store.searchRelevant(topic, MEMORY_FOLDERS_IN_ORDER, 20);
+  if (items.length === 0) return reply(`Nothing in memory matches '${topic}'.`);
+  const sections = MEMORY_FOLDERS_IN_ORDER.flatMap((folder) => {
+    const inFolder = items.filter((i) => i.folder === folder);
+    return inFolder.length === 0 ? [] : [`${memoryFolderLabel(folder)}\n${inFolder.map((i) => `- ${i.text}`).join("\n")}`];
+  });
+  return reply(sections.join("\n\n"));
+}
+
+function forgetMemory(deps: ChatTurnDeps, store: MemoryItemStore, words: string): Result<ChatTurnResponse, YohError> {
+  let targets: MemoryItem[];
+  if (words === "") {
+    const receipt = deps.turn ? store.latestReceipt(deps.turn.conversationId, "remembered") : undefined;
+    targets = (receipt?.itemIds ?? []).flatMap((id) => {
+      const item = store.getItem(id);
+      return item && item.status === "current" ? [item] : [];
+    });
+    if (targets.length === 0) return reply("Nothing to forget yet.");
+  } else {
+    targets = store.searchRelevant(words, MEMORY_FOLDERS_IN_ORDER, 10);
+    if (targets.length === 0) return reply(`Nothing in memory matches '${words}'.`);
+    // TODO(T6a Part 3): several matches become a disambiguation Structured Question ("memory-forget").
+    if (targets.length > 1) {
+      const list = targets.map((i) => `- ${i.text} (${memoryFolderLabel(i.folder)})`).join("\n");
+      return reply(`Several items match '${words}'. Say which one to forget, using more of its words:\n${list}`);
+    }
+  }
+  const chainIds = targets.flatMap((item) => store.forget(item.id).chainIds);
+  const receipt = {
+    receiptId: randomUUID(),
+    kind: "forgot" as const,
+    items: targets.map((i) => ({
+      id: i.id,
+      text: i.text,
+      folder: i.folder,
+      ...(i.scope !== undefined ? { scope: i.scope } : {}),
+      ...(i.expiresOn !== undefined ? { expiresOn: i.expiresOn } : {}),
+    })),
+  };
+  if (deps.turn) {
+    store.putReceipt({
+      receiptId: receipt.receiptId,
+      conversationId: deps.turn.conversationId,
+      userTurnId: deps.turn.userTurnId,
+      kind: "forgot",
+      itemIds: targets.map((i) => i.id),
+      chainIds,
+      createdAt: deps.now().toISOString(),
+    });
+  }
+  return reply("Done.", { memory: { kind: "forgot", receipt, chainIds } });
 }
