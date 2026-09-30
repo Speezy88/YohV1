@@ -42,6 +42,7 @@
  * (`runChatStream`). The process holds ONE `ChatSession`, built in
  * `startServer` and shared by every chat route (contract C3).
  */
+import { offerPattern } from "../app/pattern-offer.ts";
 import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import { validator } from "hono/validator";
@@ -1361,6 +1362,12 @@ export function createApp(deps: ServerDeps) {
       .get("/api/memory/search", async (c) => {
         if (!deps.memoryItems) return c.json(MEMORY_NOT_CONFIGURED, httpStatus(MEMORY_NOT_CONFIGURED));
         const result = wire(await searchMemory(memoryPageDeps(deps, deps.memoryItems), { query: c.req.query("q") ?? "" }));
+        return c.json(result, httpStatus(result));
+      })
+      // Story 13.13: the day's one pending Pattern question (records `lastOfferedOn`); needs no `chat` deps.
+      .get("/api/memory/pattern-offer", async (c) => {
+        if (!deps.memoryItems) return c.json(MEMORY_NOT_CONFIGURED, httpStatus(MEMORY_NOT_CONFIGURED));
+        const result = wire(await offerPattern(memoryPageDeps(deps, deps.memoryItems), {}));
         return c.json(result, httpStatus(result));
       })
       // Story 13.4: Undo for a Remembered Receipt; refused after Spencer's next message.

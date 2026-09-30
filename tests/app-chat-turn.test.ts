@@ -1519,3 +1519,24 @@ test("substantive: /morning, /plan and a researched answer are marked; a plain g
   const chat = await chatTurn(baseDeps({ llmClient: makeFakeLlmClient("GENERAL") }), { message: "how are you" });
   assert.ok(chat.ok && chat.value.substantive === undefined);
 });
+
+test("Story 13.13: /morning carries the day's Pattern question as `question`; a second /morning the same day does not", async () => {
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db);
+  initMemoryItemStoreSchema(connection.db);
+  const memoryItems = createMemoryItemStore(connection);
+  const store = createMemoryStore(connection);
+  const createdAt = "2026-08-21T12:00:00.000Z";
+  const proposal = { id: "pattern-m", kind: "pattern", entityId: "area-overrun:History", entityVersion: "new", suggested: { kind: "area-overrun", area: "History", occurrences: 5, paddingMinutes: 30 }, reason: "h\ne\nPlan for that?", createdAt };
+  putOpenInteractionRequest(store, "proposal:pattern-m", { requestKind: "proposal", promptText: proposal.reason, detail: { proposal, cursor: { questionId: "confirm" } }, createdAt });
+  memoryItems.putPatternState({ kind: "area-overrun", area: "History", pendingProposalId: "pattern-m" });
+  const deps = baseDeps({ store, memoryItems });
+
+  const first = await chatTurn(deps, { message: "/morning" });
+  assert.ok(first.ok);
+  if (first.ok) assert.equal(first.value.question?.requestId, "proposal:pattern-m");
+  const second = await chatTurn(deps, { message: "/morning" });
+  assert.ok(second.ok);
+  if (second.ok) assert.equal(second.value.question, undefined);
+  connection.close();
+});

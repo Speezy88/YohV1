@@ -615,7 +615,7 @@ async function dispatchSlashCommand(deps: ChatTurnDeps, line: string): Promise<R
     case "/morning": {
       const result = await morningView(deps, {});
       if (!result.ok) return result;
-      return { ok: true, value: { reply: formatMorningView(result.value), receipts: [], substantive: true } };
+      return { ok: true, value: { reply: formatMorningView(result.value), receipts: [], substantive: true, ...(result.value.patternQuestion ? { question: result.value.patternQuestion } : {}) } };
     }
     case "/night":
       return substantive(await startNightCloseOut(deps, {}));

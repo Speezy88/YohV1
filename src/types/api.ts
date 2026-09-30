@@ -789,6 +789,13 @@ export interface MorningViewResponse {
   readonly today: string;
   readonly plan: { readonly text: string; readonly reasoning: string } | undefined;
   readonly openItems: readonly OpenItem[];
+  /** Story 13.13: today's one pending Pattern question, when `offerPattern` returned one. */
+  readonly patternQuestion?: OpenItemQuestion;
+}
+
+/** `GET /api/memory/pattern-offer`'s value: at most one pending Pattern question per day (Story 13.13). */
+export interface PatternOfferResponse {
+  readonly question?: OpenItemQuestion;
 }
 
 // ============================================================================

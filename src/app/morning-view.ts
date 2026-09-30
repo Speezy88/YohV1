@@ -11,8 +11,9 @@
  */
 import { getPlan, type MemoryStore } from "../adapters/memory-store.ts";
 import { localIsoDate, renderPlan } from "../rituals/ritual-shared.ts";
+import { offerPattern } from "./pattern-offer.ts";
 import { surfaceOpenItems, type SurfaceOpenItemsDeps } from "./surface-open-items.ts";
-import type { MorningViewResponse } from "../types/api.ts";
+import type { MorningViewResponse, OpenItemQuestion } from "../types/api.ts";
 import type { Result, YohError } from "../types/domain.ts";
 
 export interface MorningViewDeps extends SurfaceOpenItemsDeps {
@@ -29,8 +30,16 @@ export async function morningView(deps: MorningViewDeps, _input: Record<string, 
   const openItemsResult = await surfaceOpenItems(deps, {});
   if (!openItemsResult.ok) return openItemsResult;
 
+  // Story 13.13: the day's one Pattern question, if any. A failure or absence changes nothing.
+  let patternQuestion: OpenItemQuestion | undefined;
+  if (deps.memoryItems) {
+    const offered = await offerPattern({ memoryItems: deps.memoryItems, store: deps.store, now: deps.now, timeZone: deps.timeZone }, {});
+    if (offered.ok) patternQuestion = offered.value.question;
+  }
+  const extra = patternQuestion ? { patternQuestion } : {};
+
   if (!stored) {
-    return { ok: true, value: { today, plan: undefined, openItems: openItemsResult.value.items } };
+    return { ok: true, value: { today, plan: undefined, openItems: openItemsResult.value.items, ...extra } };
   }
 
   // Split fields per `MorningViewResponse.plan`'s shape: `renderPlan`
@@ -41,6 +50,6 @@ export async function morningView(deps: MorningViewDeps, _input: Record<string, 
   const text = renderPlan({ ...stored.data, reasoning: "" }, { color: false, includeHeader: false });
   return {
     ok: true,
-    value: { today, plan: { text, reasoning: stored.data.reasoning }, openItems: openItemsResult.value.items },
+    value: { today, plan: { text, reasoning: stored.data.reasoning }, openItems: openItemsResult.value.items, ...extra },
   };
 }
