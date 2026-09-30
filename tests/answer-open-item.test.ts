@@ -260,7 +260,7 @@ test("answerOpenItem stores the answer and the reply as today's chat turns (E5)"
 test("answerOpenItem still returns its Result when the chat store throws (E5)", async () => {
   const store = tempStore();
   const logged: string[] = [];
-  const chatHistory = { appendTurn() { throw new Error("disk full"); }, turnsForDate: () => [], clearAll() {}, hasUserTurnAfter: () => false };
+  const chatHistory = { appendTurn() { throw new Error("disk full"); }, turnsForDate: () => [], clearAll() {}, hasUserTurnAfter: () => false, getTurn: () => undefined, searchTurns: () => [] };
   putOpenInteractionRequest(store, "future-thing", { requestKind: "some-future-kind", promptText: "x", createdAt: "x" });
   const result = await answerOpenItem(
     { ...fullDeps(store), chatHistory, timeZone: "UTC", now: () => new Date("2026-08-22T10:00:00Z"), log: (e: { event: string }) => { logged.push(e.event); } },

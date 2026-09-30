@@ -6,7 +6,7 @@
  * outbox row.
  */
 import type Database from "better-sqlite3";
-import type { Area, RuleSettingKey } from "../types/domain.ts";
+import type { Area, IsoDateTime, RuleSettingKey } from "../types/domain.ts";
 import type { SqliteConnection } from "./sqlite.ts";
 import { appendOutboxInTx } from "./notification-store.ts";
 import { MEMORY_TOPIC } from "./chat-store.ts";
@@ -60,6 +60,39 @@ export function readSettingOverrides(db: Database.Database): SettingOverrides {
     else out[row.key] = parsed as { start: string; end: string };
   }
   if (Object.keys(padding).length > 0) out.areaDurationPadding = padding;
+  return out;
+}
+
+/** Every valid override row with its `updated_at`, newest first; invalid rows are skipped and logged. */
+export function listSettingRows(db: Database.Database): { key: RuleSettingKey; area?: Area; value: RuleSettingValue; updatedAt: IsoDateTime }[] {
+  initSettingsStoreSchema(db);
+  const rows = db.prepare("SELECT key, area, value, updated_at FROM planning_settings ORDER BY updated_at DESC, key, area").all() as {
+    key: string;
+    area: string;
+    value: string;
+    updated_at: string;
+  }[];
+  const out: { key: RuleSettingKey; area?: Area; value: RuleSettingValue; updatedAt: IsoDateTime }[] = [];
+  for (const row of rows) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(row.value);
+    } catch {
+      writeStructuredLog({ level: "warn", event: "settings-store.invalid-row-skipped", detail: { key: row.key, area: row.area } });
+      continue;
+    }
+    if (!isRuleKey(row.key)) {
+      writeStructuredLog({ level: "warn", event: "settings-store.invalid-row-skipped", detail: { key: row.key, area: row.area } });
+      continue;
+    }
+    const isPadding = row.key === "areaDurationPadding";
+    const value = (isPadding ? { area: row.area, minutes: parsed } : parsed) as RuleSettingValue;
+    if (!validateRuleValue(row.key, value).ok) {
+      writeStructuredLog({ level: "warn", event: "settings-store.invalid-row-skipped", detail: { key: row.key, area: row.area } });
+      continue;
+    }
+    out.push({ key: row.key, ...(isPadding ? { area: row.area } : {}), value, updatedAt: row.updated_at });
+  }
   return out;
 }
 

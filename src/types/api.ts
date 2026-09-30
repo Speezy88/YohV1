@@ -16,7 +16,7 @@
  * the `/api/*` surface. `web/` may `import type` from here (AD-17) and from
  * nothing else in `src/` except other `types/` files.
  */
-import type { ChatTurn, EditableTaskField, Energy, IsoDate, IsoDateTime, MemoryFolder, PlanningFieldNames, Proposal, RefiningFieldNames, Result, TaskFieldOption, TaskFieldOptions, TaskStatus, YohError } from "./domain.ts";
+import type { ChatTurn, EditableTaskField, Energy, IsoDate, IsoDateTime, MemoryFolder, MemoryLoadClass, PlanningFieldNames, Proposal, RefiningFieldNames, Result, RuleSettingKey, TaskFieldOption, TaskFieldOptions, TaskStatus, YohError } from "./domain.ts";
 
 // ============================================================================
 // Serialized Result envelope
@@ -477,6 +477,77 @@ export interface ChatHistoryTodayResponse {
   readonly conversationId?: string;
   readonly date: IsoDate;
   readonly turns: readonly ChatHistoryTurn[];
+}
+
+// ---- Memory page (Story 13.9) ----------------------------------------------
+
+export interface MemoryItemView {
+  readonly id: string;
+  readonly folder: MemoryFolder;
+  readonly text: string;
+  readonly origin: "stated" | "inferred";
+  /** "history" items ("Keep as history") are listed but never loaded. */
+  readonly status: "current" | "history";
+  readonly scope?: string;
+  readonly expiresOn?: IsoDate;
+  /** `ruleChange === "declined"`. */
+  readonly declined: boolean;
+  /** `ruleChange === "pending"`. */
+  readonly pendingChange: boolean;
+  readonly createdAt: IsoDateTime;
+  readonly confirmedAt: IsoDateTime;
+  readonly loaded: boolean;
+  /** The "Not loaded" badge shows iff this is set. */
+  readonly notLoadedReason?: string;
+  /** Absent when the item has no source turn; "deleted" when the turn is gone. */
+  readonly source?: { readonly conversationId: string; readonly turnId: string; readonly date: IsoDate } | "deleted";
+  readonly earlierVersions: readonly { readonly id: string; readonly text: string; readonly confirmedAt: IsoDateTime }[];
+}
+
+/** `count` is the number of current items; all eight folders, PRD order. */
+export interface MemoryFolderView {
+  readonly folder: MemoryFolder;
+  readonly label: string;
+  readonly loadClass: MemoryLoadClass;
+  readonly count: number;
+  readonly items: readonly MemoryItemView[];
+}
+
+export interface NeedsReviewItemView extends MemoryItemView {
+  readonly reason: string;
+  /** True iff the reason is expired or unused. */
+  readonly canRenew: boolean;
+}
+
+export interface ChangedSettingView {
+  readonly key: RuleSettingKey;
+  readonly area?: string;
+  readonly label: string;
+  readonly value: string;
+  /** The built-in default, formatted. */
+  readonly was: string;
+  readonly changedAt: IsoDateTime;
+}
+
+/** `GET /api/memory`'s value: everything the Memory Rail shows. */
+export interface MemoryViewResponse {
+  readonly folders: readonly MemoryFolderView[];
+  readonly needsReview: readonly NeedsReviewItemView[];
+  readonly changedSettings: readonly ChangedSettingView[];
+  readonly pendingPatterns: readonly OpenItemQuestion[];
+}
+
+/** `GET /api/memory/search?q=`'s value. */
+export interface MemorySearchResponse {
+  readonly query: string;
+  readonly items: readonly MemoryItemView[];
+  readonly turns: readonly {
+    readonly turnId: string;
+    readonly conversationId: string;
+    readonly date: IsoDate;
+    readonly role: "user" | "assistant";
+    readonly snippet: string;
+  }[];
 }
 
 // ============================================================================

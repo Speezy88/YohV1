@@ -11,6 +11,7 @@ import type { SqliteConnection } from "./sqlite.ts";
 import { appendOutboxInTx } from "./notification-store.ts";
 import { MEMORY_TOPIC } from "./chat-store.ts";
 import { MEMORY_ITEM_MAX_CHARS } from "../core/memory-folders.ts";
+import { ftsQuery } from "../core/fts-query.ts";
 
 export interface NewMemoryItem {
   folder: MemoryFolder;
@@ -260,12 +261,6 @@ function chainRows(db: Database.Database, id: string): ItemRow[] {
     for (const n of db.prepare<[string, string], { id: string }>(`SELECT id FROM memory_items WHERE replaces_id = ? OR superseded_by = ?`).all(cur, cur)) queue.push(n.id);
   }
   return [...seen.values()];
-}
-
-function ftsQuery(text: string): string | undefined {
-  const tokens = (text.match(/[\p{L}\p{N}]+/gu) ?? []).filter((t) => t.length >= 3);
-  if (tokens.length === 0) return undefined;
-  return [...new Set(tokens)].map((t) => `"${t}"`).join(" OR ");
 }
 
 export function createMemoryItemStore(connection: SqliteConnection): MemoryItemStore {

@@ -123,6 +123,8 @@ import {
   type CheckOffDeps,
 } from "../app/check-off.ts";
 import { undoMemoryReceipt } from "../app/memory-undo.ts";
+import { viewMemory } from "../app/memory-view.ts";
+import { searchMemory } from "../app/memory-search.ts";
 import { surfaceOpenItems } from "../app/surface-open-items.ts";
 import { answerOpenItem, type AnswerOpenItemDeps } from "../app/answer-open-item.ts";
 import { approveReshuffleById, discardReshuffleById, requestReshuffleView } from "../app/decide-reshuffle.ts";
@@ -658,6 +660,19 @@ const CHAT_HISTORY_NOT_CONFIGURED: ApiFailure = {
   ok: false,
   error: { kind: "unreachable", message: errorCopyForWire({ kind: "unreachable", message: "server: chat history not configured" }) },
 };
+
+/** Story 13.9: the Memory page routes' deps; nothing here needs the `chat` block (its Task read only adds entity checks). */
+function memoryPageDeps(deps: ServerDeps, memoryItems: MemoryItemStore) {
+  return {
+    memoryItems,
+    ...(deps.chatHistory ? { chatHistory: deps.chatHistory } : {}),
+    connection: deps.connection,
+    store: deps.chat?.store ?? createMemoryStore(deps.connection),
+    ...(deps.chat?.readTasks ? { readTasks: deps.chat.readTasks } : {}),
+    now: () => new Date(),
+    timeZone: deps.chat?.timeZone ?? process.env["YOH_TIMEZONE"] ?? "UTC",
+  };
+}
 
 const MEMORY_NOT_CONFIGURED: ApiFailure = {
   ok: false,
@@ -1263,6 +1278,17 @@ export function createApp(deps: ServerDeps) {
         const timeZone = deps.chat?.timeZone ?? process.env["YOH_TIMEZONE"];
         if (!deps.chatHistory || !timeZone) return c.json(CHAT_HISTORY_NOT_CONFIGURED, httpStatus(CHAT_HISTORY_NOT_CONFIGURED));
         const result = wire(await todaysChatHistory({ chatHistory: deps.chatHistory, timeZone, now: () => new Date() }, {}));
+        return c.json(result, httpStatus(result));
+      })
+      // Story 13.9: the Memory Rail's data and one keyword search; neither needs `chat` deps.
+      .get("/api/memory", async (c) => {
+        if (!deps.memoryItems) return c.json(MEMORY_NOT_CONFIGURED, httpStatus(MEMORY_NOT_CONFIGURED));
+        const result = wire(await viewMemory(memoryPageDeps(deps, deps.memoryItems), {}));
+        return c.json(result, httpStatus(result));
+      })
+      .get("/api/memory/search", async (c) => {
+        if (!deps.memoryItems) return c.json(MEMORY_NOT_CONFIGURED, httpStatus(MEMORY_NOT_CONFIGURED));
+        const result = wire(await searchMemory(memoryPageDeps(deps, deps.memoryItems), { query: c.req.query("q") ?? "" }));
         return c.json(result, httpStatus(result));
       })
       // Story 13.4: Undo for a Remembered Receipt; refused after Spencer's next message.

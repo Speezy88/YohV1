@@ -8,6 +8,7 @@ import type Database from "better-sqlite3";
 import type { IsoDate, IsoDateTime } from "../types/domain.ts";
 import type { SqliteConnection } from "./sqlite.ts";
 import { appendOutboxInTx } from "./notification-store.ts";
+import { ftsQuery } from "../core/fts-query.ts";
 
 export const MEMORY_TOPIC = "memory";
 
@@ -32,6 +33,10 @@ export interface ChatStore {
   /** True when a user turn was stored after `turnId` in that Conversation (insertion order). */
   hasUserTurnAfter(conversationId: string, turnId: string): boolean;
   clearAll(): void;
+  /** One turn with its Conversation's date, or undefined when it no longer exists. */
+  getTurn(turnId: string): (StoredChatTurn & { date: IsoDate }) | undefined;
+  /** Keyword search over every stored turn (bm25); `snippet` is a short excerpt around the match. */
+  searchTurns(query: string, limit: number): { turnId: string; conversationId: string; date: IsoDate; role: "user" | "assistant"; snippet: string }[];
 }
 
 export function initChatStoreSchema(db: Database.Database): void {
@@ -123,6 +128,26 @@ export function createChatStore(connection: SqliteConnection): ChatStore {
         )
         .get(conversationId, turnId, conversationId);
       return row !== undefined;
+    },
+    getTurn(turnId) {
+      const row = connection.db
+        .prepare(
+          "SELECT t.id, t.conversation_id, t.role, t.text, t.truncated, t.created_at, c.date FROM chat_turns t JOIN chat_conversations c ON c.id = t.conversation_id WHERE t.id = ?",
+        )
+        .get(turnId) as (TurnRow & { date: string }) | undefined;
+      return row ? { ...toTurn(row), date: row.date } : undefined;
+    },
+    searchTurns(query, limit) {
+      const match = ftsQuery(query);
+      if (!match || limit <= 0) return [];
+      const rows = connection.db
+        .prepare(
+          `SELECT t.id, t.conversation_id, t.role, c.date, snippet(chat_turns_fts, 0, '', '', '...', 12) AS snippet
+           FROM chat_turns_fts JOIN chat_turns t ON t.rowid = chat_turns_fts.rowid JOIN chat_conversations c ON c.id = t.conversation_id
+           WHERE chat_turns_fts MATCH ? ORDER BY bm25(chat_turns_fts) LIMIT ?`,
+        )
+        .all(match, limit) as { id: string; conversation_id: string; role: "user" | "assistant"; date: string; snippet: string }[];
+      return rows.map((r) => ({ turnId: r.id, conversationId: r.conversation_id, date: r.date, role: r.role, snippet: r.snippet }));
     },
     clearAll() {
       connection.writeTx((db) => {
