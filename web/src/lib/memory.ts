@@ -10,8 +10,8 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { apiClient } from "./apiClient.ts";
 import { onHint } from "./eventBus.ts";
-import type { ChatConversationView, ChatHistoryListResponse, EditMemoryResponse, MemorySearchResponse, MemoryViewResponse, MemoryWriteResponse } from "../../../src/types/api.ts";
-import type { MemoryFolder } from "../../../src/types/domain.ts";
+import type { ChatConversationView, ChatHistoryListResponse, EditMemoryResponse, MemorySearchResponse, MemoryViewResponse, MemoryWriteResponse, RevertSettingResponse } from "../../../src/types/api.ts";
+import type { MemoryFolder, RuleSettingKey } from "../../../src/types/domain.ts";
 
 export type MemoryViewState =
   | { readonly status: "loading" }
@@ -300,6 +300,16 @@ export function setExpiry(itemId: string, expiresOn: string | null): Promise<Out
 
 export function deleteItem(itemId: string): Promise<Outcome<MemoryWriteResponse>> {
   return write(() => apiClient.api.memory.delete.$post({ json: { itemId } }));
+}
+
+/** Needs review: Renew (an expired item takes `expiresOn` or none; an unused item ignores it) or Keep as history. */
+export function reviewItem(itemId: string, action: "renew" | "keep", expiresOn?: string): Promise<Outcome<MemoryWriteResponse>> {
+  return write(() => apiClient.api.memory.review.$post({ json: { itemId, action, ...(expiresOn ? { expiresOn } : {}) } }));
+}
+
+/** Changed settings: Revert is a direct write; the value's `message` ("Reverted to 3:15 PM.") is shown as-is. */
+export function revertSetting(key: RuleSettingKey, area?: string): Promise<Outcome<RevertSettingResponse>> {
+  return write(() => apiClient.api.settings.revert.$post({ json: { key, ...(area ? { area } : {}) } }));
 }
 
 // ---- "Saved" marks ------------------------------------------------------------

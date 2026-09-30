@@ -20,7 +20,9 @@ vi.mock("./apiClient.ts", () => ({
         move: { $post: vi.fn() },
         expiry: { $post: vi.fn() },
         delete: { $post: vi.fn() },
+        review: { $post: vi.fn() },
       },
+      settings: { revert: { $post: vi.fn() } },
     },
   },
 }));
@@ -37,6 +39,8 @@ import {
   moveItem,
   setExpiry,
   deleteItem,
+  reviewItem,
+  revertSetting,
 } from "./memory.ts";
 
 const api = apiClient.api as unknown as { memory: { $get: ReturnType<typeof vi.fn> } };
@@ -160,5 +164,22 @@ describe("memory write helpers", () => {
     w.delete.$post.mockResolvedValue(envelope({ ok: true, value: {} }));
     expect(await deleteItem("m1")).toEqual({ ok: true, value: {} });
     expect(w.delete.$post).toHaveBeenCalledWith({ json: { itemId: "m1" } });
+  });
+
+  it("reviewItem posts renew with an optional expiry, and keep without one", async () => {
+    const review = (apiClient.api as unknown as { memory: { review: { $post: ReturnType<typeof vi.fn> } } }).memory.review;
+    review.$post.mockResolvedValue(envelope({ ok: true, value: { itemId: "m2" } }));
+    await reviewItem("m1", "renew", "2026-12-01");
+    expect(review.$post).toHaveBeenLastCalledWith({ json: { itemId: "m1", action: "renew", expiresOn: "2026-12-01" } });
+    await reviewItem("m1", "keep");
+    expect(review.$post).toHaveBeenLastCalledWith({ json: { itemId: "m1", action: "keep" } });
+  });
+
+  it("revertSetting posts the key (and area) and returns the server message", async () => {
+    const revert = (apiClient.api as unknown as { settings: { revert: { $post: ReturnType<typeof vi.fn> } } }).settings.revert;
+    revert.$post.mockResolvedValue(envelope({ ok: true, value: { message: "Reverted to 3:15 PM." } }));
+    expect(await revertSetting("schoolDayWorkStart")).toEqual({ ok: true, value: { message: "Reverted to 3:15 PM." } });
+    expect(revert.$post).toHaveBeenCalledWith({ json: { key: "schoolDayWorkStart" } });
+    expect(api.memory.$get).toHaveBeenCalledTimes(1);
   });
 });

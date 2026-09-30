@@ -1,19 +1,21 @@
 /**
  * web/src/pages/Memory.tsx — Story 13.9 (T10b Part 1): the fifth page. Two
  * panes: the Memory Rail and the selected list (a folder, Needs review or
- * Changed settings). Items edit in place (T11b Part 1); Needs review and Changed
- * settings actions arrive in Part 2. Data: `lib/memory.ts` (one fetch + the `memory`
+ * Changed settings). Items edit in place (T11b Part 1); Needs review actions and Changed
+ * settings Revert live in their own panes (T11b Part 2). Data: `lib/memory.ts` (one fetch + the `memory`
  * hint on the shared event bus).
  */
 import { useEffect } from "react";
 import { ChatHistoryPane } from "../components/memory/ChatHistoryPane.tsx";
 import { MemorySearchBox, MemorySearchResults } from "../components/memory/MemorySearch.tsx";
+import { ChangedSettingsPane } from "../components/memory/ChangedSettingsPane.tsx";
+import { NeedsReviewPane } from "../components/memory/NeedsReviewPane.tsx";
+import { PendingPatterns } from "../components/memory/PendingPatterns.tsx";
 import { MemoryItemRow } from "../components/memory/MemoryItemRow.tsx";
 import { useMemoryDelete, type MemoryDelete } from "../components/memory/MemoryDeleteToast.tsx";
 import { MemoryRail } from "../components/memory/MemoryRail.tsx";
 import { useReducedMotion } from "../hooks/useReducedMotion.ts";
 import { clearPendingScroll, openMemoryItem, selectMemory, startMemoryStream, useMemorySearch, useMemoryView, type MemorySelection } from "../lib/memory.ts";
-import { formatMemoryDay } from "../lib/memoryFormat.ts";
 import type { MemoryViewResponse } from "../../../src/types/api.ts";
 
 const openSource = (source: { conversationId: string; turnId: string }): void =>
@@ -44,28 +46,17 @@ function Pane({ view, selection, pendingScrollId, del }: { readonly view: Memory
 
   if (selection.kind === "needs-review" && view.needsReview.length > 0) {
     return (
-      <ul aria-label="Needs review" className="m-0 flex flex-col gap-2 p-0">
-        {view.needsReview.map((i) => (
-          <MemoryItemRow key={i.id} item={i} reason={i.reason} onOpenSource={openSource} {...rowProps(i.id)} />
-        ))}
-      </ul>
+      <NeedsReviewPane
+        items={view.needsReview}
+        folders={folderChoices}
+        onDelete={del.request}
+        isDissolving={del.isDissolving}
+        errorFor={del.errorFor}
+        onOpenSource={openSource}
+      />
     );
   }
-  if (selection.kind === "settings") {
-    if (view.changedSettings.length === 0) return <p className={MUTED}>No settings changed.</p>;
-    return (
-      <ul aria-label="Changed settings" className="m-0 flex flex-col gap-2 p-0">
-        {view.changedSettings.map((s) => (
-          <li key={`${s.key}:${s.area ?? ""}`} className="flex list-none flex-col gap-1 rounded-lg bg-surface-raised px-[18px] py-4 font-body shadow-extruded-sm">
-            <span className="text-body font-medium text-ink-primary">{s.label}</span>
-            <span className="text-small text-ink-secondary">
-              {s.value} · was {s.was} · changed {formatMemoryDay(s.changedAt)}
-            </span>
-          </li>
-        ))}
-      </ul>
-    );
-  }
+  if (selection.kind === "settings") return <ChangedSettingsPane settings={view.changedSettings} />;
   if (selection.kind === "history") {
     return (
       <ChatHistoryPane
@@ -89,11 +80,7 @@ function Pane({ view, selection, pendingScrollId, del }: { readonly view: Memory
   }
   return (
     <ul aria-label={folder.label} className="m-0 flex flex-col gap-2 p-0">
-      {patterns.map((q) => (
-        <li key={q.requestId + q.questionId} className="list-none rounded-lg bg-surface-sunken px-[18px] py-4 font-body text-body text-ink-secondary">
-          {q.text}
-        </li>
-      ))}
+      <PendingPatterns questions={patterns} />
       {folder.items.map((i) => (
         <MemoryItemRow key={i.id} item={i} onOpenSource={openSource} {...rowProps(i.id)} />
       ))}

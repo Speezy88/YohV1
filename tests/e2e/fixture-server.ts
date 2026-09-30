@@ -46,7 +46,7 @@ import {
 } from "../../src/adapters/notion-adapter.ts";
 import { draftItem, type CreateItemDeps } from "../../src/app/create-item.ts";
 import { sandboxQueue, type SandboxQueueDeps } from "../../src/app/sandbox-queue.ts";
-import { seedFixtureMemory } from "./fixture-memory-seed.ts";
+import { FIXTURE_RULE_TEXT, seedFixtureMemory } from "./fixture-memory-seed.ts";
 import { recognizeMemoryCommand } from "../../src/core/memory-commands.ts";
 import { firstCardView } from "../../src/core/sandbox-card-view.ts";
 import { localIsoDate } from "../../src/rituals/ritual-shared.ts";
@@ -284,7 +284,7 @@ const draftFieldsLlmClient: AnthropicMessagesClient = {
  * suggestions). Returns one Corrections candidate ONLY for the Chem club fixture text, otherwise `[]`,
  * so unrelated fixture turns never file.
  */
-export { FIXTURE_CONVERSATIONS, FIXTURE_MEMORY_ITEMS } from "./fixture-memory-seed.ts";
+export { FIXTURE_CONVERSATIONS, FIXTURE_MEMORY_ITEMS, FIXTURE_RULE_TEXT } from "./fixture-memory-seed.ts";
 export const FIXTURE_MEMORY_TEXT = "Chem club is a club, not a class";
 const memoryLlmClient: AnthropicMessagesClient = {
   messages: {
@@ -294,7 +294,9 @@ const memoryLlmClient: AnthropicMessagesClient = {
       const typed = prompt.slice(prompt.indexOf("Spencer's message:") + 1);
       const reply = /Chem club/.test(typed)
         ? JSON.stringify([{ folder: "corrections", text: FIXTURE_MEMORY_TEXT, origin: "stated" }])
-        : "[]";
+        : /2:30 on school days/.test(typed)
+          ? JSON.stringify([{ folder: "planning-preferences", text: FIXTURE_RULE_TEXT, origin: "stated", ruleChange: { key: "schoolDayWorkStart", value: "14:30" } }])
+          : "[]";
       return {
         id: "msg_fixture_memory",
         container: null,
@@ -375,6 +377,8 @@ const chat = {
   // `chatExchange` reads these when a chat store is present.
   timeZone: TIME_ZONE,
   now: () => new Date(),
+  // `connection` is here only for the rule-change transaction (`fileMemory` and the Yes in `confirmProposal`).
+  connection,
   runChatTurn,
   memoryLlmClient,
   createPage: (database: string, properties: Record<string, string>) =>

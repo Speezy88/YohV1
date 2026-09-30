@@ -134,16 +134,15 @@ describe("MemoryPage", () => {
     expect(screen.getByText(/Be very brief/)).toBeInTheDocument();
   });
 
-  it("lists changed settings read-only, and pending patterns at the top of Patterns", async () => {
+  it("lists changed settings with Revert, and pending patterns at the top of Patterns", async () => {
     load(view([], {
       changedSettings: [{ key: "schoolDayWorkStart", label: "School-day work start", value: "16:00", was: "15:00", changedAt: "2026-09-20T10:00:00Z" }],
       pendingPatterns: [{ requestId: "r1", questionId: "proposal:1", text: "Add a pattern: you skip Friday reviews?", options: [], allowsFreeText: false }],
     }));
     render(<MemoryPage />);
     fireEvent.click(await screen.findByRole("button", { name: /Changed settings/ }));
-    expect(screen.getByText("School-day work start")).toBeInTheDocument();
-    expect(screen.getByText(/16:00/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Revert/ })).toBeNull();
+    expect(screen.getByText("School-day work start: 16:00 (was 15:00) - changed Sep 20")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Revert School-day work start" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Patterns/ }));
     expect(screen.getByText(/Add a pattern/)).toBeInTheDocument();
   });

@@ -26,7 +26,7 @@ async function openMemory(page: Page): Promise<void> {
 
 /** Axe reads the blended color of a fading element; let entrance fades finish first. */
 async function settleAnimations(page: Page): Promise<void> {
-  await page.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished.catch(() => undefined))));
+  await page.evaluate(() => Promise.all(document.getAnimations().filter((a) => a.effect?.getComputedTiming().iterations !== Infinity).map((a) => a.finished.catch(() => undefined))));
 }
 
 const rail = (page: Page) => page.getByRole("navigation", { name: "Memory" });

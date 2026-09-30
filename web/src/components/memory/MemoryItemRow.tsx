@@ -20,6 +20,8 @@ const LINK_BUTTON =
   "font-body text-small font-semibold text-ink-primary underline underline-offset-2 " +
   "focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid";
 
+export const SMALL_BUTTON_CLASS = SMALL_BUTTON;
+
 export interface MemoryItemRowProps {
   readonly item: MemoryItemView;
   /** Needs review only: why the item is listed. */
@@ -33,11 +35,13 @@ export interface MemoryItemRowProps {
   readonly dissolving?: boolean;
   /** A failed delete send, shown in place once the row is back. */
   readonly error?: string;
+  /** Extra buttons under the row (Needs review: Renew, Keep as history, Delete). */
+  readonly actions?: React.ReactNode;
 }
 
 type Duplicate = { readonly id: string; readonly text: string };
 
-export function MemoryItemRow({ item, reason, onOpenSource, folders, onDelete, dissolving = false, error }: MemoryItemRowProps): React.JSX.Element | null {
+export function MemoryItemRow({ item, reason, onOpenSource, folders, onDelete, dissolving = false, error, actions }: MemoryItemRowProps): React.JSX.Element | null {
   const reducedMotion = useReducedMotion();
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -181,6 +185,7 @@ export function MemoryItemRow({ item, reason, onOpenSource, folders, onDelete, d
       )}
       <p className={`m-0 ${CAPTION}`}>{meta}</p>
       {reason && <p className="m-0 text-small text-ink-primary">{reason}</p>}
+      {actions}
       {(item.notLoadedReason || item.status === "history" || item.declined || item.pendingChange) && (
         <div className="flex flex-wrap items-center gap-2">
           {item.notLoadedReason && <span className={PILL}>Not loaded</span>}

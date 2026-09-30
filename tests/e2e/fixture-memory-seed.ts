@@ -29,6 +29,9 @@ export const FIXTURE_MEMORY_ITEMS: readonly FixtureMemoryItem[] = [
   { key: "expired", folder: "goals-projects", text: "Submit the scholarship form", origin: "stated", expiresInDays: -10 },
 ];
 
+/** The Planning-preferences item the fixture memory LLM files for "... 2:30 on school days" (a schoolDayWorkStart rule change). */
+export const FIXTURE_RULE_TEXT = "Start work at 2:30 PM on school days";
+
 export interface FixtureConversation {
   readonly daysAgo: number;
   readonly turns: readonly { readonly role: "user" | "assistant"; readonly text: string }[];
