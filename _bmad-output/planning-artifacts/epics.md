@@ -5,7 +5,8 @@ inputDocuments:
   - _bmad-output/planning-artifacts/architecture/architecture-YohV1-2026-08-22/ARCHITECTURE-SPINE.md
   - _bmad-output/planning-artifacts/ux-designs/ux-YohV1-2026-08-21/DESIGN.md
   - _bmad-output/planning-artifacts/ux-designs/ux-YohV1-2026-08-21/EXPERIENCE.md
-updated: '2026-09-27'
+updated: '2026-09-29'
+epic13Status: "Planned 2026-09-29 — Epic 13 (FR-52–FR-60), Stories 13.1–13.13, from PRD §5.14, UX 2026-09-29 rows, and ARCHITECTURE-SPINE AD-25–AD-31. Replaces the 2026-09-27 sketch. FR-17 is superseded by FR-60 (Story 13.12 retires Self-Check)."
 phase2StepsCompleted: [1, 2, 3, 4]
 phase2Status: "Complete — Phase 2 (FR-30–FR-51 + amended FR-1/2/4/12–14/23/24), Epics 7–12, Stories 7.1–12.4 designed, validated, and approved 2026-09-25. Ready for sprint planning. Amended 2026-09-27 (Spencer): page order Home/Tasks/Desk/Research Hub, Chat is a panel (not a page), swipe navigation retired, Tasks page (Story 11.1) delivered early via the 2026-09-27 fixes + UI plan, Research Hub page shell added, Desk gains a Claude-spend tile, and backlog Epic 13 'Yoh remembers you' added."
 epic6Status: "Complete -- Epic 6 (Phase 1.5, FR-25-29, Stories 6.1-6.6) fully designed, validated, and approved. Epics 1-6 all done; workflow finished 2026-09-18."
@@ -150,6 +151,15 @@ FR-49: In-app notifications — one reusable capability that appears on whatever
 FR-50: Retire the CLI — once the Web App covers FR-42's parity list, the interactive CLI is retired. Rituals keep running unattended on schedule. No capability is lost. Open interaction requests and Proposals created by Rituals surface in the Web App.
 
 FR-51: /research — asynchronous research questions — `/research <question>` queues a research question. Yoh searches, files the result to the Research Vault (direct-write, because the command is the save request), and raises a research-ready notification. Spencer can leave the page or close Chat and the result still arrives. FR-29's provenance rule and FR-28's citation and honest-failure rules apply, and a failed search raises a failure notification. Research never runs without the command. *(UX adds a one-time Structured Question offer, which runs only if accepted — see UX-DR38.)*
+FR-52: Persistent chat history — transcripts stored on the host, kept until Spencer deletes one Conversation or clears all (confirm step); searchable from the Memory page; never replays an action.
+FR-53: Memory folders and items — eight fixed folders (Feedback, Planning preferences, Corrections, About you, Patterns always loaded; Goals & projects, Decisions & commitments when relevant; Ideas & notes only when asked); stated vs inferred; expiry; Feedback scope; nothing duplicated from Notion/Calendar/Yoh stores.
+FR-54: Automatic filing with a visible Remembered Receipt and Undo — after the reply, ≤2 items per turn, only from Spencer's typed words, restate updates, contradiction supersedes, no inferred health/emotion/finance.
+FR-55: Memory commands — "remember that …", `/remember`, "forget …", `/forget`, "what do you remember about …", recognized deterministically; "remember to …" stays a Task.
+FR-56: Recall in answers and planning — always-loaded folders capped, relevant folders on keyword match, never in routing; live data wins; 120-day and over-cap items to Needs review; the scheduler never reads memory.
+FR-57: Memory never silently overrides a built-in rule — a conflicting preference raises a Yes/No rule-change Proposal; confirmed changes are revertible settings.
+FR-58: Patterns are proposed with evidence, never assumed — repeated evidence over ≥2 weeks; a No is quiet for 30 days.
+FR-59: Memory page — the fifth page: folders, search over memories and chat history, edit/move/delete/expiry, history, Needs review, changed settings.
+FR-60: "How is Yoh doing?" 1–3 Rating — replaces FR-17; ≤1/day after a substantive turn, in-app only; a 1 asks "What was off?" and brings the next prompt forward; ratings never loaded into a model call.
 
 ### NonFunctional Requirements
 
@@ -696,7 +706,7 @@ FR-13: Epic 3 - Capped escalating retry
 FR-14: Epic 3 - Unchecked-day handling
 FR-15: Epic 4 - Hot/Cold memory model
 FR-16: Epic 4 - Propose-Don't-Impose confirmation gate
-FR-17: Epic 4 - Periodic Self-Check
+FR-17: Epic 4 - Periodic Self-Check *(superseded 2026-09-29 by FR-60; retired in Story 13.12)*
 FR-18: Epic 2 - Default and contextual Tone
 FR-19: Epic 2 - Tone escalation tied to Escalate-Under-Strain only
 FR-20: Epic 1 - Read Notion Tasks and Projects
@@ -739,6 +749,15 @@ FR-48: Epic 8 - Surface-agnostic confirmation
 FR-49: Epic 7 (infrastructure + `operational`) / each consuming epic adds its own kinds
 FR-50: Epic 8 - Retire the CLI
 FR-51: Epic 11 - /research asynchronous research
+FR-52: Epic 13 - Persistent chat history (13.1, 13.9)
+FR-53: Epic 13 - Memory folders and items (13.3)
+FR-54: Epic 13 - Automatic filing + Remembered Receipt (13.4, 13.5)
+FR-55: Epic 13 - Memory commands (13.4)
+FR-56: Epic 13 - Recall (13.6)
+FR-57: Epic 13 - Rule-change proposals and settings (13.7, 13.8, 13.10)
+FR-58: Epic 13 - Patterns (13.2, 13.13)
+FR-59: Epic 13 - Memory page (13.9, 13.10)
+FR-60: Epic 13 - Rating, replaces FR-17 (13.11, 13.12)
 
 **Phase 2 NFR coverage:** NFR-Accessibility → Epic 7 (token and rim foundation), enforced in each epic's UI stories. NFR-CaptureSpeed → Epic 8 (Playwright capture gate). NFR-Latency (interactive) → Epics 7, 8, and 10. NFR-DataIntegrity (Phase 2 writes) → Epics 7, 9, 10, and 11. NFR-Observability (in-app) → Epic 7.
 
@@ -919,9 +938,15 @@ At his desk, Spencer sees Tasks completed, minutes worked, on-time rate, streak,
 
 **UX:** UX-DR44
 
-### Epic 13 (backlog, to be planned): "Yoh remembers you" — persistent memory
+### Epic 13: "Yoh remembers you" — persistent memory
 
-*Added 2026-09-27 (Spencer). Queued after Epic 9, before Epic 10. Supersedes the Phase 2 "client memory only" chat-transcript default.* Persistent chat history plus three auto-categorized folders — Facts about me, Decisions & commitments, Ideas & notes — so Yoh recalls Spencer without him repeating himself. Story list is sketched only; full planning happens when this epic starts. See the full entry after Epic 12 below.
+Spencer's chat history survives reloads and devices. Yoh files what he tells it into eight visible folders with a one-line receipt and Undo, uses it in answers, asks before any memory changes a planning rule, proposes patterns with evidence, and checks in with an occasional 1–3 rating instead of the old Self-Check. Everything is browsable and editable on a fifth page, Memory.
+
+**FRs covered:** FR-52, FR-53, FR-54, FR-55, FR-56, FR-57, FR-58, FR-59, FR-60 (FR-17 retired)
+
+**Also carries:** `chat-store.ts`, `memory-item-store.ts`, `settings-store.ts`, `rating-store.ts` (AD-25, AD-26, AD-29, AD-31); the `ChatStreamEvent` contract (AD-27); `completions.planned_start/end` + `slip_events` (AD-30); the `PlanningSettings` refactor (AD-29); Self-Check removal.
+
+**UX:** EXPERIENCE.md/DESIGN.md 2026-09-29 rows; mock `ux-designs/ux-YohV1-2026-08-21/mockups/memory-key-screens-2026-09-29.html`.
 
 ## Epic 1: Morning Ritual — the day arrives already planned
 
@@ -2789,25 +2814,374 @@ So that I can spot-check real usage cost without hunting through a separate bill
 **When** the tile renders
 **Then** it shows "$0.00" or an equivalent zero state, not an error
 
-## Epic 13 (backlog, to be planned): "Yoh remembers you" — persistent memory
+## Epic 13: "Yoh remembers you" — persistent memory
 
-*Added 2026-09-27 (Spencer). Queued after Epic 9, before Epic 10 (queue: fixes+UI plan → Epic 9 → this epic → 10 → 11 → 12). Supersedes the Phase 2 "client memory only" chat-transcript default (EXPERIENCE.md OQ13, ARCHITECTURE-SPINE.md's Chat-transcript-persistence open item, and Story 8.5's `[DECISION DEFAULT: client memory only]`). Story list below is sketched only — to be planned in full (SDD plan + per-story plans) when this epic starts, same as Epics 9–12.*
+*Planned 2026-09-29. Replaces the 2026-09-27 sketch (Stories 13.1–13.4: chat-store, three folders, browsing, backfill). The three-folder model became eight folders (PRD §5.14). The backfill story is dropped: before this epic, history lived only in the browser, so there is nothing on the host to migrate.* Sources: PRD FR-52–FR-60, EXPERIENCE.md/DESIGN.md 2026-09-29 rows, ARCHITECTURE-SPINE AD-25–AD-31.
 
-Spencer's chat history persists across sessions and devices instead of resetting on reload, and Yoh keeps auto-categorized "important folders" so it can recall facts, decisions, and ideas without Spencer repeating himself.
+Spencer's chat history survives reloads and devices. Yoh files what he tells it into eight visible folders with a one-line receipt and Undo, uses it in answers, asks before any memory changes a planning rule, proposes patterns with evidence, and checks in with an occasional 1–3 rating. Everything is browsable and editable on the Memory page.
 
-**Covers (sketch, to be planned):**
-- Persistent chat history: transcripts survive a reload or a new session, backed by a server-side `chat-store.ts` owner under AD-10 (not invented storage in `web/`).
-- Three auto-categorized folders: **Facts about me**, **Decisions & commitments**, and **Ideas & notes** (not topic-grouped saved conversations).
-- A way to browse/search the folders and past history from the Web App.
-- Rules for what gets filed into which folder, and how Yoh decides (to be planned).
-- Retention/deletion policy (to be planned).
+**Order:** 13.1 → 13.2 (ships early so Pattern data starts accruing) → 13.3 → 13.4 → 13.5 → 13.6 → 13.7 → 13.8 → 13.9 → 13.10 → 13.11 → 13.12 → 13.13. Stories 13.7 and 13.2 touch disjoint files from 13.3–13.6 and can run alongside them.
 
-**Sketch story list (to be planned in full):**
-- Story 13.1: `chat-store.ts` — persistent transcript storage and retrieval.
-- Story 13.2: Auto-categorization into Facts / Decisions / Ideas folders.
-- Story 13.3: Folder browsing and search in the Web App.
-- Story 13.4: Migration/backfill of any session-only history from before this epic.
+### Story 13.1: Server-Owned Chat History
 
-**FRs covered:** none yet assigned — this epic is backlog, not yet broken into FRs.
+As Spencer,
+I want my chat to still be there after a reload or on another device,
+So that I never lose a conversation or have to repeat context.
 
-**UX:** to be planned.
+**Acceptance Criteria:**
+
+**Given** `adapters/chat-store.ts` (sole owner of Conversations, turns, and a turns FTS5 index; `CREATE TABLE IF NOT EXISTS`; writes in `writeTx`)
+**When** Spencer sends a message
+**Then** his turn is stored before the model call, and Yoh's turn when the stream ends. An aborted stream stores the partial text with `truncated: true` (AD-25).
+**And** a Conversation is one calendar day in `YOH_TIMEZONE`
+
+**Given** `POST /api/chat`
+**When** this story ships
+**Then** the request carries only the new message. `ChatTurnRequest.history`, the server's `isChatHistory` check, `trimHistory`, and the fixture server are updated. `app/chat-turn.ts` reads the last `MAX_CHAT_HISTORY_TURNS` turns from the store.
+
+**Given** the Chat panel opens (fresh load, or another device)
+**When** today's Conversation has turns
+**Then** they render, scrolled to the end. Stored Structured Questions and Proposals render as answered text or re-enter `confirm-proposal`'s stale check; nothing in a transcript re-runs an action (FR-52).
+
+**Given** the chat store throws on read or write
+**When** Spencer sends a message
+**Then** Yoh still answers (logged, no history) (FR-52)
+
+**Given** a Playwright run against the fixture server
+**When** Spencer sends a message and reloads
+**Then** the message and the reply are still shown
+
+### Story 13.2: Record Planned Times and Slip Events for Patterns
+
+As Spencer,
+I want Yoh to start keeping the data a pattern needs now,
+So that pattern proposals (Story 13.13) have weeks of real evidence when they arrive.
+
+**Acceptance Criteria:**
+
+**Given** `completion-log.ts` `completions`
+**When** this story ships
+**Then** it gains nullable `planned_start` and `planned_end` columns (idempotent migration). A check-off fills them from today's Plan block for that Task; close-out completions and Tasks with no block leave them null (AD-30).
+
+**Given** a slip is recorded anywhere (night close-out, Slip-Bump)
+**When** it is written
+**Then** an append-only `slip_events` row `{taskId, area, date}` is written in the same transaction. The existing consecutive-slip record is unchanged.
+
+**Given** existing rows
+**When** the migration runs
+**Then** nothing is backfilled or altered, and the Desk metrics still pass their tests
+
+### Story 13.3: Memory Item Store
+
+As Spencer,
+I want every memory to be one versioned, recoverable item in a fixed folder,
+So that edits, supersedes, and Undo never lose what came before.
+
+**Acceptance Criteria:**
+
+**Given** `types/domain.ts`
+**When** this story ships
+**Then** it defines the closed `MemoryFolder` union (eight folders, PRD order) and `MemoryItem`. One `core/` function maps folder → load class (always / relevant / on-ask); it is never stored (AD-26).
+
+**Given** `adapters/memory-item-store.ts` (sole owner of `memory_items`, its external-content FTS5 index, `pattern_state`, and `searchRelevant`)
+**When** an item is restated, contradicted, edited, or moved
+**Then** a new row is inserted with `replaces_id`, and the old one becomes `superseded`. A merge supersedes both. A new version inherits `rule_change`.
+**And** text over `MEMORY_ITEM_MAX_CHARS` (280) is rejected as `validation`
+
+**Given** a forget
+**When** it runs
+**Then** the chain is marked `deleted`, and purged on Spencer's next user turn. Undo before then restores it.
+**And** "keep as history" sets `status: history` (kept, never loaded, never in Needs review)
+
+**Given** any write
+**When** it commits
+**Then** it ran in `writeTx` and appended one outbox row on `MEMORY_TOPIC`
+
+**Given** the store throws
+**When** a caller in `app/` uses it
+**Then** the error is caught and logged, and the caller proceeds without memory (AD-26 degradation)
+
+### Story 13.4: Memory Commands, the Remembered Receipt, and Undo
+
+As Spencer,
+I want to say "remember that …" or "forget …" and see exactly what Yoh kept,
+So that memory is never silent and a mistake is one click to undo.
+
+**Acceptance Criteria:**
+
+**Given** `core/memory-commands.ts`
+**When** a turn starts with "remember that …", "remember: …", `/remember`, "forget …", "forget that", `/forget`, or "what do you remember about …"
+**Then** it is recognized before capture, with no LLM routing guess. "remember to …" and "remind me to …" still create Tasks (FR-55).
+
+**Given** `types/api.ts`
+**When** this story ships
+**Then** it defines one `ChatStreamEvent` union with the fixed order `status`* → `delta`* → `done` (carries `substantive`) → `remembered` → `proposal` → `rating` → close (AD-27). `remembered` is `{receiptId, kind: 'remembered'|'forgot', items: [{id, text, folder, scope?, expiresOn?}]}`.
+
+**Given** "remember that Chem club is a club, not a class"
+**When** the reply finishes
+**Then** Haiku `extractMemories` runs with `forceStated`; `core` `validateFiling` checks it; the item is filed as Stated; and a `remembered` event is sent. The web renders one muted line under the reply: "Remembered: Chem club is a club, not a class · Corrections · Undo" (UX Remembered Receipt; scope and "until {date}" when present; two items joined on one line).
+**And** `aria-live="polite"` announces it; Undo is a real button
+
+**Given** Undo on the receipt
+**When** no later user turn exists in that Conversation
+**Then** `POST /api/memory/undo {receiptId}` removes the item (or restores the version it replaced, or restores a forgotten chain), and the line reads "Removed from memory." After Spencer's next message, the server refuses it and the line shows "View in Memory".
+
+**Given** "forget …" with several matches
+**When** it runs
+**Then** a disambiguation Structured Question lists them with their folders plus "None of these", stored as an interaction request. Nothing is deleted until it is answered. No match → "Nothing in memory matches '{words}'." (FR-55)
+
+**Given** "what do you remember about AP Bio"
+**When** it runs
+**Then** Yoh lists the matching items grouped by folder (Ideas & notes included), each linking to it on the Memory page
+
+**Given** filing fails or times out (`MEMORY_FILING_TIMEOUT_MS` = 8000)
+**When** it was an explicit command
+**Then** the line reads "Couldn't save that to memory." Otherwise nothing is shown. The reply is never delayed.
+
+**Given** the Command Palette
+**When** Spencer types "/"
+**Then** `/remember` and `/forget` are listed with a description and an example
+
+### Story 13.5: Automatic Filing After Each Turn
+
+As Spencer,
+I want Yoh to notice what's worth remembering without my asking,
+So that it gets to know me without me repeating myself.
+
+**Acceptance Criteria:**
+
+**Given** a turn not handled by a memory command
+**When** `core` `isTrivialTurn` is true (3 words or fewer, an acknowledgement, a turn handled by another deterministic command, or a Structured Question answer)
+**Then** no model call is made and nothing is filed (FR-54)
+
+**Given** a non-trivial turn
+**When** the reply's `done` has been sent
+**Then** one Haiku `extractMemories` call sees only Spencer's typed text plus the always-loaded set. It never sees the reply, search results, Research Vault pages, or Notion content.
+**And** `validateFiling` enforces: at most 2 items; no inferred item in Feedback or Planning preferences; inferred health, emotion, or finance items dropped; a valid expiry; the text length
+
+**Given** a candidate that restates an existing item
+**When** it is filed
+**Then** it becomes a new version of that item, not a duplicate. A contradiction supersedes the old item, which stays viewable as history (FR-54).
+
+**Given** a Feedback item
+**When** it is filed
+**Then** it stores its scope, with the narrowest reading when Spencer's words don't say. The receipt shows "for {scope}".
+
+**Given** a fake-LLM test suite
+**When** it runs
+**Then** it covers: a trivial turn (no call), a ≤2 clamp, an inferred Feedback candidate dropped, an inferred health candidate dropped, a restate, a contradiction, and a timeout with no receipt
+
+### Story 13.6: Recall in Answers and Plan Reasoning
+
+As Spencer,
+I want Yoh's answers and Plan explanations to use what it knows about me,
+So that I don't have to repeat context.
+
+**Acceptance Criteria:**
+
+**Given** the pure `core/memory-context.ts` selector
+**When** it runs over current items, relevant matches, and `now`
+**Then** it returns the `MemoryContext` plus each item's load state. The always-loaded set is current, unexpired items of the five always folders, newest `confirmed_at` first, capped at `ALWAYS_LOADED_CAP` (60). Overflow, expired, 120-day-stale, and `entity_ref`-conflict items are "not loaded" with a Needs review reason (AD-28).
+
+**Given** `answerGeneralQuestion`/`streamGeneralQuestion`, `draftNotionPageFields`, and Plan-reasoning generation
+**When** they are called
+**Then** they take a `MemoryContext`. The always block is a cached stable system block after the fixed prompt; relevant items (`searchRelevant`, FTS5 bm25 top 5 over the two relevant folders) go in the volatile block. A match bumps `last_matched_at`.
+
+**Given** `classifyCapture`, `classifyChatIntent`, search-intent, and the scheduler
+**When** this story ships
+**Then** their signatures take no memory, and a test asserts it. `confirm-proposal.ts` never reads memory (FR-56).
+
+**Given** the memory store is down
+**When** Spencer asks a question
+**Then** Yoh answers without memory
+
+### Story 13.7: Planning Settings Threaded Through the Scheduler
+
+As Spencer,
+I want every planning rule to come from one settings value,
+So that a rule change I approve (Story 13.8) changes planning everywhere, and nothing else can.
+
+**Acceptance Criteria:**
+
+**Given** `core/planning-settings.ts` `resolvePlanningSettings(defaults, overrides)` and `adapters/settings-store.ts` (closed `RuleSettingKey`: `schoolDayWorkStart`, `otherDayWorkStart`, `lunchWindow`, `communityWindow`, `areaDurationPadding`)
+**When** this story ships
+**Then** the `core/school-day.ts` work-start and protected-window functions, `work-break-fit`, `routine-placement`, and the morning / reshuffle / re-flow pipelines take a `PlanningSettings` parameter (AD-29)
+**And** a source-scan test forbids reading `WORK_START_TIMES` or the protected-window defaults anywhere but `resolvePlanningSettings`
+
+**Given** no overrides are stored
+**When** the full test suite runs
+**Then** every existing planning test passes unchanged: a pure refactor, no behavior change
+
+**Given** the Time Budget
+**When** this story ships
+**Then** it is not a `RuleSettingKey` and keeps its existing owner and proposal path
+
+### Story 13.8: Rule-Change Proposals From Planning Preferences
+
+As Spencer,
+I want "start work at 2:30 on school days" to ask me before it changes my Plan,
+So that memory never silently overrides a planning rule.
+
+**Acceptance Criteria:**
+
+**Given** a filed Planning-preferences item whose `extractMemories` candidate carries a `ruleChange` that `validateFiling` accepts
+**When** it is filed
+**Then** `app/chat-turn.ts` creates a `Proposal<RuleChange>` in the same transaction, marks the item `pending`, and sends a `proposal` event after `remembered`. The card reads "Change school-day work start from 3:15 PM to 2:30 PM?" Yes/No (FR-57).
+
+**Given** Yes
+**When** it is confirmed
+**Then** `confirm-proposal.ts` writes the override, marks the item `confirmed`, and replies "Changed school-day work start to 2:30 PM. Revert it on the Memory page." The next Plan uses it.
+
+**Given** No
+**When** it is answered
+**Then** nothing changes in planning; the item is `declined` and replies "Kept 3:15 PM. Your preference stays saved, marked declined." A restate of a declined preference is not re-proposed.
+
+**Given** Undo on that filing's receipt
+**When** the Proposal is still pending
+**Then** the Proposal is withdrawn with the item
+
+**Given** a pending Proposal
+**When** a Plan is built
+**Then** the preference has no effect
+
+**Given** a soft preference ("I like hard tasks first") or one about Derived Priority weights
+**When** it is filed
+**Then** no Proposal is raised; it affects only AI-written text
+
+### Story 13.9: Memory Page — Folders, Search, and Chat History
+
+As Spencer,
+I want a Memory page where I can see everything Yoh remembers and every past chat,
+So that nothing is remembered behind my back.
+
+**Acceptance Criteria:**
+
+**Given** the page stack
+**When** this story ships
+**Then** Memory is the fifth page after Research Hub, in the sidebar, and announced "Memory, page 5 of 5" (FR-59, UX)
+
+**Given** the Memory page
+**When** it loads
+**Then** it shows skeletons, then the Memory Rail (Needs review with count, hidden at zero; the eight folders with counts under "Always used" / "Used when relevant" / "Only when asked"; Changed settings; Chat history), with the last selection restored. Items show text, Stated/Inferred, date, scope, expiry, a Source link ("source deleted" when gone), "Not loaded" badges from the shared selector, and "{n} earlier versions".
+
+**Given** Memory Search
+**When** Spencer types
+**Then** one keyword search covers memories and chat history. Each result shows its folder or Conversation date and opens in place. Esc clears it.
+
+**Given** Chat history
+**When** Spencer opens a Conversation
+**Then** its read-only transcript shows. Delete conversation uses the Undo Toast and commits when it closes. "Clear all history" asks inline ("Clear all chat history? This can't be undone. Memories stay.") before `/api/chat-history/clear`.
+
+**Given** the memory or chat store is down
+**When** the page loads
+**Then** that pane shows "Couldn't load memory right now." and nothing is shown as saved
+
+**Given** a Playwright run
+**When** the fixture server has memory items and two Conversations
+**Then** the page lists them, and search finds an item and a chat turn. Light and dark pass axe.
+
+### Story 13.10: Memory Page — Edit, Needs Review, and Changed Settings
+
+As Spencer,
+I want to fix, move, expire, or delete any memory, and undo a rule change,
+So that I stay in control of what Yoh uses.
+
+**Acceptance Criteria:**
+
+**Given** a Memory Item
+**When** Spencer clicks its text (or presses Edit on focus)
+**Then** it edits in place: Enter saves as a new version (inferred becomes Stated), Esc cancels. A duplicate of another item offers "Merge with '{other}'?" Yes/No. A failure restores the old text with an error.
+
+**Given** the overflow menu
+**When** Spencer picks Move to folder, Set/Clear expiry, or Delete
+**Then** each is a direct write with a visible result. Delete dissolves the row with "Deleted '{text}' · Undo" and commits when the toast closes (FR-59).
+
+**Given** Needs review
+**When** it lists items
+**Then** each shows its reason ("Expired Dec 19", "Not loaded: over the cap", "Unused since May 2", "Notion now says Due Oct 4") and offers Renew (only where it applies), Edit, Delete, and Keep as history
+
+**Given** Changed settings
+**When** a confirmed rule change exists
+**Then** it reads "School-day work start: 2:30 PM (was 3:15 PM) · changed Sep 29" with Revert. Revert deletes the override and shows "Reverted to 3:15 PM." Empty: "No planning rules changed."
+
+**Given** the Patterns folder
+**When** a Pattern proposal is pending (Story 13.13)
+**Then** it appears at the top with its evidence and Yes/No
+
+### Story 13.11: "How Is Yoh Doing?" Rating
+
+As Spencer,
+I want an occasional one-click 1–3 rating instead of a written Self-Check,
+So that Yoh hears when it's off without nagging me.
+
+**Acceptance Criteria:**
+
+**Given** `adapters/rating-store.ts` and the pure `core/rating-schedule.ts` `decideRatingPrompt(state, {substantive, now, draw})`
+**When** a substantive chat turn ends (a plan change or re-fit asked in chat, a researched answer, `/morning`, `/night`)
+**Then** a `rating` event is sent with probability `RATING_PROMPT_PROBABILITY` (0.35) until that day's one prompt is shown. It never appears after a non-substantive turn, in a push, or on the Morning Ritual (FR-60).
+
+**Given** the prompt ("How is Yoh doing?" · 1 Poor · 2 Okay · 3 Good · Not now)
+**When** Spencer picks a score
+**Then** `POST /api/rating {promptId, score}` stores it, resets consecutive dismissals, and the prompt folds to "Rated 3 (good)". Keys 1–3 work while it has focus.
+
+**Given** "Not now", or a new message sent while it is open
+**When** it is dismissed
+**Then** the dismissal is recorded (server-side for a new message). Three in a row pause prompts for a week.
+
+**Given** a 1
+**When** it is picked
+**Then** an optional "What was off?" field appears with Send and Skip. A sent answer files to Feedback as Stated through the explicit path, with a receipt. `extra_prompt_due` lets the next substantive turn prompt again, at most one extra per day.
+
+**Given** any model call
+**When** it is built
+**Then** ratings are never included
+
+### Story 13.12: Retire Self-Check
+
+As Spencer,
+I want the four-day Self-Check gone now that the Rating replaces it,
+So that there's one feedback loop, not two.
+
+**Acceptance Criteria:**
+
+**Given** the codebase
+**When** this story ships
+**Then** the `self-check` subcommand and its deps, `rituals/self-check.ts`, `app/answer-self-check.ts`, the open-item question and answer kinds, the escalation and error-copy entries, and the web handling are removed. `grep -ri self-check src web/src` is empty (AD-31).
+**And** Escalate-Under-Strain no longer reads Self-Check scores
+
+**Given** stored open self-check interaction requests
+**When** the server starts after deploy
+**Then** a one-time cleanup removes them
+
+**Given** the Pi host timer for self-check
+**When** this ships
+**Then** the deploy notes name the systemd timer to disable. The coordinator disables it at deploy; the story never touches the host.
+
+### Story 13.13: Pattern Proposals With Evidence
+
+As Spencer,
+I want Yoh to notice things like "History essays run 30 minutes over" and ask me once,
+So that the Plan adapts to how I actually work, with my yes.
+
+**Acceptance Criteria:**
+
+**Given** the pure `core/pattern-detect.ts` run by `rituals/night-ritual.ts` after close-out
+**When** `slip_events` or same-day check-offs with `planned_end` show a `PatternKind` (`area-slips`, `area-overrun`) at least `PATTERN_MIN_OCCURRENCES` (4) times spanning ≥14 days within 42
+**Then** it creates a `Proposal<PatternProposal>` with evidence ("5 times since Sep 3: …") and the padding (median overrun rounded to 5 min), unless `pattern_state` for (kind, Area) is pending or declined within 30 days (FR-58, AD-30)
+**And** close-out completions and rows without `planned_start` are ignored
+
+**Given** a pending Pattern proposal
+**When** Spencer runs `/morning`, or opens the Chat panel for the first time that day
+**Then** at most one is shown per day: "Yoh noticed History essays run about 30 min over. 5 times since Sep 3: … Plan for that?" Yes/No. It is never a push or In-App Notification.
+
+**Given** Yes
+**When** it is confirmed
+**Then** a Patterns item is filed with a receipt. For `area-overrun`, an `areaDurationPadding` override is written through AD-29, and `plan-reasoning` cites the pattern whenever the padding affects a placement.
+
+**Given** No
+**When** it is answered
+**Then** nothing is filed, and `pattern_state.declined_at` is set
+
+**Given** a single day of overruns
+**When** detection runs
+**Then** nothing is proposed
