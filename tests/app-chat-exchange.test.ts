@@ -2,6 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createChatStore, initChatStoreSchema, type ChatStore } from "../src/adapters/chat-store.ts";
+import { createRatingStore, initRatingStoreSchema } from "../src/adapters/rating-store.ts";
 import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { chatExchange, type ChatExchangeDeps, type ChatTurnFn } from "../src/app/chat-exchange.ts";
@@ -356,4 +357,57 @@ test("auto filing: a restatesId outside the always-loaded set inserts instead of
   await chatExchange(h.deps, { message: CHEM });
   assert.equal(h.memoryItems.getItem(idea.id)?.status, "current");
   assert.equal(h.memoryItems.listItems().length, 2);
+});
+
+// ---- Story 13.11: rating ----
+function ratingHarness(turn: ChatTurnFn, extra: Partial<ChatExchangeDeps> = {}) {
+  const h = memoryHarness(turn, extra);
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initRatingStoreSchema(connection.db);
+  const ratings = createRatingStore(connection);
+  Object.assign(h.deps, { ratings, ratingDraw: () => 0 });
+  return { ...h, ratings };
+}
+
+test("rating: a substantive turn emits rating last, after remembered and proposal; done still carries substantive", async () => {
+  const client = fakeFiler('[{"folder":"about-you","text":"Chem club is a club","origin":"stated"}]');
+  const h = ratingHarness(async () => ok("Plan updated.", { substantive: true }), { memoryLlmClient: client });
+  await chatExchange(h.deps, { message: CHEM });
+  assert.deepEqual(h.events.map((e) => e.type), ["done", "remembered", "rating"]);
+  const done = h.events[0];
+  assert.ok(done?.type === "done" && done.response.substantive === true);
+  const rating = h.events[2];
+  assert.ok(rating?.type === "rating" && rating.promptId === h.ratings.getState().openPromptId);
+});
+
+test("rating: never after a non-substantive turn, an unlucky draw, or an abort; a second same-day turn does not prompt", async () => {
+  const quiet = ratingHarness(plainTurn());
+  await chatExchange(quiet.deps, { message: "hello there" });
+  assert.equal(quiet.events.some((e) => e.type === "rating"), false);
+  const unlucky = ratingHarness(async () => ok("x", { substantive: true }), { ratingDraw: () => 0.99 } as Partial<ChatExchangeDeps>);
+  Object.assign(unlucky.deps, { ratingDraw: () => 0.99 });
+  await chatExchange(unlucky.deps, { message: "/morning" });
+  assert.equal(unlucky.events.some((e) => e.type === "rating"), false);
+  const aborted = ratingHarness(async () => ok("x", { substantive: true }), { isAborted: () => true });
+  await chatExchange(aborted.deps, { message: "/morning" });
+  assert.equal(aborted.events.some((e) => e.type === "rating"), false);
+  const twice = ratingHarness(async () => ok("x", { substantive: true }));
+  await chatExchange(twice.deps, { message: "/morning" });
+  const firstId = twice.ratings.getState().openPromptId;
+  await chatExchange(twice.deps, { message: "/morning" });
+  assert.equal(twice.events.filter((e) => e.type === "rating").length, 1);
+  assert.equal(twice.ratings.getState().openPromptId, undefined, "the new message dismissed the open prompt");
+  assert.equal(twice.ratings.getState().consecutiveDismissals, 1);
+  assert.ok(firstId);
+});
+
+test("rating: a store failure is logged and never an error event nor a delayed done", async () => {
+  const h = ratingHarness(async () => ok("x", { substantive: true }));
+  (h.ratings as unknown as { getState: () => never }).getState = () => { throw new Error("boom"); };
+  (h.ratings as unknown as { dismissOpen: () => never }).dismissOpen = () => { throw new Error("boom"); };
+  const result = await chatExchange(h.deps, { message: "/morning" });
+  assert.equal(result.ok, true);
+  assert.deepEqual(h.events.map((e) => e.type), ["done"]);
+  assert.ok(h.logged.includes("chat-exchange.rating-failed"));
+  assert.ok(h.logged.includes("chat-exchange.rating-dismiss-failed"));
 });

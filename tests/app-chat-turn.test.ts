@@ -1502,3 +1502,20 @@ test("chatTurn answers without memory when the memory store throws", async () =>
   assert.equal(result.ok, true);
   if (result.ok) assert.equal(result.value.reply, "Do them tonight.");
 });
+
+// ---- Story 13.11: which turns are substantive ----
+test("substantive: /morning, /plan and a researched answer are marked; a plain general answer is not", async () => {
+  const store = tempStore();
+  putPlan(store, samplePlanFixture());
+  const morning = await chatTurn(baseDeps({ llmClient: makeFakeLlmClient(), store }), { message: "/morning" });
+  assert.ok(morning.ok && morning.value.substantive === true);
+  const plan = await chatTurn(planDayReadyDeps({ llmClient: makeFakeLlmClient() }), { message: "/plan" });
+  assert.ok(plan.ok && plan.value.substantive === true);
+  const searched = await chatTurn(
+    baseDeps({ llmClient: makeFakeLlmClient("GENERAL"), searchFn: async () => ({ ok: true, value: { answer: "Fall.", citations: [] } }) }),
+    { message: "search: AP Bio registration deadline" },
+  );
+  assert.ok(searched.ok && searched.value.substantive === true);
+  const chat = await chatTurn(baseDeps({ llmClient: makeFakeLlmClient("GENERAL") }), { message: "how are you" });
+  assert.ok(chat.ok && chat.value.substantive === undefined);
+});

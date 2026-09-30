@@ -13,7 +13,9 @@
 import { randomUUID } from "node:crypto";
 import { localIsoDate } from "../rituals/ritual-shared.ts";
 import type { StoredChatTurn } from "../adapters/chat-store.ts";
+import type { RatingStore } from "../adapters/rating-store.ts";
 import { isTrivialTurn } from "../core/memory-filing.ts";
+import { decideRatingPrompt } from "../core/rating-schedule.ts";
 import type { ChatStreamEvent, ChatTurnRequest, ChatTurnResponse } from "../types/api.ts";
 import type { Result, YohError } from "../types/domain.ts";
 import { chatTurn, type ChatTurnDeps } from "./chat-turn.ts";
@@ -28,6 +30,10 @@ export interface ChatExchangeDeps extends ChatTurnDeps {
   readonly isAborted?: () => boolean;
   /** Test seam: overrides `MEMORY_FILING_TIMEOUT_MS`. */
   readonly memoryFilingTimeoutMs?: number;
+  /** Story 13.11: rating schedule state. Absent = never prompts. */
+  readonly ratings?: RatingStore;
+  /** Test seam: the [0,1) draw compared against `RATING_PROMPT_PROBABILITY`; defaults to `Math.random`. */
+  readonly ratingDraw?: () => number;
 }
 
 export interface ChatExchangeSummary {
@@ -60,6 +66,15 @@ export async function chatExchange(
   const emit = (event: ChatStreamEvent): void => deps.emit?.(event);
 
   const userTurn = remember("user", input.message.trim(), false);
+  if (deps.ratings) {
+    // A new message while a rating prompt is open dismisses it (recorded server-side).
+    try {
+      const at = deps.now();
+      deps.ratings.dismissOpen({ today: localIsoDate(at, deps.timeZone), at: at.toISOString() });
+    } catch (error) {
+      deps.log?.({ level: "warn", event: "chat-exchange.rating-dismiss-failed", detail: describe(error) });
+    }
+  }
   if (deps.memoryItems) {
     try {
       deps.memoryItems.purgeDeleted();
@@ -94,7 +109,7 @@ export async function chatExchange(
   const text = response.question ? `${response.reply}\n\n${response.question.text}`.trim() : response.reply;
   if (text.trim() !== "") remember("assistant", text, false);
 
-  // Post-done seam (AD-27 order): `remembered` (here), then `proposal`, `rating` in later stories.
+  // Post-done seam (AD-27 order): `remembered`, then `proposal`, then `rating` (below).
   if (directive?.kind === "forgot") emit({ type: "remembered", receipt: directive.receipt });
   else if (directive?.kind === "remember") {
     const filed = await fileExplicitly(deps, directive.text, userTurn);
@@ -115,6 +130,21 @@ export async function chatExchange(
       }
     } catch (error) {
       deps.log?.({ level: "warn", event: "chat-exchange.filing-failed", detail: describe(error) });
+    }
+  }
+
+  // Story 13.11 (AD-27): `rating` comes last, after `remembered` and `proposal`. Never an `error` event.
+  if (deps.ratings && response.substantive === true) {
+    try {
+      const at = deps.now();
+      const today = localIsoDate(at, deps.timeZone);
+      if (decideRatingPrompt(deps.ratings.getState(), { substantive: true, today, draw: (deps.ratingDraw ?? Math.random)() })) {
+        const promptId = randomUUID();
+        deps.ratings.openPrompt({ promptId, today, at: at.toISOString() });
+        emit({ type: "rating", promptId });
+      }
+    } catch (error) {
+      deps.log?.({ level: "warn", event: "chat-exchange.rating-failed", detail: describe(error) });
     }
   }
 

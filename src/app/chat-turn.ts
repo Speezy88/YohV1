@@ -270,6 +270,11 @@ function recordRecentMessage(deps: ChatTurnDeps, message: string): void {
  * why-prioritized), then falls through to `app/general-question.ts`'s
  * `answerQuestion` as the sole, unconditional fallback.
  */
+/** Marks an OK result as a substantive turn (Story 13.11): only `chatExchange` reads it, to decide on a rating prompt. */
+function substantive(result: Result<ChatTurnResponse, YohError>): Result<ChatTurnResponse, YohError> {
+  return result.ok ? { ok: true, value: { ...result.value, substantive: true } } : result;
+}
+
 export async function chatTurn(deps: ChatTurnDeps, input: ChatTurnRequest): Promise<Result<ChatTurnResponse, YohError>> {
   const reachedLlm = { value: false };
   const result = await routeChatTurn(deps, input, reachedLlm);
@@ -305,7 +310,7 @@ async function routeChatTurn(
   // (prefix stripped, query = the rest); this is just an ordering fix.
   if (/^search:/i.test(line)) {
     const explicitSearchIntent = parseSearchIntent(line);
-    if (explicitSearchIntent) return searchWeb(deps, { query: explicitSearchIntent.query });
+    if (explicitSearchIntent) return substantive(await searchWeb(deps, { query: explicitSearchIntent.query }));
   }
 
   const timeBudgetCommand = parseTimeBudgetCommand(input.message);
@@ -327,7 +332,7 @@ async function routeChatTurn(
   // commands together keeps the dispatch chain readable.
   if (isPlanDayCommand(input.message)) {
     emitStatus(deps, STATUS_CHECKING_TASKS);
-    return planDay(planDayDepsFrom(deps), {});
+    return substantive(await planDay(planDayDepsFrom(deps), {}));
   }
 
   if (isMidDayReflowCommand(input.message)) {
@@ -346,6 +351,7 @@ async function routeChatTurn(
         reply: `${requested.value.proposal.suggested.summary} Approve to apply it, or discard to keep today's Plan as it is.`,
         receipts: [],
         question: requested.value.question,
+        substantive: true,
       },
     };
   }
@@ -466,6 +472,7 @@ async function routeChatTurn(
             reply: `${requested.value.proposal.suggested.summary} Approve to apply it, or discard to keep today's Plan as it is.`,
             receipts: [],
             question: requested.value.question,
+            substantive: true,
           },
         };
       }
@@ -494,7 +501,7 @@ async function routeChatTurn(
   // straight from searchWeb — no classifier, no capture call, matching
   // `classifyChatIntent`'s own SEARCH-trigger contract just below.
   const searchIntent = parseSearchIntent(input.message);
-  if (searchIntent) return searchWeb(deps, { query: searchIntent.query });
+  if (searchIntent) return substantive(await searchWeb(deps, { query: searchIntent.query }));
 
   // Real-use fixes plan, Task 2 (replaces Story 8.8's two-way
   // detectTaskCapture): "Lab report draft, due Thursday" matches none of the
@@ -541,7 +548,7 @@ async function routeChatTurn(
   } catch {
     chatIntent = { kind: "general-question" }; // a classifier failure must never block the ordinary chat turn.
   }
-  if (chatIntent.kind === "search-trigger") return searchWeb(deps, { query: chatIntent.query });
+  if (chatIntent.kind === "search-trigger") return substantive(await searchWeb(deps, { query: chatIntent.query }));
 
   return answerQuestion(
     {
@@ -608,12 +615,12 @@ async function dispatchSlashCommand(deps: ChatTurnDeps, line: string): Promise<R
     case "/morning": {
       const result = await morningView(deps, {});
       if (!result.ok) return result;
-      return { ok: true, value: { reply: formatMorningView(result.value), receipts: [] } };
+      return { ok: true, value: { reply: formatMorningView(result.value), receipts: [], substantive: true } };
     }
     case "/night":
-      return startNightCloseOut(deps, {});
+      return substantive(await startNightCloseOut(deps, {}));
     case "/plan":
-      return planDay(planDayDepsFrom(deps), {});
+      return substantive(await planDay(planDayDepsFrom(deps), {}));
     case "/sandbox": {
       const queue = await sandboxQueue(deps, { withOptions: true });
       if (!queue.ok) return queue;

@@ -415,6 +415,8 @@ export interface ChatTurnResponse {
   readonly memory?: MemoryTurnDirective;
   /** Server-internal (Story 13.5): the turn returned before any LLM classification step. `chatExchange` strips it before `done`. */
   readonly handledDeterministically?: boolean;
+  /** Story 13.11: a plan change, re-fit, researched answer, `/morning` or `/night`. Stays on the wire. */
+  readonly substantive?: boolean;
 }
 
 /** What `chatTurn` asks `chatExchange` to do after `done` for a memory command (E2: `chatTurn` never files). */
@@ -474,6 +476,19 @@ export interface RevertSettingRequest {
 /** `POST /api/settings/revert` value, e.g. "Reverted to 3:15 PM.". */
 export interface RevertSettingResponse {
   readonly message: string;
+}
+
+/** `POST /api/rating` request (Story 13.11): exactly one of `score` or `dismissed`; `note` only with score 1. */
+export interface RatingRequest {
+  readonly promptId: string;
+  readonly score?: 1 | 2 | 3;
+  readonly dismissed?: true;
+  readonly note?: string;
+}
+
+/** `POST /api/rating` value: a receipt when a note was filed to Feedback (empty `items` = filing failed). */
+export interface RatingResponse {
+  readonly receipt?: RememberedReceipt;
 }
 
 /** `POST /api/memory/undo` request. */

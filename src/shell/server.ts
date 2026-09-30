@@ -60,7 +60,9 @@ import {
 import { createChatStore, initChatStoreSchema, type ChatStore } from "../adapters/chat-store.ts";
 import { initSettingsStoreSchema } from "../adapters/settings-store.ts";
 import { createMemoryItemStore, initMemoryItemStoreSchema, type MemoryItemStore } from "../adapters/memory-item-store.ts";
-import { chatExchange, type ChatTurnFn } from "../app/chat-exchange.ts";
+import { chatExchange, type ChatExchangeDeps, type ChatTurnFn } from "../app/chat-exchange.ts";
+import { rate } from "../app/rate.ts";
+import { createRatingStore, initRatingStoreSchema, type RatingStore } from "../adapters/rating-store.ts";
 import { clearChatHistory, deleteChatConversation, getChatConversation, listChatHistory, todaysChatHistory } from "../app/chat-history.ts";
 import { initRoutineStoreSchema } from "../adapters/routine-store.ts";
 import { HEARTBEAT_INTERVAL_MS, initPlanStateStoreSchema, writeHeartbeat } from "../adapters/plan-state-store.ts";
@@ -143,6 +145,7 @@ import { finishSandboxSession, saveSandboxCardAndAdvance, type SandboxSubmitDeps
 import { firstCardView } from "../core/sandbox-card-view.ts";
 import type {
   AnswerOpenItemRequest,
+  RatingRequest,
   UndoMemoryRequest,
   EditMemoryRequest,
   MoveMemoryRequest,
@@ -496,7 +499,7 @@ function sseMessage(event: ChatStreamEvent): { event: string; data: string } {
  */
 export async function runChatStream(
   stream: ChatSseStreamLike,
-  deps: ChatTurnDeps,
+  deps: ChatTurnDeps & Pick<ChatExchangeDeps, "ratings" | "ratingDraw">,
   input: ChatTurnRequest,
   runChatTurn: ChatTurnFn = chatTurn,
 ): Promise<void> {
@@ -608,6 +611,8 @@ export interface ServerDeps {
    */
   readonly chat?: Omit<ChatTurnDeps & AnswerOpenItemDeps, "session" | "emit"> & {
     readonly runChatTurn?: ChatTurnFn;
+    /** Story 13.11 test seam: the [0,1) rating draw (the e2e fixture forces it). */
+    readonly ratingDraw?: () => number;
     /** The Yoh Plan calendar sync's two reads; `buildPlanSyncDeps` joins them with `reshuffle`. */
     readonly planSyncReads?: Pick<SyncPlanFromCalendarDeps, "readYohPlanEvents" | "readDeletedYohPlanEventIds" | "readPlanCalendarSnapshot" | "readPlanCalendarWriteState">;
   };
@@ -615,6 +620,8 @@ export interface ServerDeps {
   readonly chatHistory?: ChatStore;
   /** Story 13.4: the memory item store (commands, receipts, Undo). */
   readonly memoryItems?: MemoryItemStore;
+  /** Story 13.11: the rating schedule/answers store (`POST /api/rating`, the `rating` chat event). */
+  readonly ratings?: RatingStore;
   /**
    * Story 8.5, contract C3: the ONE `ChatSession` every chat route in this
    * process shares (`startServer` builds it; Stories 8.6/8.7's routes reuse
@@ -813,13 +820,14 @@ export function createApp(deps: ServerDeps) {
   // real dependency `chatTurn`/`surfaceOpenItems`/`answerOpenItem` read) is
   // stripped out here so it never reaches any of the three (pinned by
   // `tests/server-chat.test.ts`'s "never the runChatTurn seam itself" case).
-  let chatDeps: (Omit<ChatTurnDeps, "emit"> & AnswerOpenItemDeps) | undefined;
+  let chatDeps: (Omit<ChatTurnDeps, "emit"> & AnswerOpenItemDeps & Pick<ChatExchangeDeps, "ratings" | "ratingDraw">) | undefined;
   if (deps.chat) {
     const { runChatTurn: _runChatTurn, ...rest } = deps.chat;
     chatDeps = {
       ...rest,
       ...(deps.chatHistory ? { chatHistory: deps.chatHistory } : {}),
       ...(deps.memoryItems ? { memoryItems: deps.memoryItems } : {}),
+      ...(deps.ratings ? { ratings: deps.ratings } : {}),
       session: chatSession,
     };
   }
@@ -1369,6 +1377,36 @@ export function createApp(deps: ServerDeps) {
           return c.json(result, httpStatus(result));
         },
       )
+      // Story 13.11: a rating pick or dismissal; a score-1 note files to Feedback and returns its receipt.
+      .post(
+        "/api/rating",
+        validator("json", validateMemoryBody<RatingRequest>("rating", (b) =>
+          !isNonEmptyString(b["promptId"]) ? "missing promptId"
+          : b["score"] !== undefined && b["score"] !== 1 && b["score"] !== 2 && b["score"] !== 3 ? "bad score"
+          : b["dismissed"] !== undefined && b["dismissed"] !== true ? "bad dismissed"
+          : b["note"] !== undefined && typeof b["note"] !== "string" ? "bad note"
+          : undefined)),
+        async (c) => {
+          if (!deps.ratings) return c.json(CHAT_HISTORY_NOT_CONFIGURED, httpStatus(CHAT_HISTORY_NOT_CONFIGURED));
+          const { runChatTurn: _r, ...chatRest } = deps.chat ?? ({} as NonNullable<ServerDeps["chat"]>);
+          const result = wire(
+            await rate(
+              {
+                ...(deps.chat ? chatRest : {}),
+                ...(deps.memoryItems ? { memoryItems: deps.memoryItems } : {}),
+                ...(deps.chatHistory ? { chatHistory: deps.chatHistory } : {}),
+                ratings: deps.ratings,
+                connection: deps.connection,
+                store: deps.chat?.store ?? createMemoryStore(deps.connection),
+                now: () => new Date(),
+                timeZone: deps.chat?.timeZone ?? process.env["YOH_TIMEZONE"] ?? "UTC",
+              },
+              c.req.valid("json"),
+            ),
+          );
+          return c.json(result, httpStatus(result));
+        },
+      )
       // Story 13.10: the Memory page's direct writes. Each validates its body, then calls ONE app function.
       .post(
         "/api/memory/edit",
@@ -1506,7 +1544,7 @@ export function startServer(
   env: Readonly<Record<string, string | undefined>> = process.env,
   serveFn: ServeFn = (options) => serve({ ...options }),
   /** Story 7.8's `homeView`, Story 7.10's `checkOff`, Story 8.5's `chat`, Task 6C's `research`, Task 4's `calendarDay`, and Story 9.2's `sandbox`, threaded through the same way `connection` already is. */
-  features: Pick<ServerDeps, "homeView" | "calendarDay" | "checkOff" | "plan" | "planSync" | "chat" | "chatHistory" | "memoryItems" | "tasks" | "research" | "sandbox"> = {},
+  features: Pick<ServerDeps, "homeView" | "calendarDay" | "checkOff" | "plan" | "planSync" | "chat" | "chatHistory" | "memoryItems" | "ratings" | "tasks" | "research" | "sandbox"> = {},
 ): ServerHandle {
   const port = parsePort(env["YOH_SERVER_PORT"]);
   // Contract C3: one ChatSession per server process, shared by every chat route.
@@ -1522,6 +1560,7 @@ export function startServer(
     ...(features.chat ? { chat: features.chat } : {}),
     ...(features.chatHistory ? { chatHistory: features.chatHistory } : {}),
     ...(features.memoryItems ? { memoryItems: features.memoryItems } : {}),
+    ...(features.ratings ? { ratings: features.ratings } : {}),
     ...(features.tasks ? { tasks: features.tasks } : {}),
     ...(features.research ? { research: features.research } : {}),
     ...(features.sandbox ? { sandbox: features.sandbox } : {}),
@@ -2036,6 +2075,7 @@ if (import.meta.main) {
   initPlanStateStoreSchema(connection.db);
   initRoutineStoreSchema(connection.db);
   initChatStoreSchema(connection.db);
+  initRatingStoreSchema(connection.db);
   initSettingsStoreSchema(connection.db);
   initMemoryItemStoreSchema(connection.db);
   initCompletionLogSchema(connection.db);
@@ -2074,6 +2114,7 @@ if (import.meta.main) {
     ...(chat ? { chat } : {}),
     chatHistory: createChatStore(connection),
     memoryItems: createMemoryItemStore(connection),
+    ratings: createRatingStore(connection),
     ...(tasks ? { tasks } : {}),
     ...(research ? { research } : {}),
     ...(sandbox ? { sandbox } : {}),
