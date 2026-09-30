@@ -36,7 +36,7 @@
 #   epic-10, per the ledger's queue (fixes+UI plan -> Epic 9 -> this epic -> 10 -> 11 -> 12). Story list is a
 #   sketch only, to be planned in full when this epic starts (see epics.md).
 generated: 08-22-2026 00:00
-last_updated: 09-29-2026 22:00
+last_updated: 09-29-2026 23:00
 project: YohV1
 project_key: NOKEY
 tracking_system: file-system
@@ -154,7 +154,7 @@ development_status:
   13-3-memory-item-store: backlog
   13-4-memory-commands-the-remembered-receipt-and-undo: backlog
   13-5-automatic-filing-after-each-turn: backlog
-  13-6-recall-in-answers-and-plan-reasoning: backlog
+  13-6-recall-in-answers-and-drafts: backlog
   13-7-planning-settings-threaded-through-the-scheduler: backlog
   13-8-rule-change-proposals-from-planning-preferences: backlog
   13-9-memory-page-folders-search-and-chat-history: backlog

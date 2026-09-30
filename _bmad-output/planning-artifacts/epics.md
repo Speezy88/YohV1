@@ -2975,10 +2975,10 @@ So that it gets to know me without me repeating myself.
 **When** it runs
 **Then** it covers: a trivial turn (no call), a ≤2 clamp, an inferred Feedback candidate dropped, an inferred health candidate dropped, a restate, a contradiction, and a timeout with no receipt
 
-### Story 13.6: Recall in Answers and Plan Reasoning
+### Story 13.6: Recall in Answers and Drafts
 
 As Spencer,
-I want Yoh's answers and Plan explanations to use what it knows about me,
+I want Yoh's answers and the Notion items it drafts to use what it knows about me,
 So that I don't have to repeat context.
 
 **Acceptance Criteria:**
@@ -2987,7 +2987,7 @@ So that I don't have to repeat context.
 **When** it runs over current items, relevant matches, and `now`
 **Then** it returns the `MemoryContext` plus each item's load state. The always-loaded set is current, unexpired items of the five always folders, newest `confirmed_at` first, capped at `ALWAYS_LOADED_CAP` (60). Overflow, expired, 120-day-stale, and `entity_ref`-conflict items are "not loaded" with a Needs review reason (AD-28).
 
-**Given** `answerGeneralQuestion`/`streamGeneralQuestion`, `draftNotionPageFields`, and Plan-reasoning generation
+**Given** `answerGeneralQuestion`/`streamGeneralQuestion` and `draftNotionPageFields` (Plan reasoning is deterministic and takes no memory, AD-28)
 **When** they are called
 **Then** they take a `MemoryContext`. The always block is a cached stable system block after the fixed prompt; relevant items (`searchRelevant`, FTS5 bm25 top 5 over the two relevant folders) go in the volatile block. A match bumps `last_matched_at`.
 
@@ -3034,7 +3034,7 @@ So that memory never silently overrides a planning rule.
 
 **Given** a filed Planning-preferences item whose `extractMemories` candidate carries a `ruleChange` that `validateFiling` accepts
 **When** it is filed
-**Then** `app/chat-turn.ts` creates a `Proposal<RuleChange>` in the same transaction, marks the item `pending`, and sends a `proposal` event after `remembered`. The card reads "Change school-day work start from 3:15 PM to 2:30 PM?" Yes/No (FR-57).
+**Then** `app/chat-exchange.ts` creates a `Proposal<RuleChange>` in the same transaction, marks the item `pending`, and sends a `proposal` event after `remembered`. The card reads "Change school-day work start from 3:15 PM to 2:30 PM?" Yes/No (FR-57).
 
 **Given** Yes
 **When** it is confirmed
@@ -3177,18 +3177,18 @@ So that the Plan adapts to how I actually work, with my yes.
 
 **Acceptance Criteria:**
 
-**Given** the pure `core/pattern-detect.ts` run by `rituals/night-ritual.ts` after close-out
+**Given** the pure `core/pattern-detect.ts` run by `rituals/pattern-ritual.ts` after the `ritual-cli morning` Morning Ritual (AD-30)
 **When** `slip_events` or same-day check-offs with `planned_end` show a `PatternKind` (`area-slips`, `area-overrun`) at least `PATTERN_MIN_OCCURRENCES` (4) times spanning ≥14 days within 42
 **Then** it creates a `Proposal<PatternProposal>` with evidence ("5 times since Sep 3: …") and the padding (median overrun rounded to 5 min), unless `pattern_state` for (kind, Area) is pending or declined within 30 days (FR-58, AD-30)
 **And** close-out completions and rows without `planned_start` are ignored
 
 **Given** a pending Pattern proposal
 **When** Spencer runs `/morning`, or opens the Chat panel for the first time that day
-**Then** at most one is shown per day across both surfaces (`/morning` emits it as the turn's `proposal` event; the panel fetches `GET /api/memory/pattern-offer`, which records `last_offered_on`; AD-30): "Yoh noticed History essays run about 30 min over. 5 times since Sep 3: … Plan for that?" Yes/No. It is never a push or In-App Notification.
+**Then** at most one is shown per day across both surfaces (`/morning` returns it as the turn's `ChatTurnResponse.question`; the panel fetches `GET /api/memory/pattern-offer`, which records `last_offered_on`; AD-30): "Yoh noticed History essays run about 30 min over. 5 times since Sep 3: … Plan for that?" Yes/No. It is never a push or In-App Notification.
 
 **Given** Yes
 **When** it is confirmed
-**Then** a Patterns item is filed with a receipt. For `area-overrun`, an `areaDurationPadding` override is written through AD-29, and `plan-reasoning` cites the pattern whenever the padding affects a placement.
+**Then** a Patterns item is filed with a receipt. For `area-overrun`, an `areaDurationPadding` override is written through AD-29, and `core/plan-reasoning.ts` adds a deterministic sentence citing the pattern whenever the padding affects a placement.
 
 **Given** No
 **When** it is answered
