@@ -78,7 +78,12 @@ export async function fileMemory(deps: FileMemoryDeps, input: FileMemoryInput): 
       });
       if (accepted.length === 0) return undefined;
       const filed: Filed[] = [];
-      for (const action of planFilingActions(accepted, alwaysLoaded)) filed.push(await fileOne(deps, items, action, input.userTurn?.id));
+      const halted = (): boolean => timedOut || deps.isAborted?.() === true;
+      for (const action of planFilingActions(accepted, alwaysLoaded)) {
+        if (halted()) return undefined;
+        filed.push(await fileOne(deps, items, action, input.userTurn?.id, halted));
+      }
+      if (halted()) return undefined;
       const receipt: RememberedReceipt = {
         receiptId: randomUUID(),
         kind: "remembered",
@@ -159,9 +164,11 @@ async function planRuleChange(deps: FileMemoryDeps, items: MemoryItemStore, acti
   return { key: rc.key, value, previous };
 }
 
-async function fileOne(deps: FileMemoryDeps, items: MemoryItemStore, action: FilingAction, sourceTurnId: string | undefined): Promise<Filed> {
+async function fileOne(deps: FileMemoryDeps, items: MemoryItemStore, action: FilingAction, sourceTurnId: string | undefined, halted: () => boolean): Promise<Filed> {
   const base = baseItem(action.candidate, sourceTurnId);
   const planned = await planRuleChange(deps, items, action);
+  // planRuleChange awaits I/O: a timeout or abort meanwhile must not commit anything.
+  if (halted()) throw new Error("memory filing halted");
   const connection = deps.connection;
   const store = deps.store;
   if (!planned || !connection || !store) {

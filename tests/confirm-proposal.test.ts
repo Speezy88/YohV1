@@ -686,3 +686,26 @@ test("settings-store logs a skipped invalid stored row", async () => {
   }
   assert.ok(lines.some((l) => l.includes("settings-store.invalid-row-skipped")));
 });
+
+test("rule-change: a gone item (purged) never strands the card on decline, expiry or stale", async () => {
+  const gone = (h: ReturnType<typeof ruleHarness>) => {
+    (h.memoryItems as { setRuleChange: unknown }).setRuleChange = () => { throw new Error("memory item not found"); };
+  };
+  const decline = ruleHarness();
+  gone(decline);
+  assert.ok((await confirmProposal(decline.deps, { proposal: decline.proposal, accept: false, requestId: decline.requestId })).ok);
+  assert.equal(getOpenInteractionRequest(decline.store, decline.requestId), undefined);
+
+  const expired = ruleHarness(new Date(new Date(NOW).getTime() + 8 * 86_400_000));
+  gone(expired);
+  const e = await confirmProposal(expired.deps, { proposal: expired.proposal, accept: true, requestId: expired.requestId });
+  assert.ok(!e.ok && e.error.kind === "stale-proposal");
+  assert.equal(getOpenInteractionRequest(expired.store, expired.requestId), undefined);
+
+  const stale = ruleHarness();
+  gone(stale);
+  writeSetting(stale.connection, "schoolDayWorkStart", "16:00");
+  const s = await confirmProposal(stale.deps, { proposal: stale.proposal, accept: true, requestId: stale.requestId });
+  assert.ok(!s.ok && s.error.kind === "stale-proposal");
+  assert.equal(getOpenInteractionRequest(stale.store, stale.requestId), undefined);
+});

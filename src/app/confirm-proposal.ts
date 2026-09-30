@@ -37,6 +37,7 @@ import {
   type MemoryStore,
   PLAN_TOPIC,
 } from "../adapters/memory-store.ts";
+import { writeStructuredLog } from "../adapters/logger.ts";
 import { MEMORY_TOPIC } from "../adapters/chat-store.ts";
 import { readPlanningSettings, writeSettingInTx } from "../adapters/settings-store.ts";
 import { appendOutboxInTx } from "../adapters/notification-store.ts";
@@ -269,6 +270,15 @@ function staleRuleProposal(message: string): Result<ConfirmProposalResponse, Yoh
  * transaction; a No or an expired/stale/invalid one writes no planning.
  * Reads no memory text — only the item id from the stored payload.
  */
+/** Clears the request first (the caller), then sets the item state; a gone item (forgotten/purged) is logged and skipped. */
+function setItemStateOrLog(deps: ConfirmProposalDeps, itemId: string, state: "none" | "declined"): void {
+  try {
+    deps.memoryItems?.setRuleChange(itemId, state);
+  } catch (error) {
+    writeStructuredLog({ level: "warn", event: "confirm-proposal.rule-item-missing", detail: { itemId, message: error instanceof Error ? error.message : String(error) } });
+  }
+}
+
 function confirmRuleChange(
   deps: ConfirmProposalDeps,
   proposal: Proposal<RuleChange>,
@@ -277,8 +287,8 @@ function confirmRuleChange(
 ): Result<ConfirmProposalResponse, YohError> {
   const change = proposal.suggested;
   if (!accept) {
-    deps.memoryItems?.setRuleChange(change.memoryItemId, "declined");
     clearRequestIfGiven(deps.store, requestId);
+    setItemStateOrLog(deps, change.memoryItemId, "declined");
     return { ok: true, value: { applied: false, receipts: [], message: ruleChangeDeclinedCopy(change) } };
   }
   if (!deps.connection || !deps.memoryItems) {
@@ -288,15 +298,15 @@ function confirmRuleChange(
   const memoryItems = deps.memoryItems;
   const now = deps.now ? deps.now() : new Date();
   if (isOlderThanDays(proposal.createdAt, now, RULE_PROPOSAL_TTL_DAYS)) {
-    memoryItems.setRuleChange(change.memoryItemId, "declined");
     clearRequestIfGiven(deps.store, requestId);
+    setItemStateOrLog(deps, change.memoryItemId, "declined");
     return staleRuleProposal("confirm-proposal: that rule change expired");
   }
   const area = typeof change.value === "object" && "area" in change.value ? change.value.area : undefined;
   const settings = deps.store.withDb(readPlanningSettings);
   if (!ruleValuesEqual(currentRuleValue(settings, change.key, area), change.previous)) {
-    memoryItems.setRuleChange(change.memoryItemId, "none");
     clearRequestIfGiven(deps.store, requestId);
+    setItemStateOrLog(deps, change.memoryItemId, "none");
     return staleRuleProposal("confirm-proposal: that setting changed since the proposal");
   }
   const checked = validateProposedRuleValue(settings, change.key, change.value);

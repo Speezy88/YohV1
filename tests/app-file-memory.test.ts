@@ -160,3 +160,28 @@ test("surfaceOpenItems withdraws a rule-change proposal older than 7 days as dec
   assert.ok(fresh.ok && fresh.value.items.length === 1);
   void putOpenInteractionRequest;
 });
+
+test("a slow readTasks resolving after the timeout files nothing and raises no request", async () => {
+  const pad = '[{"folder":"planning-preferences","text":"Pad Work","origin":"stated","ruleChange":{"key":"areaDurationPadding","value":{"area":"Work","minutes":10}}}]';
+  const h = harness(pad, {
+    memoryFilingTimeoutMs: 20,
+    readTasks: async () => { await new Promise((r) => setTimeout(r, 80)); return [{ area: "Work" }]; },
+  });
+  const r = await fileMemory(h.deps as never, { text: "Please plan ten extra minutes for Work tasks", forceStated: false });
+  assert.equal(r.ok, false);
+  await new Promise((r2) => setTimeout(r2, 150));
+  assert.equal(h.memoryItems.listItems().length, 0);
+  assert.equal(listOpenInteractionRequests(h.store).length, 0);
+});
+
+test("a restate of a pending preference files soft and withdraws the older proposal", async () => {
+  const h = harness(SCHOOL);
+  await chatExchange(h.deps, { message: MSG });
+  const first = h.memoryItems.listItems()[0]!;
+  (h.deps as { memoryLlmClient: unknown }).memoryLlmClient = filer(SCHOOL.replace("}]", `,"restatesId":"${first.id}"}]`));
+  await chatExchange(h.deps, { message: MSG + " please" });
+  assert.equal(listOpenInteractionRequests(h.store).length, 0);
+  const current = h.memoryItems.listItems({ status: ["current"] });
+  assert.equal(current.length, 1);
+  assert.equal(current[0]?.ruleChange, "none");
+});
