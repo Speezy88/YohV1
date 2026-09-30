@@ -15,7 +15,7 @@ import { localIsoDate } from "../rituals/ritual-shared.ts";
 import type { StoredChatTurn } from "../adapters/chat-store.ts";
 import { extractMemories } from "../adapters/llm-adapter.ts";
 import { ALWAYS_LOADED_FOLDERS } from "../core/memory-folders.ts";
-import { MEMORY_FILING_TIMEOUT_MS, validateFiling } from "../core/memory-filing.ts";
+import { isTrivialTurn, MEMORY_FILING_TIMEOUT_MS, planFilingActions, validateFiling, type FilingAction } from "../core/memory-filing.ts";
 import type { ChatStreamEvent, ChatTurnRequest, ChatTurnResponse, RememberedReceipt } from "../types/api.ts";
 import type { MemoryCandidate, Result, YohError } from "../types/domain.ts";
 import { chatTurn, type ChatTurnDeps } from "./chat-turn.ts";
@@ -84,7 +84,7 @@ export async function chatExchange(
 
   if (!result.ok) return result;
 
-  const { memory: directive, ...response } = result.value;
+  const { memory: directive, handledDeterministically, ...response } = result.value;
   emit({ type: "done", response });
 
   if (isAborted?.() === true) {
@@ -99,32 +99,66 @@ export async function chatExchange(
   if (directive?.kind === "forgot") emit({ type: "remembered", receipt: directive.receipt });
   else if (directive?.kind === "remember") {
     emit({ type: "remembered", receipt: await fileExplicitly(deps, directive.text, userTurn) });
+  } else if (
+    !directive &&
+    deps.memoryItems &&
+    !isTrivialTurn(input.message, { handledDeterministically: handledDeterministically === true, isStructuredAnswer: false })
+  ) {
+    // Story 13.5: automatic filing. Failure, timeout, or nothing worth filing shows nothing.
+    try {
+      const receipt = await fileMemories(deps, input.message.trim(), userTurn, false);
+      if (receipt) emit({ type: "remembered", receipt });
+    } catch (error) {
+      deps.log?.({ level: "warn", event: "chat-exchange.filing-failed", detail: describe(error) });
+    }
   }
 
   return { ok: true, value: { reply: text, truncated: false } };
 }
 
 /**
- * The explicit "remember ..." path (Story 13.4): Haiku extracts with `forceStated`,
- * `validateFiling` checks, each accepted item is filed. Bounded by the filing timeout;
- * any failure, timeout, or empty result yields a receipt with `items: []` (the web says
- * "Couldn't save that to memory."). Never throws, never an `error` event.
+ * The explicit "remember ..." path (Story 13.4): forced Stated. Any failure, timeout, or
+ * empty result yields a receipt with `items: []` (the web says "Couldn't save that to
+ * memory."). Never throws, never an `error` event.
  */
 async function fileExplicitly(deps: ChatExchangeDeps, text: string, userTurn: StoredChatTurn | undefined): Promise<RememberedReceipt> {
   const failed: RememberedReceipt = { receiptId: randomUUID(), kind: "remembered", items: [] };
+  try {
+    return (await fileMemories(deps, text, userTurn, true)) ?? failed;
+  } catch (error) {
+    deps.log?.({ level: "warn", event: "chat-exchange.memory-filing-failed", detail: describe(error) });
+    return failed;
+  }
+}
+
+/**
+ * One filing pass shared by the explicit and automatic paths: Haiku extracts from Spencer's
+ * typed text plus the always-loaded set (never the reply), `validateFiling` checks,
+ * `planFilingActions` maps restate/contradict to supersede, each item is filed and a receipt
+ * stored. Bounded by the filing timeout. Resolves `undefined` when nothing was accepted;
+ * rejects on failure or timeout (the caller decides what that looks like).
+ */
+async function fileMemories(
+  deps: ChatExchangeDeps,
+  text: string,
+  userTurn: StoredChatTurn | undefined,
+  forceStated: boolean,
+): Promise<RememberedReceipt | undefined> {
   const store = deps.memoryItems;
-  if (!store) return failed;
+  if (!store) return undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(() => reject(new Error("memory filing timed out")), deps.memoryFilingTimeoutMs ?? MEMORY_FILING_TIMEOUT_MS);
     });
-    const filing = (async (): Promise<RememberedReceipt> => {
+    const filing = (async (): Promise<RememberedReceipt | undefined> => {
       const alwaysLoaded = store.listItems({ folders: ALWAYS_LOADED_FOLDERS, status: ["current"] });
-      const candidates = await extractMemories(deps.memoryLlmClient ?? deps.llmClient, text, alwaysLoaded, { forceStated: true }, deps.connection);
-      const { accepted } = validateFiling(candidates, { now: deps.now(), timeZone: deps.timeZone, forceStated: true });
-      if (accepted.length === 0) return failed;
-      const filed = accepted.map((c) => fileCandidate(store, c, userTurn?.id));
+      const candidates = await extractMemories(deps.memoryLlmClient ?? deps.llmClient, text, alwaysLoaded, { forceStated }, deps.connection);
+      const { accepted } = validateFiling(candidates, { now: deps.now(), timeZone: deps.timeZone, forceStated });
+      if (accepted.length === 0) return undefined;
+      const filed = planFilingActions(accepted, store.listItems({ status: ["current"] })).map((a) =>
+        fileCandidate(store, a, userTurn?.id),
+      );
       const receipt: RememberedReceipt = {
         receiptId: randomUUID(),
         kind: "remembered",
@@ -151,15 +185,13 @@ async function fileExplicitly(deps: ChatExchangeDeps, text: string, userTurn: St
     })();
     filing.catch(() => {}); // a late failure after the timeout must not go unhandled
     return await Promise.race([filing, timeout]);
-  } catch (error) {
-    deps.log?.({ level: "warn", event: "chat-exchange.memory-filing-failed", detail: describe(error) });
-    return failed;
   } finally {
     if (timer) clearTimeout(timer);
   }
 }
 
-function fileCandidate(store: NonNullable<ChatExchangeDeps["memoryItems"]>, c: MemoryCandidate, sourceTurnId: string | undefined) {
+function fileCandidate(store: NonNullable<ChatExchangeDeps["memoryItems"]>, action: FilingAction, sourceTurnId: string | undefined) {
+  const c = action.candidate;
   const next = {
     folder: c.folder,
     text: c.text,
@@ -170,6 +202,5 @@ function fileCandidate(store: NonNullable<ChatExchangeDeps["memoryItems"]>, c: M
     ...(sourceTurnId !== undefined ? { sourceTurnId } : {}),
     // ruleChange stays "none" until T9.
   };
-  const replaces = [c.restatesId, c.contradictsId].find((id) => id !== undefined && store.getItem(id)?.status === "current");
-  return replaces !== undefined ? store.supersede(replaces, next) : store.insert(next);
+  return action.kind === "supersede" && action.targetId !== undefined ? store.supersede(action.targetId, next) : store.insert(next);
 }

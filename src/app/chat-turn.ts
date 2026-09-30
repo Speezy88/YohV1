@@ -269,6 +269,18 @@ function recordRecentMessage(deps: ChatTurnDeps, message: string): void {
  * `answerQuestion` as the sole, unconditional fallback.
  */
 export async function chatTurn(deps: ChatTurnDeps, input: ChatTurnRequest): Promise<Result<ChatTurnResponse, YohError>> {
+  const reachedLlm = { value: false };
+  const result = await routeChatTurn(deps, input, reachedLlm);
+  // Story 13.5: a turn answered before any LLM classification step is "handled deterministically" (no automatic memory filing).
+  if (result.ok && !reachedLlm.value) return { ok: true, value: { ...result.value, handledDeterministically: true } };
+  return result;
+}
+
+async function routeChatTurn(
+  deps: ChatTurnDeps,
+  input: ChatTurnRequest,
+  reachedLlm: { value: boolean },
+): Promise<Result<ChatTurnResponse, YohError>> {
   recordRecentMessage(deps, input.message);
   emitStatus(deps, STATUS_THINKING);
 
@@ -504,6 +516,7 @@ export async function chatTurn(deps: ChatTurnDeps, input: ChatTurnRequest): Prom
   // whole — a transport failure here must never block the ordinary chat
   // turn, same as `classifyChatIntent`'s own catch immediately below.
   let captured: "task" | "event" | "none" = "none";
+  reachedLlm.value = true;
   try {
     captured = await classifyCapture(deps.llmClient, input.message, deps.connection);
   } catch {

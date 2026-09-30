@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { validateFiling, MEMORY_FILING_TIMEOUT_MS } from "../src/core/memory-filing.ts";
+import { validateFiling, MEMORY_FILING_TIMEOUT_MS, isTrivialTurn, planFilingActions } from "../src/core/memory-filing.ts";
 import type { MemoryCandidate } from "../src/types/domain.ts";
 
 const TZ = "America/New_York";
@@ -56,4 +56,27 @@ test("expiry compares against the local date, not UTC (late evening)", () => {
   const late = new Date("2026-09-30T02:00:00Z");
   const r = validateFiling([c({ text: "today ok", expiresOn: "2026-09-29" }), c({ text: "past", expiresOn: "2026-09-28" })], { now: late, timeZone: TZ });
   assert.deepEqual(r.accepted.map((x) => x.text), ["today ok"]);
+});
+
+// ---- Story 13.5 ----
+const flags = { handledDeterministically: false, isStructuredAnswer: false };
+
+test("isTrivialTurn: short, acknowledgement, flagged", () => {
+  for (const t of ["ok thanks", "yes", "sounds good, thank you", "Thanks so much, Yoh!", "ok, that works for me", "Got it, thank you very much"]) {
+    assert.equal(isTrivialTurn(t, flags), true, t);
+  }
+  assert.equal(isTrivialTurn("I have chemistry club every Tuesday after school", flags), false);
+  assert.equal(isTrivialTurn("Ok but I actually start work at 2:30 on school days", flags), false);
+  assert.equal(isTrivialTurn("Move the long run to Saturday morning please", { ...flags, handledDeterministically: true }), true);
+  assert.equal(isTrivialTurn("Move the long run to Saturday morning please", { ...flags, isStructuredAnswer: true }), true);
+});
+
+test("planFilingActions: restate/contradict a current item supersedes; unknown or non-current inserts; one action per id", () => {
+  const item = (id: string, status: "current" | "superseded") => ({ id, status }) as never;
+  const cur = [item("a", "current"), item("b", "superseded")];
+  const plan = planFilingActions(
+    [c({ text: "1", restatesId: "a" }), c({ text: "2", contradictsId: "a" }), c({ text: "3", restatesId: "b" }), c({ text: "4", contradictsId: "zzz" }), c({ text: "5" })],
+    cur,
+  );
+  assert.deepEqual(plan.map((p) => [p.kind, p.targetId]), [["supersede", "a"], ["insert", undefined], ["insert", undefined], ["insert", undefined], ["insert", undefined]]);
 });

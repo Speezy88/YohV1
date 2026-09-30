@@ -1469,3 +1469,10 @@ test("consecutive same-role stored turns (an orphaned user turn) are merged befo
   const c = sent[0]!.content;
   assert.equal(typeof c === "string" ? c : c[0]!.text, "first\n\nwhat should I do about the dishes");
 });
+
+test("Story 13.5: handledDeterministically is set for a slash command and unset once an LLM classification step runs", async () => {
+  const slash = await chatTurn(baseDeps({ llmClient: makeFakeLlmClient("x") }), { message: "/nonexistent" });
+  assert.ok(slash.ok && slash.value.handledDeterministically === true);
+  const general = await chatTurn(baseDeps({ llmClient: makeFakeLlmClient("Reheat it.") }), { message: "what should I do about the dishes" });
+  assert.ok(general.ok && general.value.handledDeterministically === undefined);
+});

@@ -1,5 +1,5 @@
 /** Filing validation for memory candidates (Story 13.4). Pure. */
-import type { MemoryCandidate, MemoryFolder } from "../types/domain.ts";
+import type { MemoryCandidate, MemoryFolder, MemoryItem } from "../types/domain.ts";
 import { MEMORY_ITEM_MAX_CHARS, STATED_ONLY_FOLDERS } from "./memory-folders.ts";
 import { validateRuleValue } from "./planning-settings.ts";
 
@@ -64,4 +64,34 @@ export function validateFiling(candidates: readonly MemoryCandidate[], ctx: Fili
     accepted.push(c);
   }
   return { accepted, dropped };
+}
+
+const ACK_WORDS = new Set(
+  ("ok okay thanks thank you yoh so much got it sounds good sure yes yeah yep no nope cool great perfect nice will do makes sense that works for me all a lot very appreciate").split(" "),
+);
+
+/** Story 13.5 (FR-54): a turn too small to be worth a model call. Pure. */
+export function isTrivialTurn(text: string, ctx: { handledDeterministically: boolean; isStructuredAnswer: boolean }): boolean {
+  if (ctx.handledDeterministically || ctx.isStructuredAnswer) return true;
+  const words = text.toLowerCase().replace(/[^\p{L}\p{N}\s':]/gu, " ").split(/\s+/).filter((w) => w !== "");
+  if (words.length <= 3) return true;
+  return words.every((w) => ACK_WORDS.has(w));
+}
+
+export interface FilingAction {
+  kind: "insert" | "supersede";
+  candidate: MemoryCandidate;
+  targetId?: string;
+}
+
+/** Restating or contradicting a CURRENT item supersedes it; anything else inserts. One action per target id. */
+export function planFilingActions(accepted: readonly MemoryCandidate[], current: readonly MemoryItem[]): FilingAction[] {
+  const currentIds = new Set(current.filter((i) => i.status === "current").map((i) => i.id));
+  const claimed = new Set<string>();
+  return accepted.map((candidate) => {
+    const targetId = [candidate.restatesId, candidate.contradictsId].find((id) => id !== undefined && currentIds.has(id) && !claimed.has(id));
+    if (targetId === undefined) return { kind: "insert", candidate };
+    claimed.add(targetId);
+    return { kind: "supersede", candidate, targetId };
+  });
 }

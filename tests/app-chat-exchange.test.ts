@@ -218,3 +218,105 @@ test("the inner turn gets turn ids, and purgeDeleted runs after the user turn is
   assert.deepEqual(seen, { conversationId: t.conversationId, userTurnId: t.id });
   assert.equal(purged, 1);
 });
+
+// ---- Story 13.5: automatic filing ----
+const plainTurn = (extra: Partial<ChatTurnResponse> = {}): ChatTurnFn => async () => ok("Sure thing.", extra);
+const CHEM = "I have chemistry club every Tuesday after school";
+const userMessages = (client: unknown): string => JSON.stringify((client as { calls: unknown[] }).calls);
+
+test("auto filing: trivial, deterministic, memory-directive, or store-less turns make no model call", async () => {
+  for (const [msg, turn, extra] of [
+    ["ok thanks", plainTurn(), {}],
+    [CHEM, plainTurn({ handledDeterministically: true }), {}],
+    [CHEM, rememberTurn, {}],
+    [CHEM, plainTurn(), { memoryItems: undefined }],
+  ] as const) {
+    const client = fakeFiler('[{"folder":"about-you","text":"x","origin":"stated"}]');
+    const h = memoryHarness(turn, { memoryLlmClient: client, ...extra } as unknown as Partial<ChatExchangeDeps>);
+    await chatExchange(h.deps, { message: msg });
+    if (turn !== rememberTurn) assert.equal((client as unknown as { calls: unknown[] }).calls.length, 0, msg);
+    if (turn !== rememberTurn) assert.deepEqual(h.events.map((e) => e.type), ["done"]);
+  }
+});
+
+test("auto filing: after done, files stated item with receipt; handledDeterministically stripped; only typed text + always-loaded sent", async () => {
+  const client = fakeFiler('[{"folder":"about-you","text":"Chemistry club every Tuesday after school","origin":"stated"}]');
+  const h = memoryHarness(plainTurn({ handledDeterministically: false }), { memoryLlmClient: client });
+  h.memoryItems.insert({ folder: "about-you", text: "ALWAYS-LOADED-MARK", origin: "stated" });
+  const result = await chatExchange(h.deps, { message: CHEM });
+  assert.equal(result.ok, true);
+  assert.deepEqual(h.events.map((e) => e.type), ["done", "remembered"]);
+  const done = h.events[0];
+  assert.ok(done?.type === "done" && done.response.handledDeterministically === undefined);
+  const rem = h.events[1];
+  assert.ok(rem?.type === "remembered" && rem.receipt.items.length === 1);
+  const userTurn = h.chatHistory.turnsForDate("2026-08-22")[0]!;
+  assert.equal(h.memoryItems.getItem(rem.receipt.items[0]!.id)?.sourceTurnId, userTurn.id);
+  assert.ok(h.memoryItems.getReceipt(rem.receipt.receiptId));
+  const sent = userMessages(client);
+  assert.match(sent, /chemistry club/);
+  assert.match(sent, /ALWAYS-LOADED-MARK/);
+  assert.doesNotMatch(sent, /Sure thing/);
+});
+
+test("auto filing: clamps to two; drops inferred feedback and inferred health", async () => {
+  const many = fakeFiler(JSON.stringify([1, 2, 3].map((n) => ({ folder: "about-you", text: `fact ${n}`, origin: "stated" }))));
+  const h1 = memoryHarness(plainTurn(), { memoryLlmClient: many });
+  await chatExchange(h1.deps, { message: CHEM });
+  assert.equal(h1.memoryItems.listItems().length, 2);
+  const bad = fakeFiler(JSON.stringify([
+    { folder: "feedback", text: "prefers short plans", origin: "inferred", scope: "plans" },
+    { folder: "about-you", text: "seems anxious", origin: "inferred", sensitive: "emotion" },
+    { folder: "about-you", text: "takes meds", origin: "inferred", sensitive: "health" },
+  ]));
+  const h2 = memoryHarness(plainTurn(), { memoryLlmClient: bad });
+  await chatExchange(h2.deps, { message: CHEM });
+  assert.equal(h2.memoryItems.listItems().length, 0);
+  assert.deepEqual(h2.events.map((e) => e.type), ["done"]);
+});
+
+test("auto filing: feedback without scope stores the narrowest reading; receipt carries it", async () => {
+  const client = fakeFiler('[{"folder":"feedback","text":"Keep replies short","origin":"stated"}]');
+  const h = memoryHarness(plainTurn(), { memoryLlmClient: client });
+  await chatExchange(h.deps, { message: "Please keep your replies shorter from now on" });
+  const rem = h.events[1];
+  assert.ok(rem?.type === "remembered");
+  assert.equal(rem.receipt.items[0]?.scope, "this kind of request");
+});
+
+test("auto filing: a restate makes a new version; a contradiction supersedes and stays as history", async () => {
+  const h = memoryHarness(plainTurn(), {});
+  const a = h.memoryItems.insert({ folder: "about-you", text: "Runs at 6", origin: "stated" });
+  const b = h.memoryItems.insert({ folder: "about-you", text: "Works at the cafe", origin: "stated" });
+  (h.deps as { memoryLlmClient?: unknown }).memoryLlmClient = fakeFiler(JSON.stringify([
+    { folder: "about-you", text: "Runs at 6 sharp", origin: "stated", restatesId: a.id },
+    { folder: "about-you", text: "Quit the cafe", origin: "stated", contradictsId: b.id },
+  ]));
+  await chatExchange(h.deps, { message: "I run at 6 sharp and I quit the cafe last week" });
+  assert.equal(h.memoryItems.getItem(a.id)?.status, "superseded");
+  assert.equal(h.memoryItems.getItem(b.id)?.status, "superseded");
+  assert.deepEqual(h.memoryItems.listItems().map((i) => i.text).sort(), ["Quit the cafe", "Runs at 6 sharp"]);
+});
+
+test("auto filing: a ruleChange candidate files as an ordinary item with no rule change", async () => {
+  const client = fakeFiler('[{"folder":"planning-preferences","text":"Start work at 2:30 on school days","origin":"stated","ruleChange":{"key":"schoolDayWorkStart","value":"14:30"}}]');
+  const h = memoryHarness(plainTurn(), { memoryLlmClient: client });
+  await chatExchange(h.deps, { message: "Please start my work at 2:30 on school days from now on" });
+  const items = h.memoryItems.listItems();
+  assert.equal(items.length, 1);
+  assert.equal(items[0]?.ruleChange ?? "none", "none");
+});
+
+test("auto filing: timeout or failure shows nothing, logs, never delays or errors; aborted files nothing", async () => {
+  for (const client of [fakeFiler("hang"), fakeFiler(new Error("net"))]) {
+    const h = memoryHarness(plainTurn(), { memoryLlmClient: client, memoryFilingTimeoutMs: 20 } as Partial<ChatExchangeDeps>);
+    const result = await chatExchange(h.deps, { message: CHEM });
+    assert.equal(result.ok, true);
+    assert.deepEqual(h.events.map((e) => e.type), ["done"]);
+    assert.ok(h.logged.includes("chat-exchange.filing-failed"));
+  }
+  const client = fakeFiler('[{"folder":"about-you","text":"x","origin":"stated"}]');
+  const h = memoryHarness(plainTurn(), { memoryLlmClient: client, isAborted: () => true });
+  await chatExchange(h.deps, { message: CHEM });
+  assert.equal((client as unknown as { calls: unknown[] }).calls.length, 0);
+});

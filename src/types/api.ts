@@ -411,6 +411,8 @@ export interface ChatTurnResponse {
   readonly sandboxCard?: SandboxCardView;
   /** Server-internal (Story 13.4): a memory command's post-`done` work. `chatExchange` strips it before `done`. */
   readonly memory?: MemoryTurnDirective;
+  /** Server-internal (Story 13.5): the turn returned before any LLM classification step. `chatExchange` strips it before `done`. */
+  readonly handledDeterministically?: boolean;
 }
 
 /** What `chatTurn` asks `chatExchange` to do after `done` for a memory command (E2: `chatTurn` never files). */
