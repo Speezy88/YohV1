@@ -32,7 +32,14 @@ export interface ChatStore {
   turnsForDate(date: IsoDate, limit?: number): StoredChatTurn[];
   /** True when a user turn was stored after `turnId` in that Conversation (insertion order). */
   hasUserTurnAfter(conversationId: string, turnId: string): boolean;
+  /** Removes every Conversation and turn; appends one `memory` outbox row when it removed anything. */
   clearAll(): void;
+  /** Conversations newest date first; `firstLine` is the first user turn, trimmed to 80 characters. */
+  listConversations(): { id: string; date: IsoDate; turnCount: number; firstLine: string }[];
+  /** A Conversation's turns oldest first, or undefined when it does not exist. */
+  conversationTurns(conversationId: string): StoredChatTurn[] | undefined;
+  /** Deletes a Conversation, its turns and (via triggers) their index rows; false when it was unknown. */
+  deleteConversation(conversationId: string): boolean;
   /** One turn with its Conversation's date, or undefined when it no longer exists. */
   getTurn(turnId: string): (StoredChatTurn & { date: IsoDate }) | undefined;
   /** Keyword search over every stored turn (bm25); `snippet` is a short excerpt around the match. */
@@ -151,7 +158,36 @@ export function createChatStore(connection: SqliteConnection): ChatStore {
     },
     clearAll() {
       connection.writeTx((db) => {
-        db.exec("DELETE FROM chat_turns; DELETE FROM chat_conversations;");
+        const removed = db.prepare("DELETE FROM chat_turns").run().changes + db.prepare("DELETE FROM chat_conversations").run().changes;
+        if (removed > 0) appendOutboxInTx(db, { topic: MEMORY_TOPIC, entityId: "all" });
+      });
+    },
+    listConversations() {
+      const rows = connection.db
+        .prepare(
+          `SELECT c.id, c.date,
+             (SELECT count(*) FROM chat_turns t WHERE t.conversation_id = c.id) AS turn_count,
+             (SELECT t.text FROM chat_turns t WHERE t.conversation_id = c.id AND t.role = 'user' ORDER BY t.rowid LIMIT 1) AS first_line
+           FROM chat_conversations c ORDER BY c.date DESC`,
+        )
+        .all() as { id: string; date: string; turn_count: number; first_line: string | null }[];
+      return rows.map((r) => ({ id: r.id, date: r.date, turnCount: r.turn_count, firstLine: (r.first_line ?? "").trim().slice(0, 80) }));
+    },
+    conversationTurns(conversationId) {
+      const conv = connection.db.prepare("SELECT id FROM chat_conversations WHERE id = ?").get(conversationId);
+      if (!conv) return undefined;
+      const rows = connection.db
+        .prepare("SELECT id, conversation_id, role, text, truncated, created_at FROM chat_turns WHERE conversation_id = ? ORDER BY rowid")
+        .all(conversationId) as TurnRow[];
+      return rows.map(toTurn);
+    },
+    deleteConversation(conversationId) {
+      return connection.writeTx((db) => {
+        const gone = db.prepare("DELETE FROM chat_conversations WHERE id = ?").run(conversationId).changes > 0;
+        if (!gone) return false;
+        db.prepare("DELETE FROM chat_turns WHERE conversation_id = ?").run(conversationId);
+        appendOutboxInTx(db, { topic: MEMORY_TOPIC, entityId: conversationId });
+        return true;
       });
     },
   };

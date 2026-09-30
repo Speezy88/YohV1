@@ -46,6 +46,7 @@ import {
 } from "../../src/adapters/notion-adapter.ts";
 import { draftItem, type CreateItemDeps } from "../../src/app/create-item.ts";
 import { sandboxQueue, type SandboxQueueDeps } from "../../src/app/sandbox-queue.ts";
+import { seedFixtureMemory } from "./fixture-memory-seed.ts";
 import { recognizeMemoryCommand } from "../../src/core/memory-commands.ts";
 import { firstCardView } from "../../src/core/sandbox-card-view.ts";
 import { localIsoDate } from "../../src/rituals/ritual-shared.ts";
@@ -283,6 +284,7 @@ const draftFieldsLlmClient: AnthropicMessagesClient = {
  * suggestions). Returns one Corrections candidate ONLY for the Chem club fixture text, otherwise `[]`,
  * so unrelated fixture turns never file.
  */
+export { FIXTURE_CONVERSATIONS, FIXTURE_MEMORY_ITEMS } from "./fixture-memory-seed.ts";
 export const FIXTURE_MEMORY_TEXT = "Chem club is a club, not a class";
 const memoryLlmClient: AnthropicMessagesClient = {
   messages: {
@@ -484,6 +486,12 @@ const handle = startServer(
         const url = new URL(request.url);
         if (request.method === "POST" && (url.pathname === "/__fixture/reshuffle-scenario" || url.pathname === "/__fixture/reset")) {
           resetFixturePlan(url.pathname === "/__fixture/reshuffle-scenario");
+          return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
+        }
+        // Story 13.9: memory items + two Conversations for the Memory page specs; deliberately NOT part of reset.
+        if (request.method === "POST" && url.pathname === "/__fixture/seed-memory") {
+          connection.db.prepare("DELETE FROM planning_settings").run();
+          seedFixtureMemory({ connection, chatHistory, memoryItems }, today);
           return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
         }
         if (url.pathname === "/__fixture/yoh-plan-events") {

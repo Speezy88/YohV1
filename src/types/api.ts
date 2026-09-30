@@ -481,6 +481,23 @@ export interface ChatHistoryTodayResponse {
 
 // ---- Memory page (Story 13.9) ----------------------------------------------
 
+export interface ChatConversationSummary {
+  readonly id: string;
+  readonly date: IsoDate;
+  readonly turnCount: number;
+  readonly firstLine: string;
+}
+/** `GET /api/chat-history`'s value, newest first. */
+export interface ChatHistoryListResponse {
+  readonly conversations: readonly ChatConversationSummary[];
+}
+/** `GET /api/chat-history/:conversationId`'s value (read-only transcript). */
+export interface ChatConversationView {
+  readonly id: string;
+  readonly date: IsoDate;
+  readonly turns: readonly (ChatHistoryTurn & { readonly receipt?: RememberedReceipt })[];
+}
+
 export interface MemoryItemView {
   readonly id: string;
   readonly folder: MemoryFolder;

@@ -61,7 +61,7 @@ import { createChatStore, initChatStoreSchema, type ChatStore } from "../adapter
 import { initSettingsStoreSchema } from "../adapters/settings-store.ts";
 import { createMemoryItemStore, initMemoryItemStoreSchema, type MemoryItemStore } from "../adapters/memory-item-store.ts";
 import { chatExchange, type ChatTurnFn } from "../app/chat-exchange.ts";
-import { todaysChatHistory } from "../app/chat-history.ts";
+import { clearChatHistory, deleteChatConversation, getChatConversation, listChatHistory, todaysChatHistory } from "../app/chat-history.ts";
 import { initRoutineStoreSchema } from "../adapters/routine-store.ts";
 import { HEARTBEAT_INTERVAL_MS, initPlanStateStoreSchema, writeHeartbeat } from "../adapters/plan-state-store.ts";
 import { createMemoryStore, removeRetiredRecords, type MemoryStore } from "../adapters/memory-store.ts";
@@ -1278,6 +1278,44 @@ export function createApp(deps: ServerDeps) {
         const timeZone = deps.chat?.timeZone ?? process.env["YOH_TIMEZONE"];
         if (!deps.chatHistory || !timeZone) return c.json(CHAT_HISTORY_NOT_CONFIGURED, httpStatus(CHAT_HISTORY_NOT_CONFIGURED));
         const result = wire(await todaysChatHistory({ chatHistory: deps.chatHistory, timeZone, now: () => new Date() }, {}));
+        return c.json(result, httpStatus(result));
+      })
+      // Story 13.9: chat history list, one transcript, delete, clear; none need `chat` deps.
+      // `/today` above must stay registered before the `:conversationId` route.
+      .get("/api/chat-history", async (c) => {
+        if (!deps.chatHistory) return c.json(CHAT_HISTORY_NOT_CONFIGURED, httpStatus(CHAT_HISTORY_NOT_CONFIGURED));
+        const result = wire(await listChatHistory({ chatHistory: deps.chatHistory }, {}));
+        return c.json(result, httpStatus(result));
+      })
+      .get("/api/chat-history/:conversationId", async (c) => {
+        if (!deps.chatHistory) return c.json(CHAT_HISTORY_NOT_CONFIGURED, httpStatus(CHAT_HISTORY_NOT_CONFIGURED));
+        const result = wire(
+          await getChatConversation(
+            { chatHistory: deps.chatHistory, ...(deps.memoryItems ? { memoryItems: deps.memoryItems } : {}) },
+            { conversationId: c.req.param("conversationId") },
+          ),
+        );
+        return c.json(result, httpStatus(result));
+      })
+      .post(
+        "/api/chat-history/delete",
+        validator("json", (value, c) => {
+          const conversationId = (value as { conversationId?: unknown } | null)?.conversationId;
+          if (typeof conversationId !== "string" || conversationId === "") {
+            const invalid: ApiFailure = { ok: false, error: { kind: "validation", message: "chat-history/delete: missing conversationId" } };
+            return c.json(invalid, httpStatus(invalid));
+          }
+          return { conversationId };
+        }),
+        async (c) => {
+          if (!deps.chatHistory) return c.json(CHAT_HISTORY_NOT_CONFIGURED, httpStatus(CHAT_HISTORY_NOT_CONFIGURED));
+          const result = wire(await deleteChatConversation({ chatHistory: deps.chatHistory }, c.req.valid("json")));
+          return c.json(result, httpStatus(result));
+        },
+      )
+      .post("/api/chat-history/clear", async (c) => {
+        if (!deps.chatHistory) return c.json(CHAT_HISTORY_NOT_CONFIGURED, httpStatus(CHAT_HISTORY_NOT_CONFIGURED));
+        const result = wire(await clearChatHistory({ chatHistory: deps.chatHistory }, {}));
         return c.json(result, httpStatus(result));
       })
       // Story 13.9: the Memory Rail's data and one keyword search; neither needs `chat` deps.

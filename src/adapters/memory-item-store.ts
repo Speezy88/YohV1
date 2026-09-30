@@ -78,6 +78,8 @@ export interface MemoryItemStore {
   getReceipt(receiptId: string): MemoryReceipt | undefined;
   /** Newest receipt of `kind` in the conversation that has not been undone. */
   latestReceipt(conversationId: string, kind: MemoryReceipt["kind"]): MemoryReceipt | undefined;
+  /** Every receipt for a Conversation, oldest first (undone ones included). */
+  receiptsForConversation(conversationId: string): MemoryReceipt[];
   markReceiptUndone(receiptId: string, at?: IsoDateTime): void;
   insert(input: NewMemoryItem): MemoryItem;
   supersede(oldId: string, next: NewMemoryItem): MemoryItem;
@@ -290,6 +292,12 @@ export function createMemoryItemStore(connection: SqliteConnection): MemoryItemS
         )
         .get(conversationId, kind);
       return row ? toReceipt(row) : undefined;
+    },
+    receiptsForConversation(conversationId) {
+      return db
+        .prepare<[string], ReceiptRow>(`SELECT * FROM memory_receipts WHERE conversation_id = ? ORDER BY created_at, rowid`)
+        .all(conversationId)
+        .map(toReceipt);
     },
     markReceiptUndone(receiptId, at) {
       connection.writeTx((tx) => {
