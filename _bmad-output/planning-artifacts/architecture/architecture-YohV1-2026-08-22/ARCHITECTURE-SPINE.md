@@ -4,12 +4,12 @@ type: architecture-spine
 purpose: build-substrate
 altitude: initiative
 paradigm: Functional Core / Imperative Shell
-scope: Phase 1 MVP, Phase 1.5, and Phase 2. Covers the Morning/Night Ritual loop, Notion + Google Calendar integration, memory/learning, tone, live Notion/Calendar writes and web search (Phase 1.5), and the Phase 2 Web App (Drag-to-Reshuffle, /sandbox, the four pages, in-app notifications, Completion Log, async /research, CLI retirement). Governs FR-1–FR-51 and their NFRs. Does not govern Phase 3+ (hardware voice pipeline, iOS, Voice Packs, self-calibration).
+scope: Phase 1 MVP, Phase 1.5, and Phase 2. Covers the Morning/Night Ritual loop, Notion + Google Calendar integration, memory/learning, tone, live Notion/Calendar writes and web search (Phase 1.5), and the Phase 2 Web App (Drag-to-Reshuffle, /sandbox, the four pages, in-app notifications, Completion Log, async /research, CLI retirement), and Epic 13 Memory (persistent chat history, memory items, recall, rule-change settings, Patterns, the Rating). Governs FR-1–FR-60 and their NFRs. Does not govern Phase 3+ (hardware voice pipeline, iOS, Voice Packs, self-calibration).
 status: final
 created: '2026-08-22'
-updated: '2026-09-27'
+updated: '2026-09-29'
 binds:
-  - FR-1..FR-51
+  - FR-1..FR-60
   - NFR-Reliability
   - NFR-DataIntegrity
   - NFR-Latency
@@ -19,6 +19,7 @@ binds:
 sources:
   - _bmad-output/planning-artifacts/prds/prd-YohV1-2026-08-21/prd.md
   - _bmad-output/planning-artifacts/prds/prd-YohV1-2026-08-21/addendum.md
+  - _bmad-output/planning-artifacts/prds/prd-YohV1-2026-08-21/.memlog.md
   - _bmad-output/planning-artifacts/ux-designs/ux-YohV1-2026-08-21/EXPERIENCE.md
   - _bmad-output/planning-artifacts/ux-designs/ux-YohV1-2026-08-21/DESIGN.md
   - _bmad-output/planning-artifacts/research/technical-yoh-voice-pipeline-and-notion-calendar-a-2026-08-21/research.md
@@ -92,7 +93,7 @@ graph TD
 
 ### AD-5 — Ritual triggers are independent one-shot subcommands; interaction requests are durable
 
-- **Binds:** FR-1, FR-4, FR-9, FR-10, FR-12, FR-13, FR-14, FR-17, NFR-Reliability
+- **Binds:** FR-1, FR-4, FR-9, FR-10, FR-12, FR-13, FR-14, NFR-Reliability *(FR-17 retired 2026-09-29: the Rating is in-app only, AD-31)*
 - **Prevents:** an unattended cron process being asked to block for a live answer (which it structurally cannot do); `night-ritual.ts` and `self-check.ts` each inventing their own unshared assumption about how or when they're triggered
 - **Rule:**
   - `ritual-cli.ts` exposes four independently OS-scheduled one-shot subcommands, each cron/systemd-timer/launchd-triggered at its own time and none of them blocking for input: `morning` (FR-1–FR-4), `night-prompt` (FR-12, sends the first close-out prompt), `night-escalate` (FR-13–FR-14, scheduled some hours after `night-prompt`; checks `memory-store.ts` for whether that night's close-out was already answered, and if not, sends the capped second attempt via email and marks the day unchecked), and `self-check` (FR-17, scheduled daily at a randomized time computed from the last check-in; a no-op if today isn't due).
@@ -104,7 +105,7 @@ graph TD
 
 ### AD-6 — Escalate-Under-Strain: one shared curve, three consumers, one pinned signature
 
-- **Binds:** FR-11 (Slip-Bump), FR-17 (Self-Check interval), FR-19 (Tone)
+- **Binds:** FR-11 (Slip-Bump), FR-19 (Tone) *(the FR-17 Self-Check consumer retired 2026-09-29; the Rating's shortened interval lives in `core/rating-schedule.ts`, AD-31)*
 - **Prevents:** the three escalation mechanics drifting into inconsistent shapes, or each consumer inventing its own metric/level types such that "same strain → same escalation" (FR-19's testable consequence) can't actually be checked
 - **Rule:** `core/escalate-under-strain.ts` exports exactly `computeEscalation(strainCount: number, curve: EscalationCurve): EscalationLevel`, both types defined once in `types/domain.ts`. `strainCount` is always a plain non-negative integer count of consecutive strain events (consecutive slipped days for Slip-Bump; consecutive low Self-Check scores for the check-in interval; the Task's current Slip-Bump level for Tone) — no consumer derives its own normalized score or its own level enum. `slip-bump.ts`, `self-check.ts`, and `tone.ts` each supply only their own `curve` (cap, step). `[ADOPTED]`
 
@@ -139,7 +140,7 @@ graph TD
 - **Binds:** `adapters/*`, FR-15, FR-20–FR-23
 - **Prevents:** the refresh-token-persistence gotcha the technical research flagged (the OAuth client library refreshes a token in memory but doesn't persist it back) recurring because two files each keep their own copy; `storage-adapter.ts` becoming a single file two unrelated tasks (memory vs. auth) both need to edit (violates AD-9's own spirit); a `ritual-cli.ts` run and a concurrent `chat-cli.ts` session silently clobbering each other's writes to the same day's Plan
 - **Rule:**
-  - Storage is two files, not one: `memory-store.ts` owns hot/cold memory (FR-15) and all open interaction requests / open `Proposal`s (AD-3, AD-5). `token-store.ts` owns the Google OAuth refresh token(s) and is the **sole constructor and holder** of the Calendar `OAuth2Client`(s) — `calendar-adapter.ts` receives an already-authenticated client as a parameter for whichever operation it's performing and never imports `google-auth-library` itself. `token-store.ts` rewrites each refresh token to disk immediately after every refresh.
+  - *(Epic 13, 2026-09-29: Memory Items, chat history, settings, and ratings each get their own owner — AD-25, AD-26, AD-29, AD-31. `memory-store.ts` keeps interaction requests and Proposals.)* Storage is two files, not one: `memory-store.ts` owns hot/cold memory (FR-15) and all open interaction requests / open `Proposal`s (AD-3, AD-5). `token-store.ts` owns the Google OAuth refresh token(s) and is the **sole constructor and holder** of the Calendar `OAuth2Client`(s) — `calendar-adapter.ts` receives an already-authenticated client as a parameter for whichever operation it's performing and never imports `google-auth-library` itself. `token-store.ts` rewrites each refresh token to disk immediately after every refresh.
   - **Phase 1.5 (AD-13):** `token-store.ts` constructs and holds **two separately-scoped Calendar clients**, not one — a narrow client (`calendar.events.readonly` on primary, write scope on "Yoh Plan" only) that AD-4's automatic path exclusively uses, and a second, broader client (`calendar.events` — read/write across accessible calendars) that only AD-13's `proposeCalendarEdit`/`applyCalendarEdit` pair uses. This is why AD-4's "fails at the API layer, not just at review" guarantee survives AD-13's arrival unweakened: the automatic path's credential still physically cannot write the primary calendar, because it was never handed the broader-scoped client. A single shared client with the union of both scopes was considered and rejected — it would make AD-4's API-layer defense literally false the moment AD-13's scope widening landed, silently downgrading it to a code-review-only guarantee, which is exactly what AD-4 states it doesn't want to rely on.
   - Static secrets (Notion token, Google OAuth client id/secret, Pushover key, SMTP credentials, Claude API key, Perplexity API key — AD-14) load once from environment variables at process start; only the Google refresh token(s) are persisted, mutable secrets, and each has exactly one owner (above, AD-13's second client included).
   - Every multi-step read-modify-write sequence in `memory-store.ts` runs inside a single SQLite transaction with optimistic concurrency (a version/`updated_at` column checked on write). `ritual-cli.ts` and `chat-cli.ts` are allowed to run concurrently; the storage layer, not its callers, is responsible for detecting a conflicting write and surfacing it as `YohError.kind: 'conflict'` rather than silently applying last-write-wins. `[ADOPTED]`
@@ -272,6 +273,74 @@ graph TD
 - **Prevents:** Routines implemented as Google recurring events (§9.4 exclusion); a reshuffle deleting a Routine to make room; Morning Plan and reshuffle placing Routines by different rules
 - **Rule:** `routine-store.ts` holds each declared Routine (`{id, label, days, start, durationMinutes}`), added, changed, or removed only via Chat through `app/`. `PlanBlockKind` is **extended**, never replaced, to `'work' | 'break' | 'calendar-anchor' | 'routine'` (plus `routineId` on routine blocks) in `types/domain.ts`. The existing `calendar-anchor` stays as the fixed non-Yoh event kind. The same `core/` fitting step places Routine Blocks for both the Morning Plan and AD-19's reshuffle. **Placement precedence:** `calendar-anchor` and Pins are fixed and placed first. A Pin that overlaps an anchor is rejected, and the preview says why. Routines come next, each at or as near its declared time as fits. They may shift but are never dropped (`[ASSUMPTION: FR-33]`), and an unfittable Routine is flagged in the preview. Work and break blocks are fitted into what remains. On Calendar they are ordinary tagged events on the "Yoh Plan" calendar via AD-4's automatic path, one per day, never with an RRULE. `[ADOPTED]`
 
+### AD-25 — Chat history is server-owned
+
+- **Binds:** FR-52, FR-42, FR-54 (source links)
+- **Prevents:** the browser and the server holding divergent histories; a stored transcript re-running an action; deleting history silently deleting memories
+- **Rule:** `adapters/chat-store.ts` is the sole owner of Conversations, turns, and a turns FTS5 index. A Conversation is one calendar day in `YOH_TIMEZONE` `[ADOPTED from UX]`. `POST /api/chat` carries only the new message. `ChatTurnRequest.history`, the server's `isChatHistory` check, `trimHistory`, and the fixture server change to match. `app/chat-turn.ts` reads the last `MAX_CHAT_HISTORY_TURNS` turns from the store. It stores Spencer's turn before the model call and Yoh's turn when the stream ends; an aborted stream stores the partial text with `truncated: true`. `web/` keeps no second copy beyond what it renders.
+  - Stored Structured Questions and Proposals are text plus the Proposal id. Answering one from an old transcript goes through `app/confirm-proposal.ts` and its stale check (AD-3); a transcript never replays an action.
+  - Memory items hold a nullable `source_turn_id` soft link, with no cascade. Deleting a Conversation deletes its turns and index rows only; the page shows "source deleted". Clear-all is its own route (`/api/chat-history/clear`); the two-step confirm lives in the web UI.
+  - **Degradation:** if the chat store fails to read or write, the turn proceeds with no stored history (logged); Chat still answers (FR-52).
+
+### AD-26 — Memory items are immutable, versioned rows with one owner
+
+- **Binds:** FR-53, FR-54, FR-55, FR-59
+- **Prevents:** two history models (in-place edit vs supersede); an Undo with nothing to restore; folder behavior drifting between files
+- **Rule:** `adapters/memory-item-store.ts` is the sole owner of `memory_items`, its external-content FTS5 index, and the keyword query over it (`searchRelevant`). `MemoryFolder` is a closed union in `types/domain.ts`; the load class (always / relevant / on-ask) is derived from the folder by one `core/` function and never stored.
+  - A row holds: folder, text (at most `MEMORY_ITEM_MAX_CHARS` = 280), `origin` (`stated`|`inferred`), `scope` (Feedback), `expires_on`, `entity_ref` (optional Task id), `rule_change` (`none`|`pending`|`confirmed`|`declined`, Planning preferences), `created_at`, `confirmed_at`, `last_matched_at`, `source_turn_id`, `replaces_id`, and `status` (`current`|`superseded`|`history`|`deleted`).
+  - **Every change is a new row.** A restate, a contradiction, a Memory-page edit, or a move inserts a row with `replaces_id` and marks the old one `superseded`. A merge (FR-59, duplicate edit) inserts one row that supersedes both. A new version inherits `rule_change`; a restate of a `declined` preference stays `declined` and is not re-proposed (FR-57).
+  - **Deletes.** "forget" marks the chain `deleted` (not loaded, not listed) so its Undo can restore it; the chain is purged on Spencer's next user turn. A Memory-page delete commits when its Undo Toast closes (the AD-20 pattern), then purges the chain. "Keep as history" sets `status: history`: kept and viewable, never loaded, never in Needs review.
+  - Undoing a filing deletes the new row, marks the replaced one `current` again, and withdraws any Proposal the filing raised (AD-29).
+  - Every write runs in `writeTx` and appends one outbox row on a new `MEMORY_TOPIC` (AD-18).
+  - **Degradation:** a memory-store failure is caught and logged; the turn proceeds without memory and no `remembered` event is sent (FR-54, FR-56). The Memory page shows its error state.
+
+### AD-27 — Filing runs after the reply, on the same chat stream, deterministic first
+
+- **Binds:** FR-54, FR-55, FR-60 (the "What was off?" answer)
+- **Prevents:** filing delaying the reply; an LLM guessing what a deterministic recognizer can decide; memory filed from model output or fetched content; two builders emitting different stream shapes
+- **Rule:** filing runs inside `app/chat-turn.ts` after the reply stream ends, on the same `POST /api/chat` SSE response. Filing is bounded by `MEMORY_FILING_TIMEOUT_MS` = 8000; on timeout or error there is no receipt and the reply is unaffected.
+  - **Stream contract.** One `ChatStreamEvent` union in `types/api.ts`, always in this order: `status`* → `delta`* → `done` (the `ChatTurnResponse`, with `substantive: boolean` set by `app/`; it unblocks the input) → at most one `remembered` (`{receiptId, kind: 'remembered'|'forgot', items: [{id, text, folder, scope?, expiresOn?}]}`, one receipt line for up to 2 items) → at most one `proposal` (a Structured Question: rule change, or forget disambiguation) → at most one `rating` (`{promptId}`) → close.
+  - **Order of recognition:** `core/memory-commands.ts` recognizes remember / forget / what-do-you-remember before capture ("remember to …" and "remind me to …" are excluded and stay Tasks). Otherwise `core` `isTrivialTurn` skips turns of 3 words or fewer, acknowledgements, turns a non-memory deterministic command handled, and Structured Question answers. Otherwise one Haiku `extractMemories` call sees only Spencer's typed text plus the always-loaded set (for the duplicate check). It returns up to 2 candidates, each with folder, text, origin, scope, expiry, `entity_ref`, restate/contradict target, and an optional `ruleChange {key, value}`. `core/memory-filing.ts` `validateFiling` enforces: at most 2 items; no inferred item in Feedback or Planning preferences; inferred health, emotion or finance items dropped; text length; the expiry date; `ruleChange` only for a `RuleSettingKey` with a valid value (AD-29).
+  - **Explicit commands.** `/remember` and "remember that …" call `extractMemories` with `forceStated` (filed even if trivial). The Rating's "What was off?" answer uses the same path with the folder forced to Feedback. "forget …" matches by FTS over current items; several matches raise a disambiguation Structured Question stored as an interaction request (AD-5), and nothing is deleted until it is answered. "forget that" targets the most recent filing receipt in this Conversation.
+  - Undo is `POST /api/memory/undo {receiptId}`. The server accepts it only while no later user turn exists in that Conversation.
+
+### AD-28 — Recall: one memory-context builder, typed out of routing
+
+- **Binds:** FR-53 (load classes), FR-56
+- **Prevents:** memory leaking into routing, classification, or confirmation; each model call assembling memory its own way; recall and the Memory page disagreeing about what is loaded
+- **Rule:** one pure `core/memory-context.ts` selector takes current items, the adapter's relevant matches, and `now`, and returns both the `MemoryContext` for model calls and the per-item load state the Memory page shows ("Not loaded", Needs review reason). Recall and the page call the same selector.
+  - **Always-loaded:** current, unexpired items of the five always folders, newest `confirmed_at` first, capped at `ALWAYS_LOADED_CAP` = 60 items `[ASSUMPTION]`; the overflow is not loaded and appears in Needs review. **When relevant:** `memory-item-store` `searchRelevant` (FTS5 bm25, top 5) over Goals & projects and Decisions & commitments on the request text; a match bumps `last_matched_at`. Ideas & notes are read only for "what do you remember about …" and the Memory page.
+  - The always-loaded block is a cached stable system block placed after the fixed prompt (the existing `llm-adapter.ts` stable/volatile split). Relevant items go in the volatile block.
+  - Only `answerGeneralQuestion`/`streamGeneralQuestion`, the create-item drafting call (`draftNotionPageFields`), and Plan-reasoning text generation accept a `MemoryContext` parameter. `classifyCapture`, `classifyChatIntent`, search-intent, and every other routing or classification function take none, which enforces S4 at the type level. The deterministic scheduler never receives memory text (AD-29). `app/confirm-proposal.ts` and the write-tier logic never read memory, so no memory item can weaken or skip a confirmation.
+  - Needs review reasons: expired; over the cap; `confirmed_at` and `last_matched_at` both older than 120 days (a restate, edit, or renew confirms); or an `entity_ref` Task that is now Done, missing, or re-dated `[ASSUMPTION: live-conflict detection covers entity_ref items only]`.
+
+### AD-29 — Rule changes are stored settings, never memory text
+
+- **Binds:** FR-57, FR-58 (planning-affecting Patterns)
+- **Prevents:** a memory item silently changing planning; defaults defined in two places; two owners of one planning value
+- **Rule:** `adapters/settings-store.ts` holds overrides for a closed `RuleSettingKey` union: `schoolDayWorkStart`, `otherDayWorkStart`, `lunchWindow`, `communityWindow`, `areaDurationPadding` `[ASSUMPTION: v1 list]`. Built-in defaults stay the one defining export in their `core/` file (e.g. `WORK_START_TIMES`, the protected windows in `core/school-day.ts`). `core/planning-settings.ts` `resolvePlanningSettings(defaults, overrides)` produces the one `PlanningSettings` value. The `core/school-day.ts` work-start and protected-window functions, `work-break-fit`, `routine-placement`, and the reshuffle/re-flow/morning pipelines take it as a parameter. A source-scan test forbids reading the defaults anywhere except `resolvePlanningSettings`.
+  - The Time Budget is not a `RuleSettingKey`. A preference that conflicts with it goes through the existing Time Budget proposal path (`core/time-budget.ts`, FR-5), which stays its only owner.
+  - When `validateFiling` accepts a `ruleChange`, `app/chat-turn.ts` creates the `Proposal<RuleChange>` (AD-3) in the same transaction as the filing and marks the item `pending`; it is emitted as the stream's `proposal` event. Only `app/confirm-proposal.ts` writes an override (and marks the item `confirmed`); No marks it `declined`. Revert on the Memory page deletes the override (direct write).
+  - Derived Priority weights are not settable in v1: a preference about them is filed as a soft preference.
+
+### AD-30 — Patterns are detected nightly from stored events and proposed with evidence
+
+- **Binds:** FR-58, FR-16, FR-3 (reasoning line)
+- **Prevents:** a Pattern built on data Yoh doesn't keep; a single bad day becoming a Pattern; a declined Pattern re-proposed the next morning; Pattern proposals arriving as notifications
+- **Rule:** the data comes first. `completions` gains `planned_start` and `planned_end` (nullable), filled at check-off from today's Plan. A new append-only `slip_events` log (Task id, Area, date) is written wherever a slip is recorded; the existing consecutive-count record stays as it is. Close-out completions (`source: 'close-out'`) and rows with no `planned_start` are excluded from overrun.
+  - `rituals/night-ritual.ts` runs a pure `core/pattern-detect.ts` after close-out. `PatternKind` v1 is a closed union: `area-slips` (from `slip_events`) and `area-overrun` (`completed_at` minus `planned_end`, same-day check-offs only). Thresholds: `PATTERN_MIN_OCCURRENCES` = 4, spanning at least 14 days within the last 42; the padding is the median overrun rounded to 5 minutes `[ASSUMPTION: values]`. Patterns become possible only once enough new rows exist (weeks, not days).
+  - `pattern_state` (one row per (kind, Area): pending Proposal id, `declined_at`) is owned by `memory-item-store.ts`. Detection skips a key that is pending or declined within `PATTERN_QUIET_DAYS` = 30.
+  - The result is a `Proposal<PatternProposal>` carrying its evidence (AD-3). `/morning`, or the first Chat-panel open that day, surfaces at most one per day; pending ones are also listed in the Patterns folder. Yes files a Patterns item, and for `area-overrun` also writes an `areaDurationPadding` override through AD-29. `core/plan-reasoning.ts` cites a confirmed pattern whenever its padding affects a placement.
+
+### AD-31 — The Rating replaces Self-Check
+
+- **Binds:** FR-60 (supersedes FR-17)
+- **Prevents:** ratings leaking into model context; two feedback loops running at once; the web and server disagreeing about dismissals
+- **Rule:** `adapters/rating-store.ts` owns the ratings log and the prompt state: last prompt date, consecutive dismissals, `paused_until`, `extra_prompt_due` (at most one extra per day), and the open `promptId`. A pure `core/rating-schedule.ts` `decideRatingPrompt(state, {substantive, now, draw})` decides, with the random draw injected. Each substantive chat turn prompts with probability `RATING_PROMPT_PROBABILITY` = 0.35 until that day's prompt is shown `[ASSUMPTION]`. `app/chat-turn.ts` emits the `rating` event (AD-27).
+  - `POST /api/rating {promptId, score | dismissed: true}`. A user turn sent while a prompt is open records a dismissal server-side. An answer resets consecutive dismissals; three in a row set `paused_until` to a week later. A 1 sets `extra_prompt_due`. A 1 with a "What was off?" answer files to Feedback through AD-27's explicit path as stated. No model call ever loads ratings.
+  - **Retired:** every Self-Check reference (the `self-check` subcommand and its deps, `rituals/self-check.ts`, `app/answer-self-check.ts`, the open-item question/answer kinds, the escalation and error-copy entries, and the web handling). `grep -ri self-check src web/src` must come back empty. Also retired: the host timer, and open self-check interaction requests (one-time cleanup). Escalate-Under-Strain no longer reads Self-Check scores.
+  - Chat history, memory, settings, and ratings live in the one SQLite file that `backup-cli.ts` already copies (AD-10). The FTS tables are external-content and can be rebuilt.
+
 ## Consistency Conventions
 
 | Concern | Convention |
@@ -325,11 +394,12 @@ src/
     tone.ts                      # FR-18, FR-19
     plan-reasoning.ts            # FR-3
   + desk-metrics.ts              # FR-44 Yoh-data widgets, pure over Completion Log rows (AD-23)
+  + memory-commands.ts · memory-filing.ts · memory-context.ts · pattern-detect.ts · rating-schedule.ts · planning-settings.ts   # Epic 13 (AD-27–AD-31)
   rituals/                       # orchestration — wires core + adapters
     morning-ritual.ts            # FR-1 (+ Routine placement, needs-data notification)
     night-ritual.ts              # FR-12–14 (+ skips Tasks completed today; records via completion-log)
     mid-day-reflow.ts            # FR-9–10
-    self-check.ts                # FR-17
+    ~~self-check.ts~~            # FR-17 — retired (AD-31)
   + reshuffle.ts                 # FR-30–33 — the one day-refit pipeline (also used by mid-day-reflow) + Proposal<ReshufflePreview> (AD-19)
   adapters/                      # all I/O, one file per external system or record-kind owner
     notion-adapter.ts            # AD-12 write surface (setTaskStatus no longer trashes)
@@ -349,10 +419,12 @@ src/
   + crypto-feed.ts               # FR-44 (AD-22)
   + weather-feed.ts              # FR-44 (AD-22)
   + news-feed.ts                 # FR-44 (AD-22)
+  + chat-store.ts · memory-item-store.ts · settings-store.ts · rating-store.ts   # Epic 13 (AD-25, AD-26, AD-29, AD-31)
 + app/                           # surface-agnostic interaction use-cases, one per file (AD-16)
     confirm-proposal.ts · surface-open-items.ts · chat-turn.ts · morning-view.ts · night-close-out.ts
     check-off.ts · sandbox-queue.ts · sandbox-submit.ts · request-reshuffle.ts · approve-reshuffle.ts
     queue-research.ts · routines.ts · notifications.ts · desk.ts · tasks-view.ts · time-budget.ts
+    memory-page.ts · memory-edit.ts · memory-undo.ts · chat-history.ts · rate-yoh.ts   # Epic 13 (names indicative)
   shell/
     ritual-cli.ts                # cron one-shots (AD-5) — never imports app/
     chat-cli.ts                  # transport over app/ until FR-50 parity, then deleted
@@ -363,7 +435,7 @@ src/
   + api.ts                       # wire contract (AD-9, AD-17): request/response DTOs, ChatMessage (incl. Structured
                                  #   Question), NotificationKind, event-hint shape — locked before server/web tasks
 + web/                           # Vite + React SPA (AD-17) — imports only `import type` from src/types
-    pages/ Home · Tasks · Desk · ResearchHub · Screensaver    panels/ Chat    components/    tokens.css    api-client.ts    events.ts
+    pages/ Home · Tasks · Desk · ResearchHub · Memory (Epic 13) · Screensaver    panels/ Chat    components/    tokens.css    api-client.ts    events.ts
     # Amended 2026-09-27 (Spencer): page order is Home, Tasks, Desk, Research Hub — there is no Chat page.
     # Chat moves out of pages/ into a panel component (panels/Chat, or equivalent) shared by every page,
     # opened from the "Ask Yoh" pill or ⌘K. Swipe navigation retired 2026-09-27 — pages.ts (Task 6A) drives a
@@ -420,7 +492,7 @@ graph LR
 | Time Budget & Work/Break rhythm (FR-5–FR-8) | `core/{time-budget,work-break-fit}.ts` | AD-2, AD-3 (budget-change suggestions) |
 | Mid-Day Re-Flow & Slip handling (FR-9–FR-11) | `rituals/mid-day-reflow.ts` + `core/slip-bump.ts` | AD-1, AD-6, AD-9 (`PlanBlock.id`) |
 | Night Ritual — close-out & escalation (FR-12–FR-14) | `rituals/night-ritual.ts` + `adapters/{notification,email}-adapter.ts` | AD-5, AD-7 |
-| Memory, learning, Self-Check (FR-15–FR-17) | `adapters/memory-store.ts` + `core/escalate-under-strain.ts` + `rituals/self-check.ts` | AD-5, AD-6, AD-10 |
+| Memory, learning (FR-15–FR-16; FR-17 retired) | `adapters/memory-store.ts` + `core/escalate-under-strain.ts` | AD-5, AD-6, AD-10 |
 | Tone & communication (FR-18–FR-19) | `core/tone.ts` + `adapters/llm-adapter.ts` | AD-6 |
 | Chat intent routing & on-demand interaction | `shell/chat-cli.ts` + `adapters/llm-adapter.ts` | AD-5 |
 | Notion & Calendar integration (FR-20–FR-24) | `adapters/{notion,calendar}-adapter.ts` | AD-4, AD-8, AD-10, AD-12 |
@@ -440,13 +512,20 @@ graph LR
 | Phase 2 — Surface-agnostic confirmation, CLI retirement (FR-48, FR-50) | `app/confirm-proposal.ts` + `shell/{server,chat-cli}.ts` | AD-3, AD-5, AD-16 |
 | Phase 2 — In-app notifications (FR-49) | `adapters/notification-store.ts` + `shell/server.ts` SSE | AD-7, AD-18 |
 | Phase 2 — /research (FR-51) | `app/queue-research.ts` + `adapters/job-store.ts` + server job runner | AD-12, AD-14, AD-21 |
+| Epic 13 — Chat history (FR-52) | `adapters/chat-store.ts` + `app/chat-turn.ts` | AD-25 |
+| Epic 13 — Memory items, filing, commands (FR-53–FR-55) | `adapters/memory-item-store.ts` + `core/memory-{commands,filing}.ts` + `app/chat-turn.ts` | AD-26, AD-27 |
+| Epic 13 — Recall (FR-56) | `core/memory-context.ts` + `adapters/llm-adapter.ts` | AD-28 |
+| Epic 13 — Rule changes (FR-57) | `adapters/settings-store.ts` + `core/planning-settings.ts` + `app/confirm-proposal.ts` | AD-3, AD-29 |
+| Epic 13 — Patterns (FR-58) | `core/{pattern-detect,plan-reasoning}.ts` + `rituals/night-ritual.ts` + `adapters/completion-log.ts` (`planned_start/end`, `slip_events`) | AD-3, AD-23, AD-30 |
+| Epic 13 — Memory page (FR-59) | `web/` Memory page + `app/memory-*` | AD-17, AD-26 |
+| Epic 13 — Rating (FR-60) | `adapters/rating-store.ts` + `core/rating-schedule.ts` + `app/chat-turn.ts` | AD-31 |
 | Phase 2 — Hosting, reachability, liveness | host + Tailscale + systemd + `shell/server.ts` heartbeat | AD-7, AD-15 |
 
 ## Deferred
 
 - **FR-2 secondary-factor weights** (Area, Energy fit, difficulty) — start with an even split, tune after a few weeks of real Plans. Owner: Spencer.
 - **FR-11 Slip-Bump increment curve and cap** — starting shape suggested in the PRD addendum (small bump on slip 1, ~double on slip 2, cap by slip 3–4); tune after real slip data. Owner: Spencer.
-- **FR-17 Self-Check low-score threshold** — bias toward under-triggering initially. Owner: Spencer.
+- ~~**FR-17 Self-Check low-score threshold**~~ — retired with Self-Check (AD-31).
 - **Performance threshold's concrete number** (Consistency Conventions, Performance row) — pick the actual low-seconds cutoff at build time once real Plan-generation timings exist.
 - **OAuth production-mode verification — blocking.** The Google OAuth consent screen must be flipped to "In production" before/at launch, or refresh tokens silently expire after 7 days (Testing-mode default) — the technical research's single highest-severity Sept 2 risk, and a precondition of AD-7's failure-detection actually holding for FR-20/FR-21/FR-23. Verify and flip before any of those FRs go live, not as an afterthought. Owner: Spencer.
 - **Notion internal-integration-token auth pattern** — medium confidence per the technical research; confirm against current Notion docs before build. This is more load-bearing than it first looks: AD-10/AD-12 already assume the Notion token is a static, non-refreshing secret. If the confirmed pattern turns out to need OAuth-style refresh after all, AD-10's config/secrets shape needs revisiting, not just a Deferred note.
@@ -466,7 +545,10 @@ graph LR
 - **Public-feed providers and weather location** (PRD OQ 11, AD-22): pick free-tier crypto, weather, and news providers whose terms allow this use, and set the weather location in config. A provider whose free tier disappears is dropped or replaced, never upgraded (§7). Owner: Spencer. Revisit: before FR-44's feed widgets are built.
 - **Tailscale on the real school network and PWA install on Windows** (AD-15): DERP relaying over TCP 443 should get through restrictive networks, but that's confirmed in principle only. Test it in class, and check that the tailnet HTTPS origin installs as a PWA in the Windows browser Spencer uses. If school blocks Tailscale outright, reopen AD-15, because every alternative adds either public exposure or a login step. Owner: Spencer. Revisit: first Phase 2 story that ships the server.
 - **SSE through `tailscale serve`**: buffering and idle-timeout behavior for a long-held SSE stream isn't documented. With the AD-18 keep-alive in place, confirm empirically that hints arrive promptly on the tailnet origin. Revisit: first story that ships `/api/events`.
-- ~~**Chat transcript persistence** (UX OQ 13): cards and messages stay in Chat history for the session (client memory). Whether the transcript survives a reload or a device switch is unresolved. If it must, add a server-side `chat-store.ts` owner under AD-10. Don't let `web/` invent storage for it.~~ **Superseded 2026-09-27 (Spencer):** client-memory-only is no longer the plan. Persistent chat history plus three auto-categorized folders (Facts about me, Decisions & commitments, Ideas & notes) is planned as the "Yoh remembers you" epic (`epics.md`), queued after Epic 9. It adds a server-side `chat-store.ts` owner under AD-10, as this item already anticipated. Owner: Spencer. Revisit: when that epic is planned in full.
+- ~~**Chat transcript persistence** (UX OQ 13)~~ — resolved 2026-09-29 by AD-25 (server-owned chat history).
+- **Epic 13 tuning numbers** — `ALWAYS_LOADED_CAP` (60), `MEMORY_FILING_TIMEOUT_MS` (8000), `MEMORY_ITEM_MAX_CHARS` (280), the `isTrivialTurn` word floor (3), Pattern thresholds, padding rule and quiet period, relevant-item top-k (5), `RATING_PROMPT_PROBABILITY` (0.35). Starting values; tune after a few weeks of use. Owner: Spencer.
+- **Embeddings** — keyword FTS5 until Memory passes ~10,000 items or keyword search visibly misses (PRD OQ 15).
+- **Live-data conflict detection beyond `entity_ref` items** (AD-28) — free-text memories that contradict Notion or Calendar are not detected in v1. Revisit if stale memories show up in answers.
 - **Skill switcher** (UX): the Chat layout reserves the left bar. Skills would be another `ChatIntent` routing dimension in `llm-adapter.ts` when Goals arrives. Nothing is built in Phase 2.
 - **@dnd-kit/react is pre-1.0 (0.5.x)**: breaking changes are possible. Pin the exact version and keep drag code behind one `web/` hook so a swap stays local. Revisit: at FR-30 build.
 - **Tuning numbers:** outbox poll interval (~2 s start, AD-18), heartbeat interval and staleness threshold (AD-7), undo window (~5 s, AD-20), reshuffle TTL (~10 min, AD-19), Screensaver idle (10 min per UX), feed refresh intervals (AD-22). The values are tunable. Each has one defining export (Shared tuning constants convention).
