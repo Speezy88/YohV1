@@ -220,6 +220,8 @@ function useHintedLoad<T>(load: () => Promise<Outcome<T>>, key: string): { reado
   const refetch = useMemo(() => coalesce(refetchNow), [refetchNow]);
 
   useEffect(() => {
+    // A new key makes any in-flight response for the old key stale.
+    latest.current++;
     setState({ status: "loading" });
     void refetch();
   }, [refetch, key]);
