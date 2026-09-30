@@ -161,7 +161,7 @@ development_status:
   13-10-memory-page-edit-needs-review-and-changed-settings: done
   13-11-how-is-yoh-doing-rating: done
   13-12-retire-self-check: done
-  13-13-pattern-proposals-with-evidence: backlog
+  13-13-pattern-proposals-with-evidence: done
   epic-13-retrospective: optional
 action_items:
   - id: "epic-6-retro-item-1-chunk-rich_text-values-into-2000-char-se"
