@@ -5,11 +5,17 @@
  * versions expander and the Source link. Actions arrive in T11b.
  */
 import { useState } from "react";
+import { useReducedMotion } from "../../hooks/useReducedMotion.ts";
+import { editItem, markMemorySaved, moveItem, setExpiry, useMemorySaved } from "../../lib/memory.ts";
 import { formatMemoryDay } from "../../lib/memoryFormat.ts";
 import type { MemoryItemView } from "../../../../src/types/api.ts";
+import { ItemOverflowMenu, type FolderChoice } from "./ItemOverflowMenu.tsx";
 
 const CAPTION = "font-body text-small text-ink-secondary";
 const PILL = "rounded-full bg-surface-sunken px-2 py-0.5 font-body text-small text-ink-secondary";
+const FOCUS =
+  "focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid";
+const SMALL_BUTTON = `rounded-sm border-[length:var(--rim-width)] border-rim-interactive bg-transparent px-3 py-1 font-body text-small font-bold text-ink-primary disabled:opacity-50 ${FOCUS}`;
 const LINK_BUTTON =
   "font-body text-small font-semibold text-ink-primary underline underline-offset-2 " +
   "focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid";
@@ -20,11 +26,72 @@ export interface MemoryItemRowProps {
   readonly reason?: string;
   /** When given, the Source line is a button; otherwise it is plain text. */
   readonly onOpenSource?: (source: { conversationId: string; turnId: string }) => void;
+  /** All eight folders; when given (with `onDelete`) the row is editable and shows the overflow menu. */
+  readonly folders?: readonly FolderChoice[];
+  onDelete?(item: MemoryItemView): void;
+  /** Delete dissolve: the row collapses away (instantly under reduced motion) and is inert until restored. */
+  readonly dissolving?: boolean;
+  /** A failed delete send, shown in place once the row is back. */
+  readonly error?: string;
 }
 
-export function MemoryItemRow({ item, reason, onOpenSource }: MemoryItemRowProps): React.JSX.Element {
+type Duplicate = { readonly id: string; readonly text: string };
+
+export function MemoryItemRow({ item, reason, onOpenSource, folders, onDelete, dissolving = false, error }: MemoryItemRowProps): React.JSX.Element | null {
+  const reducedMotion = useReducedMotion();
   const [expanded, setExpanded] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(item.text);
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<string | undefined>(undefined);
+  const [duplicate, setDuplicate] = useState<Duplicate | undefined>(undefined);
+  const saved = useMemorySaved(item.id);
+  const editable = folders !== undefined && onDelete !== undefined;
+  const readOnlyPending = item.pendingChange;
+
+  const startEdit = (): void => {
+    setDraft(item.text);
+    setFailure(undefined);
+    setDuplicate(undefined);
+    setEditing(true);
+  };
+  const cancel = (): void => {
+    setEditing(false);
+    setDuplicate(undefined);
+  };
+
+  /** Runs one edit request and shows its outcome in place; the field stays disabled while it runs. */
+  const save = async (opts?: { mergeWithId?: string; allowDuplicate?: boolean }): Promise<void> => {
+    const text = draft.trim();
+    if (text === item.text && !opts) return cancel();
+    setBusy(true);
+    setFailure(undefined);
+    setDuplicate(undefined);
+    const outcome = await (opts ? editItem(item.id, text, opts) : editItem(item.id, text));
+    setBusy(false);
+    if (!outcome.ok) {
+      setEditing(false);
+      setFailure(outcome.message);
+    } else if (outcome.value.status === "duplicate") {
+      setDuplicate(outcome.value.other);
+    } else {
+      setEditing(false);
+      markMemorySaved(outcome.value.itemId);
+    }
+  };
+
+  /** Move and expiry are direct writes with the same visible result. */
+  const direct = async (run: () => ReturnType<typeof moveItem>): Promise<void> => {
+    setFailure(undefined);
+    const outcome = await run();
+    if (!outcome.ok) setFailure(outcome.message);
+    else markMemorySaved(outcome.value.itemId ?? item.id);
+  };
+
+  if (dissolving && reducedMotion) return null;
+
   const meta = [
+    ...(saved ? ["Saved"] : []),
     item.origin === "stated" ? "Stated" : "Inferred",
     formatMemoryDay(item.confirmedAt),
     ...(item.scope ? [item.scope] : []),
@@ -37,9 +104,81 @@ export function MemoryItemRow({ item, reason, onOpenSource }: MemoryItemRowProps
     <li
       id={`memory-item-${item.id}`}
       data-testid="memory-item"
-      className="flex list-none flex-col gap-1.5 rounded-lg bg-surface-raised px-[18px] py-4 font-body shadow-extruded-sm"
+      aria-hidden={dissolving || undefined}
+      inert={dissolving || undefined}
+      data-dissolving={dissolving || undefined}
+      className={
+        "group relative flex list-none flex-col gap-1.5 rounded-lg bg-surface-raised px-[18px] py-4 font-body shadow-extruded-sm " +
+        "transition-[opacity,max-height,padding,margin] duration-[var(--duration-page-transition)] " +
+        (dissolving ? "pointer-events-none my-0 max-h-0 overflow-hidden py-0 opacity-0" : "max-h-[600px]")
+      }
     >
-      <p className="m-0 text-body font-medium text-ink-primary">{item.text}</p>
+      <div className="flex items-start gap-2">
+        {editing ? (
+          <input
+            autoFocus
+            aria-label="Edit memory"
+            value={draft}
+            disabled={busy}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void save();
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                cancel();
+              }
+            }}
+            className={`min-w-0 flex-1 rounded-md bg-surface-sunken px-3 py-2 font-body text-body text-ink-primary shadow-inset disabled:opacity-60 ${FOCUS}`}
+          />
+        ) : editable && !readOnlyPending ? (
+          <>
+            <button type="button" tabIndex={-1} onClick={startEdit} className="m-0 min-w-0 flex-1 cursor-text border-0 bg-transparent p-0 text-left font-body text-body font-medium text-ink-primary">
+              {item.text}
+            </button>
+            <button
+              type="button"
+              onClick={startEdit}
+              className={`${LINK_BUTTON} opacity-0 focus-visible:opacity-100 group-focus-within:opacity-100 group-hover:opacity-100`}
+            >
+              Edit
+            </button>
+          </>
+        ) : (
+          <p className="m-0 min-w-0 flex-1 text-body font-medium text-ink-primary">{item.text}</p>
+        )}
+        {editable && !editing && (
+          <ItemOverflowMenu
+            itemText={item.text}
+            currentFolder={item.folder}
+            origin={item.origin}
+            {...(item.expiresOn ? { expiresOn: item.expiresOn } : {})}
+            folders={folders}
+            deleteOnly={readOnlyPending}
+            onMove={(folder) => void direct(() => moveItem(item.id, folder))}
+            onSetExpiry={(expiresOn) => void direct(() => setExpiry(item.id, expiresOn))}
+            onDelete={() => onDelete(item)}
+          />
+        )}
+      </div>
+      {duplicate && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-body text-small text-ink-primary">Merge with '{duplicate.text}'?</span>
+          <button type="button" disabled={busy} onClick={() => void save({ mergeWithId: duplicate.id })} className={SMALL_BUTTON}>
+            Yes
+          </button>
+          <button type="button" disabled={busy} onClick={() => void save({ allowDuplicate: true })} className={SMALL_BUTTON}>
+            No
+          </button>
+        </div>
+      )}
+      {readOnlyPending && <p className={`m-0 ${CAPTION}`}>Waiting on your answer in Chat</p>}
+      {(failure ?? error) && (
+        <p role="alert" className="m-0 font-body text-small font-semibold text-ink-danger">
+          {failure ?? error}
+        </p>
+      )}
       <p className={`m-0 ${CAPTION}`}>{meta}</p>
       {reason && <p className="m-0 text-small text-ink-primary">{reason}</p>}
       {(item.notLoadedReason || item.status === "history" || item.declined || item.pendingChange) && (

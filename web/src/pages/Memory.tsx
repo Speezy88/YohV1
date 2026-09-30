@@ -1,14 +1,15 @@
 /**
  * web/src/pages/Memory.tsx — Story 13.9 (T10b Part 1): the fifth page. Two
  * panes: the Memory Rail and the selected list (a folder, Needs review or
- * Changed settings). Read-only here; search and chat history arrive in
- * Part 2, actions in T11b. Data: `lib/memory.ts` (one fetch + the `memory`
+ * Changed settings). Items edit in place (T11b Part 1); Needs review and Changed
+ * settings actions arrive in Part 2. Data: `lib/memory.ts` (one fetch + the `memory`
  * hint on the shared event bus).
  */
 import { useEffect } from "react";
 import { ChatHistoryPane } from "../components/memory/ChatHistoryPane.tsx";
 import { MemorySearchBox, MemorySearchResults } from "../components/memory/MemorySearch.tsx";
 import { MemoryItemRow } from "../components/memory/MemoryItemRow.tsx";
+import { useMemoryDelete, type MemoryDelete } from "../components/memory/MemoryDeleteToast.tsx";
 import { MemoryRail } from "../components/memory/MemoryRail.tsx";
 import { useReducedMotion } from "../hooks/useReducedMotion.ts";
 import { clearPendingScroll, openMemoryItem, selectMemory, startMemoryStream, useMemorySearch, useMemoryView, type MemorySelection } from "../lib/memory.ts";
@@ -24,7 +25,14 @@ function Skeleton({ reducedMotion }: { readonly reducedMotion: boolean }): React
   return <div data-testid="memory-skeleton" className={`h-[74px] rounded-lg bg-surface-sunken ${reducedMotion ? "" : "animate-pulse"}`} />;
 }
 
-function Pane({ view, selection, pendingScrollId }: { readonly view: MemoryViewResponse; readonly selection: MemorySelection; readonly pendingScrollId?: string }): React.JSX.Element {
+function Pane({ view, selection, pendingScrollId, del }: { readonly view: MemoryViewResponse; readonly selection: MemorySelection; readonly pendingScrollId?: string; readonly del: MemoryDelete }): React.JSX.Element {
+  const folderChoices = view.folders.map((f) => ({ folder: f.folder, label: f.label }));
+  const rowProps = (id: string) => ({
+    folders: folderChoices,
+    onDelete: del.request,
+    dissolving: del.isDissolving(id),
+    ...(del.errorFor(id) ? { error: del.errorFor(id) } : {}),
+  });
   useEffect(() => {
     if (!pendingScrollId) return;
     const el = document.getElementById(`memory-item-${pendingScrollId}`);
@@ -38,7 +46,7 @@ function Pane({ view, selection, pendingScrollId }: { readonly view: MemoryViewR
     return (
       <ul aria-label="Needs review" className="m-0 flex flex-col gap-2 p-0">
         {view.needsReview.map((i) => (
-          <MemoryItemRow key={i.id} item={i} reason={i.reason} onOpenSource={openSource} />
+          <MemoryItemRow key={i.id} item={i} reason={i.reason} onOpenSource={openSource} {...rowProps(i.id)} />
         ))}
       </ul>
     );
@@ -87,7 +95,7 @@ function Pane({ view, selection, pendingScrollId }: { readonly view: MemoryViewR
         </li>
       ))}
       {folder.items.map((i) => (
-        <MemoryItemRow key={i.id} item={i} onOpenSource={openSource} />
+        <MemoryItemRow key={i.id} item={i} onOpenSource={openSource} {...rowProps(i.id)} />
       ))}
     </ul>
   );
@@ -97,6 +105,7 @@ export default function MemoryPage(): React.JSX.Element {
   const { view, selection, pendingScrollId } = useMemoryView();
   const reducedMotion = useReducedMotion();
   const search = useMemorySearch();
+  const del = useMemoryDelete();
   const searching = search.text.trim() !== "";
 
   useEffect(() => startMemoryStream(), []);
@@ -129,7 +138,7 @@ export default function MemoryPage(): React.JSX.Element {
                   }}
                 />
               ) : (
-                <Pane view={view.value} selection={selection} pendingScrollId={pendingScrollId} />
+                <Pane view={view.value} selection={selection} pendingScrollId={pendingScrollId} del={del} />
               )}
             </section>
           </>
@@ -143,6 +152,7 @@ export default function MemoryPage(): React.JSX.Element {
           </div>
         )}
       </div>
+      {del.toast}
     </div>
   );
 }

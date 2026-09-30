@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { apiClient } from "./apiClient.ts";
 import { onHint } from "./eventBus.ts";
-import type { ChatConversationView, ChatHistoryListResponse, MemorySearchResponse, MemoryViewResponse } from "../../../src/types/api.ts";
+import type { ChatConversationView, ChatHistoryListResponse, EditMemoryResponse, MemorySearchResponse, MemoryViewResponse, MemoryWriteResponse } from "../../../src/types/api.ts";
 import type { MemoryFolder } from "../../../src/types/domain.ts";
 
 export type MemoryViewState =
@@ -269,4 +269,75 @@ export function useMemorySearch(): {
   useEffect(() => () => clearTimeout(timer.current), []);
 
   return { text, setText, clear, status, ...(results ? { results } : {}) };
+}
+
+
+// ---- Item writes (T11b Part 1) ------------------------------------------------
+// Each helper maps the server's Result envelope to an Outcome and never throws.
+// After a success it refetches once; the `memory` hint refetches again on its own.
+
+async function write<T>(request: () => Promise<{ json(): Promise<unknown> }>): Promise<Outcome<T>> {
+  const outcome = await settle<T>(request);
+  if (outcome.ok) await refetchMemory();
+  return outcome;
+}
+
+export function editItem(
+  itemId: string,
+  text: string,
+  opts: { readonly mergeWithId?: string; readonly allowDuplicate?: boolean } = {},
+): Promise<Outcome<EditMemoryResponse>> {
+  return write(() => apiClient.api.memory.edit.$post({ json: { itemId, text, ...opts } }));
+}
+
+export function moveItem(itemId: string, folder: MemoryFolder): Promise<Outcome<MemoryWriteResponse>> {
+  return write(() => apiClient.api.memory.move.$post({ json: { itemId, folder } }));
+}
+
+export function setExpiry(itemId: string, expiresOn: string | null): Promise<Outcome<MemoryWriteResponse>> {
+  return write(() => apiClient.api.memory.expiry.$post({ json: { itemId, expiresOn } }));
+}
+
+export function deleteItem(itemId: string): Promise<Outcome<MemoryWriteResponse>> {
+  return write(() => apiClient.api.memory.delete.$post({ json: { itemId } }));
+}
+
+// ---- "Saved" marks ------------------------------------------------------------
+// A save creates a new version id, so the row can remount; the mark lives here
+// (keyed by the new id) rather than in row state, and clears itself after ~2 s.
+
+export const MEMORY_SAVED_MS = 2000;
+const savedIds = new Set<string>();
+const savedTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const savedListeners = new Set<() => void>();
+const notifySaved = (): void => savedListeners.forEach((l) => l());
+
+export function markMemorySaved(itemId: string): void {
+  clearTimeout(savedTimers.get(itemId));
+  savedIds.add(itemId);
+  savedTimers.set(
+    itemId,
+    setTimeout(() => {
+      savedIds.delete(itemId);
+      savedTimers.delete(itemId);
+      notifySaved();
+    }, MEMORY_SAVED_MS),
+  );
+  notifySaved();
+}
+
+export function useMemorySaved(itemId: string): boolean {
+  return useSyncExternalStore(
+    (onChange) => {
+      savedListeners.add(onChange);
+      return () => savedListeners.delete(onChange);
+    },
+    () => savedIds.has(itemId),
+  );
+}
+
+export function __resetMemorySavedForTests(): void {
+  savedTimers.forEach((t) => clearTimeout(t));
+  savedTimers.clear();
+  savedIds.clear();
 }

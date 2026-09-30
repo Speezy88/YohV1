@@ -11,7 +11,19 @@ vi.mock("./eventBus.ts", () => ({
     };
   },
 }));
-vi.mock("./apiClient.ts", () => ({ apiClient: { api: { memory: { $get: vi.fn() } } } }));
+vi.mock("./apiClient.ts", () => ({
+  apiClient: {
+    api: {
+      memory: {
+        $get: vi.fn(),
+        edit: { $post: vi.fn() },
+        move: { $post: vi.fn() },
+        expiry: { $post: vi.fn() },
+        delete: { $post: vi.fn() },
+      },
+    },
+  },
+}));
 
 import { apiClient } from "./apiClient.ts";
 import {
@@ -21,6 +33,10 @@ import {
   refetchMemory,
   selectMemory,
   startMemoryStream,
+  editItem,
+  moveItem,
+  setExpiry,
+  deleteItem,
 } from "./memory.ts";
 
 const api = apiClient.api as unknown as { memory: { $get: ReturnType<typeof vi.fn> } };
@@ -105,5 +121,44 @@ describe("memory store", () => {
     const s = getMemoryState();
     expect(s.selection).toEqual({ kind: "folder", folder: "about-you", itemId: "m1" });
     expect(s.pendingScrollId).toBe("m1");
+  });
+});
+
+
+describe("memory write helpers", () => {
+  const w = (apiClient.api as unknown as { memory: Record<"edit" | "move" | "expiry" | "delete", { $post: ReturnType<typeof vi.fn> }> }).memory;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    __resetMemoryForTests();
+    api.memory.$get.mockResolvedValue(envelope({ ok: true, value: VIEW }));
+  });
+
+  it("editItem maps the envelope to an outcome and refetches once after a success", async () => {
+    w.edit.$post.mockResolvedValue(envelope({ ok: true, value: { status: "saved", itemId: "m2" } }));
+    const out = await editItem("m1", "new", { mergeWithId: "o1" });
+    expect(out).toEqual({ ok: true, value: { status: "saved", itemId: "m2" } });
+    expect(w.edit.$post).toHaveBeenCalledWith({ json: { itemId: "m1", text: "new", mergeWithId: "o1" } });
+    expect(api.memory.$get).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes the server's plain message through on a failure and does not refetch", async () => {
+    w.move.$post.mockResolvedValue(envelope({ ok: false, error: { kind: "validation", message: "That's already in this folder." } }));
+    expect(await moveItem("m1", "about-you")).toEqual({ ok: false, message: "That's already in this folder." });
+    expect(api.memory.$get).not.toHaveBeenCalled();
+  });
+
+  it("a network failure gives one fixed sentence and never throws", async () => {
+    w.expiry.$post.mockRejectedValue(new Error("boom"));
+    const out = await setExpiry("m1", null);
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.message).toBe("I couldn't reach Yoh's server just now.");
+    expect(w.expiry.$post).toHaveBeenCalledWith({ json: { itemId: "m1", expiresOn: null } });
+  });
+
+  it("deleteItem posts the id", async () => {
+    w.delete.$post.mockResolvedValue(envelope({ ok: true, value: {} }));
+    expect(await deleteItem("m1")).toEqual({ ok: true, value: {} });
+    expect(w.delete.$post).toHaveBeenCalledWith({ json: { itemId: "m1" } });
   });
 });
