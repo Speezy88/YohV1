@@ -549,6 +549,27 @@ export async function readYohPlanEvents(
   return out.sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0));
 }
 
+/**
+ * Ids of today's events on the "Yoh Plan" calendar that Google reports as
+ * deleted (`status: "cancelled"`, listed via `showDeleted`). Only the id is
+ * relied on: Google may strip other fields from a deleted event.
+ */
+export async function readDeletedYohPlanEventIds(
+  client: CalendarReadClient,
+  calendarId: string,
+  config: { timeZone: string; now: Date },
+): Promise<string[]> {
+  const { start, end } = localDayWindowUtc(config.now, config.timeZone);
+  const response = await client.events.list({
+    calendarId,
+    timeMin: start.toISOString(),
+    timeMax: end.toISOString(),
+    singleEvents: true,
+    showDeleted: true,
+  });
+  return (response.data.items ?? []).filter((item) => item.status === "cancelled" && item.id).map((item) => item.id as string);
+}
+
 // ============================================================================
 // "Yoh Plan" write surface (Task 12 / Story 1.12, AD-4)
 // ============================================================================

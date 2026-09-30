@@ -27,6 +27,8 @@ export interface SyncPlanFromCalendarDeps extends RequestReshuffleDeps {
   readonly writeCalendarPlan?: (blocks: readonly PlanBlock[]) => Promise<{ readonly written: readonly string[]; readonly failed: readonly string[] }>;
   /** Events on the Yoh Plan calendar for today, with the plan block each was written from; `undefined` when there is no Yoh Plan calendar id yet (never read as "everything deleted"). */
   readonly readYohPlanEvents: () => Promise<readonly YohPlanEvent[] | undefined>;
+  /** Ids of today's Yoh Plan events Google reports as deleted (cancelled); read only when every tagged event is missing. */
+  readonly readDeletedYohPlanEventIds?: () => Promise<readonly string[]>;
   readonly log?: (entry: LogEntry) => void;
   /** What Yoh last wrote to the Yoh Plan calendar for `date`. */
   readonly readPlanCalendarSnapshot: (date: string) => readonly PlanCalendarSnapshotEntry[];
@@ -105,10 +107,20 @@ export async function syncPlanFromCalendar(
   }
   // No Yoh Plan calendar yet: there is nothing to compare against.
   if (events === undefined) return { ok: true, value: { status: "unchanged" } };
-  // Snapshot has future work but the calendar has no Yoh events at all: a read anomaly, not a mass deletion.
-  if (!events.some((e) => e.blockId !== undefined) && snapshot.some((s) => Date.parse(s.end) > nowMs)) {
-    deps.log?.({ level: "warn", event: "plan-sync.no-tagged-events", detail: { date: today, snapshotEntries: snapshot.length } });
-    return { ok: true, value: { status: "unchanged" } };
+  // Snapshot has future work but the calendar has no Yoh events at all: a mass deletion only when Google
+  // confirms every missing event as deleted; otherwise a read anomaly.
+  const future = snapshot.filter((s) => Date.parse(s.end) > nowMs);
+  if (!events.some((e) => e.blockId !== undefined) && future.length > 0) {
+    let deleted: ReadonlySet<string> = new Set();
+    try {
+      deleted = new Set((await deps.readDeletedYohPlanEventIds?.()) ?? []);
+    } catch {
+      // Treated as unconfirmed.
+    }
+    if (!future.every((s) => deleted.has(s.eventId))) {
+      deps.log?.({ level: "warn", event: "plan-sync.no-tagged-events", detail: { date: today, snapshotEntries: snapshot.length } });
+      return { ok: true, value: { status: "unchanged" } };
+    }
   }
 
   const diff = diffPlanCalendar({ snapshot, events, planBlocks: plan.blocks, now: nowDate.toISOString(), date: today });

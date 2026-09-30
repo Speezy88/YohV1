@@ -76,6 +76,7 @@ import {
   proposeCalendarEdit as calendarProposeEdit,
   proposeNewCalendarEvent,
   readCalendarEvents,
+  readDeletedYohPlanEventIds,
   readYohPlanEvents,
   resolveCalendarEditRoute as calendarResolveRoute,
   writeTodaysPlanToCalendar,
@@ -591,7 +592,7 @@ export interface ServerDeps {
   readonly chat?: Omit<ChatTurnDeps & AnswerOpenItemDeps, "session" | "emit" | "today"> & {
     readonly runChatTurn?: ChatTurnFn;
     /** The Yoh Plan calendar sync's two reads; `buildPlanSyncDeps` joins them with `reshuffle`. */
-    readonly planSyncReads?: Pick<SyncPlanFromCalendarDeps, "readYohPlanEvents" | "readPlanCalendarSnapshot" | "readPlanCalendarWriteState">;
+    readonly planSyncReads?: Pick<SyncPlanFromCalendarDeps, "readYohPlanEvents" | "readDeletedYohPlanEventIds" | "readPlanCalendarSnapshot" | "readPlanCalendarWriteState">;
   };
   /**
    * Story 8.5, contract C3: the ONE `ChatSession` every chat route in this
@@ -1813,6 +1814,11 @@ function buildChatDeps(
         const calendarId = getTokenStore().getCalendarId();
         if (!calendarId) return undefined;
         return readYohPlanEvents(createCalendarReadClient(getTokenStore().getOAuth2Client() as unknown as Parameters<typeof createCalendarReadClient>[0]), calendarId, { timeZone, now: new Date() });
+      },
+      readDeletedYohPlanEventIds: async () => {
+        const calendarId = getTokenStore().getCalendarId();
+        if (!calendarId) return [];
+        return readDeletedYohPlanEventIds(createCalendarReadClient(getTokenStore().getOAuth2Client() as unknown as Parameters<typeof createCalendarReadClient>[0]), calendarId, { timeZone, now: new Date() });
       },
       readPlanCalendarSnapshot: (date) => createPlanCalendarSnapshotStore(connection).list(date),
       readPlanCalendarWriteState: (date) => createPlanCalendarSnapshotStore(connection).writeState(date),

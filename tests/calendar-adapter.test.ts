@@ -1277,7 +1277,7 @@ test("writeTodaysPlanToCalendar: reports failed block ids per block instead of t
 
 // ---- Yoh Plan snapshot, reader, added events (calendar-sync T2) -------------
 
-import { readYohPlanEvents } from "../src/adapters/calendar-adapter.ts";
+import { readDeletedYohPlanEventIds, readYohPlanEvents } from "../src/adapters/calendar-adapter.ts";
 import type { PlanCalendarSnapshotEntry } from "../src/adapters/plan-calendar-snapshot-store.ts";
 
 class FakeSnapshot {
@@ -1390,6 +1390,15 @@ test("readYohPlanEvents returns tagged and untagged timed events, skipping all-d
   assert.equal(client.calls[0]?.calendarId, "yoh-cal");
   assert.deepEqual(events.map((e) => [e.eventId, e.blockId, e.title]), [["t1", "blk", "x"], ["u1", undefined, "Added"]]);
   assert.equal(events[1]?.start, "2026-08-22T12:00:00.000Z");
+});
+
+test("readDeletedYohPlanEventIds lists only cancelled events, asking Google to include deleted ones", async () => {
+  const client = new FakeCalendarReadClient([
+    { items: [taggedEvent("t1", "blk"), { id: "c1", status: "cancelled" }, { ...taggedEvent("c2", "x"), status: "cancelled" }] },
+  ]);
+  assert.deepEqual(await readDeletedYohPlanEventIds(client, "yoh-cal", { timeZone: "UTC", now: FIXED_NOW() }), ["c1", "c2"]);
+  assert.equal(client.calls[0]?.calendarId, "yoh-cal");
+  assert.equal(client.calls[0]?.showDeleted, true);
 });
 
 test("readCalendarEvents includes untagged Yoh Plan events (with calendarId) and never tagged ones", async () => {

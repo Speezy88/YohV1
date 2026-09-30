@@ -58,6 +58,7 @@ function setup() {
   let failWrites = false;
   const logs: { event: string }[] = [];
   let noCalendar = false;
+  let deletedIds: string[] = [];
   const deps: SyncPlanFromCalendarDeps = {
     store, connection, timeZone: TZ, now: () => NOW,
     log: (e) => { logs.push(e); },
@@ -70,6 +71,7 @@ function setup() {
       if (noCalendar) return undefined;
       return yohEvents;
     },
+    readDeletedYohPlanEventIds: async () => deletedIds,
     readPlanCalendarSnapshot: (d) => listPlanCalendarSnapshot(connection.db, d),
     readPlanCalendarWriteState: () => {
       stateReads += 1;
@@ -85,6 +87,7 @@ function setup() {
   return {
     store, connection, today, plan, deps, written, logs,
     setNoCalendar: () => { noCalendar = true; },
+    setDeletedIds: (ids: string[]) => { deletedIds = ids; },
     setEvents: (e: YohPlanEvent[]) => { yohEvents = e; },
     getEvents: () => yohEvents,
     setBusy: (e: CalendarEvent[]) => { busy = e; },
@@ -321,6 +324,26 @@ test("zero tagged events while the snapshot has future entries: unchanged, one w
   assert.deepEqual(s.logs.map((l) => l.event), ["plan-sync.no-tagged-events"]);
   assert.deepEqual(listDayDrops(s.connection.db, s.today), []);
   assert.deepEqual(s.written, []);
+  s.store.close();
+});
+
+test("every Yoh event confirmed deleted by Google: each Task is dropped for today", async () => {
+  const s = setup();
+  s.setEvents([]);
+  s.setDeletedIds(["ev-v1-work-1", "ev-v1-work-2"]);
+  const r = await syncPlanFromCalendar(s.deps, {});
+  assert.equal(r.ok && r.value.status, "applied");
+  assert.deepEqual([...listDayDrops(s.connection.db, s.today)].sort(), ["t2", "t4"]);
+  assert.deepEqual(s.logs.map((l) => l.event).filter((e) => e === "plan-sync.no-tagged-events"), []);
+  s.store.close();
+});
+
+test("zero tagged events with only some confirmed deleted: still an anomaly, nothing dropped", async () => {
+  const s = setup();
+  s.setEvents([]);
+  s.setDeletedIds(["ev-v1-work-1"]);
+  assert.deepEqual(await syncPlanFromCalendar(s.deps, {}), { ok: true, value: { status: "unchanged" } });
+  assert.deepEqual(listDayDrops(s.connection.db, s.today), []);
   s.store.close();
 });
 
