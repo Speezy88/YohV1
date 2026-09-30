@@ -36,7 +36,7 @@
 #   epic-10, per the ledger's queue (fixes+UI plan -> Epic 9 -> this epic -> 10 -> 11 -> 12). Story list is a
 #   sketch only, to be planned in full when this epic starts (see epics.md).
 generated: 08-22-2026 00:00
-last_updated: 09-29-2026 23:00
+last_updated: 09-29-2026 23:30
 project: YohV1
 project_key: NOKEY
 tracking_system: file-system
@@ -148,9 +148,9 @@ development_status:
   12-5-claude-api-spend-tile-added-2026-09-27-spencer: backlog
   epic-12-retrospective: optional
 
-  epic-13: backlog
-  13-1-server-owned-chat-history: backlog
-  13-2-record-planned-times-and-slip-events-for-patterns: backlog
+  epic-13: in-progress
+  13-1-server-owned-chat-history: done
+  13-2-record-planned-times-and-slip-events-for-patterns: done
   13-3-memory-item-store: backlog
   13-4-memory-commands-the-remembered-receipt-and-undo: backlog
   13-5-automatic-filing-after-each-turn: backlog
