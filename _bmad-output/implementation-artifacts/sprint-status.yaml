@@ -148,7 +148,7 @@ development_status:
   12-5-claude-api-spend-tile-added-2026-09-27-spencer: backlog
   epic-12-retrospective: optional
 
-  epic-13: in-progress
+  epic-13: done
   13-1-server-owned-chat-history: done
   13-2-record-planned-times-and-slip-events-for-patterns: done
   13-3-memory-item-store: done
