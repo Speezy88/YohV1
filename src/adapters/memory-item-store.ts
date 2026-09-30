@@ -90,6 +90,8 @@ export interface MemoryItemStore {
   forget(id: string): { chainIds: string[] };
   restore(chainIds: readonly string[]): void;
   purgeDeleted(): number;
+  /** Removes exactly these rows for good (Memory page Delete); one outbox row. Leaves other deleted chains alone. */
+  purgeChain(chainIds: readonly string[]): void;
   undoFiling(newId: string): void;
   keepAsHistory(id: string): void;
   setRuleChange(id: string, ruleChange: MemoryItem["ruleChange"]): void;
@@ -383,6 +385,14 @@ export function createMemoryItemStore(connection: SqliteConnection): MemoryItemS
         const n = tx.prepare(`DELETE FROM memory_items WHERE status = 'deleted'`).run().changes;
         if (n > 0) hint(tx, "purge");
         return n;
+      });
+    },
+    purgeChain(chainIds) {
+      if (chainIds.length === 0) return;
+      connection.writeTx((tx) => {
+        const del = tx.prepare(`DELETE FROM memory_items WHERE id = ?`);
+        for (const id of chainIds) del.run(id);
+        hint(tx, "purge");
       });
     },
     undoFiling(newId) {

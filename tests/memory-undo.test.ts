@@ -7,6 +7,7 @@ import { createChatStore, initChatStoreSchema } from "../src/adapters/chat-store
 import { createMemoryItemStore, initMemoryItemStoreSchema } from "../src/adapters/memory-item-store.ts";
 import { createMemoryStore, getOpenInteractionRequest, putOpenInteractionRequest } from "../src/adapters/memory-store.ts";
 import { undoMemoryReceipt } from "../src/app/memory-undo.ts";
+import { ruleChangeRequestId } from "../src/core/rule-change.ts";
 import { answerOpenItem } from "../src/app/answer-open-item.ts";
 import { surfaceOpenItems } from "../src/app/surface-open-items.ts";
 
@@ -112,4 +113,16 @@ test("answering memory-forget forgets the chosen item; none removes nothing", as
   assert.ok(n.ok);
   assert.equal(n.value.message, "Okay, nothing removed.");
   assert.equal(w.memoryItems.getItem(b.id)?.status, "current");
+});
+
+test("answering memory-forget withdraws the item's open rule-change proposal", async () => {
+  const w = world();
+  const a = w.memoryItems.insert(NEW({ folder: "planning-preferences", text: "A one", ruleChange: "pending" }));
+  const b = w.memoryItems.insert(NEW({ text: "B two" }));
+  const rid = ruleChangeRequestId(a.id);
+  putOpenInteractionRequest(w.store, rid, { requestKind: "proposal", promptText: "x", createdAt: T(0) } as never);
+  forgetRequest(w, [a.id, b.id]);
+  const r = await answerOpenItem(base(w), { requestId: "memory-forget:1", questionId: "pick", answer: a.id });
+  assert.ok(r.ok);
+  assert.equal(getOpenInteractionRequest(w.store, rid), undefined);
 });

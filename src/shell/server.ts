@@ -122,6 +122,8 @@ import {
   undoCheckOff,
   type CheckOffDeps,
 } from "../app/check-off.ts";
+import { deleteMemoryItem, editMemoryItem, moveMemoryItem, reviewMemoryItem, setMemoryExpiry } from "../app/memory-edit.ts";
+import { revertPlanningSetting } from "../app/settings-revert.ts";
 import { undoMemoryReceipt } from "../app/memory-undo.ts";
 import { viewMemory } from "../app/memory-view.ts";
 import { searchMemory } from "../app/memory-search.ts";
@@ -142,6 +144,12 @@ import { firstCardView } from "../core/sandbox-card-view.ts";
 import type {
   AnswerOpenItemRequest,
   UndoMemoryRequest,
+  EditMemoryRequest,
+  MoveMemoryRequest,
+  SetMemoryExpiryRequest,
+  DeleteMemoryRequest,
+  ReviewMemoryRequest,
+  RevertSettingRequest,
   ApiResult,
   PlanSyncResponse,
   CalendarDayRequest,
@@ -673,6 +681,21 @@ function memoryPageDeps(deps: ServerDeps, memoryItems: MemoryItemStore) {
     timeZone: deps.chat?.timeZone ?? process.env["YOH_TIMEZONE"] ?? "UTC",
   };
 }
+
+/** Validates a memory-write body: a JSON object whose named fields have the given shapes; 400 envelope otherwise. */
+function validateMemoryBody<T>(route: string, check: (body: Record<string, unknown>) => string | undefined) {
+  return (value: unknown, c: Context): T | Response => {
+    const body = value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
+    const problem = body ? check(body) : "expected a JSON object";
+    if (problem) {
+      const invalid: ApiFailure = { ok: false, error: { kind: "validation", message: `${route}: ${problem}` } };
+      return c.json(invalid, httpStatus(invalid));
+    }
+    return body as unknown as T;
+  };
+}
+const isNonEmptyString = (v: unknown): v is string => typeof v === "string" && v !== "";
+const itemIdProblem = (b: Record<string, unknown>): string | undefined => (isNonEmptyString(b["itemId"]) ? undefined : "missing itemId");
 
 const MEMORY_NOT_CONFIGURED: ApiFailure = {
   ok: false,
@@ -1343,6 +1366,63 @@ export function createApp(deps: ServerDeps) {
         async (c) => {
           if (!deps.memoryItems || !deps.chatHistory) return c.json(MEMORY_NOT_CONFIGURED, httpStatus(MEMORY_NOT_CONFIGURED));
           const result = wire(await undoMemoryReceipt({ memoryItems: deps.memoryItems, chatHistory: deps.chatHistory, ...(deps.chat?.store ? { store: deps.chat.store } : {}) }, c.req.valid("json")));
+          return c.json(result, httpStatus(result));
+        },
+      )
+      // Story 13.10: the Memory page's direct writes. Each validates its body, then calls ONE app function.
+      .post(
+        "/api/memory/edit",
+        validator("json", validateMemoryBody<EditMemoryRequest>("memory/edit", (b) =>
+          itemIdProblem(b) ?? (typeof b["text"] !== "string" ? "missing text" : b["mergeWithId"] !== undefined && typeof b["mergeWithId"] !== "string" ? "bad mergeWithId" : b["allowDuplicate"] !== undefined && typeof b["allowDuplicate"] !== "boolean" ? "bad allowDuplicate" : undefined))),
+        async (c) => {
+          if (!deps.memoryItems) return c.json(MEMORY_NOT_CONFIGURED, httpStatus(MEMORY_NOT_CONFIGURED));
+          const result = wire(await editMemoryItem(memoryPageDeps(deps, deps.memoryItems), c.req.valid("json")));
+          return c.json(result, httpStatus(result));
+        },
+      )
+      .post(
+        "/api/memory/move",
+        validator("json", validateMemoryBody<MoveMemoryRequest>("memory/move", (b) => itemIdProblem(b) ?? (isNonEmptyString(b["folder"]) ? undefined : "missing folder"))),
+        async (c) => {
+          if (!deps.memoryItems) return c.json(MEMORY_NOT_CONFIGURED, httpStatus(MEMORY_NOT_CONFIGURED));
+          const result = wire(await moveMemoryItem(memoryPageDeps(deps, deps.memoryItems), c.req.valid("json")));
+          return c.json(result, httpStatus(result));
+        },
+      )
+      .post(
+        "/api/memory/expiry",
+        validator("json", validateMemoryBody<SetMemoryExpiryRequest>("memory/expiry", (b) => itemIdProblem(b) ?? (b["expiresOn"] === null || typeof b["expiresOn"] === "string" ? undefined : "expiresOn must be a date or null"))),
+        async (c) => {
+          if (!deps.memoryItems) return c.json(MEMORY_NOT_CONFIGURED, httpStatus(MEMORY_NOT_CONFIGURED));
+          const result = wire(await setMemoryExpiry(memoryPageDeps(deps, deps.memoryItems), c.req.valid("json")));
+          return c.json(result, httpStatus(result));
+        },
+      )
+      .post(
+        "/api/memory/delete",
+        validator("json", validateMemoryBody<DeleteMemoryRequest>("memory/delete", itemIdProblem)),
+        async (c) => {
+          if (!deps.memoryItems) return c.json(MEMORY_NOT_CONFIGURED, httpStatus(MEMORY_NOT_CONFIGURED));
+          const result = wire(await deleteMemoryItem(memoryPageDeps(deps, deps.memoryItems), c.req.valid("json")));
+          return c.json(result, httpStatus(result));
+        },
+      )
+      .post(
+        "/api/memory/review",
+        validator("json", validateMemoryBody<ReviewMemoryRequest>("memory/review", (b) =>
+          itemIdProblem(b) ?? (b["action"] !== "renew" && b["action"] !== "keep" ? "action must be renew or keep" : b["expiresOn"] !== undefined && typeof b["expiresOn"] !== "string" ? "bad expiresOn" : undefined))),
+        async (c) => {
+          if (!deps.memoryItems) return c.json(MEMORY_NOT_CONFIGURED, httpStatus(MEMORY_NOT_CONFIGURED));
+          const result = wire(await reviewMemoryItem(memoryPageDeps(deps, deps.memoryItems), c.req.valid("json")));
+          return c.json(result, httpStatus(result));
+        },
+      )
+      .post(
+        "/api/settings/revert",
+        validator("json", validateMemoryBody<RevertSettingRequest>("settings/revert", (b) =>
+          isNonEmptyString(b["key"]) ? (b["area"] !== undefined && typeof b["area"] !== "string" ? "bad area" : undefined) : "missing key")),
+        async (c) => {
+          const result = wire(await revertPlanningSetting({ connection: deps.connection }, c.req.valid("json")));
           return c.json(result, httpStatus(result));
         },
       )

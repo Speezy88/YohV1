@@ -7,7 +7,7 @@
  * `"proposal"` with its own `answerProposalRequest`. Any kind this file
  * still doesn't recognize keeps the pre-Epic-8 generic behavior.
  */
-import { clearInteractionRequest, getOpenInteractionRequest, type InteractionRequest, type MemoryStore, type StoredRecord } from "../adapters/memory-store.ts";
+import { clearInteractionRequest, getOpenInteractionRequest, withdrawRuleProposal, type InteractionRequest, type MemoryStore, type StoredRecord } from "../adapters/memory-store.ts";
 import type { ChatStore } from "../adapters/chat-store.ts";
 import type { MemoryItemStore } from "../adapters/memory-item-store.ts";
 import type { LogEntry } from "../adapters/logger.ts";
@@ -131,7 +131,7 @@ async function answerMemoryForget(deps: AnswerOpenItemDeps, input: AnswerOpenIte
     try {
       const item = store.getItem(answer);
       if (item && item.status === "current") {
-        store.forget(answer);
+        for (const id of store.forget(answer).chainIds) withdrawRuleProposal(deps.store, id);
         message = `Forgot: ${item.text}.`;
       } else {
         message = "That item is already gone.";

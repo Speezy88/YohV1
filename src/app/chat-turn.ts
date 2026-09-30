@@ -85,7 +85,7 @@ import type { ChatStore } from "../adapters/chat-store.ts";
 import type { MemoryItemStore } from "../adapters/memory-item-store.ts";
 import type { LogEntry } from "../adapters/logger.ts";
 import type { AnthropicMessagesClient } from "../adapters/llm-adapter.ts";
-import { getPlan, putOpenInteractionRequest, type MemoryStore } from "../adapters/memory-store.ts";
+import { getPlan, putOpenInteractionRequest, withdrawRuleProposal, type MemoryStore } from "../adapters/memory-store.ts";
 import { buildMemoryForgetQuestion } from "../core/open-item-questions.ts";
 import type { MemoryContext } from "../core/memory-context.ts";
 import { errorCopyForThrown } from "../core/error-copy.ts";
@@ -715,6 +715,8 @@ function forgetMemory(deps: ChatTurnDeps, store: MemoryItemStore, words: string)
     }
   }
   const chainIds = targets.flatMap((item) => store.forget(item.id).chainIds);
+  // A forgotten item can no longer be changed into a planning rule: close its open rule-change card.
+  if (deps.store) for (const id of chainIds) withdrawRuleProposal(deps.store, id);
   const receipt = {
     receiptId: randomUUID(),
     kind: "forgot" as const,

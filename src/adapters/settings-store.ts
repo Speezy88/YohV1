@@ -96,7 +96,7 @@ export function listSettingRows(db: Database.Database): { key: RuleSettingKey; a
   return out;
 }
 
-function isRuleKey(key: string): key is RuleSettingKey {
+export function isRuleKey(key: string): key is RuleSettingKey {
   return ["schoolDayWorkStart", "otherDayWorkStart", "lunchWindow", "communityWindow", "areaDurationPadding"].includes(key);
 }
 
@@ -120,7 +120,7 @@ export function writeSettingInTx(db: Database.Database, key: RuleSettingKey, val
 
 export function deleteSettingInTx(db: Database.Database, key: RuleSettingKey, area?: Area): void {
   initSettingsStoreSchema(db);
-  db.prepare("DELETE FROM planning_settings WHERE key = ? AND area = ?").run(key, area ?? "");
+  db.prepare("DELETE FROM planning_settings WHERE key = ? AND area = ?").run(key, area?.trim() ?? "");
 }
 
 export function writeSetting(connection: SqliteConnection, key: RuleSettingKey, value: RuleSettingValue): void {

@@ -155,3 +155,20 @@ test("receipts: put/get/latest/markUndone with outbox hints", () => {
   assert.equal(store.getReceipt("r2")?.undoneAt, T2);
   assert.equal(outboxCount(connection), before + 4);
 });
+
+test("purgeChain removes exactly those rows with one outbox row; a forgotten chain elsewhere survives", () => {
+  const { connection, store } = fresh();
+  const other = store.insert({ folder: "about-you", text: "kept for undo", origin: "stated" });
+  store.forget(other.id);
+  const a = store.insert({ folder: "about-you", text: "one", origin: "stated" });
+  const b = store.supersede(a.id, { folder: "about-you", text: "two", origin: "stated" });
+  const { chainIds } = store.forget(b.id);
+  const before = outboxCount(connection);
+  store.purgeChain(chainIds);
+  assert.equal(store.getItem(a.id), undefined);
+  assert.equal(store.getItem(b.id), undefined);
+  assert.equal(store.getItem(other.id)?.status, "deleted");
+  assert.equal(outboxCount(connection), before + 1);
+  store.purgeChain([]);
+  assert.equal(outboxCount(connection), before + 1);
+});

@@ -5,7 +5,8 @@ import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
 import { createMemoryItemStore, initMemoryItemStoreSchema, type MemoryItemStore } from "../src/adapters/memory-item-store.ts";
 import { chatTurn, type ChatTurnDeps } from "../src/app/chat-turn.ts";
-import { createMemoryStore, getOpenInteractionRequest } from "../src/adapters/memory-store.ts";
+import { createMemoryStore, getOpenInteractionRequest, putOpenInteractionRequest } from "../src/adapters/memory-store.ts";
+import { ruleChangeRequestId } from "../src/core/rule-change.ts";
 import { COMMANDS } from "../src/app/commands.ts";
 
 function memory(): MemoryItemStore {
@@ -145,4 +146,19 @@ test("forget with several matches stores a memory-forget request and returns a d
   assert.equal(m.getItem(b.id)?.status, "current");
   const rec = getOpenInteractionRequest(store, q.requestId);
   assert.equal(rec?.data.requestKind, "memory-forget");
+});
+
+test("chat forget withdraws the item's open rule-change proposal", async () => {
+  const c = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(c.db);
+  initMemoryItemStoreSchema(c.db);
+  const m = createMemoryItemStore(c);
+  const store = createMemoryStore(c);
+  const item = m.insert(NEW({ folder: "planning-preferences", text: "Start school days at 4pm", ruleChange: "pending" }));
+  const rid = ruleChangeRequestId(item.id);
+  putOpenInteractionRequest(store, rid, { requestKind: "proposal", promptText: "x", createdAt: "2026-09-29T10:00:00.000Z" } as never);
+  const r = await chatTurn(deps(m, { store } as Partial<ChatTurnDeps>), { message: "forget school days" });
+  assert.ok(r.ok);
+  assert.equal(m.getItem(item.id)?.status, "deleted");
+  assert.equal(getOpenInteractionRequest(store, rid), undefined);
 });

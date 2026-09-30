@@ -422,6 +422,60 @@ export type MemoryTurnDirective =
   | { readonly kind: "remember"; readonly text: string }
   | { readonly kind: "forgot"; readonly receipt: RememberedReceipt; readonly chainIds: readonly string[] };
 
+/** `POST /api/memory/edit` request (Story 13.10). `mergeWithId` accepts a prior duplicate offer; `allowDuplicate` saves separately. */
+export interface EditMemoryRequest {
+  readonly itemId: string;
+  readonly text: string;
+  readonly mergeWithId?: string;
+  readonly allowDuplicate?: boolean;
+}
+
+/** `POST /api/memory/edit` value. "duplicate" writes nothing; the client offers "Merge with '{other}'?". */
+export type EditMemoryResponse =
+  | { readonly status: "saved"; readonly itemId: string }
+  | { readonly status: "merged"; readonly itemId: string }
+  | { readonly status: "duplicate"; readonly other: { readonly id: string; readonly text: string; readonly folder: MemoryFolder } };
+
+/** `POST /api/memory/move` request. */
+export interface MoveMemoryRequest {
+  readonly itemId: string;
+  readonly folder: MemoryFolder;
+}
+
+/** `POST /api/memory/expiry` request; `null` clears the expiry. */
+export interface SetMemoryExpiryRequest {
+  readonly itemId: string;
+  readonly expiresOn: IsoDate | null;
+}
+
+/** `POST /api/memory/delete` request. */
+export interface DeleteMemoryRequest {
+  readonly itemId: string;
+}
+
+/** `POST /api/memory/review` request; `expiresOn` applies to renewing an expired item. */
+export interface ReviewMemoryRequest {
+  readonly itemId: string;
+  readonly action: "renew" | "keep";
+  readonly expiresOn?: IsoDate;
+}
+
+/** `POST /api/memory/{move,expiry,delete,review}` value (`itemId` is the new version's id where one exists). */
+export interface MemoryWriteResponse {
+  readonly itemId?: string;
+}
+
+/** `POST /api/settings/revert` request. */
+export interface RevertSettingRequest {
+  readonly key: RuleSettingKey;
+  readonly area?: string;
+}
+
+/** `POST /api/settings/revert` value, e.g. "Reverted to 3:15 PM.". */
+export interface RevertSettingResponse {
+  readonly message: string;
+}
+
 /** `POST /api/memory/undo` request. */
 export interface UndoMemoryRequest {
   readonly receiptId: string;
