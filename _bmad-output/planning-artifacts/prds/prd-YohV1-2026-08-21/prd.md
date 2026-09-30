@@ -122,10 +122,10 @@ Yoh has exactly one user, permanently — not a v1 scoping choice (see §8 Non-G
 - **Memory Folder** — One of eight fixed folders (FR-53). Always loaded: Feedback, Planning preferences, Corrections, About you, Patterns. Loaded when relevant: Goals & projects, Decisions & commitments. Loaded only when asked: Ideas & notes.
 - **Conversation** — One continuous chat thread in the Chat panel, from its first turn until Spencer starts a new one. The unit of "delete one conversation" (FR-52).
 - **Chat History** — The stored transcripts of all Conversations (FR-52). Not Memory: deleting it does not delete Memory Items.
-- **Stated / Inferred** — A Memory Item is stated when Spencer said it outright (including via "remember …"), and inferred when Yoh concluded it from context. Editing an inferred item makes it stated (FR-59).
-- **Always-loaded** — A Memory Folder whose items go into every model call that answers, captures, files, or plans (FR-53, FR-56).
+- **Stated / Inferred** — A Memory Item is stated when Spencer said it outright (including via "remember that …"), and inferred when Yoh concluded it from context. Editing an inferred item makes it stated (FR-59).
+- **Always-loaded** — A Memory Folder whose items go into every model call that answers, captures, or writes Plan reasoning (FR-53, FR-56). Never into routing or classification calls.
 - **Superseded** — A Memory Item replaced by a newer one that contradicts it. It stays viewable as history under the current item (FR-54).
-- **Needs review** — The Memory page list of expired items, items not loaded because an always-loaded folder is over its cap, and items awaiting a renew/edit/delete/keep-as-history decision (FR-53, FR-56, FR-59).
+- **Needs review** — The Memory page list of expired items, items not loaded because an always-loaded folder is over its cap, always-loaded items not used or confirmed in 120 days, items that conflict with live Notion, Calendar or Plan data, and items awaiting a renew/edit/delete/keep-as-history decision (FR-53, FR-56, FR-59).
 - **Ratings log** — The store of Rating scores (FR-60). Never loaded into a model call and never part of Memory.
 - **Remembered Receipt** — The one-line "Remembered: …" chat line, with Undo, shown whenever Yoh files a Memory Item (FR-54).
 - **Rating** — The occasional "How is Yoh doing?" 1–3 prompt that replaces the Self-Check (FR-60). Scores go to a ratings log, never into Memory.
@@ -760,7 +760,7 @@ Memories live in eight fixed folders. Each item holds one fact.
 | Folder | Holds | Loaded |
 |---|---|---|
 | **Feedback** | What Spencer liked or disliked about Yoh's behavior, and changes he asked for, with the reason and when it applies. Stated items only | Always |
-| **Planning preferences** | How Spencer likes his day planned: block length, buffers, how packed a day is, when to nudge. Stated items only | Always |
+| **Planning preferences** | How Spencer likes his day planned: block length, buffers, how packed a day is, when to nudge. Stated items only. A preference that maps to a real scheduler setting becomes a rule-change Proposal (FR-57); a soft preference affects only AI-written text (FR-56) | Always |
 | **Corrections** | Facts Yoh got wrong, and the fix ("that's a club, not a class") | Always |
 | **About you** | Routines, energy, people and their roles | Always |
 | **Patterns** | Confirmed patterns Yoh noticed in Spencer's check-off history (FR-58) | Always |
@@ -769,7 +769,7 @@ Memories live in eight fixed folders. Each item holds one fact.
 | **Ideas & notes** | Things to come back to | Only when asked |
 
 **Consequences (testable):**
-- Every memory item records its folder, its text, whether Spencer **stated** it or Yoh **inferred** it, when it was created and last changed, the chat turn it came from (if any), and an optional expiry date.
+- Every memory item records its folder, its text, whether Spencer **stated** it or Yoh **inferred** it, when it was created and last changed, the chat turn it came from (if any), and an optional expiry date. Every Feedback item also stores its scope: which situations it applies to. When Spencer's words don't say, Yoh files the narrowest reading (P2).
 - Feedback and Planning preferences only ever hold items Spencer stated. A preference Yoh infers (for example, that he seems to dislike long answers) is never filed there; it becomes a Pattern proposal under FR-58 and needs his yes. Inferred items in other folders (About you, Goals & projects, and so on) are recallable facts and never change Yoh's behavior.
 - Time-bound items (this semester's schedule, an exam, a project deadline) carry an expiry. Yoh sets the expiry at filing and shows it in the receipt; Spencer can change or clear it (FR-59). An expired item is no longer loaded, and the Memory page lists it under Needs review (FR-59) rather than deleting it. The review actions are renew, edit, delete, or keep as history.
 - "When relevant" means the item's text keyword-matches the request. "Only when asked" (Ideas & notes) means an explicit "what do you remember about …" or a Memory page query. Architecture picks the matching method.
@@ -779,9 +779,14 @@ Memories live in eight fixed folders. Each item holds one fact.
 
 After each chat turn, Yoh checks whether the turn contained something worth remembering. If it did, Yoh files it and shows a one-line "Remembered: …" receipt with Undo in the chat.
 
+**Filing bar and source:** Yoh files only facts that would still be true next week, and at most 2 items per turn. Memory is filed only from Spencer's own typed words, never from search results, Research Vault pages, Notion content, or model output.
+
 **Consequences (testable):**
+- Filing runs after the reply finishes. It never delays or blocks the reply, and the receipt appears when filing is done.
+- The receipt is a single line. Several filings from one turn share that one line, and it shows each Feedback item's scope.
 - A turn with nothing worth keeping files nothing and shows no receipt; this includes trivial turns. `[ASSUMPTION: the filter for trivial turns is an architecture decision]`
 - Undo removes the item completely, and the receipt then says so. If the item superseded or updated an earlier one, Undo restores the prior item or version. Undo is available until Spencer's next message.
+- The duplicate check compares a new item against the whole always-loaded set, not only keyword matches.
 - A new item that restates an existing one updates that item instead of creating a duplicate. A new item that contradicts an existing one supersedes it: the newer one is current, and the older one stays viewable as history on the Memory page.
 - Yoh never files anything it has inferred about Spencer's health, emotions, or finances. It files these only when Spencer states them outright, and they are marked stated. The ban also applies to answers given to the FR-60 "What was off?" follow-up.
 - Filing is a Yoh-owned local write at the direct-write tier (§6). It never touches Notion or Calendar.
@@ -790,22 +795,26 @@ After each chat turn, Yoh checks whether the turn contained something worth reme
 #### FR-55: Memory commands in chat
 
 Spencer can manage memory in plain words. Yoh recognizes these deterministically, never through an LLM routing guess:
-- "remember …" files the item immediately as stated.
+- "remember that …", "remember: …", and `/remember` file the item immediately as stated. "remember to …" and "remind me to …" are not memory commands: they create Tasks exactly as they do today.
 - "forget …" or "forget that" deletes the matching item, or the last one filed. Forgetting an item deletes its history (superseded versions) too.
 - "what do you remember about …" lists matching items with their folder.
 
 **Consequences (testable):**
-- "remember …" always files, even when auto-filing would have skipped the turn.
+- "remember that …", "remember: …", and `/remember` always file, even when auto-filing would have skipped the turn.
 - "forget …" that matches more than one item asks which one, and deletes nothing until Spencer answers. "forget …" that matches nothing says so and deletes nothing.
 - `/remember` and `/forget` are slash-command forms of the same commands and appear in the Command Palette (FR-42). The plain-word forms keep working.
 - A memory command shows the same receipt shape as FR-54.
 
 #### FR-56: Recall in answers and planning
 
-Yoh uses memory whenever it answers, captures, or plans.
+Yoh uses memory whenever it answers, captures, or explains a Plan. The deterministic scheduler never reads memory text.
 
 **Consequences (testable):**
-- Every model call that answers Spencer, captures, files, or builds a Plan includes the always-loaded folders (FR-53), subject to the cap below. Items from the when-relevant folders are included only when they match the request.
+- Every model call that answers Spencer, captures, or writes Plan reasoning includes the always-loaded folders (FR-53), subject to the cap below. Items from the when-relevant folders are included only when they match the request. Memory never goes into routing or classification calls.
+- Planning preferences affect only AI-written parts: the Plan reasoning line, answers, and chat moves. A preference that maps to a real scheduler setting goes through FR-57.
+- Live Notion, Calendar and Plan data always win over memory. When they conflict with a memory item, that item goes to Needs review.
+- No memory item can weaken or skip a confirmation step. Proposals still need an explicit yes.
+- An always-loaded item not used or confirmed in 120 days goes to Needs review. It is a list on the Memory page, not a notification.
 - The always-loaded set has a fixed size cap. Past the cap, the newest items are loaded and the oldest spill to Needs review: they are not loaded and never deleted. The Memory page marks which items are not loaded, so nothing is dropped silently. `[ASSUMPTION: the cap value is set in architecture]`
 - Yoh uses a memory only when it changes the answer. It never brings up an old personal detail unprompted just to show that it remembers. Checkable proxy: no memory content appears in a reply unless the item was among the request's matched or always-loaded items.
 - A Feedback item changes Yoh's behavior from the next turn onward, with no confirmation step. Spencer stating it is the instruction. Conflicts with built-in rules are handled by FR-57.
@@ -821,6 +830,7 @@ A Feedback or Planning-preferences item can conflict with a built-in planning ru
 - A preference whose Proposal is pending does not affect planning.
 - A confirmed change becomes a stored setting that Spencer can see and revert on the Memory page (FR-59).
 - A declined Proposal leaves the rule unchanged and does not affect planning. The preference stays filed, marked declined, and is not proposed again unless Spencer raises it again.
+- Split: a preference that maps to a real scheduler setting (block length, buffers, work start, and so on) becomes a Yes/No proposal to change that setting, as above. A soft preference ("I like hard tasks first") is not a rule change and affects only AI-written parts under FR-56.
 - Preferences that don't conflict with a built-in rule (tone, wording, how much detail Yoh gives) take effect directly under FR-56.
 
 #### FR-58: Patterns are proposed, never assumed
@@ -829,6 +839,7 @@ Yoh looks for patterns in the Completion Log (FR-47) and slip history, for examp
 
 **Consequences (testable):**
 - A pattern Yoh infers about how Spencer likes to be served (for example, that he seems to dislike long answers) is proposed here as a Pattern, never filed to Feedback or Planning preferences (FR-53).
+- Each Pattern proposal shows its evidence, for example "5 times since Sep 3: …".
 - A pattern needs repeated evidence before it is proposed: several occurrences over at least two weeks, never a single day. `[ASSUMPTION: thresholds set in architecture]`
 - Proposals follow FR-16 (Propose-Don't-Impose): "Yoh noticed History essays run about 30 minutes over. Plan for that? Yes/No." A no files nothing, and the same pattern is not proposed again for at least 30 days. `[ASSUMPTION: 30-day quiet period]`
 - A confirmed pattern that changes planning (a duration padding, for example) is shown in the Plan's reasoning line (FR-3) whenever it affects a placement.
@@ -842,7 +853,7 @@ The Web App gains a fifth page, Memory, after Research Hub (§5.11 lists all fiv
 - Editing an inferred item makes it stated. An edit that duplicates another item offers to merge the two. Spencer can change or clear an item's expiry.
 - One search covers memories and chat history. It matches by keyword, and each result shows its folder or conversation date.
 - Each item shows stated or inferred, its dates, and a link to the chat turn it came from (or "source deleted" when that Conversation was deleted, FR-52).
-- Superseded items appear as history under the current item. Expired items, and items not loaded because an always-loaded folder is over its cap (FR-56), appear in a "Needs review" list, with the actions renew, edit, delete, or keep as history. Items not loaded are marked as such.
+- Superseded items appear as history under the current item. Expired items, and items not loaded because an always-loaded folder is over its cap (FR-56), appear in a "Needs review" list, as do always-loaded items unused or unconfirmed for 120 days and items that conflict with live data (FR-56), with the actions renew, edit, delete, or keep as history. Items not loaded are marked as such.
 - Confirmed rule changes (FR-57) are listed as settings with a revert action.
 - If the Memory store or search is unavailable, the page shows an error state and never shows unsaved changes as saved.
 - The page follows the design system (FR-46), the page order in §5.11, and the Accessibility NFR (§6).
@@ -852,7 +863,8 @@ The Web App gains a fifth page, Memory, after Research Hub (§5.11 lists all fiv
 Occasionally, right after a substantive turn, Yoh asks "How is Yoh doing?" with three choices: 1 (poor), 2 (okay), and 3 (good). A substantive turn is a plan change, a re-fit, a researched answer, or a Morning or Night Ritual.
 
 **Consequences (testable):**
-- At most one prompt per calendar day (in `YOH_TIMEZONE`), at a randomized turn, with one exception for a 1 (see below). It never appears mid-block unprompted (FR-9). Spencer can dismiss it with no effect; a dismissal counts toward the day's one prompt.
+- At most one prompt per calendar day (in `YOH_TIMEZONE`), at a randomized turn, with one exception for a 1 (see below). It never appears mid-block unprompted (FR-9). Spencer can dismiss it with no effect; a dismissal counts toward the day's one prompt. After 3 dismissals in a row, prompts pause for a week.
+- The Rating appears only in the app, never in a push notification and not on the Morning Ritual.
 - Scores go to a ratings log, never into memory. The log feeds trends (§10) and is not loaded into any model call.
 - A 2 or a 3 stores nothing beyond the score. A 1 asks one optional follow-up, "What was off?". Spencer's answer is filed to Feedback under FR-54's rules (dedupe, supersede, and the sensitive-inference ban). It is Spencer's own words, so it is stated.
 - A 1 brings the next prompt forward: it may come on the next substantive turn, even the same day, instead of waiting for the daily random slot. At most one such extra prompt per day. This carries FR-17's rule that a single low score shortens the interval (Escalate-Under-Strain, §4).

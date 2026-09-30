@@ -89,13 +89,15 @@ For `bmad-architecture`. These are starting points, not requirements.
 
 - **Storage:** a server-side chat store (the Spine's anticipated `chat-store.ts` owner under AD-10) plus a memory-item store in SQLite. Each item records folder, text, stated/inferred, created/updated, source turn, optional expiry, and `supersededBy`. Ratings go in their own small log table, never in memory.
 - **Retrieval:**
-  - Always-loaded folders are injected into every answering/capture/planning model call under a fixed character budget. Research reference points: Letta core memory is about 2k characters; ChatGPT's saved memory is about 1.2–1.4k words.
+  - Always-loaded folders are injected into answering, capture and Plan-reasoning model calls (never routing or classification calls) under a fixed character budget. The always-loaded block is stable between calls, so it suits prompt caching; the size cap bounds cost. Research reference points: Letta core memory is about 2k characters; ChatGPT's saved memory is about 1.2–1.4k words.
   - When-relevant folders and chat-history search use SQLite FTS5 (BM25).
   - No embeddings: keyword search is sufficient at hundreds of items (see https://dev.to/intframe/grep-first-embed-when-it-earns-it-530a on grep-first retrieval). Revisit at about 10,000 items, or if keyword search visibly misses (PRD §9.4, §11 item 15).
 - **Filing:**
-  - One Haiku extraction call per non-trivial turn chooses ADD, UPDATE, SUPERSEDE, or NOOP against the most similar existing items (the Mem0-style operation set).
+  - One Haiku extraction call per non-trivial turn, run after the reply finishes, chooses ADD, UPDATE, SUPERSEDE, or NOOP. The duplicate check compares the new item against the whole always-loaded set (small enough to check in full), not only FTS keyword matches; FTS still supplies candidates from the when-relevant folders.
+  - Only Spencer's typed words are extraction input, never search results, Research Vault pages, Notion content, or model output.
   - The same extraction call classifies sensitive content (health, emotions, finances) and drops anything Spencer did not state outright, which enforces FR-54's ban, including on FR-60 "What was off?" answers. It also proposes an expiry for time-bound items.
-  - Deterministic recognizers in `core/` handle "remember", "forget", and "what do you remember" before any LLM step (AGENTS.md anti-pattern 7).
+  - Deterministic recognizers in `core/` handle "remember that", "remember:", "forget", and "what do you remember" before any LLM step (AGENTS.md anti-pattern 7). "remember to …" and "remind me to …" must not match; they stay on the existing Task-capture path.
+  - The Rating prompt is an in-app surface only; it is never sent through the notification adapter or the Morning Ritual.
 - **Deferred parameters (Epic 13):** the always-loaded cap, the trivial-turn filter, pattern evidence thresholds and the 30-day quiet period are open (PRD §11 item 14).
 - **Research digest (2026-09-29):** Claude Code typed memory (user/feedback/project/reference, one fact per file, index always loaded), ChatGPT saved memories vs chat-history reference, Letta/MemGPT core/recall/archival, LangMem semantic/episodic/procedural, Mem0 extract-then-update, Zep/Graphiti temporal invalidation. The failure modes it names each have a mitigation in the PRD:
   - bloat → FR-56 cap;
