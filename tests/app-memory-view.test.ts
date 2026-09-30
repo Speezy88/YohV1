@@ -137,3 +137,19 @@ test("ChatStore.getTurn and searchTurns", () => {
   assert.equal(w.chatHistory.searchTurns("garden", 5)[0]?.turnId, t.id);
   assert.deepEqual(w.chatHistory.searchTurns("a", 5), []);
 });
+
+test("viewMemory: confirmedOn and changedOn are the day in the host time zone, not the UTC day", async () => {
+  const w = world();
+  const a = w.memoryItems.insert(NEW({ text: "v1" }));
+  const b = w.memoryItems.supersede(a.id, NEW({ text: "v2" }));
+  // 2026-09-30 02:30 UTC is still 2026-09-29 (evening) in Los Angeles.
+  w.connection.db.prepare("UPDATE memory_items SET confirmed_at = ?").run("2026-09-30T02:30:00.000Z");
+  writeSetting(w.connection, "lunchWindow", { start: "12:00", end: "13:00" });
+  w.connection.db.prepare("UPDATE planning_settings SET updated_at = ?").run("2026-09-30T02:30:00.000Z");
+  const r = await viewMemory({ ...w.deps, timeZone: "America/Los_Angeles" }, {});
+  assert.ok(r.ok);
+  const item = r.value.folders.find((f) => f.folder === "about-you")!.items.find((i) => i.id === b.id)!;
+  assert.equal(item.confirmedOn, "2026-09-29");
+  assert.equal(item.earlierVersions[0]!.confirmedOn, "2026-09-29");
+  assert.equal(r.value.changedSettings[0]!.changedOn, "2026-09-29");
+});

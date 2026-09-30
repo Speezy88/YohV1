@@ -15,7 +15,7 @@ const review = reviewItem as unknown as ReturnType<typeof vi.fn>;
 function item(over: Partial<NeedsReviewItemView> = {}): NeedsReviewItemView {
   return {
     id: "m1", folder: "goals-projects", text: "Submit the scholarship form", origin: "stated", status: "current", declined: false, pendingChange: false,
-    createdAt: "2026-09-01T10:00:00Z", confirmedAt: "2026-09-01T10:00:00Z", loaded: true, earlierVersions: [],
+    createdAt: "2026-09-01T10:00:00Z", confirmedAt: "2026-09-01T10:00:00Z", confirmedOn: "2026-09-01", loaded: true, earlierVersions: [],
     reason: "Expired Sep 19", canRenew: true, expiresOn: "2026-09-19", ...over,
   };
 }

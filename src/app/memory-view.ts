@@ -7,6 +7,7 @@ import { listSettingRows } from "../adapters/settings-store.ts";
 import type { SqliteConnection } from "../adapters/sqlite.ts";
 import { errorCopyForThrown } from "../core/error-copy.ts";
 import { needsReviewLabel } from "../core/memory-context.ts";
+import { localIsoDate } from "../core/local-time.ts";
 import { toMemoryItemView } from "../core/memory-item-view.ts";
 import { MEMORY_FOLDERS_IN_ORDER, memoryFolderLabel, memoryLoadClass } from "../core/memory-folders.ts";
 import { buildProposalQuestion } from "../core/open-item-questions.ts";
@@ -51,6 +52,7 @@ export async function viewMemory(deps: ViewMemoryDeps, _input: Record<string, ne
         state: states.get(i.id),
         ...(turn ? { sourceTurn: { conversationId: turn.conversationId, turnId: turn.id, date: turn.date } } : {}),
         chain: deps.memoryItems.chainOf(i.id),
+        timeZone: deps.timeZone,
       });
     });
     const folders: MemoryFolderView[] = MEMORY_FOLDERS_IN_ORDER.map((folder) => {
@@ -81,6 +83,7 @@ export async function viewMemory(deps: ViewMemoryDeps, _input: Record<string, ne
       value: formatRuleValue(row.key, row.value),
       was: formatRuleValue(row.key, currentRuleValue(defaults, row.key, row.area)),
       changedAt: row.updatedAt,
+      changedOn: localIsoDate(new Date(row.updatedAt), deps.timeZone),
     }));
 
     const pendingPatterns = [];

@@ -1,6 +1,7 @@
 /** Pure builder for the Memory page's item shape (Story 13.9). The caller gathers the lookups. */
 import type { MemoryItemView } from "../types/api.ts";
 import type { MemoryItem } from "../types/domain.ts";
+import { localIsoDate } from "./local-time.ts";
 import { needsReviewLabel, type MemoryItemState } from "./memory-context.ts";
 
 export interface MemoryItemViewLookups {
@@ -9,6 +10,8 @@ export interface MemoryItemViewLookups {
   readonly sourceTurn?: { readonly conversationId: string; readonly turnId: string; readonly date: string } | undefined;
   /** The item's chain (any order, may include itself and deleted rows). */
   readonly chain: readonly MemoryItem[];
+  /** The host time zone: confirmation days are computed here, never sliced from the UTC instant. */
+  readonly timeZone: string;
 }
 
 export function toMemoryItemView(item: MemoryItem, lookups: MemoryItemViewLookups): MemoryItemView {
@@ -19,7 +22,7 @@ export function toMemoryItemView(item: MemoryItem, lookups: MemoryItemViewLookup
   const earlierVersions = lookups.chain
     .filter((v) => v.id !== item.id && v.status !== "deleted")
     .sort((a, b) => (a.confirmedAt < b.confirmedAt ? 1 : a.confirmedAt > b.confirmedAt ? -1 : 0))
-    .map((v) => ({ id: v.id, text: v.text, confirmedAt: v.confirmedAt }));
+    .map((v) => ({ id: v.id, text: v.text, confirmedAt: v.confirmedAt, confirmedOn: localIsoDate(new Date(v.confirmedAt), lookups.timeZone) }));
   return {
     id: item.id,
     folder: item.folder,
@@ -32,6 +35,7 @@ export function toMemoryItemView(item: MemoryItem, lookups: MemoryItemViewLookup
     pendingChange: item.ruleChange === "pending",
     createdAt: item.createdAt,
     confirmedAt: item.confirmedAt,
+    confirmedOn: localIsoDate(new Date(item.confirmedAt), lookups.timeZone),
     loaded: state?.loaded === true,
     ...(reason !== undefined ? { notLoadedReason: reason } : {}),
     ...(source !== undefined ? { source } : {}),

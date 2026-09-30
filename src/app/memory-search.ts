@@ -48,6 +48,7 @@ export async function searchMemory(deps: SearchMemoryDeps, input: { readonly que
             state: states.get(i.id),
             ...(turn ? { sourceTurn: { conversationId: turn.conversationId, turnId: turn.id, date: turn.date } } : {}),
             chain: deps.memoryItems.chainOf(i.id),
+        timeZone: deps.timeZone,
           });
         }), turns } };
   } catch (error) {

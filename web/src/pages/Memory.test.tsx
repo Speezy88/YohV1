@@ -16,7 +16,7 @@ const envelope = (body: unknown) => ({ json: async () => body });
 function item(id: string, folder: MemoryFolder, over: Partial<MemoryItemView> = {}): MemoryItemView {
   return {
     id, folder, text: `text ${id}`, origin: "stated", status: "current", declined: false, pendingChange: false,
-    createdAt: "2026-09-01T10:00:00Z", confirmedAt: "2026-09-01T10:00:00Z", loaded: true, earlierVersions: [], ...over,
+    createdAt: "2026-09-01T10:00:00Z", confirmedAt: "2026-09-01T10:00:00Z", confirmedOn: "2026-09-01", loaded: true, earlierVersions: [], ...over,
   };
 }
 const ORDER: [MemoryFolder, string, MemoryLoadClass][] = [
@@ -116,7 +116,7 @@ describe("MemoryPage", () => {
   it("item rows show text, Stated/Inferred, scope, expiry, Not loaded, earlier versions and the source", async () => {
     load(view([
       item("x", "feedback", { text: "Be brief", scope: "mornings", expiresOn: "2026-10-13", loaded: false, notLoadedReason: "Expired", source: "deleted",
-        earlierVersions: [{ id: "old", text: "Be very brief", confirmedAt: "2026-08-01T10:00:00Z" }] }),
+        earlierVersions: [{ id: "old", text: "Be very brief", confirmedAt: "2026-08-01T10:00:00Z", confirmedOn: "2026-08-01" }] }),
       item("y", "feedback", { origin: "inferred", source: { conversationId: "c1", turnId: "t1", date: "2026-09-28" } }),
     ]));
     render(<MemoryPage />);
@@ -136,7 +136,7 @@ describe("MemoryPage", () => {
 
   it("lists changed settings with Revert, and pending patterns at the top of Patterns", async () => {
     load(view([], {
-      changedSettings: [{ key: "schoolDayWorkStart", label: "School-day work start", value: "16:00", was: "15:00", changedAt: "2026-09-20T10:00:00Z" }],
+      changedSettings: [{ key: "schoolDayWorkStart", label: "School-day work start", value: "16:00", was: "15:00", changedAt: "2026-09-20T10:00:00Z", changedOn: "2026-09-20" }],
       pendingPatterns: [{ requestId: "r1", questionId: "proposal:1", text: "Add a pattern: you skip Friday reviews?", options: [], allowsFreeText: false }],
     }));
     render(<MemoryPage />);

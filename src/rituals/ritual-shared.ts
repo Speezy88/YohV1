@@ -28,6 +28,7 @@
  * sibling ritual file depends on, never the reverse).
  */
 import { listSlipHistories, type MemoryStore } from "../adapters/memory-store.ts";
+import { localIsoDate } from "../core/local-time.ts";
 import { computeSlipBumpLevels } from "../core/slip-bump.ts";
 import type { CompleteTask, ExternalId, IsoDate, IsoDateTime, Plan, PlanBlock, RefiningFieldNames, Result, YohError } from "../types/domain.ts";
 
@@ -339,24 +340,8 @@ function formatLocalTime(instant: IsoDateTime, timeZone: string): string {
   return `${get("hour")}:${get("minute")}`;
 }
 
-/**
- * The LOCAL calendar date of `instant` in `timeZone`. "Today" must be
- * Spencer's own calendar day, never the UTC one — the same reasoning
- * `calendar-adapter.ts` documents at length for its own day window. Computed
- * from `Intl` rather than imported from that adapter, whose helpers are
- * private to it (mirroring the small, deliberate duplications already
- * present between `core/time-budget.ts` and `core/derived-priority.ts`).
- */
-export function localIsoDate(instant: Date, timeZone: string): IsoDate {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(instant);
-  const get = (type: string): string => parts.find((p) => p.type === type)?.value ?? "";
-  return `${get("year")}-${get("month")}-${get("day")}`;
-}
+/** The LOCAL calendar date of `instant` in `timeZone`; the one shared helper lives in `core/local-time.ts`. */
+export { localIsoDate };
 
 // ============================================================================
 // PlanNotification — the push-notification message shape

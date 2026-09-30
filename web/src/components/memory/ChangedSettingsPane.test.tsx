@@ -11,7 +11,7 @@ import { ChangedSettingsPane } from "./ChangedSettingsPane.tsx";
 import { revertSetting } from "../../lib/memory.ts";
 
 const revert = revertSetting as unknown as ReturnType<typeof vi.fn>;
-const SETTING: ChangedSettingView = { key: "schoolDayWorkStart", label: "School-day work start", value: "2:30 PM", was: "3:15 PM", changedAt: "2026-09-29T10:00:00Z" };
+const SETTING: ChangedSettingView = { key: "schoolDayWorkStart", label: "School-day work start", value: "2:30 PM", was: "3:15 PM", changedAt: "2026-09-29T10:00:00Z", changedOn: "2026-09-29" };
 
 describe("ChangedSettingsPane", () => {
   beforeEach(() => vi.clearAllMocks());

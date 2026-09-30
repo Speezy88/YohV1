@@ -16,7 +16,15 @@ export function resolveClockMinutes(hour: number, minute: number, meridiem?: "am
   return (hour + 12) * 60 + minute; // 1-7 -> PM
 }
 
-const zoneOffsetMinutes = (ms: number, timeZone: string): number => {
+/** The calendar date of `instant` in `timeZone` (YYYY-MM-DD): the one shared local-date helper. */
+export function localIsoDate(instant: Date, timeZone: string): IsoDate {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(instant);
+  const get = (type: string): string => parts.find((p) => p.type === type)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
+/** `timeZone`'s offset from UTC in minutes (positive east) at the instant `ms`. */
+export const zoneOffsetMinutes = (ms: number, timeZone: string): number => {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit",
   }).formatToParts(new Date(ms));

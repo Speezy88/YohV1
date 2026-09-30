@@ -29,6 +29,7 @@
  *    is a genuine no-op on a non-school day).
  */
 import type { CalendarEvent, IsoDate, IsoDateTime, Result, YohError } from "../types/domain.ts";
+import { zoneOffsetMinutes } from "./local-time.ts";
 import { defaultPlanningSettings, type PlanningSettings } from "./planning-settings.ts";
 
 export interface SchoolDayResult {
@@ -162,27 +163,7 @@ function isWeekday(year: number, month: number, day: number): boolean {
 
 /** `timeZone`'s offset from UTC (in minutes, positive east of UTC) at the instant `utcMillis`. */
 function zoneOffsetMinutesAt(utcMillis: number, timeZone: string): number {
-  const formatter = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hourCycle: "h23",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-  const parts = formatter.formatToParts(new Date(utcMillis));
-  const get = (type: string): number => Number(parts.find((p) => p.type === type)?.value);
-  const localWallClockAsUtcMillis = Date.UTC(
-    get("year"),
-    get("month") - 1,
-    get("day"),
-    get("hour"),
-    get("minute"),
-    get("second"),
-  );
-  return (localWallClockAsUtcMillis - utcMillis) / 60_000;
+  return zoneOffsetMinutes(utcMillis, timeZone);
 }
 
 /** Safety bound on the fixed-point iteration below — real-world DST shifts converge in 1-2 iterations; this only guards pathological/malformed zone data (mirrors `calendar-adapter.ts`'s own `MAX_OFFSET_ITERATIONS`). */

@@ -7,7 +7,7 @@
  * (never a second EventSource). The rail selection is client state, persisted
  * in localStorage (always in try/catch) and restored on the next load.
  */
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { apiClient } from "./apiClient.ts";
 import { onHint } from "./eventBus.ts";
 import type { ChatConversationView, ChatHistoryListResponse, EditMemoryResponse, MemorySearchResponse, MemoryViewResponse, MemoryWriteResponse, RevertSettingResponse } from "../../../src/types/api.ts";
@@ -87,7 +87,37 @@ export function useMemoryView(): MemoryState {
   );
 }
 
-export async function refetchMemory(): Promise<void> {
+/**
+ * Coalesces bursts: at most one run in flight plus one trailing run. Callers
+ * that arrive mid-flight share the trailing run's promise, so an awaiting
+ * write still sees a view fetched after it.
+ */
+function coalesce(run: () => Promise<void>): () => Promise<void> {
+  let inflight: Promise<void> | undefined;
+  let trailing: Promise<void> | undefined;
+  const call = (): Promise<void> => {
+    if (!inflight) {
+      inflight = run().catch(() => undefined).finally(() => {
+        inflight = undefined;
+      });
+      return inflight;
+    }
+    trailing ??= inflight.then(() => {
+      trailing = undefined;
+      return call();
+    });
+    return trailing;
+  };
+  return call;
+}
+
+let coalescedMemoryFetch = coalesce(fetchMemoryView);
+
+export function refetchMemory(): Promise<void> {
+  return coalescedMemoryFetch();
+}
+
+async function fetchMemoryView(): Promise<void> {
   const seq = ++latest;
   let next: MemoryViewState;
   try {
@@ -140,6 +170,7 @@ export function __resetMemoryForTests(options: { readonly keepStorage?: boolean 
     try { localStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
   }
   latest = 0;
+  coalescedMemoryFetch = coalesce(fetchMemoryView);
   listeners.clear();
   state = { view: { status: "loading" }, selection: readStoredSelection() };
 }
@@ -176,7 +207,7 @@ function useHintedLoad<T>(load: () => Promise<Outcome<T>>, key: string): { reado
   const loadRef = useRef(load);
   loadRef.current = load;
 
-  const refetch = useCallback(async (): Promise<void> => {
+  const refetchNow = useCallback(async (): Promise<void> => {
     const seq = ++latest.current;
     const outcome = await loadRef.current();
     if (seq !== latest.current) return;
@@ -186,6 +217,7 @@ function useHintedLoad<T>(load: () => Promise<Outcome<T>>, key: string): { reado
       return prev.status === "loaded" ? prev : { status: "error", message: outcome.message };
     });
   }, []);
+  const refetch = useMemo(() => coalesce(refetchNow), [refetchNow]);
 
   useEffect(() => {
     setState({ status: "loading" });

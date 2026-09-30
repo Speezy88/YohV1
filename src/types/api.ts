@@ -586,12 +586,14 @@ export interface MemoryItemView {
   readonly pendingChange: boolean;
   readonly createdAt: IsoDateTime;
   readonly confirmedAt: IsoDateTime;
+  /** `confirmedAt`'s calendar day in the host time zone (what the page shows). */
+  readonly confirmedOn: IsoDate;
   readonly loaded: boolean;
   /** The "Not loaded" badge shows iff this is set. */
   readonly notLoadedReason?: string;
   /** Absent when the item has no source turn; "deleted" when the turn is gone. */
   readonly source?: { readonly conversationId: string; readonly turnId: string; readonly date: IsoDate } | "deleted";
-  readonly earlierVersions: readonly { readonly id: string; readonly text: string; readonly confirmedAt: IsoDateTime }[];
+  readonly earlierVersions: readonly { readonly id: string; readonly text: string; readonly confirmedAt: IsoDateTime; readonly confirmedOn: IsoDate }[];
 }
 
 /** `count` is the number of current items; all eight folders, PRD order. */
@@ -617,6 +619,8 @@ export interface ChangedSettingView {
   /** The built-in default, formatted. */
   readonly was: string;
   readonly changedAt: IsoDateTime;
+  /** `changedAt`'s calendar day in the host time zone. */
+  readonly changedOn: IsoDate;
 }
 
 /** `GET /api/memory`'s value: everything the Memory Rail shows. */

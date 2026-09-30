@@ -97,7 +97,7 @@ export function MemoryItemRow({ item, reason, onOpenSource, folders, onDelete, d
   const meta = [
     ...(saved ? ["Saved"] : []),
     item.origin === "stated" ? "Stated" : "Inferred",
-    formatMemoryDay(item.confirmedAt),
+    formatMemoryDay(item.confirmedOn),
     ...(item.scope ? [item.scope] : []),
     ...(item.expiresOn ? [`Expires ${formatMemoryDay(item.expiresOn)}`] : []),
   ].join(" · ");
@@ -217,7 +217,7 @@ export function MemoryItemRow({ item, reason, onOpenSource, folders, onDelete, d
         <ul className="m-0 flex flex-col gap-1 p-0">
           {item.earlierVersions.map((v) => (
             <li key={v.id} className={`list-none ${CAPTION}`}>
-              {v.text} · {formatMemoryDay(v.confirmedAt)}
+              {v.text} · {formatMemoryDay(v.confirmedOn)}
             </li>
           ))}
         </ul>

@@ -20,7 +20,7 @@ const FOLDERS = [
 function item(over: Partial<MemoryItemView> = {}): MemoryItemView {
   return {
     id: "m1", folder: "about-you", text: "Likes early mornings", origin: "inferred", status: "current", declined: false, pendingChange: false,
-    createdAt: "2026-09-01T10:00:00Z", confirmedAt: "2026-09-01T10:00:00Z", loaded: true, earlierVersions: [], ...over,
+    createdAt: "2026-09-01T10:00:00Z", confirmedAt: "2026-09-01T10:00:00Z", confirmedOn: "2026-09-01", loaded: true, earlierVersions: [], ...over,
   };
 }
 const row = (over: Partial<MemoryItemView> = {}, props: Partial<Parameters<typeof MemoryItemRow>[0]> = {}) =>

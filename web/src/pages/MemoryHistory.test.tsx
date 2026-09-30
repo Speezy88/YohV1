@@ -32,7 +32,7 @@ const env = (value: unknown) => ({ json: async () => ({ ok: true, value }) });
 function item(id: string, folder: MemoryFolder, over: Partial<MemoryItemView> = {}): MemoryItemView {
   return {
     id, folder, text: `text ${id}`, origin: "stated", status: "current", declined: false, pendingChange: false,
-    createdAt: "2026-09-01T10:00:00Z", confirmedAt: "2026-09-01T10:00:00Z", loaded: true, earlierVersions: [], ...over,
+    createdAt: "2026-09-01T10:00:00Z", confirmedAt: "2026-09-01T10:00:00Z", confirmedOn: "2026-09-01", loaded: true, earlierVersions: [], ...over,
   };
 }
 const VIEW: MemoryViewResponse = {

@@ -17,7 +17,7 @@ const envelope = (body: unknown) => ({ json: async () => body });
 function item(id: string, text: string): MemoryItemView {
   return {
     id, folder: "feedback", text, origin: "stated", status: "current", declined: false, pendingChange: false,
-    createdAt: "2026-09-01T10:00:00Z", confirmedAt: "2026-09-01T10:00:00Z", loaded: true, earlierVersions: [],
+    createdAt: "2026-09-01T10:00:00Z", confirmedAt: "2026-09-01T10:00:00Z", confirmedOn: "2026-09-01", loaded: true, earlierVersions: [],
   };
 }
 const FOLDER_ORDER = ["feedback", "planning-preferences", "corrections", "about-you", "patterns", "goals-projects", "decisions-commitments", "ideas-notes"] as const;

@@ -1,5 +1,6 @@
 /** Filing validation for memory candidates (Story 13.4). Pure. */
 import type { MemoryCandidate, MemoryFolder, MemoryItem } from "../types/domain.ts";
+import { localIsoDate } from "./local-time.ts";
 import { MEMORY_ITEM_MAX_CHARS, STATED_ONLY_FOLDERS } from "./memory-folders.ts";
 import { validateRuleValue } from "./planning-settings.ts";
 
@@ -23,12 +24,6 @@ export interface FilingResult {
   dropped: { candidate: MemoryCandidate; reason: string }[];
 }
 
-function localDate(instant: Date, timeZone: string): string {
-  const parts = new Intl.DateTimeFormat("en-US", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(instant);
-  const get = (type: string): string => parts.find((p) => p.type === type)?.value ?? "";
-  return `${get("year")}-${get("month")}-${get("day")}`;
-}
-
 function validDate(s: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
   const d = new Date(`${s}T00:00:00Z`);
@@ -38,7 +33,7 @@ function validDate(s: string): boolean {
 export function validateFiling(candidates: readonly MemoryCandidate[], ctx: FilingContext): FilingResult {
   const accepted: MemoryCandidate[] = [];
   const dropped: FilingResult["dropped"] = [];
-  const today = localDate(ctx.now, ctx.timeZone);
+  const today = localIsoDate(ctx.now, ctx.timeZone);
   for (const raw of candidates) {
     if (accepted.length >= MEMORY_FILING_MAX_ITEMS) {
       dropped.push({ candidate: raw, reason: "over-limit" });

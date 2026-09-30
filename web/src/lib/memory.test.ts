@@ -49,7 +49,7 @@ const envelope = (body: unknown) => ({ json: async () => body });
 function item(id: string, folder: MemoryItemView["folder"]): MemoryItemView {
   return {
     id, folder, text: `text ${id}`, origin: "stated", status: "current", declined: false, pendingChange: false,
-    createdAt: "2026-09-01T10:00:00Z", confirmedAt: "2026-09-01T10:00:00Z", loaded: true, earlierVersions: [],
+    createdAt: "2026-09-01T10:00:00Z", confirmedAt: "2026-09-01T10:00:00Z", confirmedOn: "2026-09-01", loaded: true, earlierVersions: [],
   };
 }
 const VIEW: MemoryViewResponse = {
@@ -93,16 +93,17 @@ describe("memory store", () => {
     expect(getMemoryState().view.status).toBe("loaded");
   });
 
-  it("drops an out-of-order response", async () => {
+  it("serializes an overlapping refetch: the trailing fetch's response is what ends up shown", async () => {
     let releaseFirst: (v: unknown) => void = () => {};
     api.memory.$get.mockReturnValueOnce(new Promise((r) => { releaseFirst = r; }));
     const first = refetchMemory();
     api.memory.$get.mockResolvedValueOnce(envelope({ ok: true, value: VIEW }));
-    await refetchMemory();
+    const second = refetchMemory();
     releaseFirst(envelope({ ok: true, value: { ...VIEW, folders: [] } }));
-    await first;
+    await Promise.all([first, second]);
     const v = getMemoryState().view;
     expect(v.status === "loaded" && v.value.folders.length).toBe(2);
+    expect(api.memory.$get).toHaveBeenCalledTimes(2);
   });
 
   it("defaults to the first folder, persists the selection, and restores it after a reset", () => {

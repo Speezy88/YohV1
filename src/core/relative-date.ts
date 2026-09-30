@@ -30,6 +30,7 @@
  *
  * Exported for Task 5's reuse as well as this task's own callers.
  */
+import { localIsoDate, zoneOffsetMinutes } from "./local-time.ts";
 
 export interface RelativeDateContext {
   /** The real current instant — always `deps.now()`, never `new Date()` read again here. */
@@ -95,26 +96,13 @@ function calendarWeekday(date: CalendarDate): number {
 
 /** `now`'s calendar date IN `timeZone` — Spencer's own "today", via `Intl`, never `now.getUTCDate()`/`now.getDate()`. */
 function zonedCalendarDate(now: Date, timeZone: string): CalendarDate {
-  const parts = new Intl.DateTimeFormat("en-US", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(now);
-  const get = (type: string): number => Number(parts.find((p) => p.type === type)?.value ?? "0");
-  return { year: get("year"), month: get("month"), day: get("day") };
+  const [year, month, day] = localIsoDate(now, timeZone).split("-").map(Number) as [number, number, number];
+  return { year, month, day };
 }
 
 /** Minutes `timeZone` is AHEAD of UTC at `instant` (negative for a zone behind UTC, e.g. America/Los_Angeles). */
 function tzOffsetMinutes(instant: Date, timeZone: string): number {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hourCycle: "h23",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).formatToParts(instant);
-  const get = (type: string): number => Number(parts.find((p) => p.type === type)?.value ?? "0");
-  const asUtc = Date.UTC(get("year"), get("month") - 1, get("day"), get("hour"), get("minute"), get("second"));
-  return (asUtc - instant.getTime()) / 60000;
+  return zoneOffsetMinutes(instant.getTime(), timeZone);
 }
 
 /**

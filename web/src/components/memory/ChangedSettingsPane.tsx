@@ -72,7 +72,7 @@ export function ChangedSettingsPane({ settings }: { readonly settings: readonly 
             ) : (
               <>
                 <span className="text-body font-medium text-ink-primary">
-                  {label}: {s.value} (was {s.was}) - changed {formatMemoryDay(s.changedAt)}
+                  {label}: {s.value} (was {s.was}) - changed {formatMemoryDay(s.changedOn)}
                 </span>
                 <div>
                   <button type="button" disabled={busyKey === k} aria-label={`Revert ${label}`} onClick={() => void revert(s)} className={BUTTON}>
