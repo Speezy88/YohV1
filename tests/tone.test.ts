@@ -344,3 +344,23 @@ test("resolveToneSystemPrompt threads webSearchAvailable through to buildToneSys
   assert.equal(unavailable, buildToneSystemPrompt("casual-peer", false));
   assert.notEqual(available, unavailable);
 });
+
+// ============================================================================
+// E15: capability text built from the command registry
+// ============================================================================
+
+import { COMMANDS } from "../src/app/commands.ts";
+
+test("capabilities text lists every registry command, and a new entry needs no tone.ts edit", () => {
+  const prompt = resolveToneSystemPrompt("hey", true, COMMANDS);
+  for (const c of COMMANDS) assert.ok(prompt.includes(c.name), c.name);
+  assert.match(prompt, /remember that/);
+  const extra = resolveToneSystemPrompt("hey", true, [...COMMANDS, { name: "/zzz", description: "does zzz", example: "/zzz now" }]);
+  assert.match(extra, /\/zzz \(does zzz\) for example "\/zzz now"/);
+  assert.ok(extra.indexOf("/zzz") < extra.indexOf("You do NOT have"));
+});
+
+test("no commands leaves the prompt byte-identical to before", () => {
+  assert.equal(resolveToneSystemPrompt("hey", true, []), resolveToneSystemPrompt("hey", true));
+  assert.doesNotMatch(resolveToneSystemPrompt("hey"), /Slash commands you can run/);
+});

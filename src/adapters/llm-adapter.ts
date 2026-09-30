@@ -67,6 +67,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { isValidIsoDateTime, normalizeIsoDateTime } from "./iso-datetime.ts";
 import { writeStructuredLog } from "./logger.ts";
 import { isMemoryFolder, MEMORY_FOLDERS_IN_ORDER } from "../core/memory-folders.ts";
+import { formatAlwaysMemoryBlock, formatRelevantMemoryBlock, type MemoryContext } from "../core/memory-context.ts";
 import { recordLlmUsage, type LlmUsagePurpose } from "./llm-usage-store.ts";
 import type { SqliteConnection } from "./sqlite.ts";
 import type {
@@ -185,6 +186,16 @@ function cacheableSystemBlock(text: string): Anthropic.TextBlockParam {
 /** A block carrying content that changes every call — deliberately WITHOUT `cache_control`, so it never gets folded into (and never invalidates) the preceding cached block. */
 function volatileSystemBlock(text: string): Anthropic.TextBlockParam {
   return { type: "text", text };
+}
+
+/** Story 13.6: memory blocks after `base` — always-loaded folders cached (stable), relevant items volatile. */
+function memorySystemBlocks(memory: MemoryContext | undefined): { always: Anthropic.TextBlockParam[]; relevant: Anthropic.TextBlockParam[] } {
+  const always = memory ? formatAlwaysMemoryBlock(memory.always) : undefined;
+  const relevant = memory ? formatRelevantMemoryBlock(memory.relevant) : undefined;
+  return {
+    always: always ? [cacheableSystemBlock(always)] : [],
+    relevant: relevant ? [volatileSystemBlock(relevant)] : [],
+  };
 }
 
 /**
@@ -452,6 +463,7 @@ export async function answerGeneralQuestion(
   systemPrompt: string = DEFAULT_GENERAL_QA_SYSTEM_PROMPT,
   model: Anthropic.Model = CLAUDE_CHAT_MODEL_FAST,
   connection?: SqliteConnection,
+  memory?: MemoryContext,
 ): Promise<string> {
   if (messages.length === 0) {
     throw new Error("llm-adapter: answerGeneralQuestion called with no conversation history at all");
@@ -460,7 +472,7 @@ export async function answerGeneralQuestion(
   const message = await client.messages.create({
     model,
     max_tokens: CLAUDE_CHAT_MAX_TOKENS,
-    system: [cacheableSystemBlock(systemPrompt)],
+    system: generalSystemBlocks(systemPrompt, memory),
     messages: toCacheableMessages(messages),
   });
   recordUsageSafely(connection, "answer", model, message.usage);
@@ -475,6 +487,11 @@ export async function answerGeneralQuestion(
     throw new Error("llm-adapter: Claude returned no text content for a general Q&A response");
   }
   return text;
+}
+
+function generalSystemBlocks(systemPrompt: string, memory: MemoryContext | undefined): Anthropic.TextBlockParam[] {
+  const blocks = memorySystemBlocks(memory);
+  return [cacheableSystemBlock(systemPrompt), ...blocks.always, ...blocks.relevant];
 }
 
 /**
@@ -494,6 +511,7 @@ export async function* streamGeneralQuestion(
   systemPrompt: string = DEFAULT_GENERAL_QA_SYSTEM_PROMPT,
   model: Anthropic.Model = CLAUDE_CHAT_MODEL_FAST,
   connection?: SqliteConnection,
+  memory?: MemoryContext,
 ): AsyncGenerator<string, void, void> {
   if (messages.length === 0) {
     throw new Error("llm-adapter: streamGeneralQuestion called with no conversation history at all");
@@ -502,7 +520,7 @@ export async function* streamGeneralQuestion(
   const stream = await client.messages.create({
     model,
     max_tokens: CLAUDE_CHAT_MAX_TOKENS,
-    system: [cacheableSystemBlock(systemPrompt)],
+    system: generalSystemBlocks(systemPrompt, memory),
     messages: toCacheableMessages(messages),
     stream: true,
   });
@@ -737,10 +755,13 @@ export async function draftNotionPageFields(
   today: string,
   timeZone: string,
   connection?: SqliteConnection,
+  memory?: MemoryContext,
 ): Promise<Record<string, string> | undefined> {
   const dynamicContext = buildDraftNotionPageDynamicContext(database, today, timeZone);
-  const system: Anthropic.TextBlockParam[] = [cacheableSystemBlock(buildDraftNotionPageStableSystemPrompt(database))];
+  const memoryBlocks = memorySystemBlocks(memory);
+  const system: Anthropic.TextBlockParam[] = [cacheableSystemBlock(buildDraftNotionPageStableSystemPrompt(database)), ...memoryBlocks.always];
   if (dynamicContext) system.push(volatileSystemBlock(dynamicContext));
+  system.push(...memoryBlocks.relevant);
 
   const message = await client.messages.create({
     model: CLAUDE_CHAT_MODEL_FAST,

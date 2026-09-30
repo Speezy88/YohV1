@@ -1051,3 +1051,41 @@ test("extractMemories forceFolder is named in the prompt", async () => {
   await extractMemories(client, "x", [], { forceStated: false, forceFolder: "ideas-notes" });
   assert.match(JSON.stringify(calls[0]!.params), /ideas-notes/);
 });
+
+// ============================================================================
+// Story 13.6: memory blocks on general answers and drafts
+// ============================================================================
+
+const MEMORY_FIXTURE = {
+  always: [{ id: "m1", folder: "feedback", text: "Keep it short", origin: "stated", ruleChange: "none", status: "current", createdAt: "2026-09-01T00:00:00.000Z", confirmedAt: "2026-09-01T00:00:00.000Z" }],
+  relevant: [{ id: "m2", folder: "goals-projects", text: "Ship Obliterade v2", origin: "stated", ruleChange: "none", status: "current", createdAt: "2026-09-01T00:00:00.000Z", confirmedAt: "2026-09-01T00:00:00.000Z" }],
+} as const;
+
+test("answerGeneralQuestion sends [prompt cached, always cached, relevant volatile] when memory is given, one block without", async () => {
+  const withMemory = fakeClient(textMessage("ok"));
+  await answerGeneralQuestion(withMemory.client, oneTurn("hi"), "PROMPT", undefined, undefined, MEMORY_FIXTURE as never);
+  const blocks = withMemory.calls[0]!.params.system as Anthropic.TextBlockParam[];
+  assert.equal(blocks.length, 3);
+  assert.equal(blocks[0]!.text, "PROMPT");
+  assert.deepEqual(blocks[1]!.cache_control, { type: "ephemeral" });
+  assert.match(blocks[1]!.text, /Keep it short/);
+  assert.equal(blocks[2]!.cache_control, undefined);
+  assert.match(blocks[2]!.text, /Ship Obliterade v2/);
+
+  const without = fakeClient(textMessage("ok"));
+  await answerGeneralQuestion(without.client, oneTurn("hi"), "PROMPT");
+  assert.equal((without.calls[0]!.params.system as Anthropic.TextBlockParam[]).length, 1);
+});
+
+test("draftNotionPageFields orders blocks stable, always, date, relevant", async () => {
+  const { calls, client } = fakeClient(textMessage("title=X"));
+  await draftNotionPageFields(client, "Tasks", "create a task due tomorrow", "2026-09-27", "America/Los_Angeles", undefined, MEMORY_FIXTURE as never);
+  const blocks = calls[0]!.params.system as Anthropic.TextBlockParam[];
+  assert.equal(blocks.length, 4);
+  assert.deepEqual(blocks[0]!.cache_control, { type: "ephemeral" });
+  assert.match(blocks[1]!.text, /Keep it short/);
+  assert.deepEqual(blocks[1]!.cache_control, { type: "ephemeral" });
+  assert.match(blocks[2]!.text, /2026-09-27/);
+  assert.equal(blocks[2]!.cache_control, undefined);
+  assert.match(blocks[3]!.text, /Ship Obliterade v2/);
+});

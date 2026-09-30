@@ -19,6 +19,7 @@ import { randomUUID } from "node:crypto";
 import { draftNotionPageFields, DRAFT_NOTION_PAGE_DATE_FIELDS, type AnthropicMessagesClient } from "../adapters/llm-adapter.ts";
 import { resolveNotionPageDraftProperties, type NotionCreatePageClient, type NotionCreatePageConfig } from "../adapters/notion-adapter.ts";
 import type { SqliteConnection } from "../adapters/sqlite.ts";
+import type { MemoryContext } from "../core/memory-context.ts";
 import { errorCopy } from "../core/error-copy.ts";
 import { resolveRelativeDate, resolveRelativeDateTime } from "../core/relative-date.ts";
 import { localIsoDate } from "../rituals/ritual-shared.ts";
@@ -54,6 +55,8 @@ export interface CreateItemDeps extends OpenProposalDeps {
 export interface CreateItemInput {
   readonly database: NotionDatabaseTarget;
   readonly request: string;
+  /** Story 13.6: what Yoh remembers; absent when the store is down. */
+  readonly memory?: MemoryContext;
 }
 
 /** Unchanged wording from the Phase 1.5 `chat-cli.ts` preview — now the Proposal's own `reason`, so whatever question text `openProposal` builds from it still shows the field-by-field breakdown. */
@@ -114,7 +117,7 @@ export async function draftItem(deps: CreateItemDeps, input: CreateItemInput): P
 
   let fields: Record<string, string> | undefined;
   try {
-    fields = await draftNotionPageFields(deps.llmClient, input.database, input.request, today, deps.timeZone, deps.connection);
+    fields = await draftNotionPageFields(deps.llmClient, input.database, input.request, today, deps.timeZone, deps.connection, input.memory);
   } catch {
     fields = undefined;
   }

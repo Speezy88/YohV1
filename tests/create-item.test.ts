@@ -200,3 +200,17 @@ test("a bare relative dueDate with no time (\"Thursday\") resolves to a plain YY
   assert.match(result.value.question?.text ?? "", /dueDate: 2026-10-01(?!T)/);
   deps.connection.close();
 });
+
+test("draftItem passes memory through to the drafting call's system blocks", async () => {
+  const deps = tempDeps({ llmResponse: "title=Buy boots" });
+  const seen: any[] = [];
+  const inner = deps.llmClient;
+  const llmClient = { messages: { create: async (p: any) => { seen.push(p); return (inner.messages.create as any)(p); } } } as unknown as AnthropicMessagesClient;
+  const memory = {
+    always: [{ id: "m1", folder: "about-you", text: "Lives in Seattle", origin: "stated", ruleChange: "none", status: "current", createdAt: "2026-09-01T00:00:00.000Z", confirmedAt: "2026-09-01T00:00:00.000Z" }],
+    relevant: [],
+  } as const;
+  await draftItem({ ...deps, llmClient }, { database: "Tasks", request: "buy boots", memory: memory as never });
+  assert.ok((seen[0].system as Array<{ text: string }>).some((b) => /Lives in Seattle/.test(b.text)));
+  deps.connection.close();
+});

@@ -107,6 +107,7 @@
  * follow-up, or Task 19's Night Ritual close-out).
  */
 
+import type { CommandDescriptor } from "../types/api.ts";
 import type { EscalationCurve, EscalationLevel } from "../types/domain.ts";
 import { computeEscalation } from "./escalate-under-strain.ts";
 
@@ -230,7 +231,7 @@ export function classifyTone(message: string): ToneRegister {
  * `buildToneSystemPrompt`/`resolveToneSystemPrompt`/
  * `resolveEscalatedToneSystemPrompt` default it to `true`) is unaffected.
  */
-function buildCapabilitiesInstruction(webSearchAvailable: boolean): string {
+function buildCapabilitiesInstruction(webSearchAvailable: boolean, commands: readonly CommandDescriptor[] = []): string {
   const intro =
     "Yoh (you) can actually do the following, for real, inside this same chat — when Spencer asks what you " +
     "can do, or asks for something one of these covers, say so accurately and, if his exact phrasing didn't " +
@@ -249,6 +250,15 @@ function buildCapabilitiesInstruction(webSearchAvailable: boolean): string {
     : "move, resize, or create Calendar events (each shown for confirmation before it's written, never applied " +
       "silently). ";
 
+  // E15: built from the command registry so a new entry needs no edit here.
+  const commandsSection =
+    commands.length === 0
+      ? ""
+      : "Slash commands you can run for Spencer in this chat: " +
+        commands.map((c) => `${c.name} (${c.description}) for example "${c.example}"`).join("; ") +
+        ". You file what Spencer tells you after chat turns, show a one-line Remembered receipt with Undo, and he can " +
+        "say \"remember that ...\", \"forget ...\" or \"what do you remember about ...\". ";
+
   const limits = webSearchAvailable
     ? "You do NOT have a changelog or release notes about your own recent updates, and you CANNOT delete or " +
       "cancel a Calendar event (Spencer has to do that directly in Google Calendar) — say so plainly if asked, " +
@@ -257,12 +267,12 @@ function buildCapabilitiesInstruction(webSearchAvailable: boolean): string {
       "cancel a Calendar event (Spencer has to do that directly in Google Calendar), and web search isn't set " +
       "up yet (it needs a Perplexity key) — say so plainly if asked, rather than guessing or claiming otherwise.";
 
-  return intro + searchAndCalendar + limits;
+  return intro + searchAndCalendar + commandsSection + limits;
 }
 
-function buildSharedBaseInstruction(webSearchAvailable: boolean): string {
+function buildSharedBaseInstruction(webSearchAvailable: boolean, commands: readonly CommandDescriptor[]): string {
   return (
-    `${buildCapabilitiesInstruction(webSearchAvailable)} You are Yoh, Spencer's personal daily-planning assistant, now answering a ` +
+    `${buildCapabilitiesInstruction(webSearchAvailable, commands)} You are Yoh, Spencer's personal daily-planning assistant, now answering a ` +
     "general chat message. " +
     "Spencer is a high school senior at Seattle Academy of Arts and Sciences (class of 2027) who also runs " +
     "sales and operations at Manatee Aquatic, co-founded the electrolyte beverage brand Obliterade with " +
@@ -283,9 +293,9 @@ function buildSharedBaseInstruction(webSearchAvailable: boolean): string {
 }
 
 /** Register-specific guidance for a casual, conversational message — the default register. */
-function buildCasualPeerInstruction(webSearchAvailable: boolean): string {
+function buildCasualPeerInstruction(webSearchAvailable: boolean, commands: readonly CommandDescriptor[]): string {
   return (
-    `${buildSharedBaseInstruction(webSearchAvailable)} This message reads as casual and conversational, so answer in Yoh's ` +
+    `${buildSharedBaseInstruction(webSearchAvailable, commands)} This message reads as casual and conversational, so answer in Yoh's ` +
     "default casual, peer-level register: talk plainly and naturally, the way one competent friend " +
     "talks to another — contractions are fine, brevity is fine. Don't be repetitive or robotic, and " +
     "don't over-explain something simple just to sound thorough."
@@ -300,9 +310,9 @@ function buildCasualPeerInstruction(webSearchAvailable: boolean): string {
  * an abstract "avoid rhetorical tics," since that specific framing is exactly
  * what the brief is guarding against and this register is most prone to it.
  */
-function buildConciseEducationalInstruction(webSearchAvailable: boolean): string {
+function buildConciseEducationalInstruction(webSearchAvailable: boolean, commands: readonly CommandDescriptor[]): string {
   return (
-    `${buildSharedBaseInstruction(webSearchAvailable)} This message is a factual or intellectual question, so switch to a ` +
+    `${buildSharedBaseInstruction(webSearchAvailable, commands)} This message is a factual or intellectual question, so switch to a ` +
     "concise, educational register: answer directly and plainly, like a knowledgeable peer explaining " +
     "something, not a lecture. In particular, never use the \"it's not just X, it's Y\" rhetorical " +
     "framing (or similar false-contrast setups) — just state what's true."
@@ -323,12 +333,12 @@ function buildConciseEducationalInstruction(webSearchAvailable: boolean): string
  * `ChatTurnDeps.webSearchAvailable`, ultimately `shell/server.ts`'s own
  * `Boolean(env["PERPLEXITY_API_KEY"])`).
  */
-export function buildToneSystemPrompt(register: ToneRegister, webSearchAvailable: boolean = true): string {
+export function buildToneSystemPrompt(register: ToneRegister, webSearchAvailable: boolean = true, commands: readonly CommandDescriptor[] = []): string {
   switch (register) {
     case "casual-peer":
-      return buildCasualPeerInstruction(webSearchAvailable);
+      return buildCasualPeerInstruction(webSearchAvailable, commands);
     case "concise-educational":
-      return buildConciseEducationalInstruction(webSearchAvailable);
+      return buildConciseEducationalInstruction(webSearchAvailable, commands);
   }
 }
 
@@ -345,8 +355,8 @@ export function buildToneSystemPrompt(register: ToneRegister, webSearchAvailable
  * `webSearchAvailable` (review fix) is forwarded to `buildToneSystemPrompt`
  * unchanged; see that function's own doc comment.
  */
-export function resolveToneSystemPrompt(message: string, webSearchAvailable: boolean = true): string {
-  return buildToneSystemPrompt(classifyTone(message), webSearchAvailable);
+export function resolveToneSystemPrompt(message: string, webSearchAvailable: boolean = true, commands: readonly CommandDescriptor[] = []): string {
+  return buildToneSystemPrompt(classifyTone(message), webSearchAvailable, commands);
 }
 
 // ============================================================================
@@ -444,8 +454,13 @@ const HIGH_ESCALATION_ADDITION =
  * `atCap` — both are appended, not substituted, so the base register's own
  * voice/register guidance always still applies even while escalated.
  */
-export function resolveEscalatedToneSystemPrompt(register: ToneRegister, strainCount: number, webSearchAvailable: boolean = true): string {
-  const base = buildToneSystemPrompt(register, webSearchAvailable);
+export function resolveEscalatedToneSystemPrompt(
+  register: ToneRegister,
+  strainCount: number,
+  webSearchAvailable: boolean = true,
+  commands: readonly CommandDescriptor[] = [],
+): string {
+  const base = buildToneSystemPrompt(register, webSearchAvailable, commands);
   const level = computeToneEscalationLevel(strainCount);
   if (level.value <= 0) {
     return base;

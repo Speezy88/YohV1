@@ -19,6 +19,7 @@ import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { createMemoryStore, getCurrentTimeBudget, getPlan, putOpenInteractionRequest, putPlan, putTimeBudget, type MemoryStore } from "../src/adapters/memory-store.ts";
 import { createChatStore, initChatStoreSchema, type ChatStore } from "../src/adapters/chat-store.ts";
 import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
+import { createMemoryItemStore, initMemoryItemStoreSchema } from "../src/adapters/memory-item-store.ts";
 import { PLAN_EDIT_HOW_TO_REPLY } from "../src/core/plan-edit-commands.ts";
 import { CALENDAR_DELETE_NOT_SUPPORTED_REPLY, chatTurn, MAX_CHAT_HISTORY_TURNS, STATUS_THINKING, type ChatTurnDeps } from "../src/app/chat-turn.ts";
 import { COMMANDS } from "../src/app/commands.ts";
@@ -1475,4 +1476,29 @@ test("Story 13.5: handledDeterministically is set for a slash command and unset 
   assert.ok(slash.ok && slash.value.handledDeterministically === true);
   const general = await chatTurn(baseDeps({ llmClient: makeFakeLlmClient("Reheat it.") }), { message: "what should I do about the dishes" });
   assert.ok(general.ok && general.value.handledDeterministically === undefined);
+});
+
+// Story 13.6: memory reaches only the general answer, and a store that throws never blocks it.
+test("chatTurn general answer carries always-loaded memory; only the answer call sees it", async () => {
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db);
+  initMemoryItemStoreSchema(connection.db);
+  const memoryItems = createMemoryItemStore(connection);
+  memoryItems.insert({ folder: "about-you", text: "Prefers plain words", origin: "stated" });
+  const llmClient = makeFakeLlmClient("Do them tonight.");
+  const result = await chatTurn(baseDeps({ llmClient, memoryItems }), { message: "what should I do about the dishes" });
+  assert.equal(result.ok, true);
+  const calls = (llmClient as any).calls as any[];
+  assert.equal(calls.length, 3);
+  const has = (c: any) => JSON.stringify(c.system).includes("Prefers plain words");
+  assert.deepEqual(calls.map(has), [false, false, true]);
+  connection.close();
+});
+
+test("chatTurn answers without memory when the memory store throws", async () => {
+  const llmClient = makeFakeLlmClient("Do them tonight.");
+  const memoryItems = { listItems: () => { throw new Error("store down"); } } as never;
+  const result = await chatTurn(baseDeps({ llmClient, memoryItems }), { message: "what should I do about the dishes" });
+  assert.equal(result.ok, true);
+  if (result.ok) assert.equal(result.value.reply, "Do them tonight.");
 });

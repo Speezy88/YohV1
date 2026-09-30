@@ -64,6 +64,7 @@ import { COMMANDS } from "./commands.ts";
 import { draftItem, type CreateItemDeps } from "./create-item.ts";
 import { dayView } from "./day-view.ts";
 import { answerQuestion } from "./general-question.ts";
+import { recallMemoryContext } from "./memory-recall.ts";
 import { manageRoutine } from "./routines.ts";
 import { requestReshuffle } from "./request-reshuffle.ts";
 import { PLAN_EDIT_HOW_TO_REPLY, parsePlanEditCommand, resolvePlanEdit } from "../core/plan-edit-commands.ts";
@@ -86,6 +87,7 @@ import type { LogEntry } from "../adapters/logger.ts";
 import type { AnthropicMessagesClient } from "../adapters/llm-adapter.ts";
 import { getPlan, putOpenInteractionRequest, type MemoryStore } from "../adapters/memory-store.ts";
 import { buildMemoryForgetQuestion } from "../core/open-item-questions.ts";
+import type { MemoryContext } from "../core/memory-context.ts";
 import { errorCopyForThrown } from "../core/error-copy.ts";
 import type { ChatStreamEvent, ChatTurnRequest, ChatTurnResponse, MorningViewResponse } from "../types/api.ts";
 import type { CalendarEvent, ChatIntent, ChatTurn, ExternalId, IsoDate, MemoryItem, PlanBlock, Result, Task, YohError } from "../types/domain.ts";
@@ -396,7 +398,7 @@ async function routeChatTurn(
   if (isSaveSearchResultCommand(input.message)) return saveSearchResult(deps, {});
 
   const createItemCommand = parseCreateItemCommand(input.message);
-  if (createItemCommand) return draftItem(deps, createItemCommand);
+  if (createItemCommand) return draftItem(deps, { ...createItemCommand, ...(await recallFor(deps, createItemCommand.request)) });
 
   // Post-review fix, Important #1 (AD-13): checked BEFORE isCalendarEditCommand
   // (and before any LLM call) — a cancel/delete/remove/clear Calendar
@@ -530,7 +532,7 @@ async function routeChatTurn(
     // itself came back NONE (a rare double-miss) — fall through to
     // classify/general-chat below rather than ever returning a blank reply.
   } else if (captured === "task") {
-    return draftItem(deps, { database: "Tasks", request: input.message });
+    return draftItem(deps, { database: "Tasks", request: input.message, ...(await recallFor(deps, input.message)) });
   }
 
   let chatIntent: ChatIntent = { kind: "general-question" };
@@ -548,8 +550,14 @@ async function routeChatTurn(
       ...(deps.connection ? { connection: deps.connection } : {}),
       ...(deps.emit ? { emit: deps.emit } : {}),
     },
-    { message: input.message, history: trimHistory(historyForModel(deps, input.message)) },
+    { message: input.message, history: trimHistory(historyForModel(deps, input.message)), ...(await recallFor(deps, input.message)) },
   );
+}
+
+/** Story 13.6: what Yoh remembers for this request, as `{ memory }` to spread into a draft or answer input; empty when the store is absent or down. */
+async function recallFor(deps: ChatTurnDeps, requestText: string): Promise<{ memory?: MemoryContext }> {
+  const recalled = await recallMemoryContext(deps, { requestText });
+  return recalled.ok && recalled.value ? { memory: recalled.value.context } : {};
 }
 
 /** Joins consecutive same-role turns (an orphaned user turn from a failed exchange) so roles strictly alternate. */
