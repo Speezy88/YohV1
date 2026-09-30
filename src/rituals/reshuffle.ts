@@ -8,6 +8,7 @@
 import type { LogEntry } from "../adapters/logger.ts";
 import { orderByDerivedPriority } from "../core/derived-priority.ts";
 import { localMinutesToMs } from "../core/local-time.ts";
+import { applyAreaPadding, defaultPlanningSettings, type PlanningSettings } from "../core/planning-settings.ts";
 import { computeSchoolDay, mergeOverlappingAnchors, type SchoolDayResult } from "../core/school-day.ts";
 import { placeRoutines, type DayRoutine } from "../core/routine-placement.ts";
 import type { Routine, RoutineDay } from "../core/routine-commands.ts";
@@ -209,6 +210,8 @@ export interface DayRefitInput {
   readonly workStart: IsoDateTime;
   /** Already gated (and, for reflow, remaining-duration-adjusted) open Tasks. */
   readonly openTasks: readonly CompleteTask[];
+  /** Planning rules; defaults to the built-ins. `computeDayRefit` pads `openTasks` by Area from it, once. */
+  readonly settings?: PlanningSettings;
   readonly budget: TimeBudget;
   /** Anchors the fit must route around (calendar anchors, plus protected windows when the caller has no separate `protectedWindows`). */
   readonly fixedEvents: readonly CalendarEvent[];
@@ -322,11 +325,18 @@ export function computeSchoolDayInputs(
   events: readonly CalendarEvent[],
   date: IsoDate,
   timeZone: string,
+  settings?: PlanningSettings,
 ): Result<SchoolDayResult, YohError> {
-  return computeSchoolDay(events, date, timeZone);
+  return computeSchoolDay(events, date, timeZone, settings);
 }
 
 export function computeDayRefit(input: DayRefitInput): Result<DayRefitOutput, YohError> {
+  // Area padding applies once, here; the unpinned retry inside recurses through the padded inner fit.
+  const settings = input.settings ?? defaultPlanningSettings();
+  return fitPaddedDay({ ...input, settings, openTasks: applyAreaPadding(input.openTasks, settings) });
+}
+
+function fitPaddedDay(input: DayRefitInput): Result<DayRefitOutput, YohError> {
   const startedMs = Date.now();
   const dropped = new Set(input.drops ?? []);
   const nowMs = Date.parse(input.now);
@@ -401,7 +411,7 @@ export function computeDayRefit(input: DayRefitInput): Result<DayRefitOutput, Yo
     placements = placements.filter((p) => p !== collision.release);
   }
   if (rejection !== undefined) {
-    const unpinned = computeDayRefit({ ...input, pins: [], requestPinTaskIds: [] });
+    const unpinned = fitPaddedDay({ ...input, pins: [], requestPinTaskIds: [] });
     return unpinned.ok ? { ok: true, value: { ...unpinned.value, rejectedReason: rejection } } : unpinned;
   }
 

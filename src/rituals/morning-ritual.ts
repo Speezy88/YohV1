@@ -210,6 +210,7 @@ import { isOpenTask } from "../core/planning-field-value.ts";
 import { buildTimeBudgetChangeProposal, nextTimeBudgetDeferralStreak, resolveTodayTimeBudget } from "../core/time-budget.ts";
 import { listDayDrops, listDayPins } from "../adapters/plan-state-store.ts";
 import { computeDayRefit, computeSchoolDayInputs } from "./reshuffle.ts";
+import { readPlanningSettings } from "../adapters/settings-store.ts";
 import { appendUnplacedRoutines } from "../core/routine-placement.ts";
 import { listRoutinesFromStore } from "../adapters/routine-store.ts";
 import type { Routine } from "../core/routine-commands.ts";
@@ -773,7 +774,9 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
   // --- 7-9. Order, fit, and explain — from ONE candidates/bumpLevels pair ---
   // Polish-5 Task 3: school-day rules — anchors/protected windows replace the
   // raw calendar events, byte-for-byte unchanged on a non-school day.
-  const schoolDay = computeSchoolDayInputs(calendarEvents, today, deps.timeZone);
+  // Rules are read per run (the server lives for days), never cached.
+  const settings = deps.store.withDb(readPlanningSettings);
+  const schoolDay = computeSchoolDayInputs(calendarEvents, today, deps.timeZone, settings);
   if (!schoolDay.ok) {
     log({ level: "error", event: "morning-ritual.school-day-rejected", detail: schoolDay.error });
     return schoolDay;
@@ -790,6 +793,7 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
   // ONE shared pipeline (`rituals/reshuffle.ts`): order -> coalesce anchors
   // -> fit -> school-day last resort. A no-op past pass 1 on a non-school day.
   const refit = computeDayRefit({
+    settings,
     date: today,
     timeZone: deps.timeZone,
     now: nowIso,

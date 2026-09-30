@@ -28,6 +28,7 @@ import { join } from "node:path";
 import { serve } from "@hono/node-server";
 import { openSqliteConnection } from "../../src/adapters/sqlite.ts";
 import { createChatStore, initChatStoreSchema } from "../../src/adapters/chat-store.ts";
+import { initSettingsStoreSchema } from "../../src/adapters/settings-store.ts";
 import { initRoutineStoreSchema } from "../../src/adapters/routine-store.ts";
 import { appendOutboxInTx, initNotificationStoreSchema } from "../../src/adapters/notification-store.ts";
 import { initPlanStateStoreSchema, replaceDayPinsAndDropsInTx } from "../../src/adapters/plan-state-store.ts";
@@ -68,6 +69,7 @@ initNotificationStoreSchema(connection.db);
 initPlanStateStoreSchema(connection.db);
 initRoutineStoreSchema(connection.db);
 initChatStoreSchema(connection.db);
+initSettingsStoreSchema(connection.db);
 initCompletionLogSchema(connection.db);
 
 const store = createMemoryStore(connection);
@@ -149,6 +151,7 @@ function resetFixturePlan(scenario: boolean): void {
   reshuffleScenario = scenario;
   chatHistory.clearAll();
   for (const open of listOpenReshuffleProposals(store)) clearInteractionRequest(store, open.requestId, open.requestVersion);
+  connection.db.prepare("DELETE FROM planning_settings").run();
   connection.db.transaction(() => replaceDayPinsAndDropsInTx(connection.db, today, [], []))();
   const version = (store.getRecord<Plan>("plan", today)?.version ?? 0) + 1;
   const next = scenario ? scenarioPlan(version) : defaultPlan(version);

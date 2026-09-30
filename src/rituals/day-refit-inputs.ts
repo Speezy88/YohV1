@@ -15,6 +15,7 @@ import { isOpenTask } from "../core/planning-field-value.ts";
 import type { MissingFieldReport } from "../core/data-completeness-gate.ts";
 import type { Routine } from "../core/routine-commands.ts";
 import { runDataCompletenessGate } from "./data-completeness.ts";
+import { readPlanningSettings } from "../adapters/settings-store.ts";
 import { computeDayRefit, computeSchoolDayInputs, elapsedMinutesWithinBlock, type DayRefitOutput } from "./reshuffle.ts";
 import { computeBumpLevels, localIsoDate, missingRefiningFor } from "./ritual-shared.ts";
 import type { CalendarEvent, CompleteTask, DayPin, ExternalId, IsoDate, Plan, PlanBlock, Result, Task, YohError } from "../types/domain.ts";
@@ -119,7 +120,8 @@ export async function refitToday(
     if (remaining > 0) outstanding.push({ ...task, estimatedDurationMinutes: remaining });
   }
 
-  const school = computeSchoolDayInputs(events, today, deps.timeZone);
+  const settings = deps.store.withDb(readPlanningSettings);
+  const school = computeSchoolDayInputs(events, today, deps.timeZone, settings);
   if (!school.ok) return school;
 
   const currentDay: DayChange = {
@@ -143,6 +145,7 @@ export async function refitToday(
     return fail("conflict", errorCopyForThrown(err), err);
   }
   const refit = computeDayRefit({
+    settings,
     date: today,
     timeZone: deps.timeZone,
     workStart: school.value.workStart,

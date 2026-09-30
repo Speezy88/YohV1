@@ -720,3 +720,6 @@ export interface CheckOffSweepSummary {
   /** Notion Status writes that failed this run and stay owed for a later sweep. */
   readonly notionFailed: number;
 }
+
+/** The closed set of planning rules Spencer can override (Story 13.7). The Time Budget is not one of them. */
+export type RuleSettingKey = "schoolDayWorkStart" | "otherDayWorkStart" | "lunchWindow" | "communityWindow" | "areaDurationPadding";

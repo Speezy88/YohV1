@@ -65,6 +65,7 @@ import { manageRoutine } from "./routines.ts";
 import { requestReshuffle } from "./request-reshuffle.ts";
 import { PLAN_EDIT_HOW_TO_REPLY, parsePlanEditCommand, resolvePlanEdit } from "../core/plan-edit-commands.ts";
 import { isOpenTask } from "../core/planning-field-value.ts";
+import { readPlanningSettings } from "../adapters/settings-store.ts";
 import { computeSchoolDayInputs } from "../rituals/reshuffle.ts";
 import { morningView } from "./morning-view.ts";
 import { startNightCloseOut } from "./night-close-out.ts";
@@ -408,8 +409,8 @@ export async function chatTurn(deps: ChatTurnDeps, input: ChatTurnRequest): Prom
       try {
         if (planEdit.kind !== "move") tasks = (await deps.readTasks()).filter(isOpenTask);
         if (planEdit.when?.kind === "after-lunch") {
-          const school = computeSchoolDayInputs(await deps.readCalendarEventsFn(), today, deps.timeZone);
-          if (school.ok) lunchEnd = school.value.protectedWindows.find((w) => w.title === "Lunch")?.end;
+          const school = computeSchoolDayInputs(await deps.readCalendarEventsFn(), today, deps.timeZone, deps.store.withDb(readPlanningSettings));
+          if (school.ok) lunchEnd = school.value.protectedWindows.find((w) => w.id.startsWith("school-protected:lunch:"))?.end;
         }
       } catch (err) {
         return { ok: false, error: { kind: "unreachable", message: errorCopyForThrown(err), detail: err } };

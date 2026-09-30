@@ -211,6 +211,7 @@ import { initCompletionLogSchema } from "../adapters/completion-log.ts";
 import { initRoutineStoreSchema } from "../adapters/routine-store.ts";
 import { createNotification, initNotificationStoreSchema } from "../adapters/notification-store.ts";
 import { getLastHeartbeatAt, initPlanStateStoreSchema, isHeartbeatStale } from "../adapters/plan-state-store.ts";
+import { initSettingsStoreSchema } from "../adapters/settings-store.ts";
 import { loadPushoverConfigFromEnv, sendPushoverNotification } from "../adapters/notification-adapter.ts";
 import {
   PLAN_GENERATION_DEGRADED_THRESHOLD_MS,
@@ -1304,6 +1305,7 @@ export async function main(
   // `morning` actually reads it (the server, a separate process, is what
   // writes it).
   initPlanStateStoreSchema(connection.db);
+  initSettingsStoreSchema(connection.db);
   initRoutineStoreSchema(connection.db);
   const notifyOperational = createOperationalNotifier(connection);
   const checkServerHeartbeatStale = (): boolean => isHeartbeatStale(getLastHeartbeatAt(connection), new Date());

@@ -19,7 +19,7 @@
  *    other school event is busy, same as any other Calendar event.
  *  - On a school day, two windows are PROTECTED (busy) regardless of what
  *    Calendar events exist: lunch 10:55-11:40 and community time
- *    12:55-13:45, host-`timeZone` wall clock (`SCHOOL_PROTECTED_WINDOWS`).
+ *    12:55-13:45, host-`timeZone` wall clock.
  *  - No school events, or a weekend: `anchors` is `events` unchanged and
  *    `protectedWindows` is empty — the day's Plan is byte-for-byte what it
  *    was before this file existed (`morning-ritual.ts` feeds
@@ -29,18 +29,19 @@
  *    is a genuine no-op on a non-school day).
  */
 import type { CalendarEvent, IsoDate, IsoDateTime, Result, YohError } from "../types/domain.ts";
+import { defaultPlanningSettings, type PlanningSettings } from "./planning-settings.ts";
 
 export interface SchoolDayResult {
   /** `events` minus Study Blocks on a school day; `events` unchanged (verbatim) otherwise. */
   readonly anchors: readonly CalendarEvent[];
   /** The two protected-window synthetic events on a school day; empty otherwise. */
   readonly protectedWindows: readonly CalendarEvent[];
-  /** The earliest instant Yoh places its own work on `date` (`WORK_START_TIMES`, host `timeZone`). */
+  /** The earliest instant Yoh places its own work on `date` (the planning settings' work-start time, host `timeZone`). */
   readonly workStart: IsoDateTime;
 }
 
-/** One `SCHOOL_PROTECTED_WINDOWS` entry — a host-`timeZone` wall-clock span, by hour/minute (never a fixed UTC offset, since `computeSchoolDay` resolves it against the target date via `wallClockToUtcMillis` below, which is DST-correct). */
-interface ProtectedWindowSpec {
+/** One protected-window entry — a host-`timeZone` wall-clock span, by hour/minute (never a fixed UTC offset, since `computeSchoolDay` resolves it against the target date via `wallClockToUtcMillis` below, which is DST-correct). */
+export interface ProtectedWindowSpec {
   readonly key: string;
   readonly label: string;
   readonly startHour: number;
@@ -72,8 +73,8 @@ export const WORK_START_TIMES = {
   otherDay: { hour: 9, minute: 0 },
 } as const;
 
-function workStartMs(year: number, month: number, day: number, isSchoolDay: boolean, timeZone: string): IsoDateTime {
-  const start = isSchoolDay ? WORK_START_TIMES.schoolDay : WORK_START_TIMES.otherDay;
+function workStartMs(year: number, month: number, day: number, isSchoolDay: boolean, timeZone: string, settings: PlanningSettings): IsoDateTime {
+  const start = isSchoolDay ? settings.workStart.schoolDay : settings.workStart.otherDay;
   return new Date(wallClockToUtcMillis(year, month, day, start.hour, start.minute, timeZone)).toISOString();
 }
 
@@ -82,12 +83,12 @@ function workStartMs(year: number, month: number, day: number, isSchoolDay: bool
  * made before `Plan.workStart` existed): a weekday counts as a school day.
  * `undefined` for a malformed date.
  */
-export function workStartWithoutCalendar(date: IsoDate, timeZone: string): IsoDateTime | undefined {
+export function workStartWithoutCalendar(date: IsoDate, timeZone: string, settings: PlanningSettings = defaultPlanningSettings()): IsoDateTime | undefined {
   const match = ISO_DATE_SHAPE_RE.exec(date);
   if (!match) return undefined;
   const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
   if (!isRealCalendarDate(year, month, day)) return undefined;
-  return workStartMs(year, month, day, isWeekday(year, month, day), timeZone);
+  return workStartMs(year, month, day, isWeekday(year, month, day), timeZone, settings);
 }
 
 const STUDY_BLOCK_PREFIX = "study block";
@@ -221,12 +222,17 @@ function validationError(message: string, detail?: unknown): Result<never, YohEr
  * extra calendars, Task 2's `CalendarEvent.calendarId` telling them apart),
  * the target `date`, and the host `timeZone`: `anchors` is `events` minus
  * any Study Block school events, and `protectedWindows` holds the two
- * synthetic protected-window events (`SCHOOL_PROTECTED_WINDOWS`, converted
+ * synthetic protected-window events (converted
  * to UTC `IsoDateTime`s for `date` in `timeZone`) when `date` is a school
  * day, or is empty otherwise. See the file doc comment for the full set of
  * binding rulings this implements.
  */
-export function computeSchoolDay(events: readonly CalendarEvent[], date: IsoDate, timeZone: string): Result<SchoolDayResult, YohError> {
+export function computeSchoolDay(
+  events: readonly CalendarEvent[],
+  date: IsoDate,
+  timeZone: string,
+  settings: PlanningSettings = defaultPlanningSettings(),
+): Result<SchoolDayResult, YohError> {
   const match = ISO_DATE_SHAPE_RE.exec(date);
   const year = match ? Number(match[1]) : NaN;
   const month = match ? Number(match[2]) : NaN;
@@ -236,7 +242,7 @@ export function computeSchoolDay(events: readonly CalendarEvent[], date: IsoDate
   }
 
   const isSchoolDay = isWeekday(year, month, day) && events.some((event) => event.calendarId !== undefined);
-  const workStart = workStartMs(year, month, day, isSchoolDay, timeZone);
+  const workStart = workStartMs(year, month, day, isSchoolDay, timeZone, settings);
 
   if (!isSchoolDay) {
     // Ruling 4: anchors are `events` verbatim, no synthetic protected windows.
@@ -245,7 +251,7 @@ export function computeSchoolDay(events: readonly CalendarEvent[], date: IsoDate
 
   const anchors = events.filter((event) => !isStudyBlockEvent(event) && !isAllDayExtraCalendarEvent(event));
 
-  const protectedWindows: CalendarEvent[] = SCHOOL_PROTECTED_WINDOWS.map((window) => {
+  const protectedWindows: CalendarEvent[] = settings.protectedWindows.map((window) => {
     const startMs = wallClockToUtcMillis(year, month, day, window.startHour, window.startMinute, timeZone);
     const endMs = wallClockToUtcMillis(year, month, day, window.endHour, window.endMinute, timeZone);
     return {
