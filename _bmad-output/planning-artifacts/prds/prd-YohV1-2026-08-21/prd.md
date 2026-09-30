@@ -760,7 +760,7 @@ Memories live in eight fixed folders. Each item holds one fact.
 | Folder | Holds | Loaded |
 |---|---|---|
 | **Feedback** | What Spencer liked or disliked about Yoh's behavior, and changes he asked for, with the reason and when it applies. Stated items only | Always |
-| **Planning preferences** | How Spencer likes his day planned: block length, buffers, how packed a day is, when to nudge. Stated items only. A preference that maps to a real scheduler setting becomes a rule-change Proposal (FR-57); a soft preference affects only AI-written text (FR-56) | Always |
+| **Planning preferences** | How Spencer likes his day planned: block length, buffers, how packed a day is, when to nudge. Stated items only. A preference that maps to a real scheduler setting (v1: work start, protected windows, per-Area padding) becomes a rule-change Proposal (FR-57); a soft preference affects only AI-written text (FR-56) | Always |
 | **Corrections** | Facts Yoh got wrong, and the fix ("that's a club, not a class") | Always |
 | **About you** | Routines, energy, people and their roles | Always |
 | **Patterns** | Confirmed patterns Yoh noticed in Spencer's check-off history (FR-58) | Always |
@@ -823,14 +823,14 @@ Yoh uses memory whenever it answers, captures, or explains a Plan. The determini
 
 #### FR-57: Memory never silently overrides a built-in rule
 
-A Feedback or Planning-preferences item can conflict with a built-in planning rule. The built-in rules are: work-start times, protected windows (Lunch, Community time), the Time Budget, and Derived Priority weights. In that case Yoh raises a Proposal to change the rule. The item alone does not change it.
+A Feedback or Planning-preferences item can conflict with a built-in planning rule. The built-in rules are: work-start times, protected windows (Lunch, Community time), per-Area duration padding, and the Time Budget (which keeps its own FR-5 proposal path). Derived Priority weights, block length, and buffers are not settable in v1; a preference about them is soft `[ASSUMPTION: v1 settable list, readiness gate 2026-09-29]`. In that case Yoh raises a Proposal to change the rule. The item alone does not change it.
 
 **Consequences (testable):**
 - "Start work at 2:30 on school days" files the preference and raises a Proposal, e.g. "Change school-day work start from 3:15 PM to 2:30 PM? Yes/No". Only a yes changes planning, and it applies through the normal confirm path (FR-16, FR-48).
 - A preference whose Proposal is pending does not affect planning.
 - A confirmed change becomes a stored setting that Spencer can see and revert on the Memory page (FR-59).
 - A declined Proposal leaves the rule unchanged and does not affect planning. The preference stays filed, marked declined, and is not proposed again unless Spencer raises it again.
-- Split: a preference that maps to a real scheduler setting (block length, buffers, work start, and so on) becomes a Yes/No proposal to change that setting, as above. A soft preference ("I like hard tasks first") is not a rule change and affects only AI-written parts under FR-56.
+- Split: a preference that maps to a real scheduler setting (work start, protected windows, per-Area padding; the v1 list is in architecture AD-29) becomes a Yes/No proposal to change that setting, as above. A soft preference ("I like hard tasks first") is not a rule change and affects only AI-written parts under FR-56.
 - Preferences that don't conflict with a built-in rule (tone, wording, how much detail Yoh gives) take effect directly under FR-56.
 
 #### FR-58: Patterns are proposed, never assumed
@@ -860,7 +860,7 @@ The Web App gains a fifth page, Memory, after Research Hub (§5.11 lists all fiv
 
 #### FR-60: "How is Yoh doing?" rating (replaces FR-17)
 
-Occasionally, right after a substantive turn, Yoh asks "How is Yoh doing?" with three choices: 1 (poor), 2 (okay), and 3 (good). A substantive turn is a plan change, a re-fit, a researched answer, or a Morning or Night Ritual.
+Occasionally, right after a substantive turn, Yoh asks "How is Yoh doing?" with three choices: 1 (poor), 2 (okay), and 3 (good). A substantive turn is a plan change, a re-fit, a researched answer, or the `/morning` or `/night` chat command. The pushed Morning and Night Rituals never carry it.
 
 **Consequences (testable):**
 - At most one prompt per calendar day (in `YOH_TIMEZONE`), at a randomized turn, with one exception for a 1 (see below). It never appears mid-block unprompted (FR-9). Spencer can dismiss it with no effect; a dismissal counts toward the day's one prompt. After 3 dismissals in a row, prompts pause for a week.

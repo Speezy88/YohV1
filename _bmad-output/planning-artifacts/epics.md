@@ -2915,7 +2915,7 @@ So that memory is never silent and a mistake is one click to undo.
 
 **Given** `types/api.ts`
 **When** this story ships
-**Then** it defines one `ChatStreamEvent` union with the fixed order `status`* → `delta`* → `done` (carries `substantive`) → `remembered` → `proposal` → `rating` → close (AD-27). `remembered` is `{receiptId, kind: 'remembered'|'forgot', items: [{id, text, folder, scope?, expiresOn?}]}`.
+**Then** it extends the existing `ChatStreamEvent` union in `types/api.ts` with the fixed order `status`* → `delta`* → `done` (carries `substantive`) → `remembered` → `proposal` → `rating` → close (AD-27). `remembered` is `{receiptId, kind: 'remembered'|'forgot', items: [{id, text, folder, scope?, expiresOn?}]}`.
 
 **Given** "remember that Chem club is a club, not a class"
 **When** the reply finishes
@@ -2929,6 +2929,10 @@ So that memory is never silent and a mistake is one click to undo.
 **Given** "forget …" with several matches
 **When** it runs
 **Then** a disambiguation Structured Question lists them with their folders plus "None of these", stored as an interaction request. Nothing is deleted until it is answered. No match → "Nothing in memory matches '{words}'." (FR-55)
+
+**Given** "forget that" or a single "forget …" match
+**When** it runs
+**Then** "forget that" targets the most recent filing receipt in this Conversation (AD-27); the chain is marked `deleted` and a `remembered` event with `kind: 'forgot'` renders "Forgot: {text} · Undo" (UX). Undo restores the chain under the same no-later-turn rule.
 
 **Given** "what do you remember about AP Bio"
 **When** it runs
@@ -3016,6 +3020,10 @@ So that a rule change I approve (Story 13.8) changes planning everywhere, and no
 **When** this story ships
 **Then** it is not a `RuleSettingKey` and keeps its existing owner and proposal path
 
+**Given** an override value for any `RuleSettingKey`
+**When** the settings store or `validateFiling` checks it
+**Then** it must match the AD-29 value shape (work starts `"HH:MM"` 06:00–21:00 on 5-minute steps; windows `{start, end}` with start < end, 5–180 min; `areaDurationPadding` `{area, minutes 0–120, multiple of 5}`), or it is rejected as `validation`
+
 ### Story 13.8: Rule-Change Proposals From Planning Preferences
 
 As Spencer,
@@ -3044,7 +3052,11 @@ So that memory never silently overrides a planning rule.
 **When** a Plan is built
 **Then** the preference has no effect
 
-**Given** a soft preference ("I like hard tasks first") or one about Derived Priority weights
+**Given** a `Proposal<RuleChange>` (`{key, value, previous, memoryItemId}`)
+**When** Spencer says Yes after the resolved value has changed from `previous`, or 7 days pass unanswered
+**Then** a stale Yes returns `stale-proposal` and writes nothing; an expired one is withdrawn and the item is marked `declined`, staying as a soft preference (AD-29)
+
+**Given** a soft preference ("I like hard tasks first") or one about Derived Priority weights, block length, or buffers
 **When** it is filed
 **Then** no Proposal is raised; it affects only AI-written text
 
@@ -3070,7 +3082,7 @@ So that nothing is remembered behind my back.
 
 **Given** Chat history
 **When** Spencer opens a Conversation
-**Then** its read-only transcript shows. Delete conversation uses the Undo Toast and commits when it closes. "Clear all history" asks inline ("Clear all chat history? This can't be undone. Memories stay.") before `/api/chat-history/clear`.
+**Then** its read-only transcript shows. Delete conversation uses the Undo Toast and commits when it closes. "Clear all history" asks inline ("Clear all chat history? This can't be undone. Memories stay.") before `POST /api/chat-history/clear`. Delete conversation sends `POST /api/chat-history/delete {conversationId}` when the toast closes (routes: AD-26).
 
 **Given** the memory or chat store is down
 **When** the page loads
@@ -3094,7 +3106,7 @@ So that I stay in control of what Yoh uses.
 
 **Given** the overflow menu
 **When** Spencer picks Move to folder, Set/Clear expiry, or Delete
-**Then** each is a direct write with a visible result. Delete dissolves the row with "Deleted '{text}' · Undo" and commits when the toast closes (FR-59).
+**Then** each is a direct write with a visible result (`POST /api/memory/move`, `/api/memory/expiry`, `/api/memory/delete`; edit is `/api/memory/edit`, Renew/Keep is `/api/memory/review`, Revert is `/api/settings/revert`; AD-26). Delete dissolves the row with "Deleted '{text}' · Undo" and commits when the toast closes (FR-59).
 
 **Given** Needs review
 **When** it lists items
@@ -3106,7 +3118,7 @@ So that I stay in control of what Yoh uses.
 
 **Given** the Patterns folder
 **When** a Pattern proposal is pending (Story 13.13)
-**Then** it appears at the top with its evidence and Yes/No
+**Then** it appears at the top with its evidence and Yes/No, answered through `POST /api/open-items/answer` → `app/confirm-proposal.ts` (AD-30)
 
 ### Story 13.11: "How Is Yoh Doing?" Rating
 
@@ -3130,7 +3142,7 @@ So that Yoh hears when it's off without nagging me.
 
 **Given** a 1
 **When** it is picked
-**Then** an optional "What was off?" field appears with Send and Skip. A sent answer files to Feedback as Stated through the explicit path, with a receipt. `extra_prompt_due` lets the next substantive turn prompt again, at most one extra per day.
+**Then** an optional "What was off?" field appears with Send and Skip. A sent answer (`POST /api/rating {promptId, score: 1, note}`) files to Feedback as Stated through the explicit path; the route's JSON response carries the `remembered` receipt payload, rendered with the Remembered Receipt component (AD-31). `extra_prompt_due` lets the next substantive turn prompt again, at most one extra per day.
 
 **Given** any model call
 **When** it is built
@@ -3146,7 +3158,7 @@ So that there's one feedback loop, not two.
 
 **Given** the codebase
 **When** this story ships
-**Then** the `self-check` subcommand and its deps, `rituals/self-check.ts`, `app/answer-self-check.ts`, the open-item question and answer kinds, the escalation and error-copy entries, and the web handling are removed. `grep -ri self-check src web/src` is empty (AD-31).
+**Then** the `self-check` subcommand and its deps, `rituals/self-check.ts`, `app/answer-self-check.ts`, the open-item question and answer kinds, the escalation and error-copy entries, and the web handling are removed. Known references at planning time: `shell/ritual-cli.ts` + its self-check deps, `rituals/self-check.ts`, `rituals/morning-ritual.ts`, `rituals/ritual-shared.ts`, `app/answer-self-check.ts`, `adapters/memory-store.ts`, `adapters/logger.ts`, `core/error-copy.ts`, `web/src/components/ChatPanel.tsx`. `grep -ri self-check src web/src` is empty (AD-31).
 **And** Escalate-Under-Strain no longer reads Self-Check scores
 
 **Given** stored open self-check interaction requests
@@ -3172,7 +3184,7 @@ So that the Plan adapts to how I actually work, with my yes.
 
 **Given** a pending Pattern proposal
 **When** Spencer runs `/morning`, or opens the Chat panel for the first time that day
-**Then** at most one is shown per day: "Yoh noticed History essays run about 30 min over. 5 times since Sep 3: … Plan for that?" Yes/No. It is never a push or In-App Notification.
+**Then** at most one is shown per day across both surfaces (`/morning` emits it as the turn's `proposal` event; the panel fetches `GET /api/memory/pattern-offer`, which records `last_offered_on`; AD-30): "Yoh noticed History essays run about 30 min over. 5 times since Sep 3: … Plan for that?" Yes/No. It is never a push or In-App Notification.
 
 **Given** Yes
 **When** it is confirmed
@@ -3181,6 +3193,10 @@ So that the Plan adapts to how I actually work, with my yes.
 **Given** No
 **When** it is answered
 **Then** nothing is filed, and `pattern_state.declined_at` is set
+
+**Given** a Pattern proposal unanswered for 7 days, or confirmed after its `pattern_state` moved on
+**When** it expires or is confirmed
+**Then** it is withdrawn and treated as declined; a stale confirm returns `stale-proposal` and writes nothing (AD-30)
 
 **Given** a single day of overruns
 **When** detection runs

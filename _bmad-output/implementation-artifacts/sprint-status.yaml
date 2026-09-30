@@ -36,7 +36,7 @@
 #   epic-10, per the ledger's queue (fixes+UI plan -> Epic 9 -> this epic -> 10 -> 11 -> 12). Story list is a
 #   sketch only, to be planned in full when this epic starts (see epics.md).
 generated: 08-22-2026 00:00
-last_updated: 09-27-2026 00:00
+last_updated: 09-29-2026 22:00
 project: YohV1
 project_key: NOKEY
 tracking_system: file-system
@@ -111,10 +111,10 @@ development_status:
   8-2-one-confirmation-path-for-every-proposal: done
   8-3-chat-turn-routing-for-planning-commands: done
   8-4-chat-turn-routing-for-notion-calendar-and-search-commands: done
-  8-5-chat-page-with-streaming-replies: done
+  8-5-chat-page-chat-panel-with-streaming-replies: done
   8-6-open-items-and-structured-questions-in-chat: done
   8-7-command-palette-morning-and-night: done
-  8-8-chat-bubble-on-home-and-the-three-action-capture-flow: done
+  8-8-chat-bubble-on-home-ask-yoh-pill-on-every-page-and-the-three: done
   8-9-cli-parity-check-and-retirement: done
   epic-8-retrospective: optional
 
@@ -125,29 +125,17 @@ development_status:
   9-4-needs-data-notification-and-indicator: done
   epic-9-retrospective: optional
 
-  # epic-13 (backlog, to be planned): "Yoh remembers you" -- persistent chat memory. Added 2026-09-27 (Spencer),
-  # queued after epic-9 and before epic-10 (queue: fixes+UI plan -> epic-9 -> epic-13 -> epic-10 -> epic-11 ->
-  # epic-12). Sketch story list only -- see epics.md for the full entry.
-  epic-13: backlog
-  13-1-chat-store-persistent-transcript-storage-and-retrieval: backlog
-  13-2-auto-categorization-into-facts-decisions-ideas-folders: backlog
-  13-3-folder-browsing-and-search-in-the-web-app: backlog
-  13-4-migration-backfill-of-session-only-history: backlog
-  epic-13-retrospective: optional
-
-  epic-10: backlog
-  10-1-one-re-planning-pipeline-and-the-reshuffle-preview: backlog
-  10-2-approve-or-discard-a-reshuffle: backlog
-  10-3-routines-declare-once-placed-every-day: backlog
-  10-4-drag-a-block-and-approve-the-animated-preview: backlog
-  10-5-pin-a-task-and-unpin-it: backlog
+  epic-10: done
+  10-1-one-re-planning-pipeline-and-the-reshuffle-preview: done
+  10-2-approve-or-discard-a-reshuffle: done
+  10-3-routines-declare-once-placed-every-day: done
+  10-4-drag-a-block-and-approve-the-animated-preview: done
+  10-5-pin-a-task-and-unpin-it: done
   epic-10-retrospective: optional
 
-  # epic-11: Tasks page (11-1) delivered early via the 2026-09-27 fixes + UI plan's Task 6B -- see the
-  # amendment note at the top of this file. Epic 11 itself (job + offer) stays backlog.
   epic-11: backlog
-  11-1-tasks-page-every-task-grouped: done # delivered early, Task 6B, 2026-09-27 fixes + UI plan
-  11-2-research-box-on-tasks: backlog # content now ships on the new Research Hub page (Task 6C shell, 2026-09-27)
+  11-1-tasks-page-every-task-grouped-delivered-early-in-the-2026-09: done
+  11-2-research-box-on-tasks-on-research-hub: backlog
   11-3-research-runs-as-a-background-job: backlog
   11-4-one-time-research-offer: backlog
   epic-11-retrospective: optional
@@ -157,8 +145,24 @@ development_status:
   12-2-usage-heatmap: backlog
   12-3-feed-providers-and-crypto-tickers: backlog
   12-4-weather-and-news-widgets: backlog
-  12-5-claude-api-spend-tile: backlog # added 2026-09-27
+  12-5-claude-api-spend-tile-added-2026-09-27-spencer: backlog
   epic-12-retrospective: optional
+
+  epic-13: backlog
+  13-1-server-owned-chat-history: backlog
+  13-2-record-planned-times-and-slip-events-for-patterns: backlog
+  13-3-memory-item-store: backlog
+  13-4-memory-commands-the-remembered-receipt-and-undo: backlog
+  13-5-automatic-filing-after-each-turn: backlog
+  13-6-recall-in-answers-and-plan-reasoning: backlog
+  13-7-planning-settings-threaded-through-the-scheduler: backlog
+  13-8-rule-change-proposals-from-planning-preferences: backlog
+  13-9-memory-page-folders-search-and-chat-history: backlog
+  13-10-memory-page-edit-needs-review-and-changed-settings: backlog
+  13-11-how-is-yoh-doing-rating: backlog
+  13-12-retire-self-check: backlog
+  13-13-pattern-proposals-with-evidence: backlog
+  epic-13-retrospective: optional
 action_items:
   - id: "epic-6-retro-item-1-chunk-rich_text-values-into-2000-char-se"
     epic: 6
