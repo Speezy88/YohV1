@@ -7,7 +7,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { computeSchoolDay, mergeOverlappingAnchors, SCHOOL_PROTECTED_WINDOWS } from "../src/core/school-day.ts";
+import { computeSchoolDay, mergeOverlappingAnchors, SCHOOL_PROTECTED_WINDOWS, WORK_START_TIMES } from "../src/core/school-day.ts";
 import type { CalendarEvent } from "../src/types/domain.ts";
 
 function schoolEvent(id: string, title: string, start: string, end: string): CalendarEvent {
@@ -33,7 +33,7 @@ test("weekday with a school event: it's a school day — the event stays an anch
   const [lunch, community] = result.value.protectedWindows;
   assert.equal(lunch!.title, "Lunch");
   assert.equal(lunch!.start, "2026-08-24T10:55:00.000Z");
-  assert.equal(lunch!.end, "2026-08-24T11:40:00.000Z");
+  assert.equal(lunch!.end, "2026-08-24T11:35:00.000Z");
   assert.equal(community!.title, "Community time");
   assert.equal(community!.start, "2026-08-24T12:55:00.000Z");
   assert.equal(community!.end, "2026-08-24T13:45:00.000Z");
@@ -88,10 +88,10 @@ test("protected-window times are correct across a DST date in America/Los_Angele
   assert.ok(result.ok);
   const [lunch, community] = result.value.protectedWindows;
   // America/Los_Angeles is PDT (UTC-7) on 2026-03-09, the day after the
-  // spring-forward transition — 10:55/11:40/12:55/13:45 local all fall
+  // spring-forward transition — 10:55/11:35/12:55/13:45 local all fall
   // after the transition itself, so the whole window uses the -7 offset.
   assert.equal(lunch!.start, "2026-03-09T17:55:00.000Z");
-  assert.equal(lunch!.end, "2026-03-09T18:40:00.000Z");
+  assert.equal(lunch!.end, "2026-03-09T18:35:00.000Z");
   assert.equal(community!.start, "2026-03-09T19:55:00.000Z");
   assert.equal(community!.end, "2026-03-09T20:45:00.000Z");
 });
@@ -104,7 +104,7 @@ test("protected-window times respect standard time too (2026-11-02, the Monday r
   assert.ok(result.ok);
   const [lunch, community] = result.value.protectedWindows;
   assert.equal(lunch!.start, "2026-11-02T18:55:00.000Z");
-  assert.equal(lunch!.end, "2026-11-02T19:40:00.000Z");
+  assert.equal(lunch!.end, "2026-11-02T19:35:00.000Z");
   assert.equal(community!.start, "2026-11-02T20:55:00.000Z");
   assert.equal(community!.end, "2026-11-02T21:45:00.000Z");
 });
@@ -225,4 +225,41 @@ test("mergeOverlappingAnchors: a real anchor in the MIDDLE of a protected window
   assert.equal(result.protectedWindows[0]!.end, "2026-08-24T11:05:00.000Z");
   assert.equal(result.protectedWindows[1]!.start, "2026-08-24T11:15:00.000Z");
   assert.equal(result.protectedWindows[1]!.end, "2026-08-24T11:40:00.000Z");
+});
+
+// ============================================================================
+// Earliest start for Yoh's own work placement (Spencer, 2026-09-29): 3:15 PM
+// on a school day, 9:00 AM on every other day (weekends and non-school
+// weekdays), host-timeZone wall clock.
+// ============================================================================
+
+test("workStart: 3:15 PM local on a school day (PDT)", () => {
+  const events = [schoolEvent("s1", "AP Calculus", "2026-09-28T16:00:00.000Z", "2026-09-28T17:00:00.000Z")];
+  const result = computeSchoolDay(events, "2026-09-28", "America/Los_Angeles");
+  assert.ok(result.ok);
+  assert.equal(result.value.workStart, "2026-09-28T22:15:00.000Z");
+});
+
+test("workStart: 9:00 AM local on a weekend, even with a school event", () => {
+  const events = [schoolEvent("s1", "Game", "2026-08-22T18:00:00.000Z", "2026-08-22T19:00:00.000Z")];
+  const result = computeSchoolDay(events, SATURDAY, "America/Los_Angeles");
+  assert.ok(result.ok);
+  assert.equal(result.value.workStart, "2026-08-22T16:00:00.000Z");
+});
+
+test("workStart: 9:00 AM local on a weekday with no school events", () => {
+  const result = computeSchoolDay([primaryEvent("p1", "Dentist", "2026-08-24T17:00:00.000Z", "2026-08-24T18:00:00.000Z")], MONDAY, "America/Los_Angeles");
+  assert.ok(result.ok);
+  assert.equal(result.value.workStart, "2026-08-24T16:00:00.000Z");
+});
+
+test("workStart respects standard time (PST, 2026-11-02 school day)", () => {
+  const events = [schoolEvent("s1", "AP Calculus", "2026-11-02T17:00:00.000Z", "2026-11-02T18:00:00.000Z")];
+  const result = computeSchoolDay(events, "2026-11-02", "America/Los_Angeles");
+  assert.ok(result.ok);
+  assert.equal(result.value.workStart, "2026-11-02T23:15:00.000Z");
+});
+
+test("WORK_START_TIMES is the one constant holding both start times", () => {
+  assert.deepEqual(WORK_START_TIMES, { schoolDay: { hour: 15, minute: 15 }, otherDay: { hour: 9, minute: 0 } });
 });

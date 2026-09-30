@@ -470,6 +470,8 @@ export interface Plan {
   readonly reasoning: string;
   /** Labels of declared Routines that found no free slot today. Absent when every Routine was placed (or none applied). */
   readonly unplacedRoutineLabels?: readonly string[];
+  /** The earliest instant Yoh places its own work this day (`computeSchoolDay`'s `workStart`), kept so a re-flow that reuses stored anchors honors it. Absent on Plans made before it existed. */
+  readonly workStart?: IsoDateTime;
   readonly version: number;
   readonly createdAt: IsoDateTime;
   readonly updatedAt: IsoDateTime;

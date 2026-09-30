@@ -8,7 +8,7 @@
 import type { LogEntry } from "../adapters/logger.ts";
 import { orderByDerivedPriority } from "../core/derived-priority.ts";
 import { localMinutesToMs } from "../core/local-time.ts";
-import { computeSchoolDay, mergeOverlappingAnchors } from "../core/school-day.ts";
+import { computeSchoolDay, mergeOverlappingAnchors, type SchoolDayResult } from "../core/school-day.ts";
 import { placeRoutines, type DayRoutine } from "../core/routine-placement.ts";
 import type { Routine, RoutineDay } from "../core/routine-commands.ts";
 import { fitWorkBreakBlocks, type FitWorkBreakBlocksOutput } from "../core/work-break-fit.ts";
@@ -205,6 +205,8 @@ export interface DayRefitInput {
   readonly date: IsoDate;
   readonly timeZone: string;
   readonly now: IsoDateTime;
+  /** The earliest instant Yoh places its own work today (`computeSchoolDay`'s `workStart`); pins and routines are not bound by it. */
+  readonly workStart: IsoDateTime;
   /** Already gated (and, for reflow, remaining-duration-adjusted) open Tasks. */
   readonly openTasks: readonly CompleteTask[];
   readonly budget: TimeBudget;
@@ -320,7 +322,7 @@ export function computeSchoolDayInputs(
   events: readonly CalendarEvent[],
   date: IsoDate,
   timeZone: string,
-): Result<{ anchors: readonly CalendarEvent[]; protectedWindows: readonly CalendarEvent[] }, YohError> {
+): Result<SchoolDayResult, YohError> {
   return computeSchoolDay(events, date, timeZone);
 }
 
@@ -388,7 +390,8 @@ export function computeDayRefit(input: DayRefitInput): Result<DayRefitOutput, Yo
   let rejection = spilled ? `"${spilled.task.title}" can't go there: it would run past the end of the day.` : undefined;
   while (rejection === undefined) {
     const routineFixed: CalendarEvent[] = keptRoutineBlocks.map((b, i) => ({ id: `kept-routine-${i}`, title: b.label, start: b.start, end: b.end }));
-    const collision = firstPinCollision(placements, [...anchors, ...protectedWindows, ...routineFixed], requested);
+    // A pin may sit in Lunch or Community time: Spencer placed it there himself (protected windows only keep Yoh's own placement out).
+    const collision = firstPinCollision(placements, [...anchors, ...routineFixed], requested);
     if (!collision) break;
     if ("reject" in collision) {
       rejection = collision.reject;
@@ -424,6 +427,9 @@ export function computeDayRefit(input: DayRefitInput): Result<DayRefitOutput, Yo
     idPrefix: input.idPrefix,
   });
   const routineAnchors: CalendarEvent[] = [...keptRoutineBlocks, ...routinePlacement.blocks].map((b, i) => ({ id: `routine-anchor-${i}`, title: ROUTINE_ANCHOR_TITLE, start: b.start, end: b.end }));
+  // Protected windows clipped around pins, so a pin inside Lunch never overlaps a busy span.
+  const unpinnedProtected = mergeOverlappingAnchors(pinAnchors, protectedWindows).protectedWindows;
+  const startTime = new Date(Math.max(nowMs, Date.parse(input.workStart))).toISOString();
   const pinnedMinutes = pinBlocks.reduce((sum, b) => sum + (Date.parse(b.end) - Date.parse(b.start)) / MINUTES_TO_MS, 0);
   const budget: TimeBudget =
     pinnedMinutes > 0 ? { ...input.budget, totalMinutes: Math.max(1, Math.round(input.budget.totalMinutes - pinnedMinutes)) } : input.budget;
@@ -431,17 +437,17 @@ export function computeDayRefit(input: DayRefitInput): Result<DayRefitOutput, Yo
   const pass1 = fitWorkBreakBlocks({
     tasks: ordered.value,
     budget,
-    calendarEvents: [...anchors, ...protectedWindows, ...pinAnchors, ...routineAnchors],
-    startTime: input.now,
+    calendarEvents: [...anchors, ...unpinnedProtected, ...pinAnchors, ...routineAnchors],
+    startTime,
   });
   if (!pass1.ok) return pass1;
 
   const fitted = applySchoolDayLastResort({
     pass1: pass1.value,
     tasks: ordered.value,
-    protectedWindows,
+    protectedWindows: unpinnedProtected,
     budget,
-    startTime: input.now,
+    startTime,
     today: input.date,
   });
   if (!fitted.ok) return fitted;

@@ -35,6 +35,7 @@ function baseInput(overrides: Record<string, unknown> = {}) {
     date: DATE,
     timeZone: "UTC",
     now: NOW,
+    workStart: "2026-08-22T00:00:00.000Z",
     openTasks: [task("a", 60, "2026-08-25"), task("b", 45, "2026-08-23")],
     budget: BUDGET,
     fixedEvents: [ANCHOR],
@@ -380,4 +381,48 @@ test("an in-progress pin whose length has fully elapsed is skipped", () => {
   if (!result.ok) return;
   const bWork = result.value.blocks.filter((x) => x.kind === "work" && x.taskId === "b");
   assert.ok(bWork.length > 0 && bWork.every((x) => x.pinned !== true), "the elapsed pin no longer pins the Task");
+});
+
+// ============================================================================
+// Earliest start (workStart): Yoh never places its own work before it; pins
+// and routines keep Spencer's times.
+// ============================================================================
+
+test("workStart later than now: the first work block starts at workStart, not now", () => {
+  const result = computeDayRefit({ ...baseInput({ fixedEvents: [] }), workStart: "2026-08-22T15:15:00.000Z" });
+  assert.ok(result.ok);
+  const work = result.value.fittedBlocks.filter((b) => b.kind === "work");
+  assert.ok(work.length > 0);
+  assert.equal(work[0]!.start, "2026-08-22T15:15:00.000Z");
+  assert.ok(result.value.fittedBlocks.every((b) => Date.parse(b.start) >= Date.parse("2026-08-22T15:15:00.000Z")));
+});
+
+test("workStart earlier than now: placement starts at now", () => {
+  const result = computeDayRefit({ ...baseInput({ fixedEvents: [] }), workStart: "2026-08-22T08:00:00.000Z" });
+  assert.ok(result.ok);
+  const work = result.value.fittedBlocks.filter((b) => b.kind === "work");
+  assert.equal(work[0]!.start, NOW);
+});
+
+test("a pin before workStart keeps Spencer's time", () => {
+  const pin = { date: DATE, subject: { kind: "task" as const, taskId: "b" }, start: "2026-08-22T10:00:00.000Z" };
+  const result = computeDayRefit({ ...baseInput({ fixedEvents: [], pins: [pin] }), workStart: "2026-08-22T15:15:00.000Z" });
+  assert.ok(result.ok);
+  const pinned = result.value.fittedBlocks.find((b) => b.kind === "work" && b.taskId === "b");
+  assert.equal(pinned!.start, "2026-08-22T10:00:00.000Z");
+  const other = result.value.fittedBlocks.find((b) => b.kind === "work" && b.taskId === "a");
+  assert.ok(Date.parse(other!.start) >= Date.parse("2026-08-22T15:15:00.000Z"));
+});
+
+test("a pin inside a protected window (Lunch) is Spencer's choice: kept, not released, and the day still fits", () => {
+  const lunch: CalendarEvent = { id: "school-protected:lunch", title: "Lunch", start: "2026-08-22T10:55:00.000Z", end: "2026-08-22T11:35:00.000Z" };
+  const pin = { date: DATE, subject: { kind: "task" as const, taskId: "b" }, start: "2026-08-22T11:00:00.000Z", durationMinutes: 30 };
+  const result = computeDayRefit({ ...baseInput({ fixedEvents: [], protectedWindows: [lunch], pins: [pin] }), workStart: "2026-08-22T09:00:00.000Z" });
+  assert.ok(result.ok);
+  assert.equal(result.value.releasedPins, undefined);
+  const pinned = result.value.fittedBlocks.find((b) => b.kind === "work" && b.taskId === "b");
+  assert.equal(pinned!.start, "2026-08-22T11:00:00.000Z");
+  // Yoh's own placement still stays out of the rest of Lunch.
+  const own = result.value.fittedBlocks.filter((b) => b.kind === "work" && b.taskId === "a");
+  assert.ok(own.every((b) => Date.parse(b.end) <= Date.parse(lunch.start) || Date.parse(b.start) >= Date.parse(lunch.end) || (Date.parse(b.start) >= Date.parse(pin.start) && Date.parse(b.end) <= Date.parse("2026-08-22T11:30:00.000Z"))));
 });

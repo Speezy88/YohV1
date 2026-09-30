@@ -240,6 +240,7 @@ import type { DataCompletenessGateResult } from "../core/data-completeness-gate.
 import { isOpenTask } from "../core/planning-field-value.ts";
 import { listDayDrops, listDayPins, replaceDayPinsAndDropsInTx } from "../adapters/plan-state-store.ts";
 import { computeDayRefit, elapsedMinutesWithinBlock } from "./reshuffle.ts";
+import { workStartWithoutCalendar } from "../core/school-day.ts";
 import { listRoutinesFromStore } from "../adapters/routine-store.ts";
 import { appendUnplacedRoutines } from "../core/routine-placement.ts";
 import type { Routine } from "../core/routine-commands.ts";
@@ -599,6 +600,8 @@ export async function runMidDayReflow(deps: MidDayReflowDeps): Promise<Result<Mi
   const refit = computeDayRefit({
     date: today,
     timeZone: deps.timeZone,
+    // Re-flow reuses stored anchors (no calendar read), so the Plan carries its own earliest start.
+    workStart: existingPlan.data.workStart ?? workStartWithoutCalendar(today, deps.timeZone) ?? nowIso,
     now: nowIso,
     openTasks: outstanding,
     budget: {

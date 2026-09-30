@@ -145,6 +145,7 @@ export async function refitToday(
   const refit = computeDayRefit({
     date: today,
     timeZone: deps.timeZone,
+    workStart: school.value.workStart,
     now: nowDate.toISOString(),
     openTasks: outstanding,
     budget: {

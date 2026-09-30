@@ -28,13 +28,15 @@
  *    `validateAndSortAnchors` there doesn't care about input order, so this
  *    is a genuine no-op on a non-school day).
  */
-import type { CalendarEvent, IsoDate, Result, YohError } from "../types/domain.ts";
+import type { CalendarEvent, IsoDate, IsoDateTime, Result, YohError } from "../types/domain.ts";
 
 export interface SchoolDayResult {
   /** `events` minus Study Blocks on a school day; `events` unchanged (verbatim) otherwise. */
   readonly anchors: readonly CalendarEvent[];
   /** The two protected-window synthetic events on a school day; empty otherwise. */
   readonly protectedWindows: readonly CalendarEvent[];
+  /** The earliest instant Yoh places its own work on `date` (`WORK_START_TIMES`, host `timeZone`). */
+  readonly workStart: IsoDateTime;
 }
 
 /** One `SCHOOL_PROTECTED_WINDOWS` entry — a host-`timeZone` wall-clock span, by hour/minute (never a fixed UTC offset, since `computeSchoolDay` resolves it against the target date via `wallClockToUtcMillis` below, which is DST-correct). */
@@ -48,15 +50,45 @@ interface ProtectedWindowSpec {
 }
 
 /**
- * Task 3 binding ruling: lunch 10:55-11:40, community time 12:55-13:45,
+ * Task 3 binding ruling (lunch end corrected to 11:35 by Spencer, 2026-09-29):
+ * lunch 10:55-11:35, community time 12:55-13:45,
  * host-`timeZone` wall clock. One exported constant per the brief ("Put
  * them in one exported constant") so a future change to these times has a
  * single place to edit.
  */
 export const SCHOOL_PROTECTED_WINDOWS: readonly ProtectedWindowSpec[] = [
-  { key: "lunch", label: "Lunch", startHour: 10, startMinute: 55, endHour: 11, endMinute: 40 },
+  { key: "lunch", label: "Lunch", startHour: 10, startMinute: 55, endHour: 11, endMinute: 35 },
   { key: "community", label: "Community time", startHour: 12, startMinute: 55, endHour: 13, endMinute: 45 },
 ];
+
+/**
+ * Spencer, 2026-09-29: Yoh never places its own work before 3:15 PM on a
+ * school day, or before 9:00 AM on any other day (weekends and non-school
+ * weekdays). Host-`timeZone` wall clock. Spencer's own pins and routines
+ * are not bound by it.
+ */
+export const WORK_START_TIMES = {
+  schoolDay: { hour: 15, minute: 15 },
+  otherDay: { hour: 9, minute: 0 },
+} as const;
+
+function workStartMs(year: number, month: number, day: number, isSchoolDay: boolean, timeZone: string): IsoDateTime {
+  const start = isSchoolDay ? WORK_START_TIMES.schoolDay : WORK_START_TIMES.otherDay;
+  return new Date(wallClockToUtcMillis(year, month, day, start.hour, start.minute, timeZone)).toISOString();
+}
+
+/**
+ * `workStart` for a day whose calendar isn't at hand (a re-flow of a Plan
+ * made before `Plan.workStart` existed): a weekday counts as a school day.
+ * `undefined` for a malformed date.
+ */
+export function workStartWithoutCalendar(date: IsoDate, timeZone: string): IsoDateTime | undefined {
+  const match = ISO_DATE_SHAPE_RE.exec(date);
+  if (!match) return undefined;
+  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  if (!isRealCalendarDate(year, month, day)) return undefined;
+  return workStartMs(year, month, day, isWeekday(year, month, day), timeZone);
+}
 
 const STUDY_BLOCK_PREFIX = "study block";
 
@@ -204,11 +236,11 @@ export function computeSchoolDay(events: readonly CalendarEvent[], date: IsoDate
   }
 
   const isSchoolDay = isWeekday(year, month, day) && events.some((event) => event.calendarId !== undefined);
+  const workStart = workStartMs(year, month, day, isSchoolDay, timeZone);
 
   if (!isSchoolDay) {
-    // Ruling 4: byte-for-byte unchanged — `events` verbatim, no synthetic
-    // protected windows.
-    return { ok: true, value: { anchors: events, protectedWindows: [] } };
+    // Ruling 4: anchors are `events` verbatim, no synthetic protected windows.
+    return { ok: true, value: { anchors: events, protectedWindows: [], workStart } };
   }
 
   const anchors = events.filter((event) => !isStudyBlockEvent(event) && !isAllDayExtraCalendarEvent(event));
@@ -224,7 +256,7 @@ export function computeSchoolDay(events: readonly CalendarEvent[], date: IsoDate
     };
   });
 
-  return { ok: true, value: { anchors, protectedWindows } };
+  return { ok: true, value: { anchors, protectedWindows, workStart } };
 }
 
 // ============================================================================
@@ -287,7 +319,7 @@ function subtractSpans(
 export function mergeOverlappingAnchors(
   anchors: readonly CalendarEvent[],
   protectedWindows: readonly CalendarEvent[],
-): SchoolDayResult {
+): Pick<SchoolDayResult, "anchors" | "protectedWindows"> {
   // A zero-length event (end <= start, e.g. a calendar marker) occupies no
   // time, and `fitWorkBreakBlocks` rejects it outright — drop it here.
   const sortedByStart = anchors.filter((e) => spanMs(e).endMs > spanMs(e).startMs).sort((a, b) => spanMs(a).startMs - spanMs(b).startMs);
