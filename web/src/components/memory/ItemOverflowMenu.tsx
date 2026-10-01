@@ -6,6 +6,7 @@
  * handed to the row; this component owns no writes.
  */
 import { useEffect, useId, useRef, useState } from "react";
+import { BUTTON_SECONDARY, CONTROL_SM, FOCUS_RING, ICON_BUTTON, ROW_HOVER_FLAT } from "../../lib/controlStyles.ts";
 import type { MemoryFolder } from "../../../../src/types/domain.ts";
 
 export interface FolderChoice {
@@ -30,10 +31,8 @@ export interface ItemOverflowMenuProps {
 /** Folders that hold only things Spencer said; mirrors the server's rule, whose message the disabled item repeats. */
 const STATED_ONLY: readonly MemoryFolder[] = ["feedback", "planning-preferences"];
 
-const FOCUS =
-  "focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid";
 const MENU_ITEM =
-  `block w-full rounded-sm bg-transparent px-3 py-2 text-left font-body text-body text-ink-primary hover:bg-surface-sunken aria-disabled:text-ink-secondary ${FOCUS}`;
+  `block w-full rounded-sm px-3 py-2 text-left font-body text-body text-ink-primary aria-disabled:text-ink-secondary ${ROW_HOVER_FLAT}`;
 
 type View = "root" | "move" | "expiry";
 
@@ -132,7 +131,7 @@ export function ItemOverflowMenu({ itemText, currentFolder, origin, expiresOn, f
             setOpen(true);
           }
         }}
-        className={`flex h-8 w-8 items-center justify-center rounded-sm bg-transparent text-ink-secondary hover:text-ink-primary ${FOCUS}`}
+        className={`${ICON_BUTTON} h-9 w-9`}
       >
         <MoreGlyph />
       </button>
@@ -208,13 +207,13 @@ export function ItemOverflowMenu({ itemText, currentFolder, origin, expiresOn, f
                   type="date"
                   value={date}
                   onChange={(e) => setDate(e.target.value)}
-                  className={`rounded-md bg-surface-sunken px-3 py-2 font-body text-body text-ink-primary shadow-inset ${FOCUS}`}
+                  className={`rounded-md bg-surface-sunken px-3 py-2 font-body text-body text-ink-primary shadow-inset ${FOCUS_RING}`}
                 />
               </label>
               <button
                 type="submit"
                 disabled={!date}
-                className={`self-start rounded-sm border-[length:var(--rim-width)] border-rim-interactive bg-transparent px-3 py-1 font-body text-small font-bold text-ink-primary disabled:opacity-50 ${FOCUS}`}
+                className={`self-start ${BUTTON_SECONDARY} ${CONTROL_SM}`}
               >
                 Save
               </button>

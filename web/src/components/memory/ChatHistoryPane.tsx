@@ -15,16 +15,16 @@ import {
   useChatHistoryList,
 } from "../../lib/memory.ts";
 import { formatConversationDay } from "../../lib/memoryFormat.ts";
+import { ROW_HOVER_RAISED } from "../../lib/controlStyles.ts";
 import { UndoToast } from "../UndoToast.tsx";
+import { LINK_BUTTON_CLASS, SMALL_BUTTON_CLASS } from "./MemoryItemRow.tsx";
 import { TranscriptTurn } from "./TranscriptTurn.tsx";
 
 const CAPTION = "font-body text-small text-ink-secondary";
 const MUTED = "m-0 p-5 font-body text-body text-ink-secondary";
 const LOAD_ERROR = "Couldn't load memory right now.";
-const FOCUS =
-  "focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid";
-const LINK_BUTTON = `font-body text-small font-semibold text-ink-primary underline underline-offset-2 ${FOCUS}`;
-const ACTION_BUTTON = `rounded-sm border-[length:var(--rim-width)] border-rim-interactive bg-transparent px-3 py-1 font-body text-small font-bold text-ink-primary ${FOCUS}`;
+const LINK_BUTTON = LINK_BUTTON_CLASS;
+const ACTION_BUTTON = SMALL_BUTTON_CLASS;
 
 function Skeletons(): React.JSX.Element {
   const reducedMotion = useReducedMotion();
@@ -174,7 +174,7 @@ export function ChatHistoryPane({
                 <button
                   type="button"
                   onClick={() => onOpen(c.id)}
-                  className={`w-full rounded-lg bg-surface-raised px-[18px] py-4 text-left font-body text-body text-ink-primary shadow-extruded-sm ${FOCUS}`}
+                  className={`w-full rounded-lg bg-surface-raised px-[18px] py-4 text-left font-body text-body text-ink-primary shadow-extruded-sm ${ROW_HOVER_RAISED}`}
                 >
                   {formatConversationDay(c.date)} · {c.turnCount} {c.turnCount === 1 ? "turn" : "turns"} · {c.firstLine}
                 </button>

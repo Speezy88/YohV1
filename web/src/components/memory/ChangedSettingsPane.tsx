@@ -8,15 +8,14 @@
 import { useEffect, useRef, useState } from "react";
 import { revertSetting } from "../../lib/memory.ts";
 import { formatMemoryDay } from "../../lib/memoryFormat.ts";
+import { SMALL_BUTTON_CLASS } from "./MemoryItemRow.tsx";
 import type { ChangedSettingView } from "../../../../src/types/api.ts";
 
 const RESULT_HOLD_MS = 3000;
 /** The server's rule labels are lowercase ("school-day work start"); the list shows them as a sentence start. */
 const capitalize = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1);
 const rowKey = (s: ChangedSettingView): string => `${s.key}:${s.area ?? ""}`;
-const BUTTON =
-  "rounded-sm border-[length:var(--rim-width)] border-rim-interactive bg-transparent px-3 py-1 font-body text-small font-bold text-ink-primary disabled:opacity-50 " +
-  "focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid";
+const BUTTON = SMALL_BUTTON_CLASS;
 const CARD = "flex list-none flex-col gap-1 rounded-lg bg-surface-raised px-[18px] py-4 font-body shadow-extruded-sm";
 
 interface Reverted {
@@ -80,7 +79,7 @@ export function ChangedSettingsPane({ settings }: { readonly settings: readonly 
                   </button>
                 </div>
                 {failures[k] && (
-                  <p role="alert" className="m-0 text-small font-semibold text-ink-danger">
+                  <p role="alert" className="m-0 text-small font-bold text-ink-danger">
                     {failures[k]}
                   </p>
                 )}

@@ -9,6 +9,7 @@
 import { useState } from "react";
 import { markMemorySaved, reviewItem, type Outcome } from "../../lib/memory.ts";
 import type { MemoryItemView, NeedsReviewItemView } from "../../../../src/types/api.ts";
+import { FOCUS_RING } from "../../lib/controlStyles.ts";
 import { MemoryItemRow, SMALL_BUTTON_CLASS } from "./MemoryItemRow.tsx";
 import type { FolderChoice } from "./ItemOverflowMenu.tsx";
 
@@ -70,7 +71,7 @@ function ReviewActions({ item, onDelete }: { readonly item: NeedsReviewItemView;
               value={date}
               disabled={busy}
               onChange={(e) => setDate(e.target.value)}
-              className="rounded-md bg-surface-sunken px-2 py-1 font-body text-small text-ink-primary shadow-inset"
+              className={`rounded-md bg-surface-sunken px-2 py-1 font-body text-small text-ink-primary shadow-inset ${FOCUS_RING}`}
             />
           </label>
           <button type="button" disabled={busy || date === ""} onClick={() => void run("renew", date)} className={SMALL_BUTTON_CLASS}>
@@ -82,7 +83,7 @@ function ReviewActions({ item, onDelete }: { readonly item: NeedsReviewItemView;
         </div>
       )}
       {failure && (
-        <p role="alert" className="m-0 font-body text-small font-semibold text-ink-danger">
+        <p role="alert" className="m-0 font-body text-small font-bold text-ink-danger">
           {failure}
         </p>
       )}

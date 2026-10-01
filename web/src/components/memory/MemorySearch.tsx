@@ -4,6 +4,8 @@
  * results, which replace the list while text is present. Each hit shows its
  * folder or Conversation date and opens in place. Esc clears.
  */
+import { FIELD_FOCUS_WITHIN, ROW_HOVER_RAISED } from "../../lib/controlStyles.ts";
+import { LINK_BUTTON_CLASS } from "./MemoryItemRow.tsx";
 import { useReducedMotion } from "../../hooks/useReducedMotion.ts";
 import { formatConversationDay } from "../../lib/memoryFormat.ts";
 import { MEMORY_FOLDER_LABELS } from "../../lib/memoryApi.ts";
@@ -12,13 +14,11 @@ import type { useMemorySearch } from "../../lib/memory.ts";
 type Search = ReturnType<typeof useMemorySearch>;
 
 const CAPTION = "font-body text-small text-ink-secondary";
-const HIT =
-  "flex w-full flex-col gap-1 rounded-lg bg-surface-raised px-[18px] py-4 text-left font-body shadow-extruded-sm " +
-  "focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid";
+const HIT = `flex w-full flex-col gap-1 rounded-lg bg-surface-raised px-[18px] py-4 text-left font-body shadow-extruded-sm ${ROW_HOVER_RAISED}`;
 
 export function MemorySearchBox({ search }: { readonly search: Search }): React.JSX.Element {
   return (
-    <div data-wheel-nav="off" className="flex items-center gap-2 rounded-xl bg-surface-sunken px-4 py-2 shadow-inset">
+    <div data-wheel-nav="off" className={`flex items-center gap-2 rounded-xl bg-surface-sunken px-4 py-2 shadow-inset ${FIELD_FOCUS_WITHIN}`}>
       <input
         type="search"
         aria-label="Search memory"
@@ -38,7 +38,7 @@ export function MemorySearchBox({ search }: { readonly search: Search }): React.
         <button
           type="button"
           onClick={search.clear}
-          className="rounded-sm font-body text-small font-semibold text-ink-primary underline underline-offset-2 focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid"
+          className={LINK_BUTTON_CLASS}
         >
           Clear search
         </button>

@@ -9,18 +9,17 @@ import { useReducedMotion } from "../../hooks/useReducedMotion.ts";
 import { editItem, markMemorySaved, moveItem, setExpiry, useMemorySaved } from "../../lib/memory.ts";
 import { formatMemoryDay } from "../../lib/memoryFormat.ts";
 import type { MemoryItemView } from "../../../../src/types/api.ts";
+import { BUTTON_SECONDARY, CONTROL_DISABLED, CONTROL_SM, CONTROL_TRANSITION, FOCUS_RING } from "../../lib/controlStyles.ts";
 import { ItemOverflowMenu, type FolderChoice } from "./ItemOverflowMenu.tsx";
 
 const CAPTION = "font-body text-small text-ink-secondary";
 const PILL = "rounded-full bg-surface-sunken px-2 py-0.5 font-body text-small text-ink-secondary";
-const FOCUS =
-  "focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid";
-const SMALL_BUTTON = `rounded-sm border-[length:var(--rim-width)] border-rim-interactive bg-transparent px-3 py-1 font-body text-small font-bold text-ink-primary disabled:opacity-50 ${FOCUS}`;
-const LINK_BUTTON =
-  "font-body text-small font-semibold text-ink-primary underline underline-offset-2 " +
-  "focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid";
+const SMALL_BUTTON = `${BUTTON_SECONDARY} ${CONTROL_SM}`;
+/** Underlined ink-primary text button (Undo-style link): pads out to the 24px minimum target. */
+const LINK_BUTTON = `inline-flex min-h-6 items-center rounded-xs font-body text-small font-bold text-ink-primary underline underline-offset-2 ${FOCUS_RING} ${CONTROL_TRANSITION}`;
 
 export const SMALL_BUTTON_CLASS = SMALL_BUTTON;
+export const LINK_BUTTON_CLASS = LINK_BUTTON;
 
 export interface MemoryItemRowProps {
   readonly item: MemoryItemView;
@@ -112,8 +111,8 @@ export function MemoryItemRow({ item, reason, onOpenSource, folders, onDelete, d
       inert={dissolving || undefined}
       data-dissolving={dissolving || undefined}
       className={
-        "group relative flex list-none flex-col gap-1.5 rounded-lg bg-surface-raised px-[18px] py-4 font-body shadow-extruded-sm " +
-        "transition-[opacity,max-height,padding,margin] duration-[var(--duration-page-transition)] " +
+        "group relative flex list-none flex-col gap-1.5 rounded-lg bg-surface-raised px-[18px] py-4 font-body shadow-extruded-sm hover:shadow-extruded-md " +
+        "transition-[opacity,max-height,padding,margin,box-shadow] duration-[var(--duration-page-transition)] " +
         (dissolving ? "pointer-events-none my-0 max-h-0 overflow-hidden py-0 opacity-0" : "max-h-[600px]")
       }
     >
@@ -134,7 +133,7 @@ export function MemoryItemRow({ item, reason, onOpenSource, folders, onDelete, d
                 cancel();
               }
             }}
-            className={`min-w-0 flex-1 rounded-md bg-surface-sunken px-3 py-2 font-body text-body text-ink-primary shadow-inset disabled:opacity-60 ${FOCUS}`}
+            className={`min-w-0 flex-1 rounded-md bg-surface-sunken px-3 py-2 font-body text-body text-ink-primary shadow-inset ${CONTROL_DISABLED} ${FOCUS_RING}`}
           />
         ) : editable && !readOnlyPending ? (
           <>
@@ -179,7 +178,7 @@ export function MemoryItemRow({ item, reason, onOpenSource, folders, onDelete, d
       )}
       {readOnlyPending && <p className={`m-0 ${CAPTION}`}>Waiting on your answer in Chat</p>}
       {(failure ?? error) && (
-        <p role="alert" className="m-0 font-body text-small font-semibold text-ink-danger">
+        <p role="alert" className="m-0 font-body text-small font-bold text-ink-danger">
           {failure ?? error}
         </p>
       )}

@@ -6,6 +6,7 @@
  * of paging the app.
  */
 import { useRef } from "react";
+import { ROW_HOVER_FLAT, ROW_HOVER_RAISED } from "../../lib/controlStyles.ts";
 import type { MemoryViewResponse } from "../../../../src/types/api.ts";
 import type { MemoryLoadClass } from "../../../../src/types/domain.ts";
 import type { MemorySelection } from "../../lib/memory.ts";
@@ -16,7 +17,7 @@ const GROUPS: readonly { readonly loadClass: MemoryLoadClass; readonly caption: 
   { loadClass: "on-ask", caption: "Only when asked" },
 ];
 
-const CAPTION_CLASS = "m-0 px-3 pb-1 pt-3 font-body text-small font-semibold text-ink-secondary";
+const CAPTION_CLASS = "m-0 px-3 pb-1 pt-3 font-body text-small font-bold text-ink-secondary";
 
 function sameSelection(a: MemorySelection, b: MemorySelection): boolean {
   if (a.kind !== b.kind) return false;
@@ -55,8 +56,7 @@ export function MemoryRail({
         onClick={() => onSelect(e.selection)}
         className={
           "flex w-full items-center justify-between gap-2 rounded-lg border-[length:var(--rim-width)] px-3 py-2 text-left font-body text-body text-ink-primary " +
-          "focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid " +
-          (active ? "border-accent-solid bg-surface-raised shadow-extruded-sm" : "border-transparent")
+          (active ? `border-accent-solid bg-surface-raised shadow-extruded-sm ${ROW_HOVER_RAISED}` : `border-transparent ${ROW_HOVER_FLAT}`)
         }
       >
         <span>{e.label}</span>
