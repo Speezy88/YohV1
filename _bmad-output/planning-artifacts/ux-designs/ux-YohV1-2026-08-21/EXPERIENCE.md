@@ -41,6 +41,29 @@ updated: 2026-09-29
 - **Commands:** `/remember` and `/forget` join the Command Palette (FR-55); the plain-word forms work too.
 - Everything below that mentions Self-Check now means the Rating Prompt.
 
+## Amendments (2026-10-01, Polish 6 — decided without Spencer, awaiting his glance)
+
+Source: `sdd-plan-YohV1-polish-6.md` rulings P6-R6–R8 and P6-R12; visual side in DESIGN.md "Interaction states and control sizes".
+
+- **Load errors offer a retry.** A first-load failure on Home, Tasks, Research Hub and Memory shows the error line plus "Try again". After a successful load, a failed refresh keeps the loaded content and shows "Couldn't refresh — showing … from {time}" (the time of the last successful load) — now on Home too, not only Tasks and Research Hub.
+- **New or changed copy** (State Patterns table below is otherwise unchanged):
+  - Desk, until it is built: "Desk isn't built yet."
+  - Chat panel with no turns: "Ask about your day, add a Task, or type / for commands."
+  - Tasks, Missing data filter with nothing to show: "No Tasks are missing data."
+  - Tasks, no Tasks at all: "No Tasks yet. Type one below and press Enter."
+  - Today's calendar with no blocks: "Nothing on the calendar" (as other days).
+  - Command Palette: skeleton rows while loading; "Couldn't load commands." + "Try again" on failure; "No matching command" only after a successful load.
+  - Task cell edit saved: the cell shows a check + "Saved" briefly.
+  - Time Budget, invalid hours: "Enter hours above 0, up to 24."
+  - Quick-add preview failed: "Couldn't preview that — you can still add it."
+- **Sandbox Card:** Save is always enabled; pressing it with a Required field empty names the field inline and focuses it.
+- **The current page is in the URL hash** (`#home`, `#tasks`, `#desk`, `#research`, `#memory`): reload stays on the page; browser Back/Forward move between visited pages, and Back closes the Chat panel first when it is open.
+- **Chat panel is a true modal:** the page and sidebar behind it are inert; Tab stays within the panel plus any visible notification or Undo Toast; Escape closes it from anywhere; focus returns to what opened it (or the Ask Yoh pill).
+- **Undo Toast:** after a check-off, the next Tab reaches Undo.
+- **Landmarks:** one `main` region and a "Skip to content" link.
+- **Plan row:** clicking the label checks the row, same as the checkbox.
+- **Narrow windows / phone:** still not specified; proposal in `responsive-proposal-2026-10-01.md`.
+
 → Key-screen mock for these surfaces: `mockups/memory-key-screens-2026-09-29.html` (Memory page; Chat panel with receipt, rule-change card, Pattern card, Rating). The spines win on conflict; the mock's Needs review preview panel is illustrative only (it is a Memory Rail entry).
 
 ## Foundation

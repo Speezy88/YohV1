@@ -395,6 +395,26 @@ Visual anatomy only. Behavior lives in EXPERIENCE.md Component Patterns, which u
 | Screensaver drift | launch / 10-min idle | slow fluid dot movement | static dot field |
 | Birthday confetti | Feb 19 on Home (`[ASSUMPTION]` first Home view that day) | one short burst | skipped |
 
+## Interaction states and control sizes *(added 2026-10-01, Polish 6 — decided without Spencer, awaiting his glance; rulings P6-R1–R5 in `sdd-plan-YohV1-polish-6.md`)*
+
+Defined once in `web/src/lib/controlStyles.ts`; components compose those constants.
+
+| State | Raised / Secondary control | Primary (accent gradient) | Text button | Clickable row |
+|---|---|---|---|---|
+| Hover | label to `{colors.ink-primary}`, shadow one step up (Extruded-sm → md) | brighten 5% | underline | flat rows: `{colors.surface-sunken}`; raised rows: shadow one step up |
+| Pressed | Inset shadow | dim 5% | — | — |
+| Focus | 2px `{colors.accent-solid}` outline, offset 2px (Ask Yoh pill and Chat Input keep the glow) | same | same | same |
+| Disabled | 50% opacity, not-allowed cursor, no hover or pressed state | same | same | — |
+
+- **Motion:** 150ms, `cubic-bezier(0.2, 0, 0, 1)`, on colour, background, border colour, shadow, opacity and filter only. Removed under reduced motion (the state still changes).
+- **Sizes:** three control heights — 36px, 44px, 48px. Icon-only buttons are square at the same steps. No interactive target is smaller than 24×24px. The Ask Yoh pill stays ~46px.
+- **Shapes:** buttons are `{rounded.sm}`; pills stay for things that float or navigate (as in Shapes above). Sandbox Save/Skip, Structured Question chips and rating chips are therefore `{rounded.sm}`, not pills.
+- **Text buttons** use `ink-accent` (accent-solid text fails 4.5:1).
+- **Type:** only Figtree 500 and 700 ship, so nothing is set in 600 or 400. Sentences and form labels are never below 12.5px.
+- **Spacing:** the named steps only (4/8/12/16/24/32). Page title to content is 24px on every page. Page cards are `rounded-2xl`; nested cards `{rounded.lg}`.
+- **Layers:** z-index values are `--z-*` tokens in `tokens.css`.
+- **Empty and error states** share one block (`StateMessage`): empty = one `{colors.ink-secondary}` line; error = alert glyph + `{colors.ink-primary}` line + Secondary "Try again".
+
 ## Do's and Don'ts
 
 | Do | Don't |
