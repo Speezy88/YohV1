@@ -147,6 +147,7 @@ export function PageShell(): React.JSX.Element {
           e.preventDefault();
           document.getElementById(MAIN_ID)?.focus();
         }}
+        inert={chatOpen ? true : undefined}
         className={`fixed left-4 top-4 z-(--z-skip-link) -translate-y-24 rounded-md bg-surface-raised px-4 py-2 font-body text-body font-bold text-ink-primary shadow-extruded-md focus:translate-y-0 ${FOCUS_RING}`}
       >
         Skip to content

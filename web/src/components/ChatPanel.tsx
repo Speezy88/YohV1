@@ -106,6 +106,43 @@ export function ChatPanel(): React.JSX.Element | null {
     panelRef.current?.querySelector<HTMLElement>('textarea[aria-label="Message Yoh"]')?.focus();
   }, [open]);
 
+  // Escape and the Tab cycle live on `document` while the panel is open, so
+  // they work wherever focus is (including <body> after a click on the
+  // transcript). Escape yields to anything that already handled it (the
+  // Command Palette stops propagation; a control may preventDefault).
+  // Tab cycles panel -> notifications -> Undo Toast -> back to the panel; the
+  // overlay and toast are outside the inert shell and stay operable.
+  useEffect(() => {
+    if (!open) return;
+    const selector = "button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex='-1'])";
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.defaultPrevented) return;
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeChatPanel();
+        return;
+      }
+      if (e.key !== "Tab") return;
+      const panel = panelRef.current;
+      if (!panel) return;
+      const regions = [panel, ...document.querySelectorAll<HTMLElement>('[data-testid="notification-overlay"], [data-testid="undo-toast"]')];
+      const focusables = regions.flatMap((r) => Array.from(r.querySelectorAll<HTMLElement>(selector)));
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (!first || !last) return;
+      const active = document.activeElement;
+      if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      } else if (e.shiftKey && active === first) {
+        e.preventDefault();
+        last.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [open]);
+
   // Task 8: hand focus back to the opener once the close has rendered (the
   // shell is no longer inert by then, so the focus call can land).
   const wasOpen = useRef(false);
@@ -151,29 +188,6 @@ export function ChatPanel(): React.JSX.Element | null {
         role="dialog"
         aria-label="Chat with Yoh"
         aria-modal="true"
-        onKeyDown={(e) => {
-          if (e.key === "Tab") {
-            // Task 8: Tab cycles within the modal panel.
-            const focusables = Array.from(
-              e.currentTarget.querySelectorAll<HTMLElement>("button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex='-1'])"),
-            );
-            const first = focusables[0];
-            const last = focusables[focusables.length - 1];
-            if (!first || !last) return;
-            const active = document.activeElement;
-            if (!e.shiftKey && active === last) {
-              e.preventDefault();
-              first.focus();
-            } else if (e.shiftKey && active === first) {
-              e.preventDefault();
-              last.focus();
-            }
-            return;
-          }
-          if (e.key !== "Escape") return;
-          e.preventDefault();
-          closeChatPanel();
-        }}
         className="fixed bottom-6 left-[268px] right-6 top-6 z-(--z-chat) flex flex-col gap-4 rounded-2xl border-[length:var(--rim-width)] border-rim-structural bg-surface-raised p-6 shadow-extruded-lg"
       >
         <div className="flex items-center justify-between">

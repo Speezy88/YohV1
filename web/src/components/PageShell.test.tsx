@@ -326,6 +326,16 @@ describe("PageShell", () => {
     expect(document.activeElement).toBe(screen.getByRole("main"));
   });
 
+  it("the skip link is not tabbable while the Chat panel is open (its target is inert)", () => {
+    render(<PageShell />);
+    const skip = screen.getByRole("link", { name: "Skip to content" });
+    expect(skip).not.toHaveAttribute("inert");
+    fireEvent.keyDown(document, { key: "k", metaKey: true });
+    expect(skip).toHaveAttribute("inert");
+    fireEvent.keyDown(document, { key: "k", metaKey: true });
+    expect(skip).not.toHaveAttribute("inert");
+  });
+
   it("while the Chat panel is open everything outside it (sidebar, pill) is inert; closing restores it", () => {
     render(<PageShell />);
     const root = screen.getByTestId("page-shell-root");

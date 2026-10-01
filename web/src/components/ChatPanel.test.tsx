@@ -129,6 +129,72 @@ describe("ChatPanel", () => {
     expect(fireEvent.keyDown(input, { key: "Tab", shiftKey: true })).toBe(true);
   });
 
+  it("S2: Esc closes the panel when focus is on <body> (after clicking the transcript)", () => {
+    renderOpenPanel();
+    (document.activeElement as HTMLElement | null)?.blur();
+    expect(document.activeElement).toBe(document.body);
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(screen.queryByTestId("chat-panel")).not.toBeInTheDocument();
+  });
+
+  it("S2: Esc that a control inside the panel already handled does not also close it", () => {
+    renderOpenPanel();
+    const input = screen.getByRole("combobox", { name: "Message Yoh" });
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") e.preventDefault();
+    });
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(screen.getByTestId("chat-panel")).toBeInTheDocument();
+  });
+
+  describe("S3: notifications and the Undo Toast are in the Tab cycle", () => {
+    function addOutside(): { overlayBtn: HTMLElement; toastBtn: HTMLElement; remove: () => void } {
+      const overlay = document.createElement("div");
+      overlay.setAttribute("data-testid", "notification-overlay");
+      const overlayBtn = document.createElement("button");
+      overlay.appendChild(overlayBtn);
+      const toast = document.createElement("div");
+      toast.setAttribute("data-testid", "undo-toast");
+      const toastBtn = document.createElement("button");
+      toast.appendChild(toastBtn);
+      document.body.append(overlay, toast);
+      return { overlayBtn, toastBtn, remove: () => (overlay.remove(), toast.remove()) };
+    }
+
+    it("Tab from the panel's last control is left to the browser (it reaches the overlay); the cycle wraps after the toast", () => {
+      renderOpenPanel();
+      const { overlayBtn, toastBtn, remove } = addOutside();
+      const panel = screen.getByTestId("chat-panel");
+      const controls = Array.from(panel.querySelectorAll<HTMLElement>("button:not([disabled]), textarea"));
+      const first = controls[0]!;
+      const last = controls[controls.length - 1]!;
+      last.focus();
+      expect(fireEvent.keyDown(last, { key: "Tab" })).toBe(true);
+      overlayBtn.focus();
+      expect(fireEvent.keyDown(overlayBtn, { key: "Tab" })).toBe(true);
+      toastBtn.focus();
+      expect(fireEvent.keyDown(toastBtn, { key: "Tab" })).toBe(false);
+      expect(first).toHaveFocus();
+      remove();
+    });
+
+    it("Shift+Tab from the panel's first control goes to the last outside control; from the overlay's first, back to the panel's last", () => {
+      renderOpenPanel();
+      const { overlayBtn, toastBtn, remove } = addOutside();
+      const panel = screen.getByTestId("chat-panel");
+      const controls = Array.from(panel.querySelectorAll<HTMLElement>("button:not([disabled]), textarea"));
+      const first = controls[0]!;
+      const last = controls[controls.length - 1]!;
+      first.focus();
+      expect(fireEvent.keyDown(first, { key: "Tab", shiftKey: true })).toBe(false);
+      expect(toastBtn).toHaveFocus();
+      overlayBtn.focus();
+      expect(fireEvent.keyDown(overlayBtn, { key: "Tab", shiftKey: true })).toBe(true);
+      remove();
+      void last;
+    });
+  });
+
   it("Task 8: closing returns focus to the element that opened the panel", () => {
     const opener = document.createElement("button");
     document.body.appendChild(opener);

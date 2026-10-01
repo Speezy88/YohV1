@@ -124,13 +124,18 @@ export function CommandPalette({ query, onRun, onClose, onHighlightedOptionChang
   }, [filtered, highlighted, onRun, onClose]);
 
   return (
-    <div id={COMMAND_PALETTE_ID} role="listbox" aria-label="Command palette" data-testid="command-palette" className="notification-glass absolute bottom-full left-0 z-(--z-raised) mb-2 w-full rounded-md p-2">
+    <div data-testid="command-palette" className="notification-glass absolute bottom-full left-0 z-(--z-raised) mb-2 w-full rounded-md p-2">
       {loadState === "loading" &&
         [0, 1, 2].map((i) => (
           <div key={i} data-testid="command-row-skeleton" className={`my-1 h-7 rounded-sm bg-surface-sunken ${reducedMotion ? "" : "animate-pulse"}`} />
         ))}
-      {loadState === "failed" && <StateMessage variant="error" className="px-2 py-1" message="Couldn't load commands." onRetry={() => void load()} />}
+      {loadState === "failed" && <StateMessage variant="error" className="px-2 py-1" message="Couldn't load commands." onRetry={() => {
+        // The Retry button unmounts while reloading; hand focus back to the input this palette serves.
+        document.querySelector<HTMLElement>(`[aria-controls="${COMMAND_PALETTE_ID}"]`)?.focus();
+        void load();
+      }} />}
       {loadState === "ready" && filtered.length === 0 && <div className="px-2 py-1 font-body text-body text-ink-secondary">No matching command</div>}
+      <div id={COMMAND_PALETTE_ID} role="listbox" aria-label="Command palette">
       {rows.map((c, i) => (
         <div
           key={c.name}
@@ -153,6 +158,7 @@ export function CommandPalette({ query, onRun, onClose, onHighlightedOptionChang
           {c.example !== c.name && <span className="shrink-0 font-body text-caption-lg text-ink-secondary">{c.example}</span>}
         </div>
       ))}
+      </div>
     </div>
   );
 }

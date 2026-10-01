@@ -107,7 +107,7 @@ export function NotificationOverlay(): React.JSX.Element {
   };
 
   return (
-    <div className={`pointer-events-none fixed right-4 ${chatOpen ? "top-28" : "top-4"} z-(--z-toast) flex flex-col gap-2`} role="status" aria-live="polite">
+    <div data-testid="notification-overlay" className={`pointer-events-none fixed right-4 ${chatOpen ? "top-28" : "top-4"} z-(--z-toast) flex flex-col gap-2`} role="status" aria-live="polite">
       {visible.map((n) => {
         const showTitle = n.title.length > 0 && n.title !== n.body;
         const isLong = n.body.length > CLAMP_THRESHOLD_CHARS;

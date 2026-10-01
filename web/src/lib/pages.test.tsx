@@ -6,6 +6,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { usePageNavigation } from "./pages.ts";
+import { __resetChatPanelForTests, isChatPanelOpen, openChatPanel } from "./chatPanel.ts";
 
 function setHash(hash: string): void {
   history.replaceState(null, "", hash === "" ? "/" : `/#${hash}`);
@@ -92,5 +93,21 @@ describe("usePageNavigation and the URL hash", () => {
       await new Promise((r) => setTimeout(r, 20));
     });
     expect(result.current.index).toBe(1);
+  });
+
+  it("Back with the Chat panel open closes the panel and leaves the page where it was", async () => {
+    __resetChatPanelForTests();
+    const { result } = renderHook(() => usePageNavigation());
+    act(() => result.current.goTo(1));
+    act(() => result.current.goTo(2));
+    act(() => openChatPanel());
+    await act(async () => {
+      history.back();
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(isChatPanelOpen()).toBe(false);
+    expect(result.current.index).toBe(2);
+    expect(location.hash).toBe("#desk");
+    __resetChatPanelForTests();
   });
 });

@@ -67,3 +67,78 @@ test("the Close button closes the panel; focus returns to the Ask Yoh pill", asy
   await expect(page.getByTestId("chat-panel")).not.toBeVisible();
   await expect(page.getByRole("button", { name: /ask yoh/i })).toBeFocused();
 });
+
+// Polish-6 final-review fixes (S1, S2, S3, S5, skip link, Back): keyboard and focus in a real browser.
+
+const NOTIFICATION = { id: "n-e2e", kind: "operational", title: "E2E notice", body: "E2E notice body", deepLink: null, createdAt: new Date().toISOString() };
+
+test("S1: after the missing-data chip runs /sandbox, Escape returns focus to the Ask Yoh pill", async ({ page }) => {
+  await openChat(page);
+  const chat = page.getByTestId("chat-panel");
+  await chat.getByTestId("missing-data-chip").click();
+  await expect(chat.getByTestId("sandbox-card").or(chat.getByText("Nothing's missing a Due Date or Duration."))).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(chat).not.toBeVisible();
+  await expect(page.getByRole("button", { name: /ask yoh/i })).toBeFocused();
+});
+
+test("S2: Escape closes the panel after a click on the transcript left focus on body", async ({ page }) => {
+  await openChat(page);
+  await page.getByTestId("chat-stream").click({ position: { x: 5, y: 5 } });
+  await expect.poll(() => page.evaluate(() => document.activeElement === document.body)).toBe(true);
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("chat-panel")).not.toBeVisible();
+});
+
+test("S3: with the panel open, Tab reaches a notification's buttons", async ({ page }) => {
+  await page.route("**/api/notifications", (route) =>
+    route.request().method() === "GET" ? route.fulfill({ json: { ok: true, value: { notifications: [NOTIFICATION] } } }) : route.continue(),
+  );
+  await page.goto("/");
+  await expect(page.getByTestId("notification-card")).toBeVisible();
+  await page.getByRole("button", { name: /ask yoh/i }).click();
+  await expect(page.getByTestId("chat-panel")).toBeVisible();
+  const dismiss = page.getByRole("button", { name: "Dismiss notification" });
+  let reached = false;
+  for (let i = 0; i < 8 && !reached; i++) {
+    await page.keyboard.press("Tab");
+    reached = await dismiss.evaluate((el) => el === document.activeElement);
+  }
+  expect(reached).toBe(true);
+});
+
+test("S5: after Try again the commands load and focus is back on the Chat Input", async ({ page }) => {
+  let fail = true;
+  await page.route("**/api/commands", (route) => {
+    if (!fail) return route.continue();
+    fail = false;
+    return route.fulfill({ status: 500, json: { ok: false, error: { kind: "unreachable", message: "no" } } });
+  });
+  await openChat(page);
+  const input = page.getByRole("combobox", { name: "Message Yoh" });
+  await input.fill("/");
+  await page.getByRole("button", { name: "Try again" }).click();
+  await expect(page.getByRole("option").first()).toBeVisible();
+  await expect(input).toBeFocused();
+  await expect(page.getByRole("listbox").getByRole("alert")).toHaveCount(0);
+});
+
+test("the skip link is not tabbable while the panel is open", async ({ page }) => {
+  await openChat(page);
+  for (let i = 0; i < 12; i++) {
+    await page.keyboard.press("Tab");
+    expect(await page.evaluate(() => document.activeElement?.textContent)).not.toBe("Skip to content");
+  }
+});
+
+test("browser Back with the panel open closes the panel and keeps the page", async ({ page }) => {
+  await page.goto("/");
+  await page.keyboard.press("ArrowDown");
+  await expect.poll(() => page.evaluate(() => location.hash)).not.toBe("#home");
+  const hash = await page.evaluate(() => location.hash);
+  await page.getByRole("button", { name: /ask yoh/i }).click();
+  await expect(page.getByTestId("chat-panel")).toBeVisible();
+  await page.goBack();
+  await expect(page.getByTestId("chat-panel")).not.toBeVisible();
+  expect(await page.evaluate(() => location.hash)).toBe(hash);
+});

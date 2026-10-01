@@ -48,14 +48,21 @@ function snapshot(): ChatPanelState {
   return state;
 }
 
+/** Non-reactive read of the open state (for event handlers outside React). */
+export function isChatPanelOpen(): boolean {
+  return state.open;
+}
+
 export function useChatPanel(): ChatPanelState {
   return useSyncExternalStore(subscribe, snapshot);
 }
 
-/** Opens the panel, remembering whatever currently has focus (so `closeChatPanel` can return it there). Idempotent: opening while already open just re-notes the current focus. */
+/** Opens the panel, remembering whatever currently has focus (so `closeChatPanel` can return it there). Opening while already open keeps the original opener: focus is inside the panel by then, and that element (a chip, a notification button) may be gone at close. */
 export function openChatPanel(): void {
-  const active = document.activeElement;
-  restoreFocusTo = active instanceof HTMLElement ? active : undefined;
+  if (!state.open) {
+    const active = document.activeElement;
+    restoreFocusTo = active instanceof HTMLElement ? active : undefined;
+  }
   set({ open: true });
 }
 
@@ -64,10 +71,15 @@ export function closeChatPanel(): void {
   set({ open: false });
 }
 
-/** Returns focus to whatever had it before `openChatPanel` — a no-op if that element is gone from the DOM. Called after the close has rendered. */
+/** Returns focus to whatever had it before `openChatPanel`; if that element is gone or no longer focusable, to the Ask Yoh pill. Called after the close has rendered. */
 export function restoreChatPanelFocus(): void {
-  restoreFocusTo?.focus();
+  const target = restoreFocusTo;
   restoreFocusTo = undefined;
+  if (target && target.isConnected && target !== document.body && !(target as HTMLButtonElement).disabled && !target.closest("[hidden], [inert]")) {
+    target.focus();
+    return;
+  }
+  document.querySelector<HTMLElement>('[data-testid="ask-yoh-pill"]')?.focus();
 }
 
 export function toggleChatPanel(): void {

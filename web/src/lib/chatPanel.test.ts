@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { act, renderHook } from "@testing-library/react";
-import { openChatWithCommand, useChatPanel, __resetChatPanelForTests } from "./chatPanel.ts";
+import { openChatPanel, closeChatPanel, restoreChatPanelFocus, openChatWithCommand, useChatPanel, __resetChatPanelForTests } from "./chatPanel.ts";
 import * as chatStoreModule from "./chatStore.ts";
 import * as chatStreamModule from "./chatStream.ts";
 import type { ChatStreamEvent, ChatTurnRequest } from "../../../src/types/api.ts";
@@ -94,5 +94,38 @@ describe("queued command during a turn", () => {
     expect(stream.requests).toHaveLength(1);
 
     await stream.finish(0);
+  });
+});
+
+describe("focus return (S1, polish-6 review)", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+    __resetChatPanelForTests();
+  });
+
+  it("opening again while open does not replace the recorded opener", () => {
+    const pill = document.createElement("button");
+    const chip = document.createElement("button");
+    document.body.append(pill, chip);
+    pill.focus();
+    openChatPanel();
+    chip.focus();
+    openChatWithCommand();
+    closeChatPanel();
+    restoreChatPanelFocus();
+    expect(pill).toHaveFocus();
+  });
+
+  it("falls back to the Ask Yoh pill when the opener is gone at close", () => {
+    const pill = document.createElement("button");
+    pill.setAttribute("data-testid", "ask-yoh-pill");
+    const link = document.createElement("button");
+    document.body.append(pill, link);
+    link.focus();
+    openChatPanel();
+    link.remove();
+    closeChatPanel();
+    restoreChatPanelFocus();
+    expect(pill).toHaveFocus();
   });
 });

@@ -59,3 +59,13 @@ test("check-off -> commit: the Notion Status is written and a Completion Log ent
   await page.reload();
   await expect(page.getByRole("checkbox", { name: "E2E Commit Task" })).toHaveAttribute("aria-checked", "true");
 });
+
+test("M2: after a Home check-off, the first Tab lands on Undo", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("checkbox", { name: "E2E Undo Task" }).focus();
+  await checkOff(page, "E2E Undo Task");
+  const undo = page.getByRole("status").filter({ hasText: "Checked off E2E Undo Task" }).getByRole("button", { name: "Undo" });
+  await expect(undo).toBeVisible();
+  await page.keyboard.press("Tab");
+  await expect(undo).toBeFocused();
+});

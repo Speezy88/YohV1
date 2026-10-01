@@ -64,14 +64,19 @@ export function UndoToast({ id, taskName, label, serverHold = true, durationMs, 
   const undoRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     const trigger = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : undefined;
+    // A trigger that was disabled or hidden since (Home disables the checkbox
+    // and dissolves the row) can no longer hold focus; focus then sits on <body>.
+    const usable = (el: HTMLElement | undefined): el is HTMLElement =>
+      !!el && el.isConnected && !(el as HTMLButtonElement).disabled && !el.closest("[hidden], [inert]");
     const onKeyDown = (e: KeyboardEvent): void => {
-      if (e.key !== "Tab" || !trigger?.isConnected) return;
+      if (e.key !== "Tab") return;
       const undo = undoRef.current;
       if (!undo) return;
-      if (!e.shiftKey && document.activeElement === trigger) {
+      const active = document.activeElement;
+      if (!e.shiftKey && (usable(trigger) ? active === trigger : active === document.body || active === null)) {
         e.preventDefault();
         undo.focus();
-      } else if (e.shiftKey && document.activeElement === undo) {
+      } else if (e.shiftKey && active === undo && usable(trigger)) {
         e.preventDefault();
         trigger.focus();
       }

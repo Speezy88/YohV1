@@ -74,4 +74,42 @@ describe("UndoToast reachability (Task 8, polish-6)", () => {
     expect(fireEvent.keyDown(other, { key: "Tab" })).toBe(true);
     other.remove();
   });
+  it("M2: when the trigger was disabled before the toast mounted (Home check-off), the first Tab on <body> lands on Undo", () => {
+    const trigger = document.createElement("button");
+    document.body.appendChild(trigger);
+    trigger.focus();
+    trigger.blur(); // the browser drops focus to <body> when a focused control is disabled
+    trigger.disabled = true;
+    expect(document.activeElement).toBe(document.body);
+    render(<UndoToast id="x" label="Deleted" serverHold={false} durationMs={5000} onUndo={async () => {}} onExpire={() => {}} />);
+    const undo = screen.getByRole("button", { name: "Undo" });
+    expect(fireEvent.keyDown(document.body, { key: "Tab" })).toBe(false);
+    expect(undo).toHaveFocus();
+    // Shift+Tab: the trigger is no longer focusable, so the browser default applies.
+    expect(fireEvent.keyDown(undo, { key: "Tab", shiftKey: true })).toBe(true);
+    trigger.remove();
+  });
+
+  it("M2: a recorded trigger that later became hidden is treated as gone", () => {
+    const trigger = document.createElement("button");
+    document.body.appendChild(trigger);
+    trigger.focus();
+    render(<UndoToast id="x" label="Deleted" serverHold={false} durationMs={5000} onUndo={async () => {}} onExpire={() => {}} />);
+    trigger.hidden = true;
+    trigger.blur();
+    const undo = screen.getByRole("button", { name: "Undo" });
+    expect(fireEvent.keyDown(document.body, { key: "Tab" })).toBe(false);
+    expect(undo).toHaveFocus();
+    trigger.remove();
+  });
+
+  it("M2: Tab on <body> is left alone when the trigger is still focusable", () => {
+    const trigger = document.createElement("button");
+    document.body.appendChild(trigger);
+    trigger.focus();
+    render(<UndoToast id="x" label="Deleted" serverHold={false} durationMs={5000} onUndo={async () => {}} onExpire={() => {}} />);
+    trigger.blur();
+    expect(fireEvent.keyDown(document.body, { key: "Tab" })).toBe(true);
+    trigger.remove();
+  });
 });

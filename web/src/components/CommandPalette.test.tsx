@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { CommandPalette } from "./CommandPalette.tsx";
+import { CommandPalette, COMMAND_PALETTE_ID } from "./CommandPalette.tsx";
 import * as commands from "../lib/commands.ts";
 
 // Note: `example` intentionally differs from `name` in this fixture (unlike
@@ -38,6 +38,40 @@ describe("CommandPalette", () => {
     await waitFor(() => expect(screen.getByTestId("command-row-/morning")).toBeInTheDocument());
     expect(spy).toHaveBeenCalledTimes(2);
     expect(screen.queryByText("Couldn't load commands.")).not.toBeInTheDocument();
+  });
+
+  it("S5: the listbox holds only options; loading, failed and empty states are siblings in the same popover", async () => {
+    vi.spyOn(commands, "fetchCommands").mockRejectedValueOnce(new Error("boom"));
+    render(<CommandPalette query="/m" onRun={() => {}} onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
+    const listbox = screen.getByRole("listbox", { name: "Command palette" });
+    expect(listbox.contains(screen.getByRole("alert"))).toBe(false);
+    expect(screen.getByTestId("command-palette").contains(screen.getByRole("alert"))).toBe(true);
+    expect(listbox.id).toBe(COMMAND_PALETTE_ID);
+    expect(listbox.children).toHaveLength(0);
+  });
+
+  it("S5: skeleton rows are not inside the listbox", () => {
+    vi.spyOn(commands, "fetchCommands").mockReturnValue(new Promise(() => {}));
+    render(<CommandPalette query="/m" onRun={() => {}} onClose={() => {}} />);
+    const listbox = screen.getByRole("listbox", { name: "Command palette" });
+    expect(listbox.querySelector('[data-testid="command-row-skeleton"]')).toBeNull();
+  });
+
+  it("S5: after Try again, focus returns to the input the palette serves", async () => {
+    vi.spyOn(commands, "fetchCommands").mockRejectedValueOnce(new Error("boom")).mockResolvedValueOnce(REGISTRY);
+    render(
+      <div>
+        <textarea aria-label="Message Yoh" role="combobox" aria-controls={COMMAND_PALETTE_ID} aria-expanded />
+        <CommandPalette query="/m" onRun={() => {}} onClose={() => {}} />
+      </div>,
+    );
+    await waitFor(() => expect(screen.getByText("Couldn't load commands.")).toBeInTheDocument());
+    const retry = screen.getByRole("button", { name: "Try again" });
+    retry.focus();
+    fireEvent.click(retry);
+    await waitFor(() => expect(screen.getByTestId("command-row-/morning")).toBeInTheDocument());
+    expect(screen.getByRole("combobox", { name: "Message Yoh" })).toHaveFocus();
   });
 
   it("lists every command, filtered live by query", async () => {

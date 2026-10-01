@@ -12,6 +12,7 @@
  * now vertical, not horizontal.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { closeChatPanel, isChatPanelOpen } from "./chatPanel.ts";
 
 export const PAGES = [
   { id: "home", label: "Home" },
@@ -63,6 +64,13 @@ export function usePageNavigation(initialIndex = 0): PageNavigation {
   // Back/Forward (and a hand-edited hash) move the page; an unknown hash is Home.
   useEffect(() => {
     function onPopState(): void {
+      // The Chat panel is modal: Back/Forward closes it rather than changing
+      // the page behind it. Put the current page's entry back on top.
+      if (isChatPanelOpen()) {
+        closeChatPanel();
+        history.pushState(null, "", hashFor(indexRef.current));
+        return;
+      }
       const known = indexFromHash();
       const target = known ?? 0;
       if (known === undefined) history.replaceState(null, "", hashFor(0));
