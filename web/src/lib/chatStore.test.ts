@@ -463,6 +463,23 @@ describe("chatStore", () => {
       expect(messagesOf(result.current).filter((m) => m.question)).toHaveLength(1);
     });
 
+    it("a question on the done event is one card, and appendPendingOpenItem does not re-append it", async () => {
+      const stream = controllableStream();
+      const { result } = renderHook(() => useChatStore());
+      act(() => void send("add a task to draft the memo"));
+      stream.emit({ type: "done", response: { reply: "Here's the draft.", receipts: [], question: QUESTION } });
+      await stream.finish();
+      act(() => appendPendingOpenItem({ requestId: QUESTION.requestId, promptText: QUESTION.text, question: QUESTION } as unknown as OpenItem));
+      expect(messagesOf(result.current).filter((m) => m.question)).toHaveLength(1);
+    });
+
+    it("a follow-up question from an answered one is one card, and appendPendingOpenItem does not re-append it", () => {
+      const { result } = renderHook(() => useChatStore());
+      act(() => recordAnsweredOpenItem("Work", { message: "Got it.", receipts: [], next: QUESTION }));
+      act(() => appendPendingOpenItem({ requestId: QUESTION.requestId, promptText: QUESTION.text, question: QUESTION } as unknown as OpenItem));
+      expect(messagesOf(result.current).filter((m) => m.question)).toHaveLength(1);
+    });
+
     it("the next send() settles every undoable receipt", async () => {
       const stream = controllableStream();
       const { result } = renderHook(() => useChatStore());

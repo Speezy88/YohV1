@@ -130,6 +130,16 @@ function pendingItemKey(requestId: string, questionId: string): string {
   return `${requestId}::${questionId}`;
 }
 
+/**
+ * A question that arrives on a reply itself (a chat turn's `done`, or the
+ * follow-up to an answered one) is already on screen as that turn's card.
+ * Recording it here keeps the next `GET /api/open-items` refetch — which the
+ * same server write triggers — from appending it a second time.
+ */
+function markQuestionShown(question: OpenItemQuestion): void {
+  shownPendingRequestIds.add(pendingItemKey(question.requestId, question.questionId));
+}
+
 function set(next: ChatStoreState): void {
   state = next;
   listeners.forEach((listener) => listener());
@@ -320,6 +330,7 @@ export async function send(message: string): Promise<void> {
         patchMessage(assistantId, (m) => ({ text: m.text + event.text }));
         return;
       case "done":
+        if (event.response.question) markQuestionShown(event.response.question);
         patchMessage(assistantId, () => ({
           text: event.response.reply,
           receipts: event.response.receipts,
@@ -383,6 +394,7 @@ export function recordAnsweredOpenItem(
   const userId = `chat-${++nextId}`;
   const assistantId = `chat-${++nextId}`;
   settleUndoableReceipts();
+  if (yoh.next) markQuestionShown(yoh.next);
   appendMessage({ id: userId, role: "user", text: youText, receipts: [], status: "done" });
   appendMessage({
     id: assistantId,
