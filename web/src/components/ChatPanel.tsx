@@ -64,7 +64,7 @@ const AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 48;
 
 export function ChatPanel(): React.JSX.Element | null {
   const { open } = useChatPanel();
-  const { entries } = useChatStore();
+  const { entries, hydrated } = useChatStore();
   const missingDataCount = useMissingDataCount();
   const openItems = useOpenItems();
   const reducedMotion = useReducedMotion();
@@ -222,7 +222,7 @@ export function ChatPanel(): React.JSX.Element | null {
 
         <div className="relative min-h-0 flex-1">
           {/* Polish 6 (P6-R8): text-only welcome while the chat has no turns. Outside the role="log" region so it is never announced as a turn. */}
-          {entries.length === 0 && (
+          {hydrated && entries.length === 0 && (
             <div data-testid="chat-welcome" className="pointer-events-none absolute inset-0 flex items-center justify-center px-6 text-center">
               <StateMessage variant="empty" message="Ask about your day, add a Task, or type / for commands." />
             </div>

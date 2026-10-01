@@ -93,6 +93,11 @@ describe("NotificationOverlay", () => {
     for (const b of buttons) expect(b.querySelector("button, [role='button']")).toBeNull();
   });
 
+  it("Show more keeps the bold weight even though the shared text button sets medium (important, not source order)", () => {
+    renderWithNav([{ id: "n1", kind: "sandbox-complete", title: "Saved 3 Tasks", body: "word ".repeat(60).trim(), createdAt: "2026-01-01T00:00:00.000Z", deepLink: "/desk" }]);
+    expect(screen.getByRole("button", { name: "Show more" })).toHaveClass("font-bold!");
+  });
+
   it("Task 8: activating the message button (keyboard-operable natively) navigates and dismisses", () => {
     const dismiss = vi.spyOn(notificationsModule, "dismissNotification");
     const { goTo } = renderWithNav([{ id: "n1", kind: "sandbox-complete", title: "Saved 3 Tasks", body: "Saved 3 Tasks", createdAt: "2026-01-01T00:00:00.000Z", deepLink: "/desk" }]);

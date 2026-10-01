@@ -27,6 +27,16 @@ describe("Sidebar", () => {
     expect(screen.getByText("Yoh")).toBeInTheDocument();
   });
 
+  it("the active item sets one weight (bold) and the inactive items set one (medium); never both", () => {
+    renderWithNav({ index: 1, goTo: vi.fn(), next: vi.fn(), prev: vi.fn() });
+    const active = screen.getByRole("button", { name: /^tasks$/i });
+    const inactive = screen.getByRole("button", { name: /^home$/i });
+    expect(active).toHaveClass("font-bold");
+    expect(active).not.toHaveClass("font-medium");
+    expect(inactive).toHaveClass("font-medium");
+    expect(inactive).not.toHaveClass("font-bold");
+  });
+
   it("renders a link for every page, the active one marked aria-current", () => {
     renderWithNav({ index: 1, goTo: vi.fn(), next: vi.fn(), prev: vi.fn() });
     expect(screen.getByRole("button", { name: /^tasks$/i })).toHaveAttribute("aria-current", "page");

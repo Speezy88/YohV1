@@ -44,12 +44,12 @@ describe("StructuredQuestion", () => {
   it("chips and Send are shared Secondary buttons (rounded-sm, no font-semibold); Other keeps the body token", () => {
     render(<StructuredQuestion text="Q" options={[{ label: "Yes", value: "yes" }]} allowsFreeText onAnswer={vi.fn()} />);
     const chip = screen.getByRole("button", { name: "Yes" });
-    expect(chip).toHaveClass("text-body", "rounded-sm", "hover:shadow-extruded-md", "active:shadow-inset");
+    expect(chip).toHaveClass("text-body", "rounded-sm", "enabled:hover:shadow-extruded-md", "enabled:active:shadow-inset");
     expect(chip).not.toHaveClass("font-semibold", "rounded-full");
     const other = screen.getByLabelText("Other");
     expect(other).toHaveClass("text-body");
     const send = screen.getByRole("button", { name: "Send" });
-    expect(send).toHaveClass("text-body", "rounded-sm", "hover:shadow-extruded-md");
+    expect(send).toHaveClass("text-body", "rounded-sm", "enabled:hover:shadow-extruded-md");
     expect(send).not.toHaveClass("font-semibold");
   });
 
@@ -58,7 +58,7 @@ describe("StructuredQuestion", () => {
     render(<StructuredQuestion text="Q" options={[{ label: "Yes", value: "yes" }]} allowsFreeText={false} onAnswer={onAnswer} />);
     fireEvent.click(screen.getByRole("button", { name: "Yes" }));
     expect(onAnswer).toHaveBeenCalledWith("yes");
-    expect(screen.getByRole("button", { name: "Yes" })).toHaveClass("bg-gradient-to-br", "from-accent-gradient-start", "to-accent-gradient-end", "hover:brightness-105", "active:brightness-95");
+    expect(screen.getByRole("button", { name: "Yes" })).toHaveClass("bg-gradient-to-br", "from-accent-gradient-start", "to-accent-gradient-end", "enabled:hover:brightness-105", "enabled:active:brightness-95");
   });
 
   it("chips and Other are native <button>/<input> — reachable by Tab, activatable by Enter/Space with no custom handling", () => {

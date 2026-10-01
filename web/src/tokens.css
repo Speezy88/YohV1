@@ -339,17 +339,21 @@ body {
 }
 
 /* Polish 6 (P6-R3): pointer cursor on every enabled control, not-allowed on
-   disabled ones; unlayered so it wins over Tailwind's preflight cursor reset. */
-button:not(:disabled),
-[role="button"]:not([aria-disabled="true"]),
-[role="option"],
-a[href],
-summary {
-  cursor: pointer;
-}
-button:disabled,
-[role="button"][aria-disabled="true"] {
-  cursor: not-allowed;
+   disabled ones. Inside `@layer base` so it still beats Tailwind's preflight
+   cursor reset (later in the same layer) while cursor utilities (cursor-grab,
+   cursor-text) win over it. */
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  [role="option"],
+  a[href],
+  summary {
+    cursor: pointer;
+  }
+  button:disabled,
+  [role="button"][aria-disabled="true"] {
+    cursor: not-allowed;
+  }
 }
 
 /* Polish 6 (P6-R2): under reduced motion the control state still changes,

@@ -38,11 +38,11 @@ describe("controlStyles", () => {
   });
 
   it("primary lifts on hover and dims on press; secondary steps the shadow", () => {
-    expect(styles.BUTTON_PRIMARY).toContain("hover:brightness-105");
-    expect(styles.BUTTON_PRIMARY).toContain("active:brightness-95");
-    expect(styles.BUTTON_SECONDARY).toContain("hover:shadow-extruded-md");
-    expect(styles.BUTTON_SECONDARY).toContain("active:shadow-inset");
-    expect(styles.BUTTON_TEXT).toContain("hover:underline");
+    expect(styles.BUTTON_PRIMARY).toContain("enabled:hover:brightness-105");
+    expect(styles.BUTTON_PRIMARY).toContain("enabled:active:brightness-95");
+    expect(styles.BUTTON_SECONDARY).toContain("enabled:hover:shadow-extruded-md");
+    expect(styles.BUTTON_SECONDARY).toContain("enabled:active:shadow-inset");
+    expect(styles.BUTTON_TEXT).toContain("enabled:hover:underline");
   });
 
   it("row hovers", () => {

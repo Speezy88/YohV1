@@ -71,10 +71,10 @@ export function Sidebar(): React.JSX.Element {
             onClick={() => nav.goTo(i)}
             aria-current={active ? "page" : undefined}
             className={
-              `flex h-14 items-center gap-3.5 whitespace-nowrap rounded-lg px-4 font-body text-body font-medium ${FOCUS_RING} ${CONTROL_TRANSITION} ${CONTROL_DISABLED} ` +
+              `flex h-14 items-center gap-3.5 whitespace-nowrap rounded-lg px-4 font-body text-body ${FOCUS_RING} ${CONTROL_TRANSITION} ${CONTROL_DISABLED} ` +
               (active
                 ? "bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end font-bold text-on-accent-solid shadow-extruded-sm hover:brightness-105 active:brightness-95"
-                : "text-ink-secondary hover:bg-surface-sunken hover:text-ink-primary active:shadow-inset")
+                : "font-medium text-ink-secondary hover:bg-surface-sunken hover:text-ink-primary active:shadow-inset")
             }
           >
             <DecorativeGlyph path={PAGE_ICON_PATHS[page.id]} />

@@ -31,7 +31,7 @@ const DEFAULT_TOTAL_MINUTES = 360;
 
 /** `core/time-budget.ts` rejects a budget over 24 hours (MAX_TOTAL_MINUTES) or at/below zero. */
 const MAX_HOURS = 24;
-const HOURS_ERROR = "Enter hours between 0 and 24.";
+const HOURS_ERROR = "Enter hours above 0, up to 24.";
 
 function formatHours(minutes: number): string {
   const rounded = Math.round((minutes / 60) * 10) / 10;
@@ -141,7 +141,7 @@ export function TimeBudgetWidget({ timeBudget }: TimeBudgetWidgetProps): React.J
         </span>
       ) : (
         <span>
-          Time Budget {formatHours(DEFAULT_TOTAL_MINUTES)} (default) · <span className="font-bold text-accent-solid">Set today's budget</span>
+          Time Budget {formatHours(DEFAULT_TOTAL_MINUTES)} (default) · <span className="font-bold text-ink-accent">Set today's budget</span>
         </span>
       )}
     </button>

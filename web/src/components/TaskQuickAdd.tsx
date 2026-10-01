@@ -26,7 +26,6 @@
  */
 import { forwardRef, useEffect, useRef, useState } from "react";
 import type { QuickAddPreviewResponse } from "../../../src/types/api.ts";
-import { FIELD_FOCUS_WITHIN } from "../lib/controlStyles.ts";
 import { PlusGlyph } from "./icons/Glyphs.tsx";
 import { formatDue, formatDuration, optionLabel, requestQuickAddPreview } from "../lib/tasks.ts";
 import type { TaskFieldOptions, TaskStatus } from "../../../src/types/domain.ts";
@@ -167,7 +166,7 @@ export const TaskQuickAdd = forwardRef<HTMLInputElement, TaskQuickAddProps>(func
       )}
       <label
         className={
-          "flex h-[58px] items-center gap-3.5 rounded-lg border-[length:var(--rim-width)] bg-surface-sunken px-4 shadow-inset " + FIELD_FOCUS_WITHIN + " " +
+          "flex h-[58px] items-center gap-3.5 rounded-lg border-[length:var(--rim-width)] bg-surface-sunken px-4 shadow-inset " +
           (focused ? "border-accent-solid" : "border-transparent")
         }
       >

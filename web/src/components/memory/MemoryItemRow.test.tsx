@@ -103,3 +103,10 @@ describe("MemoryItemRow editing", () => {
     expect(screen.getByText("Waiting on your answer in Chat")).toBeInTheDocument();
   });
 });
+
+describe("MemoryItemRow motion", () => {
+  it("the hover-shadow transition on the row honours reduced motion", () => {
+    row();
+    expect(screen.getByRole("listitem").className).toContain("motion-reduce:transition-none");
+  });
+});

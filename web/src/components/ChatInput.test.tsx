@@ -64,8 +64,8 @@ describe("ChatInput", () => {
     const cls = screen.getByRole("button", { name: "Send" }).className;
     expect(cls).toContain(FOCUS_RING);
     expect(cls).toContain(CONTROL_DISABLED);
-    expect(cls).toContain("hover:brightness-105");
-    expect(cls).toContain("active:brightness-95");
+    expect(cls).toContain("enabled:hover:brightness-105");
+    expect(cls).toContain("enabled:active:brightness-95");
   });
 
   it("the Send button sends too, and is disabled while the draft is blank", () => {

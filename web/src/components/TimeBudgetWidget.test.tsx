@@ -59,7 +59,7 @@ describe("TimeBudgetWidget", () => {
     fireEvent.click(screen.getByTestId("time-budget-widget"));
     fireEvent.change(screen.getByLabelText("Today's Time Budget, in hours"), { target: { value: "" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(screen.getByRole("alert")).toHaveTextContent("Enter hours between 0 and 24.");
+    expect(screen.getByRole("alert")).toHaveTextContent("Enter hours above 0, up to 24.");
     expect(setSpy).not.toHaveBeenCalled();
   });
 
@@ -69,7 +69,7 @@ describe("TimeBudgetWidget", () => {
     fireEvent.click(screen.getByTestId("time-budget-widget"));
     fireEvent.change(screen.getByLabelText("Today's Time Budget, in hours"), { target: { value: "30" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(screen.getByRole("alert")).toHaveTextContent("Enter hours between 0 and 24.");
+    expect(screen.getByRole("alert")).toHaveTextContent("Enter hours above 0, up to 24.");
     expect(setSpy).not.toHaveBeenCalled();
   });
 

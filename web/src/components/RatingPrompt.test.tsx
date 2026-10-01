@@ -37,10 +37,10 @@ describe("RatingPrompt", () => {
   it("chips are shared Secondary buttons (rounded-sm) and Not now is a shared text button", () => {
     render(<Harness />);
     for (const radio of screen.getAllByRole("radio")) {
-      expect(radio).toHaveClass("rounded-sm", "hover:shadow-extruded-md", "disabled:opacity-50");
+      expect(radio).toHaveClass("rounded-sm", "enabled:hover:shadow-extruded-md", "disabled:opacity-50");
       expect(radio).not.toHaveClass("rounded-full", "font-semibold");
     }
-    expect(screen.getByRole("button", { name: "Not now" })).toHaveClass("hover:underline", "text-ink-accent");
+    expect(screen.getByRole("button", { name: "Not now" })).toHaveClass("enabled:hover:underline", "text-ink-accent", "min-h-6");
   });
 
   it("a 1 asks What was off? and Send posts the note and hands up the receipt", async () => {

@@ -395,7 +395,7 @@ export default function TasksPage(): React.JSX.Element {
             <StateMessage
               variant="empty"
               className="p-5"
-              message={query ? `No Tasks match "${query}".` : missingDataFilterActive ? "No Tasks are missing data." : "No Tasks yet. Type one above and press Enter."}
+              message={query ? `No Tasks match "${query}".` : missingDataFilterActive ? "No Tasks are missing data." : "No Tasks yet. Type one below and press Enter."}
             />
           ) : (
             groups.map((group) => (

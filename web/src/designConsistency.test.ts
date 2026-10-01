@@ -1,17 +1,18 @@
 /**
  * Polish 6 (P6-R9/R10/R11): a source-scanning guard so spacing, type and
- * icon rules do not drift again. Scans every non-test .tsx under pages/ and
- * components/ and reports the offending file:line.
+ * icon rules do not drift again. Scans every non-test .ts/.tsx under pages/,
+ * components/ and lib/ (controlStyles.ts lives there) and reports the
+ * offending file:line.
  */
 import { describe, expect, it } from "vitest";
 
-const sources = import.meta.glob("./{pages,components}/**/*.tsx", {
+const sources = import.meta.glob("./{pages,components,lib}/**/*.{ts,tsx}", {
   query: "?raw",
   import: "default",
   eager: true,
 }) as Record<string, string>;
 
-const files = Object.entries(sources).filter(([path]) => !path.endsWith(".test.tsx"));
+const files = Object.entries(sources).filter(([path]) => !/\.test\.tsx?$/.test(path));
 
 /** Stroke widths other than 1.8 that are justified, with the reason. */
 const STROKE_ALLOW_LIST: Record<string, string> = {

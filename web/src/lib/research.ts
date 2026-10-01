@@ -35,7 +35,7 @@ export function fetchResearch(): Promise<Outcome<ResearchListResponse>> {
 
 export type ResearchListState =
   | { readonly status: "loading" }
-  | { readonly status: "loaded"; readonly value: ResearchListResponse; readonly refreshFailed?: { readonly message: string; readonly at: Date } }
+  | { readonly status: "loaded"; readonly value: ResearchListResponse; readonly loadedAt: Date; readonly refreshFailed?: { readonly message: string; readonly at: Date } }
   | { readonly status: "error"; readonly message: string };
 
 /**
@@ -54,8 +54,8 @@ export function useResearchList(): { readonly state: ResearchListState; refetch(
     const outcome = await fetchResearch();
     if (seq !== latest.current) return;
     setState((prev) => {
-      if (outcome.ok) return { status: "loaded", value: outcome.value };
-      if (prev.status === "loaded") return { ...prev, refreshFailed: { message: outcome.message, at: new Date() } };
+      if (outcome.ok) return { status: "loaded", value: outcome.value, loadedAt: new Date() };
+      if (prev.status === "loaded") return { ...prev, refreshFailed: { message: outcome.message, at: prev.loadedAt } };
       return { status: "error", message: outcome.message };
     });
   }, []);

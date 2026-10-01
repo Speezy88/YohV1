@@ -64,7 +64,7 @@ export function ChatInput(): React.JSX.Element {
         disabled={!canSend}
         onClick={submit}
         aria-label="Send"
-        className={`flex size-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end text-on-accent-solid hover:brightness-105 active:brightness-95 ${FOCUS_RING} ${CONTROL_TRANSITION} ${CONTROL_DISABLED}`}
+        className={`flex size-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end text-on-accent-solid enabled:hover:brightness-105 enabled:active:brightness-95 ${FOCUS_RING} ${CONTROL_TRANSITION} ${CONTROL_DISABLED}`}
       >
         <SendGlyph />
       </button>

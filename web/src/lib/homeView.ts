@@ -16,7 +16,7 @@ import type { HomeViewResponse } from "../../../src/types/api.ts";
 
 export type HomeViewState =
   | { readonly status: "loading" }
-  | { readonly status: "loaded"; readonly value: HomeViewResponse; readonly refreshFailed?: { readonly message: string; readonly at: Date } }
+  | { readonly status: "loaded"; readonly value: HomeViewResponse; readonly loadedAt: Date; readonly refreshFailed?: { readonly message: string; readonly at: Date } }
   | { readonly status: "error"; readonly message: string };
 
 let state: HomeViewState = { status: "loading" };
@@ -34,14 +34,14 @@ const UNREACHABLE_COPY = "I couldn't reach Yoh's server just now.";
 
 function fail(message: string): void {
   // Stale beats blank (P6-R7): after a successful load, keep the view.
-  state = state.status === "loaded" ? { ...state, refreshFailed: { message, at: new Date() } } : { status: "error", message };
+  state = state.status === "loaded" ? { ...state, refreshFailed: { message, at: state.loadedAt } } : { status: "error", message };
 }
 
 async function refetch(): Promise<void> {
   try {
     const res = await apiClient.api.home.$get();
     const result = await res.json();
-    if (result.ok) state = { status: "loaded", value: result.value };
+    if (result.ok) state = { status: "loaded", value: result.value, loadedAt: new Date() };
     else fail(result.error.message);
   } catch {
     fail(UNREACHABLE_COPY);

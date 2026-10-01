@@ -133,7 +133,7 @@ describe("TasksPage", () => {
   it("the empty list renders as a status-free empty message (no alert)", async () => {
     api.tasks.$get.mockResolvedValue(envelope({ ok: true, value: { ...VIEW, groups: [], total: 0 } }));
     render(<TasksPage />);
-    await screen.findByText("No Tasks yet. Type one above and press Enter.");
+    await screen.findByText("No Tasks yet. Type one below and press Enter.");
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
@@ -201,6 +201,29 @@ describe("TasksPage", () => {
       await screen.findByText("Calc problem set 4");
       expect(screen.getByText("Email Mr. Alvarez")).toBeInTheDocument();
     });
+  });
+
+  it("the quick-add field shows one focus indication: its accent border, no extra outline", async () => {
+    await renderLoaded();
+    const input = screen.getByRole("textbox", { name: "New task" });
+    expect(document.activeElement).toBe(input);
+    const field = input.parentElement as HTMLElement;
+    expect(field.className).toContain("border-accent-solid");
+    expect(field.className).not.toContain("has-[:focus-visible]");
+  });
+
+  it("cell editors (input, select, title) carry the focus ring and no outline-none", async () => {
+    await renderLoaded();
+    const r = row("Calc problem set 4");
+    fireEvent.click(within(r).getByRole("button", { name: /^Duration for Calc problem set 4/ }));
+    const number = screen.getByRole("spinbutton", { name: "Duration for Calc problem set 4" });
+    expect(number.className).toContain("focus-visible:outline-accent-solid");
+    expect(number.className).not.toContain("outline-none");
+    fireEvent.keyDown(number, { key: "Escape" });
+    fireEvent.click(within(row("Calc problem set 4")).getByRole("button", { name: /^Energy for Calc problem set 4/ }));
+    const select = screen.getByRole("combobox", { name: /Energy for Calc problem set 4/ });
+    expect(select.className).toContain("focus-visible:outline-accent-solid");
+    expect(select.className).not.toContain("outline-none");
   });
 
   it("focuses the quick-add line on arrival", async () => {
@@ -500,10 +523,10 @@ describe("TasksPage", () => {
       expect(await screen.findByText("Couldn't preview that — you can still add it.")).toBeInTheDocument();
     });
 
-    it("the quick-add field and the dock controls carry the shared focus treatment; cell buttons are at least 24px tall targets", async () => {
+    it("the dock controls carry the shared focus treatment (the quick-add keeps only its accent border); cell buttons are at least 24px tall targets", async () => {
       await renderLoaded();
       const field = screen.getByRole("textbox", { name: "New task" }).closest("label") as HTMLElement;
-      expect(field.className).toContain("has-[:focus-visible]:outline-accent-solid");
+      expect(field.className).not.toContain("has-[:focus-visible]");
       expect(screen.getByTestId("tasks-filter-missing-data").className).toContain(FOCUS_RING);
       expect(screen.getByTestId("tasks-filter-missing-data").className).toContain("transition-[color");
       const cell = within(row("Calc problem set 4")).getByRole("button", { name: /^Duration for Calc problem set 4/ });

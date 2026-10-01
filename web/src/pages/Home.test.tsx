@@ -28,9 +28,10 @@ function mockState(state: homeViewModule.HomeViewState): void {
   vi.spyOn(homeViewModule, "startHomeViewStream").mockReturnValue(() => {});
 }
 
-function loaded(overrides: Partial<HomeViewResponse> = {}): { status: "loaded"; value: HomeViewResponse } {
+function loaded(overrides: Partial<HomeViewResponse> = {}): { status: "loaded"; value: HomeViewResponse; loadedAt: Date } {
   return {
     status: "loaded",
+    loadedAt: new Date(2026, 8, 25, 8, 0),
     value: { today: "2026-09-25", plan: undefined, calendar: { blocks: [] }, timeBudget: undefined, timeZone: "America/New_York", ...overrides },
   };
 }
@@ -321,7 +322,7 @@ describe("HomePage", () => {
     expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
   });
 
-  it("shows a plain 'Couldn't load that day' line with a Retry button on error; Retry re-fetches that exact date", () => {
+  it("shows a plain 'Couldn't load that day' line with a Try again button on error; Retry re-fetches that exact date", () => {
     vi.spyOn(calendarDayModule, "useCalendarDay").mockReturnValue({ status: "error", message: "network down" });
     const retrySpy = vi.spyOn(calendarDayModule, "retryCalendarDay").mockImplementation(() => {});
     mockState(loaded({ today: "2026-09-27" }));
@@ -329,8 +330,8 @@ describe("HomePage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Month" }));
     fireEvent.click(screen.getByLabelText("September 15"));
 
-    expect(screen.getByText("Couldn't load that day")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Couldn't load that day");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(retrySpy).toHaveBeenCalledWith("2026-09-15");
   });
 

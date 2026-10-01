@@ -41,8 +41,7 @@ const FIELD_NAMES: Record<EditableTaskField, string> = {
   priority: "Priority",
 };
 
-const EDITOR_BASE =
-  "h-10 w-full min-w-0 rounded-md border-[length:var(--rim-width)] border-accent-solid bg-surface-sunken px-3 font-body text-ink-primary shadow-inset outline-none";
+const EDITOR_BASE = `h-10 w-full min-w-0 rounded-md border-[length:var(--rim-width)] border-accent-solid bg-surface-sunken px-3 font-body text-ink-primary shadow-inset ${FOCUS_RING}`;
 const EDITOR_CLASS = `${EDITOR_BASE} text-small`;
 /** The title editor keeps the row title's own size and weight, so renaming doesn't visibly shrink the text. */
 const TITLE_EDITOR_CLASS = `${EDITOR_BASE} -ml-2 text-body font-medium`;

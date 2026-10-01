@@ -39,7 +39,7 @@ export function Checkbox({ label, checked, disabled = false, size = "sm", onChec
         data-checkbox-box
         className={
           (size === "lg" ? "size-[26px] rounded-sm " : "size-[17px] rounded-xs ") +
-          `flex items-center justify-center border-[length:var(--rim-width)] border-rim-interactive shadow-inset group-hover:border-accent-solid ${CONTROL_TRANSITION} ` +
+          `flex items-center justify-center border-[length:var(--rim-width)] border-rim-interactive shadow-inset group-enabled:group-hover:border-accent-solid ${CONTROL_TRANSITION} ` +
           (checked ? "bg-accent-solid" : "bg-surface-sunken")
         }
       >

@@ -107,6 +107,20 @@ describe("CommandPalette", () => {
     expect(onRun).toHaveBeenCalledWith("/night");
   });
 
+  it("only the highlighted row is tinted: no CSS hover background on any row", async () => {
+    render(<CommandPalette query="/" onRun={() => {}} onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByTestId("command-row-/morning")).toBeInTheDocument());
+    const first = screen.getByTestId("command-row-/morning");
+    const second = screen.getByTestId("command-row-/night");
+    expect(first.className).toContain("bg-surface-sunken");
+    expect(second.className).not.toMatch(/(^|\s)bg-surface-sunken/);
+    expect(first.className).not.toContain("hover:bg-surface-sunken");
+    expect(second.className).not.toContain("hover:bg-surface-sunken");
+    fireEvent.mouseMove(second);
+    expect(second.className).toMatch(/(^|\s)bg-surface-sunken/);
+    expect(first.className).not.toMatch(/(^|\s)bg-surface-sunken/);
+  });
+
   it("↑ from the top row stays at the top row (no wrap-under)", async () => {
     const onRun = vi.fn();
     render(<CommandPalette query="/" onRun={onRun} onClose={() => {}} />);

@@ -18,7 +18,7 @@ import type { MessageRating } from "../lib/chatStore.ts";
 import type { RememberedReceipt } from "../../../src/types/api.ts";
 
 const CAPTION = "font-body text-small text-ink-secondary";
-const TEXT_BUTTON = `${BUTTON_TEXT} px-2 text-small`;
+const TEXT_BUTTON = `${BUTTON_TEXT} min-h-6 px-2 text-small`;
 
 export const RATING_FAILED_COPY = "Couldn't save that. Try again.";
 

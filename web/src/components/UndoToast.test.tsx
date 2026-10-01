@@ -16,7 +16,7 @@ describe("UndoToast generalization (Story 13.9)", () => {
 
   it("Undo is a shared Secondary button", () => {
     render(<UndoToast id="x" label="Deleted" durationMs={1000} onUndo={async () => {}} onExpire={() => {}} />);
-    expect(screen.getByRole("button", { name: "Undo" })).toHaveClass("hover:shadow-extruded-md", "active:shadow-inset", "disabled:opacity-50");
+    expect(screen.getByRole("button", { name: "Undo" })).toHaveClass("enabled:hover:shadow-extruded-md", "enabled:active:shadow-inset", "disabled:opacity-50");
   });
 
   it("keeps the default check-off copy", () => {

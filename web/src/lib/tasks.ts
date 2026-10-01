@@ -77,7 +77,7 @@ export function requestRenameTask(taskId: string, title: string): Promise<Outcom
 
 export type TasksListState =
   | { readonly status: "loading" }
-  | { readonly status: "loaded"; readonly value: TasksViewResponse; readonly refreshFailed?: { readonly message: string; readonly at: Date } }
+  | { readonly status: "loaded"; readonly value: TasksViewResponse; readonly loadedAt: Date; readonly refreshFailed?: { readonly message: string; readonly at: Date } }
   | { readonly status: "error"; readonly message: string };
 
 /** Hint topics that can change what the Tasks list shows. */
@@ -101,8 +101,8 @@ export function useTasksList(groupBy: TasksGroupBy, query: string): { readonly s
     const outcome = await fetchTasks(params.current.groupBy, params.current.query);
     if (seq !== latest.current) return;
     setState((prev) => {
-      if (outcome.ok) return { status: "loaded", value: outcome.value };
-      if (prev.status === "loaded") return { ...prev, refreshFailed: { message: outcome.message, at: new Date() } };
+      if (outcome.ok) return { status: "loaded", value: outcome.value, loadedAt: new Date() };
+      if (prev.status === "loaded") return { ...prev, refreshFailed: { message: outcome.message, at: prev.loadedAt } };
       return { status: "error", message: outcome.message };
     });
   }, []);

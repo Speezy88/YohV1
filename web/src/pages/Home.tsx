@@ -295,7 +295,7 @@ function DayNavHeader({
   );
 }
 
-/** `lib/calendarDay.ts`'s loading/error states for a non-today shown date — a skeleton while it loads, a plain line + Retry on error (this task's brief, verbatim); never a static spinner. */
+/** `lib/calendarDay.ts`'s loading/error states for a non-today shown date — a skeleton while it loads, a StateMessage error with "Try again" on failure (this task's brief, verbatim); never a static spinner. */
 function OtherDayPanel({ shownDate, timeZone }: { readonly shownDate: string; readonly timeZone: string }): React.JSX.Element {
   const state = useCalendarDay(shownDate);
   const reducedMotion = useReducedMotion();
@@ -305,15 +305,8 @@ function OtherDayPanel({ shownDate, timeZone }: { readonly shownDate: string; re
   }
   if (state.status === "error") {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-3">
-        <p className="font-body text-body text-ink-secondary">Couldn't load that day</p>
-        <button
-          type="button"
-          onClick={() => retryCalendarDay(shownDate)}
-          className={`${BUTTON_SECONDARY} ${CONTROL_SM}`}
-        >
-          Retry
-        </button>
+      <div className="flex h-full items-center justify-center">
+        <StateMessage variant="error" message="Couldn't load that day" onRetry={() => retryCalendarDay(shownDate)} />
       </div>
     );
   }

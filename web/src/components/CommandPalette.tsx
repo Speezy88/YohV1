@@ -25,7 +25,7 @@
  * `onHighlightedOptionChange`, so a screen reader announces the highlighted
  * command as ↑/↓ move it, without moving DOM focus off the input.
  */
-import { ROW_HOVER_FLAT } from "../lib/controlStyles.ts";
+import { CONTROL_TRANSITION, FOCUS_RING } from "../lib/controlStyles.ts";
 import { useCallback, useEffect, useState } from "react";
 import { useReducedMotion } from "../hooks/useReducedMotion.ts";
 import { StateMessage } from "./StateMessage.tsx";
@@ -148,8 +148,8 @@ export function CommandPalette({ query, onRun, onClose, onHighlightedOptionChang
             if (filtered.length > 0 && i !== highlighted) setHighlighted(i);
           }}
           className={
-            `flex cursor-pointer items-baseline justify-between gap-2 rounded-sm border-[length:var(--rim-width)] px-2 py-1 ${ROW_HOVER_FLAT} ` +
-            (filtered.length > 0 && i === highlighted ? "border-accent-solid" : "border-transparent")
+            `flex cursor-pointer items-baseline justify-between gap-2 rounded-sm border-[length:var(--rim-width)] px-2 py-1 ${FOCUS_RING} ${CONTROL_TRANSITION} ` +
+            (filtered.length > 0 && i === highlighted ? "border-accent-solid bg-surface-sunken" : "border-transparent")
           }
         >
           <span className="shrink-0 font-body text-body font-bold text-ink-primary">{c.name}</span>

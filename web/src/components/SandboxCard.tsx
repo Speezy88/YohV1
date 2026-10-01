@@ -31,9 +31,9 @@ export interface SandboxCardProps {
 }
 
 const RIM_INPUT =
-  `h-11 w-full min-w-0 rounded-md border-[length:var(--rim-width)] border-accent-solid bg-surface-sunken px-3 font-body text-small text-ink-primary shadow-inset outline-none ${FOCUS_RING}`;
+  `h-11 w-full min-w-0 rounded-md border-[length:var(--rim-width)] border-accent-solid bg-surface-sunken px-3 font-body text-small text-ink-primary shadow-inset ${FOCUS_RING}`;
 const PLAIN_INPUT =
-  `h-11 w-full min-w-0 rounded-md border-[length:var(--rim-width)] border-rim-interactive bg-surface-raised px-3 font-body text-small text-ink-primary shadow-extruded-sm outline-none ${FOCUS_RING}`;
+  `h-11 w-full min-w-0 rounded-md border-[length:var(--rim-width)] border-rim-interactive bg-surface-raised px-3 font-body text-small text-ink-primary shadow-extruded-sm ${FOCUS_RING}`;
 const PRIMARY_BUTTON = `${BUTTON_PRIMARY} ${CONTROL_MD}`;
 const SECONDARY_BUTTON = `${BUTTON_SECONDARY} ${CONTROL_MD}`;
 

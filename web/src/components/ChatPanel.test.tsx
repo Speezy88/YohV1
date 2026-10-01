@@ -71,9 +71,15 @@ describe("ChatPanel", () => {
     expect(offer).toHaveBeenCalledTimes(1);
   });
 
-  it("shows the welcome line with no entries, outside the log, and drops it once there is a turn", () => {
+  it("does not show the welcome line while today's history is still loading", async () => {
     renderOpenPanel();
-    const welcome = screen.getByText("Ask about your day, add a Task, or type / for commands.");
+    expect(screen.queryByText("Ask about your day, add a Task, or type / for commands.")).not.toBeInTheDocument();
+    await screen.findByText("Ask about your day, add a Task, or type / for commands.");
+  });
+
+  it("shows the welcome line with no entries, outside the log, and drops it once there is a turn", async () => {
+    renderOpenPanel();
+    const welcome = await screen.findByText("Ask about your day, add a Task, or type / for commands.");
     expect(welcome).toBeInTheDocument();
     expect(screen.getByRole("log", { name: "Conversation" })).not.toContainElement(welcome);
     act(() => {
@@ -289,7 +295,7 @@ describe("ChatPanel", () => {
       vi.spyOn(missingDataModule, "useMissingDataCount").mockReturnValue({ status: "loaded", count: 1 });
       renderOpenPanel();
       expect(screen.getByTestId("missing-data-chip")).toHaveClass("rounded-full", "hover:shadow-extruded-md", "active:shadow-inset");
-      expect(screen.getByRole("button", { name: "Close chat" })).toHaveClass("hover:shadow-extruded-md", "h-11", "w-11");
+      expect(screen.getByRole("button", { name: "Close chat" })).toHaveClass("enabled:hover:shadow-extruded-md", "h-11", "w-11");
     });
 
     it("shows 'N need data' for a count greater than 1", () => {

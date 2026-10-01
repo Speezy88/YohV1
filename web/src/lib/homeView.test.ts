@@ -104,6 +104,28 @@ describe("homeView store", () => {
     await waitFor(() => expect(result.current.status === "loaded" && result.current.refreshFailed === undefined).toBe(true));
   });
 
+  it("refreshFailed.at is the last successful load and does not advance on repeated failures", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date(2026, 8, 25, 8, 0));
+      const home = apiClient.api.home.$get as ReturnType<typeof vi.fn>;
+      const { result } = renderHook(() => useHomeView());
+      stops.push(startHomeViewStream());
+      await waitFor(() => expect(result.current.status).toBe("loaded"));
+      home.mockRejectedValue(new Error("network down"));
+      vi.setSystemTime(new Date(2026, 8, 25, 9, 5));
+      act(() => hintCb({ seq: 1, topic: "plan", entityId: "x" }));
+      await waitFor(() => expect(result.current.status === "loaded" && result.current.refreshFailed !== undefined).toBe(true));
+      vi.setSystemTime(new Date(2026, 8, 25, 10, 30));
+      act(() => hintCb({ seq: 2, topic: "plan", entityId: "x" }));
+      await new Promise((r) => setTimeout(r, 20));
+      const s = result.current;
+      expect(s.status === "loaded" && s.refreshFailed?.at.getTime()).toBe(new Date(2026, 8, 25, 8, 0).getTime());
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("re-fetches when the tab regains focus, and stops after the stream stops", async () => {
     const stop = startHomeViewStream();
     await waitFor(() => expect(apiClient.api.home.$get).toHaveBeenCalledTimes(1));

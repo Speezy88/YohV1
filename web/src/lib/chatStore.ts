@@ -94,6 +94,8 @@ export interface ChatStoreState {
   readonly entries: readonly StreamEntry[];
   readonly draft: string;
   readonly sending: boolean;
+  /** True once today's stored conversation has been fetched (or the fetch failed): until then an empty transcript may just mean "not loaded yet". */
+  readonly hydrated: boolean;
 }
 
 /**
@@ -104,7 +106,7 @@ export interface ChatStoreState {
  */
 const INITIAL_STATUS_TEXT = "Thinking…";
 
-const EMPTY: ChatStoreState = { entries: [], draft: "", sending: false };
+const EMPTY: ChatStoreState = { entries: [], draft: "", sending: false, hydrated: false };
 
 let state: ChatStoreState = EMPTY;
 let nextId = 0;
@@ -252,14 +254,18 @@ export async function hydrateChatHistory(): Promise<void> {
   try {
     const res = await apiClient.api["chat-history"].today.$get();
     const result = await res.json();
-    if (!result.ok || result.value.turns.length === 0) return;
+    if (!result.ok || result.value.turns.length === 0) {
+      set({ ...state, hydrated: true });
+      return;
+    }
     const restored: StreamEntry[] = result.value.turns.map((turn) => {
       const message: ChatViewMessage = { id: `stored-${turn.id}`, role: turn.role, text: turn.text, receipts: [], status: "done" };
       return { kind: "message", id: message.id, message };
     });
-    set({ ...state, entries: [...restored, ...state.entries] });
+    set({ ...state, entries: [...restored, ...state.entries], hydrated: true });
   } catch {
     // The panel simply starts empty.
+    set({ ...state, hydrated: true });
   }
 }
 
@@ -339,6 +345,7 @@ export async function send(message: string): Promise<void> {
       entries: state.entries.filter((e) => !(e.kind === "message" && (e.id === userId || e.id === assistantId))),
       draft: state.draft === "" ? trimmed : state.draft,
       sending: false,
+      hydrated: state.hydrated,
     });
     addLocalFailureNotice("Couldn't reach Yoh. Your message is back in the box to try again.");
   }

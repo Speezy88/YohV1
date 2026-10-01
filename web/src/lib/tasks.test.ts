@@ -70,6 +70,25 @@ describe("useTasksList", () => {
     }
   });
 
+  it("refreshFailed.at is the last successful load and does not advance on repeated failures", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date(2026, 8, 25, 8, 0));
+      $get.mockResolvedValueOnce({ json: async () => ({ ok: true, value: view(3) }) });
+      const { result } = renderHook(() => useTasksList("due", ""));
+      await waitFor(() => expect(result.current.state.status).toBe("loaded"));
+      $get.mockResolvedValue({ json: async () => ({ ok: false, error: { kind: "unreachable", message: "down" } }) });
+      vi.setSystemTime(new Date(2026, 8, 25, 9, 5));
+      await act(() => result.current.refetch());
+      vi.setSystemTime(new Date(2026, 8, 25, 10, 30));
+      await act(() => result.current.refetch());
+      const s = result.current.state;
+      expect(s.status === "loaded" && s.refreshFailed?.at.getTime()).toBe(new Date(2026, 8, 25, 8, 0).getTime());
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("a first load that fails is an error state with the server's plain message", async () => {
     $get.mockResolvedValueOnce({ json: async () => ({ ok: false, error: { kind: "unreachable", message: "Nope." } }) });
     const { result } = renderHook(() => useTasksList("due", ""));

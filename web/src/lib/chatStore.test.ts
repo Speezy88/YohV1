@@ -114,6 +114,21 @@ describe("chatStore", () => {
     ]);
   });
 
+  it("hydrated is false until the history fetch settles, then true (success or failure)", async () => {
+    historyGet.mockReset();
+    historyGet.mockResolvedValue({ json: async () => ({ ok: true, value: { date: "2026-08-22", turns: [] } }) });
+    const { result } = renderHook(() => useChatStore());
+    expect(result.current.hydrated).toBe(false);
+    await act(async () => hydrateChatHistory());
+    expect(result.current.hydrated).toBe(true);
+    act(() => __resetChatStoreForTests());
+    historyGet.mockRejectedValue(new Error("offline"));
+    const second = renderHook(() => useChatStore());
+    expect(second.result.current.hydrated).toBe(false);
+    await act(async () => hydrateChatHistory());
+    expect(second.result.current.hydrated).toBe(true);
+  });
+
   it("a failed hydrate leaves the transcript empty", async () => {
     historyGet.mockReset();
     historyGet.mockRejectedValue(new Error("offline"));

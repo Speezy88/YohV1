@@ -27,16 +27,16 @@ export const CONTROL_LG = "h-12 px-5 text-body";
 const BASE = `${FOCUS_RING} ${CONTROL_TRANSITION} ${CONTROL_DISABLED}`;
 
 /** Accent-gradient fill; hover brightens, press dims. */
-export const BUTTON_PRIMARY = `inline-flex items-center justify-center gap-2 rounded-sm bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end font-body font-bold text-on-accent-solid hover:brightness-105 active:brightness-95 ${BASE}`;
+export const BUTTON_PRIMARY = `inline-flex items-center justify-center gap-2 rounded-sm bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end font-body font-bold text-on-accent-solid enabled:hover:brightness-105 enabled:active:brightness-95 ${BASE}`;
 
 /** Rimmed, extruded; hover steps the shadow up, press insets. */
-export const BUTTON_SECONDARY = `inline-flex items-center justify-center gap-2 rounded-sm border-[length:var(--rim-width)] border-rim-interactive bg-surface-base font-body font-medium text-ink-secondary shadow-extruded-sm hover:text-ink-primary hover:shadow-extruded-md active:shadow-inset ${BASE}`;
+export const BUTTON_SECONDARY = `inline-flex items-center justify-center gap-2 rounded-sm border-[length:var(--rim-width)] border-rim-interactive bg-surface-base font-body font-medium text-ink-secondary shadow-extruded-sm enabled:hover:text-ink-primary enabled:hover:shadow-extruded-md enabled:active:shadow-inset ${BASE}`;
 
 /** Text-only button; hover underlines. `ink-accent`, not `accent-solid`: accent-solid text fails 4.5:1 (DESIGN.md, Undo Toast note). */
-export const BUTTON_TEXT = `inline-flex items-center justify-center rounded-xs font-body font-medium text-ink-accent hover:underline ${BASE}`;
+export const BUTTON_TEXT = `inline-flex items-center justify-center rounded-xs font-body font-medium text-ink-accent enabled:hover:underline ${BASE}`;
 
 /** Square, rimmed, extruded icon button; pair with a CONTROL_* height and a matching width. */
-export const ICON_BUTTON = `inline-flex items-center justify-center rounded-md border-[length:var(--rim-width)] border-rim-interactive bg-surface-base text-ink-secondary shadow-extruded-sm hover:text-ink-primary hover:shadow-extruded-md active:shadow-inset ${BASE}`;
+export const ICON_BUTTON = `inline-flex items-center justify-center rounded-md border-[length:var(--rim-width)] border-rim-interactive bg-surface-base text-ink-secondary shadow-extruded-sm enabled:hover:text-ink-primary enabled:hover:shadow-extruded-md enabled:active:shadow-inset ${BASE}`;
 
 /** Clickable flat row: hover tints to the sunken surface. */
 export const ROW_HOVER_FLAT = `hover:bg-surface-sunken ${FOCUS_RING} ${CONTROL_TRANSITION}`;
