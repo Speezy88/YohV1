@@ -68,4 +68,25 @@ describe("MiniMonth", () => {
     render(<MiniMonth today="2026-09-27" />);
     expect(() => fireEvent.click(screen.getByLabelText("September 15"))).not.toThrow();
   });
+
+  it("marks only today's button aria-current=date", () => {
+    render(<MiniMonth today="2026-09-27" />);
+    expect(screen.getByLabelText("Today, September 27")).toHaveAttribute("aria-current", "date");
+    expect(screen.getByLabelText("September 15")).not.toHaveAttribute("aria-current");
+  });
+
+  it("weekday header cells carry full-name accessible text", () => {
+    render(<MiniMonth today="2026-09-27" />);
+    for (const name of ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]) {
+      expect(screen.getByText(name)).toBeInTheDocument();
+    }
+  });
+
+  it("month arrows and day buttons show the shared focus ring and hover state", () => {
+    render(<MiniMonth today="2026-09-27" />);
+    for (const el of [screen.getByRole("button", { name: "Next month" }), screen.getByLabelText("September 15")]) {
+      expect(el.className).toContain("focus-visible:outline-accent-solid");
+      expect(el.className).toMatch(/hover:/);
+    }
+  });
 });

@@ -133,7 +133,14 @@ export function PlanChecklist({ rows, timeZone }: PlanChecklistProps): React.JSX
             className={`flex h-16 items-center gap-4 rounded-lg bg-surface-raised px-5 font-body text-body text-ink-primary shadow-extruded-sm ${checked ? "line-through opacity-50" : ""} ${row.past && !checked ? "opacity-70" : ""} ${motion}`}
           >
             <Checkbox label={displayLabel(row.label)} checked={checked} disabled={readOnly} onCheck={() => void check(row)} />
-            <span className="min-w-0 flex-1 truncate">{displayLabel(row.label)}</span>
+            {/* The label shares the checkbox's hit target: same check(row), inert when read-only, not a second tab stop. */}
+            <span
+              data-testid="plan-row-label"
+              onClick={readOnly ? undefined : () => void check(row)}
+              className={`min-w-0 flex-1 truncate ${readOnly ? "" : "cursor-pointer"}`}
+            >
+              {displayLabel(row.label)}
+            </span>
             {row.missingRefining && row.missingRefining.length > 0 && (
               <span data-testid="plan-row-incomplete-marker" className="flex shrink-0 items-center gap-1 whitespace-nowrap font-body text-label font-bold text-ink-secondary">
                 <IncompleteGlyph />

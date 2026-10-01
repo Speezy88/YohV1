@@ -68,9 +68,14 @@ describe("ReshufflePreviewCard", () => {
     expect(screen.getByText("That overlaps Standup.")).toBeInTheDocument();
   });
 
-  it("uses no transition classes under reduced motion", () => {
+  it("uses no animation classes under reduced motion (the paint-only control transition is zeroed globally in tokens.css)", () => {
     setReducedMotion(true);
     render(<ReshufflePreviewCard preview={preview} onApprove={() => {}} onDiscard={() => {}} />);
-    expect(screen.getByTestId("reshuffle-preview-card").outerHTML).not.toMatch(/transition|animate-/);
+    expect(screen.getByTestId("reshuffle-preview-card").outerHTML).not.toMatch(/animate-|transition-opacity/);
+  });
+
+  it("Approve and Discard carry the shared focus ring", () => {
+    render(<ReshufflePreviewCard preview={preview} onApprove={() => {}} onDiscard={() => {}} />);
+    for (const name of ["Approve", "Discard"]) expect(screen.getByRole("button", { name }).className).toContain("focus-visible:outline-accent-solid");
   });
 });

@@ -27,8 +27,17 @@
  * clicked date instead of always reverting to today.
  */
 import { useState } from "react";
+import { ICON_BUTTON, ROW_HOVER_FLAT } from "../lib/controlStyles.ts";
 
-const WEEKDAY_LABELS = ["S", "M", "T", "W", "T", "F", "S"] as const;
+const WEEKDAY_LABELS = [
+  { short: "S", full: "Sunday" },
+  { short: "M", full: "Monday" },
+  { short: "T", full: "Tuesday" },
+  { short: "W", full: "Wednesday" },
+  { short: "T", full: "Thursday" },
+  { short: "F", full: "Friday" },
+  { short: "S", full: "Saturday" },
+] as const;
 const MONTH_NAMES = [
   "January",
   "February",
@@ -88,7 +97,7 @@ export function MiniMonth({ today, onSelectDay }: MiniMonthProps): React.JSX.Ele
             type="button"
             aria-label="Previous month"
             onClick={goToPreviousMonth}
-            className="flex size-[38px] items-center justify-center rounded-md border-[length:var(--rim-width)] border-rim-interactive text-ink-primary shadow-extruded-sm"
+            className={`size-11 ${ICON_BUTTON}`}
           >
             <svg aria-hidden="true" viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round">
               <path d="M15 5l-7 7 7 7" />
@@ -98,7 +107,7 @@ export function MiniMonth({ today, onSelectDay }: MiniMonthProps): React.JSX.Ele
             type="button"
             aria-label="Next month"
             onClick={goToNextMonth}
-            className="flex size-[38px] items-center justify-center rounded-md border-[length:var(--rim-width)] border-rim-interactive text-ink-primary shadow-extruded-sm"
+            className={`size-11 ${ICON_BUTTON}`}
           >
             <svg aria-hidden="true" viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round">
               <path d="M9 5l7 7-7 7" />
@@ -112,7 +121,8 @@ export function MiniMonth({ today, onSelectDay }: MiniMonthProps): React.JSX.Ele
       <div className="grid min-h-0 flex-1 grid-cols-7 grid-rows-[auto_repeat(6,minmax(0,1fr))] gap-1 text-center font-body">
         {WEEKDAY_LABELS.map((label, i) => (
           <span key={i} className="py-1 text-small font-bold text-ink-secondary">
-            {label}
+            <span aria-hidden="true">{label.short}</span>
+            <span className="sr-only">{label.full}</span>
           </span>
         ))}
         {cells.map((day, i) =>
@@ -124,10 +134,11 @@ export function MiniMonth({ today, onSelectDay }: MiniMonthProps): React.JSX.Ele
               type="button"
               onClick={() => onSelectDay?.(isoDateForCell(viewed.year, viewed.month, day))}
               aria-label={isViewingCurrentMonth && day === todayDay ? `Today, ${MONTH_NAMES[viewed.month]} ${day}` : `${MONTH_NAMES[viewed.month]} ${day}`}
-              className="flex items-center justify-center"
+              aria-current={isViewingCurrentMonth && day === todayDay ? "date" : undefined}
+              className={`flex items-center justify-center rounded-md tabular-nums ${ROW_HOVER_FLAT}`}
             >
               {isViewingCurrentMonth && day === todayDay ? (
-                <span className="flex size-[38px] items-center justify-center rounded-full bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end text-title font-bold text-on-accent-solid">
+                <span className="flex size-11 items-center justify-center rounded-full bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end text-title font-bold text-on-accent-solid">
                   {day}
                 </span>
               ) : (

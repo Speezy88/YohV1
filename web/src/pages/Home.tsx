@@ -55,6 +55,7 @@ import { loadCalendarView, saveCalendarView, type CalendarView } from "../lib/ca
 import { ReshufflePreviewCard } from "../components/ReshufflePreviewCard.tsx";
 import { approveReshuffle, discardReshuffle, requestReshuffle, useReshuffle, type ReshuffleView } from "../lib/reshuffle.ts";
 import { useReducedMotion } from "../hooks/useReducedMotion.ts";
+import { BUTTON_SECONDARY, BUTTON_TEXT, CONTROL_SM, CONTROL_TRANSITION, FOCUS_RING, ICON_BUTTON } from "../lib/controlStyles.ts";
 import type { HomeCalendarBlock } from "../../../src/types/api.ts";
 
 /** Weekday + month + day, e.g. "SUNDAY, SEPTEMBER 27" — the server's own host-timezone `today` (AD-17), never `new Date()`. */
@@ -119,7 +120,7 @@ function CalendarViewToggle({ view, onChange }: { readonly view: CalendarView; r
             aria-pressed={pressed}
             onClick={() => onChange(option.value)}
             className={
-              "h-[34px] rounded-md px-3.5 font-body text-small focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid " +
+              `h-9 rounded-md px-3.5 font-body text-small ${FOCUS_RING} ${CONTROL_TRANSITION} ` +
               (pressed
                 ? "bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end font-bold text-on-accent-solid shadow-extruded-sm"
                 : "text-ink-secondary hover:text-ink-primary")
@@ -239,7 +240,7 @@ function DayNavHeader({
             type="button"
             aria-label="Previous day"
             onClick={onPrevDay}
-            className="flex size-[28px] items-center justify-center rounded-md border-[length:var(--rim-width)] border-rim-interactive text-ink-primary shadow-extruded-sm focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid"
+            className={`size-9 ${ICON_BUTTON}`}
           >
             <svg aria-hidden="true" viewBox="0 0 24 24" width={14} height={14} fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round">
               <path d="M15 5l-7 7 7 7" />
@@ -249,7 +250,7 @@ function DayNavHeader({
             type="button"
             aria-label="Next day"
             onClick={onNextDay}
-            className="flex size-[28px] items-center justify-center rounded-md border-[length:var(--rim-width)] border-rim-interactive text-ink-primary shadow-extruded-sm focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid"
+            className={`size-9 ${ICON_BUTTON}`}
           >
             <svg aria-hidden="true" viewBox="0 0 24 24" width={14} height={14} fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round">
               <path d="M9 5l7 7-7 7" />
@@ -258,7 +259,7 @@ function DayNavHeader({
           <button
             type="button"
             onClick={onToday}
-            className="rounded-md px-2.5 py-1 font-body text-caption-lg font-bold text-ink-secondary hover:text-ink-primary focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid"
+            className={`${BUTTON_TEXT} h-9 px-3 text-small`}
           >
             Today
           </button>
@@ -283,7 +284,7 @@ function OtherDayPanel({ shownDate, timeZone }: { readonly shownDate: string; re
         <button
           type="button"
           onClick={() => retryCalendarDay(shownDate)}
-          className="rounded-md border-[length:var(--rim-width)] border-rim-interactive px-3 py-1.5 font-body text-small text-ink-primary shadow-extruded-sm focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid"
+          className={`${BUTTON_SECONDARY} ${CONTROL_SM}`}
         >
           Retry
         </button>

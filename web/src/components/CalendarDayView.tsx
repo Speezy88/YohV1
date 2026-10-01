@@ -123,6 +123,7 @@ import { useReducedMotion } from "../hooks/useReducedMotion.ts";
 import { displayLabel } from "../lib/labels.ts";
 import { formatClockTime, localMinutesSinceMidnight } from "../lib/hostTime.ts";
 import { layoutOverlappingIntervals } from "../lib/calendarLayout.ts";
+import { CONTROL_TRANSITION, FOCUS_RING } from "../lib/controlStyles.ts";
 
 const DAY_START_HOUR = 6;
 const DAY_END_HOUR = 23;
@@ -340,8 +341,8 @@ function PinGlyph(): React.JSX.Element {
   );
 }
 
-/** The Unpin pill is 20px (size-5) and sits 4px in from the block's top-right corner. */
-const PIN_SIZE_PX = 20;
+/** The Unpin pill is 24px (size-5, the minimum target) and sits 4px in from the block's top-right corner. */
+const PIN_SIZE_PX = 24;
 const PIN_INSET_PX = 4;
 
 /** 8am, this component's own fallback auto-scroll target for a genuinely empty non-today day (no "now" line to anchor to instead). */
@@ -437,7 +438,7 @@ export function CalendarDayView({ blocks, timeZone, now = () => new Date(), isTo
                 // was below the 12px readability floor this task sets for
                 // hour labels; `text-caption-lg` (tokens.css) is the new
                 // >=12px token, ink-secondary unchanged.
-                className="shrink-0 pr-2 text-right font-body text-caption-lg font-bold uppercase tracking-wide text-ink-secondary"
+                className="shrink-0 pr-2 text-right font-body tabular-nums text-caption-lg font-bold uppercase tracking-wide text-ink-secondary"
               >
                 {hourLabel(h)}
               </span>
@@ -534,7 +535,7 @@ export function CalendarDayView({ blocks, timeZone, now = () => new Date(), isTo
                     type="button"
                     aria-label={`Unpin ${label}`}
                     onClick={() => onUnpin(b.taskId!)}
-                    className="flex size-5 items-center justify-center rounded-full focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid"
+                    className={`flex size-5 items-center justify-center rounded-full hover:text-ink-primary ${FOCUS_RING} ${CONTROL_TRANSITION}`}
                   >
                     <PinGlyph />
                   </button>

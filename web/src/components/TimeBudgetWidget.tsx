@@ -18,6 +18,7 @@ import type { HomeTimeBudget } from "../../../src/types/api.ts";
 import { requestSetTimeBudget } from "../lib/timeBudget.ts";
 import { refetchHomeView } from "../lib/homeView.ts";
 import { addLocalFailureNotice } from "../lib/notifications.ts";
+import { BUTTON_PRIMARY, BUTTON_TEXT, CONTROL_SM, CONTROL_TRANSITION, FOCUS_RING } from "../lib/controlStyles.ts";
 
 /**
  * Shown before Spencer has ever declared a Time Budget today. `core/time-
@@ -27,6 +28,10 @@ import { addLocalFailureNotice } from "../lib/notifications.ts";
  * placeholder, never written to the server until Spencer actually saves.
  */
 const DEFAULT_TOTAL_MINUTES = 360;
+
+/** `core/time-budget.ts` rejects a budget over 24 hours (MAX_TOTAL_MINUTES) or at/below zero. */
+const MAX_HOURS = 24;
+const HOURS_ERROR = "Enter hours between 0 and 24.";
 
 function formatHours(minutes: number): string {
   const rounded = Math.round((minutes / 60) * 10) / 10;
@@ -42,15 +47,21 @@ export function TimeBudgetWidget({ timeBudget }: TimeBudgetWidgetProps): React.J
   const [editing, setEditing] = useState(false);
   const [hoursInput, setHoursInput] = useState(() => String(defaultTotal / 60));
   const [saving, setSaving] = useState(false);
+  const [invalid, setInvalid] = useState(false);
 
   const startEdit = (): void => {
     setHoursInput(String(defaultTotal / 60));
+    setInvalid(false);
     setEditing(true);
   };
 
   const save = async (): Promise<void> => {
     const hours = Number(hoursInput);
-    if (!Number.isFinite(hours) || hours <= 0) return;
+    if (hoursInput.trim() === "" || !Number.isFinite(hours) || hours <= 0 || hours > MAX_HOURS) {
+      setInvalid(true);
+      return;
+    }
+    setInvalid(false);
     setSaving(true);
     const outcome = await requestSetTimeBudget(Math.round(hours * 60));
     setSaving(false);
@@ -70,7 +81,7 @@ export function TimeBudgetWidget({ timeBudget }: TimeBudgetWidgetProps): React.J
           e.preventDefault();
           void save();
         }}
-        className="flex items-center gap-2.5 rounded-lg bg-surface-sunken px-4.5 py-3 font-body text-small text-ink-primary shadow-inset"
+        className="flex flex-wrap items-center gap-2.5 rounded-lg bg-surface-sunken px-4.5 py-3 font-body text-small text-ink-primary shadow-inset"
       >
         <label htmlFor="time-budget-hours" className="sr-only">
           Today's Time Budget, in hours
@@ -82,26 +93,36 @@ export function TimeBudgetWidget({ timeBudget }: TimeBudgetWidgetProps): React.J
           step={0.5}
           value={hoursInput}
           autoFocus
-          onChange={(e) => setHoursInput(e.target.value)}
+          aria-invalid={invalid}
+          aria-describedby={invalid ? "time-budget-hours-error" : undefined}
+          onChange={(e) => {
+            setHoursInput(e.target.value);
+            setInvalid(false);
+          }}
           onKeyDown={(e) => {
             if (e.key === "Escape") {
               e.preventDefault();
               setEditing(false);
             }
           }}
-          className="w-16 rounded-sm bg-transparent text-center focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid"
+          className={`w-16 rounded-sm bg-transparent text-center tabular-nums ${FOCUS_RING}`}
         />
         <span>h budget</span>
         <button
           type="submit"
           disabled={saving}
-          className="rounded-sm bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end px-3 py-1 font-bold text-on-accent-solid disabled:opacity-50"
+          className={`${BUTTON_PRIMARY} ${CONTROL_SM}`}
         >
-          Save
+          {saving ? "Saving…" : "Save"}
         </button>
-        <button type="button" onClick={() => setEditing(false)} className="text-ink-secondary">
+        <button type="button" onClick={() => setEditing(false)} className={`${BUTTON_TEXT} ${CONTROL_SM}`}>
           Cancel
         </button>
+        {invalid && (
+          <p id="time-budget-hours-error" role="alert" className="m-0 basis-full text-small font-bold text-ink-primary">
+            {HOURS_ERROR}
+          </p>
+        )}
       </form>
     );
   }
@@ -111,7 +132,7 @@ export function TimeBudgetWidget({ timeBudget }: TimeBudgetWidgetProps): React.J
       type="button"
       data-testid="time-budget-widget"
       onClick={startEdit}
-      className="flex items-center gap-2.5 rounded-lg bg-surface-raised px-4.5 py-3 font-body text-small text-ink-primary shadow-extruded-sm"
+      className={`flex items-center gap-2.5 rounded-lg bg-surface-raised px-4.5 py-3 font-body text-small tabular-nums text-ink-primary shadow-extruded-sm hover:shadow-extruded-md ${FOCUS_RING} ${CONTROL_TRANSITION}`}
     >
       <span aria-hidden="true" className="size-2.5 rounded-full bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end" />
       {timeBudget ? (

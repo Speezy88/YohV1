@@ -348,4 +348,23 @@ describe("PlanChecklist pinned badge", () => {
     expect(badges[0]!.closest("button")).toBeNull();
     expect(badges[0]!.tagName).not.toBe("BUTTON");
   });
+
+  it("clicking the row's label checks the row, exactly like the checkbox", () => {
+    mocked.checkOff.mockReturnValue(new Promise(() => {}));
+    renderChecklist(rows);
+    fireEvent.click(screen.getAllByTestId("plan-row-label")[0]!);
+    expect(mocked.checkOff).toHaveBeenCalledWith("t1");
+    expect(screen.getByRole("checkbox", { name: "Draft the memo" })).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("clicking the label of an already-checked (read-only) row does nothing", () => {
+    renderChecklist([{ ...rows[0]!, completed: true }]);
+    fireEvent.click(screen.getByTestId("plan-row-label"));
+    expect(mocked.checkOff).not.toHaveBeenCalled();
+  });
+
+  it("the label is not a tab stop of its own", () => {
+    renderChecklist(rows);
+    expect(screen.getAllByTestId("plan-row-label")[0]).not.toHaveAttribute("tabindex");
+  });
 });

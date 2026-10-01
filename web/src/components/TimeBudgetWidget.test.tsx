@@ -52,4 +52,41 @@ describe("TimeBudgetWidget", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(screen.getByTestId("time-budget-edit")).toBeInTheDocument());
   });
+
+  it("an empty hours value shows the inline message and does not call the API", () => {
+    const setSpy = vi.spyOn(timeBudgetLib, "requestSetTimeBudget").mockResolvedValue({ ok: true, receipt: "Got it." });
+    render(<TimeBudgetWidget timeBudget={undefined} />);
+    fireEvent.click(screen.getByTestId("time-budget-widget"));
+    fireEvent.change(screen.getByLabelText("Today's Time Budget, in hours"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Enter hours between 0 and 24.");
+    expect(setSpy).not.toHaveBeenCalled();
+  });
+
+  it("a value over 24 hours shows the inline message and does not call the API", () => {
+    const setSpy = vi.spyOn(timeBudgetLib, "requestSetTimeBudget").mockResolvedValue({ ok: true, receipt: "Got it." });
+    render(<TimeBudgetWidget timeBudget={undefined} />);
+    fireEvent.click(screen.getByTestId("time-budget-widget"));
+    fireEvent.change(screen.getByLabelText("Today's Time Budget, in hours"), { target: { value: "30" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Enter hours between 0 and 24.");
+    expect(setSpy).not.toHaveBeenCalled();
+  });
+
+  it("Save reads 'Saving…' while the request is pending", async () => {
+    vi.spyOn(timeBudgetLib, "requestSetTimeBudget").mockReturnValue(new Promise(() => {}));
+    render(<TimeBudgetWidget timeBudget={undefined} />);
+    fireEvent.click(screen.getByTestId("time-budget-widget"));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("button", { name: "Saving…" })).toBeDisabled();
+  });
+
+  it("the pill, Save and Cancel carry the shared focus ring", () => {
+    render(<TimeBudgetWidget timeBudget={undefined} />);
+    const pill = screen.getByTestId("time-budget-widget");
+    expect(pill.className).toContain("focus-visible:outline-accent-solid");
+    expect(pill.className).toMatch(/hover:/);
+    fireEvent.click(pill);
+    for (const name of ["Save", "Cancel"]) expect(screen.getByRole("button", { name }).className).toContain("focus-visible:outline-accent-solid");
+  });
 });
