@@ -132,7 +132,7 @@ export function ChatPanel(): React.JSX.Element | null {
         data-testid="chat-panel-backdrop"
         aria-hidden="true"
         onClick={closeChatPanel}
-        className={`fixed inset-0 z-30 bg-ink-primary/30 ${reducedMotion ? "" : "transition-opacity"}`}
+        className={`fixed inset-0 z-30 bg-scrim${reducedMotion ? "" : "transition-opacity"}`}
       />
       <div
         ref={panelRef}
@@ -181,7 +181,7 @@ export function ChatPanel(): React.JSX.Element | null {
 
         <div className="relative min-h-0 flex-1">
           <div ref={streamRef} data-testid="chat-stream" onScroll={handleScroll} className="h-full min-h-0 flex-1 overflow-y-auto">
-            <div className="mx-auto flex min-h-full w-full max-w-2xl flex-col justify-end gap-4 px-1 py-2">
+            <div role="log" aria-label="Conversation" className="mx-auto flex min-h-full w-full max-w-2xl flex-col justify-end gap-4 px-1 py-2">
               {entries.map((entry) =>
                 entry.kind === "message" ? (
                   <ChatMessage key={entry.id} message={entry.message} />

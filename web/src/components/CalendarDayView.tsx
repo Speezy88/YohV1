@@ -412,7 +412,9 @@ export function CalendarDayView({ blocks, timeZone, now = () => new Date(), isTo
         onMoveBlock(block.id, movedStartIso(block.start, dy, HOUR_HEIGHT_PX));
       }}
     >
-    <div ref={scrollRef} data-testid="calendar-day-view" className="relative h-full overflow-y-auto overflow-x-hidden rounded-lg">
+    {/* `py-3`: the first and last hour labels are centred ON their rule
+        (half above it), so without this inset the scroll box clips them. */}
+    <div ref={scrollRef} data-testid="calendar-day-view" className="relative h-full overflow-y-auto overflow-x-hidden rounded-lg py-3">
       {!isToday && isEmpty && (
         <p data-testid="calendar-day-empty" className="pointer-events-none absolute inset-x-0 top-4 z-10 px-4 text-center font-body text-small text-ink-secondary" style={{ left: HOUR_LABEL_WIDTH_PX }}>
           Nothing on the calendar

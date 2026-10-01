@@ -106,7 +106,7 @@ export function CommandPalette({ query, onRun, onClose, onHighlightedOptionChang
   }, [filtered, highlighted, onRun, onClose]);
 
   return (
-    <div role="listbox" aria-label="Command palette" data-testid="command-palette" className="notification-glass absolute bottom-full left-0 z-10 mb-2 w-full max-w-md rounded-md p-2">
+    <div role="listbox" aria-label="Command palette" data-testid="command-palette" className="notification-glass absolute bottom-full left-0 z-10 mb-2 w-full rounded-md p-2">
       {filtered.length === 0 && <div className="px-2 py-1 font-body text-body text-ink-secondary">No matching command</div>}
       {rows.map((c, i) => (
         <div
@@ -121,9 +121,10 @@ export function CommandPalette({ query, onRun, onClose, onHighlightedOptionChang
             (filtered.length > 0 && i === highlighted ? "border-accent-solid" : "border-transparent")
           }
         >
-          <span className="font-body text-body font-bold text-ink-primary">{c.name}</span>
-          <span className="flex-1 truncate px-2 font-body text-body text-ink-secondary">{c.description}</span>
-          <span className="font-body text-caption text-ink-secondary">{c.example}</span>
+          <span className="shrink-0 font-body text-body font-bold text-ink-primary">{c.name}</span>
+          <span className="min-w-0 flex-1 truncate px-2 font-body text-body text-ink-secondary">{c.description}</span>
+          {/* A no-argument command's example is just its own name — repeating it adds nothing. */}
+          {c.example !== c.name && <span className="shrink-0 font-body text-caption text-ink-secondary">{c.example}</span>}
         </div>
       ))}
     </div>

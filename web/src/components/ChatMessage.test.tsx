@@ -226,4 +226,12 @@ describe("ChatMessage rating prompt (Story 13.11)", () => {
     render(<ChatMessage message={msg({ text: "Plan updated.", rating: { promptId: "p1", phase: "dismissed" } })} />);
     expect(screen.queryByTestId("rating-prompt")).toBeNull();
   });
+
+  it("keeps the text of markdown it doesn't style (headings, quotes, code blocks) instead of dropping it", () => {
+    render(<ChatMessage message={msg({ text: "# Summary\n\n> Quoted line\n\n```\nnpm test\n```" })} />);
+    expect(screen.getByText("Summary")).toBeInTheDocument();
+    expect(screen.getByText("Quoted line")).toBeInTheDocument();
+    expect(screen.getByText(/npm test/)).toBeInTheDocument();
+    expect(screen.queryByRole("heading")).toBeNull();
+  });
 });

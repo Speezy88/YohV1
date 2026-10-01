@@ -50,6 +50,11 @@ describe("ChatPanel", () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
+  it("exposes the transcript as a log, so a screen reader announces each new turn", () => {
+    renderOpenPanel();
+    expect(screen.getByRole("log", { name: "Conversation" })).toBeInTheDocument();
+  });
+
   it("hydrates today's conversation when the panel opens, not while closed (Story 13.1)", () => {
     const hydrate = vi.spyOn(chatStoreModule, "hydrateChatHistory").mockResolvedValue();
     render(<ChatPanel />);

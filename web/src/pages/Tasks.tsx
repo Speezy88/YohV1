@@ -417,7 +417,7 @@ export default function TasksPage(): React.JSX.Element {
         />
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-3">
-            <label className="flex h-[46px] w-[280px] items-center gap-2.5 rounded-full bg-surface-sunken px-4 shadow-inset">
+            <label className="flex h-[46px] w-[280px] items-center gap-2.5 rounded-full bg-surface-sunken px-4 shadow-inset has-[:focus-visible]:outline-[length:var(--focus-ring-width)] has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent-solid">
               <svg aria-hidden="true" viewBox="0 0 24 24" width={18} height={18} fill="none" stroke="currentColor" className="shrink-0 text-ink-secondary">
                 <path d="M11 17a6 6 0 1 0 0-12 6 6 0 0 0 0 12z M20 20l-4.5-4.5" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
               </svg>

@@ -54,6 +54,7 @@ import { MiniMonth } from "../components/MiniMonth.tsx";
 import { loadCalendarView, saveCalendarView, type CalendarView } from "../lib/calendarView.ts";
 import { ReshufflePreviewCard } from "../components/ReshufflePreviewCard.tsx";
 import { approveReshuffle, discardReshuffle, requestReshuffle, useReshuffle, type ReshuffleView } from "../lib/reshuffle.ts";
+import { useReducedMotion } from "../hooks/useReducedMotion.ts";
 import type { HomeCalendarBlock } from "../../../src/types/api.ts";
 
 /** Weekday + month + day, e.g. "SUNDAY, SEPTEMBER 27" — the server's own host-timezone `today` (AD-17), never `new Date()`. */
@@ -83,7 +84,8 @@ function greetingForHour(hour: number): string {
 }
 
 function PlanRowSkeleton(): React.JSX.Element {
-  return <div data-testid="plan-row-skeleton" className="h-16 animate-pulse rounded-lg bg-surface-sunken" />;
+  const reducedMotion = useReducedMotion();
+  return <div data-testid="plan-row-skeleton" className={`h-16 rounded-lg bg-surface-sunken ${reducedMotion ? "" : "animate-pulse"}`} />;
 }
 
 function HomeHeader({ today }: { readonly today: string }): React.JSX.Element {
@@ -139,6 +141,7 @@ export default function HomePage(): React.JSX.Element {
   // exists from Home's very first render — no later-registering gate can
   // trip the splash's one-way latch before Home has had its own say.
   useReadinessGate("home-data", state.status !== "loading");
+  const reducedMotion = useReducedMotion();
 
   if (state.status === "loading") {
     return (
@@ -148,7 +151,7 @@ export default function HomePage(): React.JSX.Element {
             <PlanRowSkeleton key={i} />
           ))}
         </div>
-        <div data-testid="calendar-skeleton" className="animate-pulse rounded-2xl bg-surface-sunken" />
+        <div data-testid="calendar-skeleton" className={`rounded-2xl bg-surface-sunken ${reducedMotion ? "" : "animate-pulse"}`} />
       </div>
     );
   }
@@ -183,7 +186,10 @@ export default function HomePage(): React.JSX.Element {
             <h2 className="m-0 font-body text-heading font-bold text-ink-primary">Today's Plan</h2>
             <TimeBudgetWidget timeBudget={timeBudget} />
           </div>
-          <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
+          {/* The negative margin + matching padding gives each row's extruded
+              shadow room inside this scroll box (same idiom as the Tasks
+              list) — flush against the edge, the shadow was clipped square. */}
+          <div className="-mx-4 -mt-3 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 pb-4 pt-3">
             {plan === undefined ? (
               <p className="font-body text-body text-ink-secondary">No Plan yet today. Type /plan to build it now.</p>
             ) : allDone ? (
@@ -265,9 +271,10 @@ function DayNavHeader({
 /** `lib/calendarDay.ts`'s loading/error states for a non-today shown date — a skeleton while it loads, a plain line + Retry on error (this task's brief, verbatim); never a static spinner. */
 function OtherDayPanel({ shownDate, timeZone }: { readonly shownDate: string; readonly timeZone: string }): React.JSX.Element {
   const state = useCalendarDay(shownDate);
+  const reducedMotion = useReducedMotion();
 
   if (state.status === "loading") {
-    return <div data-testid="calendar-day-loading-skeleton" className="h-full animate-pulse rounded-lg bg-surface-sunken" />;
+    return <div data-testid="calendar-day-loading-skeleton" className={`h-full rounded-lg bg-surface-sunken ${reducedMotion ? "" : "animate-pulse"}`} />;
   }
   if (state.status === "error") {
     return (

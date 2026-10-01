@@ -115,11 +115,11 @@ export function UndoToast({ id, taskName, label, serverHold = true, durationMs, 
         sync();
       }}
       className={
-        "notification-glass glass-accent-bar fixed bottom-12 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-md px-4 py-2 font-body text-body text-ink-primary " +
+        "notification-glass glass-accent-bar fixed bottom-22 left-1/2 z-40 flex max-w-xl -translate-x-1/2 items-center gap-3 rounded-md px-4 py-2 font-body text-body text-ink-primary " +
         (reducedMotion ? "notification-card--reduced-motion" : "notification-card")
       }
     >
-      <span>{label ?? `Checked off ${taskName ?? ""}`}</span>{" "}
+      <span className="min-w-0 truncate">{label ?? `Checked off ${taskName ?? ""}`}</span>{" "}
       <span aria-hidden="true" className="text-ink-secondary">
         ·
       </span>{" "}

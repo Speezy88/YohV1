@@ -36,6 +36,10 @@
   --color-rim-highlight: light-dark(rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.06));
   --color-shadow-light: light-dark(rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0.07));
   --color-shadow-dark: light-dark(rgba(163, 177, 198, 0.5), rgba(0, 0, 0, 0.6));
+  /* The dimming layer behind a modal panel. Its own token because it must
+     darken in BOTH themes — `ink-primary` is light in dark mode, so an
+     ink-tinted layer washed the page out instead of dimming it. */
+  --color-scrim: light-dark(rgba(32, 36, 44, 0.3), rgba(0, 0, 0, 0.55));
   /* Polish-1 fix round (2026-09-27 review, finding 4): raised again, from a
      92%/90% near-opaque fill to FULLY opaque (alpha 1) — at 92% the
      calendar's own digits still faintly showed through in a real

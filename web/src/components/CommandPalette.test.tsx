@@ -5,9 +5,8 @@ import * as commands from "../lib/commands.ts";
 
 // Note: `example` intentionally differs from `name` in this fixture (unlike
 // the real registry, where a no-arg command's example is just its own
-// name) — the real registry's own repeated text is fine visually (it's two
-// differently-styled spans), but would make `getByText("/morning")`
-// ambiguous here. Every assertion below that cares about a SPECIFIC row
+// name, which the palette now leaves out rather than repeat) so each row
+// renders all three spans. Every assertion below that cares about a SPECIFIC row
 // still keys off the row's own `data-testid`, never bare text, for exactly
 // that reason.
 const REGISTRY = [
@@ -112,5 +111,16 @@ describe("CommandPalette", () => {
     render(<CommandPalette query="/zzz" onRun={() => {}} onClose={() => {}} onHighlightedOptionChange={onHighlightedOptionChange} />);
     await waitFor(() => expect(screen.getByText("No matching command")).toBeInTheDocument());
     expect(onHighlightedOptionChange).toHaveBeenLastCalledWith(undefined);
+  });
+
+  it("shows a command's example only when it adds something beyond the name", async () => {
+    vi.spyOn(commands, "fetchCommands").mockResolvedValue([
+      { name: "/plan", description: "Builds today's Plan.", example: "/plan" },
+      { name: "/remember", description: "Saves a memory.", example: "/remember I prefer mornings" },
+    ]);
+    render(<CommandPalette query="/" onRun={() => {}} onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByTestId("command-row-/plan")).toBeInTheDocument());
+    expect(screen.getAllByText("/plan")).toHaveLength(1);
+    expect(screen.getByText("/remember I prefer mornings")).toBeInTheDocument();
   });
 });

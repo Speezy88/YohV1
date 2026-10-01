@@ -84,12 +84,16 @@ function failureCaption(message: ChatViewMessage): string {
  * Markdown for model- or transcript-written text. The only live link is a
  * `#memory-item-{id}` href (a button that opens that memory); every other
  * href renders as its plain text, so a model-written link is never live.
+ * `unwrapDisallowed` keeps the text of anything outside the allowed set (a
+ * heading, a quote, a fenced code block) — without it react-markdown drops
+ * the element together with its words.
  */
 export function SafeMarkdown({ text }: { readonly text: string }): React.JSX.Element {
   const openInMemory = useOpenInMemory();
   return (
     <Markdown
       allowedElements={ALLOWED_MARKDOWN_ELEMENTS}
+      unwrapDisallowed
       components={{
         a: ({ href, children }) => {
           if (href?.startsWith(MEMORY_LINK_PREFIX) && openInMemory) {
@@ -185,7 +189,7 @@ export function ChatMessage({ message }: ChatMessageProps): React.JSX.Element | 
   return (
     <div data-testid={`chat-message-${message.id}`} className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
       <div
-        className={`flex max-w-[640px] flex-col gap-1 font-body text-body text-ink-primary [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 ${isUser ? "rounded-tl-lg rounded-tr-lg rounded-bl-lg bg-surface-sunken px-5 py-3.5" : ""}`}
+        className={`flex max-w-[640px] flex-col gap-1 wrap-anywhere font-body text-body text-ink-primary [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 ${isUser ? "rounded-tl-lg rounded-tr-lg rounded-bl-lg bg-surface-sunken px-5 py-3.5" : ""}`}
       >
         {thinking ? (
           <ThinkingIndicator statusText={message.statusText ?? ""} />

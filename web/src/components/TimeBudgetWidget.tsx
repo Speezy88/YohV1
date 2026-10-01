@@ -89,7 +89,7 @@ export function TimeBudgetWidget({ timeBudget }: TimeBudgetWidgetProps): React.J
               setEditing(false);
             }
           }}
-          className="w-16 rounded-sm bg-transparent text-center outline-none"
+          className="w-16 rounded-sm bg-transparent text-center focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid"
         />
         <span>h budget</span>
         <button
