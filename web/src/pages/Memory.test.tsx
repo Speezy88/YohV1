@@ -57,6 +57,26 @@ describe("MemoryPage", () => {
     expect(screen.getByRole("heading", { level: 1, name: "Memory" })).toBeInTheDocument();
   });
 
+  it("loading skeleton has the rail and list landmarks in the loaded layout", () => {
+    api.memory.$get.mockReturnValue(new Promise(() => {}));
+    render(<MemoryPage />);
+    const rail = screen.getByTestId("memory-skeleton-rail");
+    expect(rail.className).toContain("w-60");
+    expect(within(rail).getAllByTestId("memory-skeleton").length).toBeGreaterThan(3);
+    const list = screen.getByTestId("memory-skeleton-list");
+    expect(within(list).getAllByTestId("memory-skeleton").length).toBe(3);
+  });
+
+  it("a load error shows Try again, which reloads the view", async () => {
+    api.memory.$get.mockResolvedValueOnce(envelope({ ok: false, error: { kind: "unreachable", message: "raw" } }));
+    render(<MemoryPage />);
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Couldn't load memory right now.");
+    load(view([item("a", "about-you")]));
+    fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("navigation", { name: "Memory" })).toBeInTheDocument();
+  });
+
   it("hides Needs review at zero and shows it with a count otherwise", async () => {
     load(view());
     const { unmount } = render(<MemoryPage />);

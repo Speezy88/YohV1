@@ -28,6 +28,7 @@ import MemoryPage from "./Memory.tsx";
 import { __resetMemoryForTests } from "../lib/memory.ts";
 
 const env = (value: unknown) => ({ json: async () => ({ ok: true, value }) });
+const FAIL = { json: async () => ({ ok: false, error: { kind: "unreachable", message: "raw" } }) };
 
 function item(id: string, folder: MemoryFolder, over: Partial<MemoryItemView> = {}): MemoryItemView {
   return {
@@ -99,6 +100,37 @@ describe("Memory page: search and chat history", () => {
     listGet.mockResolvedValue(env({ conversations: [] }));
     await openHistory();
     expect(await screen.findByText("No saved conversations.")).toBeInTheDocument();
+  });
+
+  it("a failed conversation list shows Try again, which reloads it", async () => {
+    listGet.mockResolvedValueOnce(FAIL);
+    await openHistory();
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Couldn't load memory right now.");
+    fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("button", { name: /Mon Sep 28/ })).toBeInTheDocument();
+    expect(listGet).toHaveBeenCalledTimes(2);
+  });
+
+  it("a failed transcript shows Try again, which reloads it", async () => {
+    oneGet.mockResolvedValueOnce(FAIL);
+    await openHistory();
+    fireEvent.click(await screen.findByRole("button", { name: /Mon Sep 28/ }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Couldn't load memory right now.");
+    fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
+    expect(await screen.findByTestId("remembered-receipt")).toBeInTheDocument();
+    expect(oneGet).toHaveBeenCalledTimes(2);
+  });
+
+  it("a failed clear-all shows its note as an alert in the danger treatment", async () => {
+    clearPost.mockResolvedValue(FAIL);
+    await openHistory();
+    fireEvent.click(await screen.findByRole("button", { name: "Clear all history" }));
+    fireEvent.click(screen.getByRole("button", { name: "Clear history" }));
+    const note = await screen.findByRole("alert");
+    expect(note.className).toContain("text-ink-danger");
+    expect(note.className).toContain("text-small");
   });
 
   it("delete: Undo cancels with no request; letting the toast close commits", async () => {
@@ -194,6 +226,17 @@ describe("Memory page: search and chat history", () => {
       expect(screen.getByRole("searchbox", { name: "Search memory" })).toHaveValue("");
       expect(screen.queryByRole("button", { name: /Runs before school/ })).toBeNull();
       expect(screen.getByRole("region", { name: "Memory items" })).toBeInTheDocument();
+    });
+
+    it("a failed search shows Try again, which re-runs the query", async () => {
+      searchGet.mockResolvedValueOnce(FAIL);
+      render(<MemoryPage />);
+      await type("run");
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent("Couldn't search memory right now.");
+      searchGet.mockResolvedValue(env(RESULTS));
+      fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
+      expect(await screen.findByRole("list", { name: "Search results" })).toBeInTheDocument();
     });
 
     it("no results says so, using the words typed", async () => {

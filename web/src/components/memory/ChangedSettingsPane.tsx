@@ -9,6 +9,8 @@ import { useEffect, useRef, useState } from "react";
 import { revertSetting } from "../../lib/memory.ts";
 import { formatMemoryDay } from "../../lib/memoryFormat.ts";
 import { SMALL_BUTTON_CLASS } from "./MemoryItemRow.tsx";
+import { MEMORY_WRITE_NOTE_CLASS } from "./MemorySkeletonRow.tsx";
+import { StateMessage } from "../StateMessage.tsx";
 import type { ChangedSettingView } from "../../../../src/types/api.ts";
 
 const RESULT_HOLD_MS = 3000;
@@ -55,7 +57,7 @@ export function ChangedSettingsPane({ settings }: { readonly settings: readonly 
   };
 
   const rows = [...settings.filter((s) => !(rowKey(s) in reverted)).map((s) => ({ setting: s, done: undefined as string | undefined })), ...Object.values(reverted).map((r) => ({ setting: r.setting, done: r.message }))];
-  if (rows.length === 0) return <p className="m-0 p-5 font-body text-body text-ink-secondary">No planning rules changed.</p>;
+  if (rows.length === 0) return <StateMessage variant="empty" message="No planning rules changed." className="p-5" />;
 
   return (
     <ul aria-label="Changed settings" className="m-0 flex flex-col gap-2 p-0">
@@ -79,7 +81,7 @@ export function ChangedSettingsPane({ settings }: { readonly settings: readonly 
                   </button>
                 </div>
                 {failures[k] && (
-                  <p role="alert" className="m-0 text-small font-bold text-ink-danger">
+                  <p role="alert" className={MEMORY_WRITE_NOTE_CLASS}>
                     {failures[k]}
                   </p>
                 )}

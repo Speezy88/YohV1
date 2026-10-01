@@ -14,17 +14,42 @@ import { PendingPatterns } from "../components/memory/PendingPatterns.tsx";
 import { MemoryItemRow } from "../components/memory/MemoryItemRow.tsx";
 import { useMemoryDelete, type MemoryDelete } from "../components/memory/MemoryDeleteToast.tsx";
 import { MemoryRail } from "../components/memory/MemoryRail.tsx";
-import { useReducedMotion } from "../hooks/useReducedMotion.ts";
-import { clearPendingScroll, openMemoryItem, selectMemory, startMemoryStream, useMemorySearch, useMemoryView, type MemorySelection } from "../lib/memory.ts";
+import { MemorySkeletonRow, MEMORY_LOAD_ERROR } from "../components/memory/MemorySkeletonRow.tsx";
+import { StateMessage } from "../components/StateMessage.tsx";
+import { clearPendingScroll, openMemoryItem, refetchMemory, selectMemory, startMemoryStream, useMemorySearch, useMemoryView, type MemorySelection } from "../lib/memory.ts";
 import type { MemoryViewResponse } from "../../../src/types/api.ts";
 
 const openSource = (source: { conversationId: string; turnId: string }): void =>
   selectMemory({ kind: "history", conversationId: source.conversationId, turnId: source.turnId });
 
-const MUTED = "m-0 p-5 font-body text-body text-ink-secondary";
+const EMPTY_FOLDER = 'Nothing here yet. Say "remember that ..." in Chat.';
 
-function Skeleton({ reducedMotion }: { readonly reducedMotion: boolean }): React.JSX.Element {
-  return <div data-testid="memory-skeleton" className={`h-[74px] rounded-lg bg-surface-sunken ${reducedMotion ? "" : "animate-pulse"}`} />;
+/** Mirrors MemoryRail (three captioned groups, then the tail) and the list column, so nothing shifts when data arrives. */
+function LoadingLayout(): React.JSX.Element {
+  const railRow = "h-9 rounded-lg";
+  return (
+    <>
+      <div aria-hidden="true" data-testid="memory-skeleton-rail" className="flex w-60 shrink-0 flex-col gap-0.5 overflow-y-auto rounded-xl bg-surface-sunken p-2 shadow-inset">
+        {[3, 3, 2].map((rows, g) => (
+          <div key={g} className="flex flex-col gap-0.5 pt-3">
+            {Array.from({ length: rows }, (_, i) => (
+              <MemorySkeletonRow key={i} className={railRow} />
+            ))}
+          </div>
+        ))}
+        <div className="mt-2 flex flex-col gap-0.5">
+          {[0, 1].map((i) => (
+            <MemorySkeletonRow key={i} className={railRow} />
+          ))}
+        </div>
+      </div>
+      <section aria-hidden="true" data-testid="memory-skeleton-list" className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 px-1 pb-4 pt-1">
+        {[0, 1, 2].map((i) => (
+          <MemorySkeletonRow key={i} />
+        ))}
+      </section>
+    </>
+  );
 }
 
 function Pane({ view, selection, pendingScrollId, del }: { readonly view: MemoryViewResponse; readonly selection: MemorySelection; readonly pendingScrollId?: string; readonly del: MemoryDelete }): React.JSX.Element {
@@ -69,15 +94,11 @@ function Pane({ view, selection, pendingScrollId, del }: { readonly view: Memory
   }
   const folderId = selection.kind === "folder" ? selection.folder : "feedback";
   const folder = view.folders.find((f) => f.folder === folderId) ?? view.folders[0];
-  if (!folder) return <p className={MUTED}>Nothing here yet. Say "remember that ..." in Chat.</p>;
+  if (!folder) return <StateMessage variant="empty" message={EMPTY_FOLDER} className="p-5" />;
   const patterns = folder.folder === "patterns" ? view.pendingPatterns : [];
   // The Patterns folder always mounts PendingPatterns, so an answered card's reply survives the refetch that empties it.
   if (folder.items.length === 0 && patterns.length === 0 && folder.folder !== "patterns") {
-    return (
-      <p className={MUTED}>
-        Nothing here yet. Say "remember that ..." in Chat.
-      </p>
-    );
+    return <StateMessage variant="empty" message={EMPTY_FOLDER} className="p-5" />;
   }
   return (
     <ul aria-label={folder.label} className="m-0 flex flex-col gap-2 p-0">
@@ -91,7 +112,6 @@ function Pane({ view, selection, pendingScrollId, del }: { readonly view: Memory
 
 export default function MemoryPage(): React.JSX.Element {
   const { view, selection, pendingScrollId } = useMemoryView();
-  const reducedMotion = useReducedMotion();
   const search = useMemorySearch();
   const del = useMemoryDelete();
   const searching = search.text.trim() !== "";
@@ -131,13 +151,9 @@ export default function MemoryPage(): React.JSX.Element {
             </section>
           </>
         ) : view.status === "error" ? (
-          <p className={MUTED}>Couldn't load memory right now.</p>
+          <StateMessage variant="error" message={MEMORY_LOAD_ERROR} onRetry={() => void refetchMemory()} className="p-5" />
         ) : (
-          <div className="flex min-w-0 flex-1 flex-col gap-2">
-            {[0, 1, 2].map((i) => (
-              <Skeleton key={i} reducedMotion={reducedMotion} />
-            ))}
-          </div>
+          <LoadingLayout />
         )}
       </div>
       {del.toast}

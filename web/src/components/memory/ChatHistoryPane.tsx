@@ -6,7 +6,8 @@
  * and an inline two-step "Clear all history".
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useReducedMotion } from "../../hooks/useReducedMotion.ts";
+import { StateMessage } from "../StateMessage.tsx";
+import { MemorySkeletonRow, MEMORY_LOAD_ERROR, MEMORY_WRITE_NOTE_CLASS } from "./MemorySkeletonRow.tsx";
 import {
   clearHistory,
   deleteConversation,
@@ -21,24 +22,21 @@ import { LINK_BUTTON_CLASS, SMALL_BUTTON_CLASS } from "./MemoryItemRow.tsx";
 import { TranscriptTurn } from "./TranscriptTurn.tsx";
 
 const CAPTION = "font-body text-small text-ink-secondary";
-const MUTED = "m-0 p-5 font-body text-body text-ink-secondary";
-const LOAD_ERROR = "Couldn't load memory right now.";
 const LINK_BUTTON = LINK_BUTTON_CLASS;
 const ACTION_BUTTON = SMALL_BUTTON_CLASS;
 
 function Skeletons(): React.JSX.Element {
-  const reducedMotion = useReducedMotion();
   return (
     <div className="flex flex-col gap-2">
       {[0, 1, 2].map((i) => (
-        <div key={i} data-testid="memory-skeleton" className={`h-[74px] rounded-lg bg-surface-sunken ${reducedMotion ? "" : "animate-pulse"}`} />
+        <MemorySkeletonRow key={i} />
       ))}
     </div>
   );
 }
 
 function Transcript({ conversationId, turnId, onDelete }: { readonly conversationId: string; readonly turnId?: string; onDelete(): void }): React.JSX.Element {
-  const { state } = useChatConversation(conversationId);
+  const { state, refetch } = useChatConversation(conversationId);
   const loaded = state.status === "loaded";
 
   useEffect(() => {
@@ -50,7 +48,7 @@ function Transcript({ conversationId, turnId, onDelete }: { readonly conversatio
   }, [loaded, turnId, conversationId]);
 
   if (state.status === "loading") return <Skeletons />;
-  if (state.status === "error") return <p className={MUTED}>{LOAD_ERROR}</p>;
+  if (state.status === "error") return <StateMessage variant="error" message={MEMORY_LOAD_ERROR} onRetry={() => void refetch()} className="p-5" />;
   return (
     <section aria-label={`Conversation ${formatConversationDay(state.value.date)}`} className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-3">
@@ -154,18 +152,18 @@ export function ChatHistoryPane({
   }
 
   if (state.status === "loading") return <Skeletons />;
-  if (state.status === "error") return <p className={MUTED}>{LOAD_ERROR}</p>;
+  if (state.status === "error") return <StateMessage variant="error" message={MEMORY_LOAD_ERROR} onRetry={() => void refetch()} className="p-5" />;
   const conversations = state.value.conversations.filter((c) => c.id !== pendingId);
 
   return (
     <div className="flex flex-col gap-3">
       {note && (
-        <p role="alert" className={`m-0 ${CAPTION}`}>
+        <p role="alert" className={MEMORY_WRITE_NOTE_CLASS}>
           {note}
         </p>
       )}
       {conversations.length === 0 ? (
-        <p className={MUTED}>No saved conversations.</p>
+        <StateMessage variant="empty" message="No saved conversations." className="p-5" />
       ) : (
         <>
           <ul aria-label="Conversations" className="m-0 flex flex-col gap-2 p-0">

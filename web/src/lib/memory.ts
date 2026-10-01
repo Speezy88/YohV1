@@ -239,12 +239,12 @@ export function useChatHistoryList(): { readonly state: LoadState<ChatHistoryLis
   return useHintedLoad<ChatHistoryListResponse>(() => settle(() => apiClient.api["chat-history"].$get()), "list");
 }
 
-export function useChatConversation(conversationId: string): { readonly state: LoadState<ChatConversationView> } {
-  const { state } = useHintedLoad<ChatConversationView>(
+export function useChatConversation(conversationId: string): { readonly state: LoadState<ChatConversationView>; refetch(): Promise<void> } {
+  const { state, refetch } = useHintedLoad<ChatConversationView>(
     () => settle(() => apiClient.api["chat-history"][":conversationId"].$get({ param: { conversationId } })),
     conversationId,
   );
-  return { state };
+  return { state, refetch };
 }
 
 export function deleteConversation(conversationId: string): Promise<Outcome<Record<string, never>>> {

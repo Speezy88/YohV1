@@ -6,7 +6,8 @@
  */
 import { FIELD_FOCUS_WITHIN, ROW_HOVER_RAISED } from "../../lib/controlStyles.ts";
 import { LINK_BUTTON_CLASS } from "./MemoryItemRow.tsx";
-import { useReducedMotion } from "../../hooks/useReducedMotion.ts";
+import { StateMessage } from "../StateMessage.tsx";
+import { MemorySkeletonRow } from "./MemorySkeletonRow.tsx";
 import { formatConversationDay } from "../../lib/memoryFormat.ts";
 import { MEMORY_FOLDER_LABELS } from "../../lib/memoryApi.ts";
 import type { useMemorySearch } from "../../lib/memory.ts";
@@ -56,14 +57,16 @@ export function MemorySearchResults({
   onOpenItem(itemId: string): void;
   onOpenTurn(conversationId: string, turnId: string): void;
 }): React.JSX.Element {
-  const reducedMotion = useReducedMotion();
   const words = search.text.trim();
-  if (search.status === "error") return <p className={`m-0 p-5 ${CAPTION}`}>Couldn't search memory right now.</p>;
+  if (search.status === "error") {
+    // Retry = run the current query again.
+    return <StateMessage variant="error" message="Couldn't search memory right now." onRetry={() => search.setText(search.text)} className="p-5" />;
+  }
   if (search.status === "loading" && !search.results) {
     return (
       <div className="flex flex-col gap-2">
         {[0, 1].map((i) => (
-          <div key={i} data-testid="memory-skeleton" className={`h-[74px] rounded-lg bg-surface-sunken ${reducedMotion ? "" : "animate-pulse"}`} />
+          <MemorySkeletonRow key={i} />
         ))}
       </div>
     );
@@ -71,7 +74,7 @@ export function MemorySearchResults({
   const results = search.results;
   if (!results) return <></>;
   if (results.items.length === 0 && results.turns.length === 0) {
-    return <p className={`m-0 p-5 text-body ${CAPTION}`}>No memories or chats match '{words}'.</p>;
+    return <StateMessage variant="empty" message={`No memories or chats match '${words}'.`} className="p-5" />;
   }
   return (
     <ul aria-label="Search results" className="m-0 flex flex-col gap-2 p-0">
