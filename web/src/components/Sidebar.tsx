@@ -20,6 +20,7 @@ import { PAGES } from "../lib/pages.ts";
 import { PageIndicator } from "./PageIndicator.tsx";
 import { ThemeToggle } from "./ThemeToggle.tsx";
 import { YohMark } from "./YohMark.tsx";
+import { CONTROL_DISABLED, CONTROL_TRANSITION, FOCUS_RING, ICON_BUTTON } from "../lib/controlStyles.ts";
 
 const PAGE_ICON_PATHS: Record<(typeof PAGES)[number]["id"], string> = {
   home: "M3 11l9-7 9 7 M5 10v10h14V10",
@@ -71,10 +72,10 @@ export function Sidebar(): React.JSX.Element {
             onClick={() => nav.goTo(i)}
             aria-current={active ? "page" : undefined}
             className={
-              "flex h-[54px] items-center gap-3.5 whitespace-nowrap rounded-lg px-4 font-body text-body font-medium " +
+              `flex h-14 items-center gap-3.5 whitespace-nowrap rounded-lg px-4 font-body text-body font-medium ${FOCUS_RING} ${CONTROL_TRANSITION} ${CONTROL_DISABLED} ` +
               (active
-                ? "bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end font-bold text-on-accent-solid shadow-extruded-sm"
-                : "text-ink-secondary hover:text-ink-primary")
+                ? "bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end font-bold text-on-accent-solid shadow-extruded-sm hover:brightness-105 active:brightness-95"
+                : "text-ink-secondary hover:bg-surface-sunken hover:text-ink-primary active:shadow-inset")
             }
           >
             <DecorativeGlyph path={PAGE_ICON_PATHS[page.id]} />
@@ -89,7 +90,7 @@ export function Sidebar(): React.JSX.Element {
           onClick={nav.prev}
           disabled={atFirst}
           aria-label="Previous page"
-          className="flex h-11 flex-1 items-center justify-center rounded-md border-[length:var(--rim-width)] border-rim-interactive bg-surface-base text-ink-secondary shadow-extruded-sm disabled:opacity-40 enabled:hover:text-accent-solid"
+          className={`h-11 flex-1 ${ICON_BUTTON}`}
         >
           <DecorativeGlyph path={UP_ARROW_PATH} />
         </button>
@@ -98,7 +99,7 @@ export function Sidebar(): React.JSX.Element {
           onClick={nav.next}
           disabled={atLast}
           aria-label="Next page"
-          className="flex h-11 flex-1 items-center justify-center rounded-md border-[length:var(--rim-width)] border-rim-interactive bg-surface-base text-ink-secondary shadow-extruded-sm disabled:opacity-40 enabled:hover:text-accent-solid"
+          className={`h-11 flex-1 ${ICON_BUTTON}`}
         >
           <DecorativeGlyph path={DOWN_ARROW_PATH} />
         </button>

@@ -7,6 +7,8 @@
  * strikethrough and a fade. A real `role="checkbox"` with `aria-checked`
  * and the Task's name as its accessible name; keyboard-operable as a button.
  */
+import { CONTROL_DISABLED, CONTROL_TRANSITION, FOCUS_RING } from "../lib/controlStyles.ts";
+
 export interface CheckboxProps {
   /** The accessible name — the Task's label. */
   readonly label: string;
@@ -27,17 +29,26 @@ export function Checkbox({ label, checked, disabled = false, size = "sm", onChec
       disabled={disabled}
       onClick={onCheck}
       className={
-        (size === "lg" ? "flex size-[26px] rounded-sm " : "flex size-[17px] rounded-xs ") +
-        "shrink-0 items-center justify-center border-[length:var(--rim-width)] border-rim-interactive shadow-inset disabled:opacity-60 " +
-        "focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid " +
-        (checked ? "bg-accent-solid" : "bg-surface-sunken")
+        // The button is the hit area (>= 24px); the drawn box inside keeps its design size. The
+        // sm box's 32px button is pulled back with a negative margin so layout is unchanged.
+        (size === "lg" ? "size-[26px] " : "-m-[7.5px] size-6 ") +
+        `group flex shrink-0 items-center justify-center rounded-xs ${FOCUS_RING} ${CONTROL_DISABLED}`
       }
     >
-      {checked && (
-        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" className="size-full stroke-on-accent-solid" strokeWidth={1.8}>
-          <path d="M5 12.5 L10 17.5 L19 7" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      )}
+      <span
+        data-checkbox-box
+        className={
+          (size === "lg" ? "size-[26px] rounded-sm " : "size-[17px] rounded-xs ") +
+          `flex items-center justify-center border-[length:var(--rim-width)] border-rim-interactive shadow-inset group-hover:border-accent-solid ${CONTROL_TRANSITION} ` +
+          (checked ? "bg-accent-solid" : "bg-surface-sunken")
+        }
+      >
+        {checked && (
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" className="size-full stroke-on-accent-solid" strokeWidth={1.8}>
+            <path d="M5 12.5 L10 17.5 L19 7" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        )}
+      </span>
     </button>
   );
 }

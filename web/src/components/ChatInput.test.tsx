@@ -6,6 +6,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ChatInput } from "./ChatInput.tsx";
+import { FOCUS_RING, CONTROL_DISABLED } from "../lib/controlStyles.ts";
 import * as chatStore from "../lib/chatStore.ts";
 import * as chatStreamModule from "../lib/chatStream.ts";
 import * as commands from "../lib/commands.ts";
@@ -56,6 +57,15 @@ describe("ChatInput", () => {
     fireEvent.keyDown(box(), { key: "Enter", shiftKey: true });
     fireEvent.keyDown(box(), { key: "Enter", isComposing: true });
     expect(sendSpy).not.toHaveBeenCalled();
+  });
+
+  it("Send has the shared focus ring, disabled treatment and hover/pressed brightness", () => {
+    render(<ChatInput />);
+    const cls = screen.getByRole("button", { name: "Send" }).className;
+    expect(cls).toContain(FOCUS_RING);
+    expect(cls).toContain(CONTROL_DISABLED);
+    expect(cls).toContain("hover:brightness-105");
+    expect(cls).toContain("active:brightness-95");
   });
 
   it("the Send button sends too, and is disabled while the draft is blank", () => {

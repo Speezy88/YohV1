@@ -10,6 +10,7 @@
 import { useState } from "react";
 import { effectiveTheme, setStoredTheme, type Theme } from "../lib/theme.ts";
 import { Icon } from "./icons/Icon.tsx";
+import { CONTROL_DISABLED, CONTROL_TRANSITION, FOCUS_RING } from "../lib/controlStyles.ts";
 
 /** 24x24 viewBox, round caps — DESIGN.md's "Sun glyph in light mode". */
 const SUN_PATH =
@@ -31,15 +32,16 @@ export function ThemeToggle(): React.JSX.Element {
   // mode" while the CURRENT theme is light (click to enter dark mode), not
   // "Dark mode" while already dark (which would describe current state,
   // the opposite of what was shipped first).
-  const label = theme === "dark" ? "Switch to light theme" : "Switch to dark theme";
+  // The accessible name is the visible text (WCAG 2.5.3 Label in Name).
   const modeText = theme === "dark" ? "Light mode" : "Dark mode";
+  const label = modeText;
 
   return (
     <button
       type="button"
       onClick={flip}
       aria-label={label}
-      className="flex h-[50px] items-center gap-3 rounded-lg border-[length:var(--rim-width)] border-rim-interactive px-4.5 font-body text-small font-medium text-ink-secondary shadow-extruded-sm"
+      className={`flex h-12 items-center gap-3 rounded-full border-[length:var(--rim-width)] border-rim-interactive px-4.5 font-body text-small font-medium text-ink-secondary shadow-extruded-sm hover:text-ink-primary hover:shadow-extruded-md active:shadow-inset ${FOCUS_RING} ${CONTROL_TRANSITION} ${CONTROL_DISABLED}`}
     >
       {/* DESIGN.md specifies ink-primary for this one glyph; the shared Icon
           convention's neutral/active coloring (ink-secondary/accent-solid)

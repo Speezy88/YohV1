@@ -9,6 +9,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { Sidebar } from "./Sidebar.tsx";
+import { FOCUS_RING } from "../lib/controlStyles.ts";
 import { PageNavigationContext } from "../lib/navigationContext.tsx";
 import type { PageNavigation } from "../lib/pages.ts";
 
@@ -59,11 +60,20 @@ describe("Sidebar", () => {
 
   it("renders the Theme Toggle", () => {
     renderWithNav({ index: 0, goTo: vi.fn(), next: vi.fn(), prev: vi.fn() });
-    expect(screen.getByRole("button", { name: /switch to (dark|light) theme/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /(dark|light) mode/i })).toBeInTheDocument();
   });
 
   it("announces the current page via the visually-hidden live region", () => {
     renderWithNav({ index: 2, goTo: vi.fn(), next: vi.fn(), prev: vi.fn() });
     expect(screen.getByText("Desk, page 3 of 5")).toBeInTheDocument();
+  });
+
+  it("nav items and arrow buttons carry the focus ring; inactive items hover to bg-surface-sunken", () => {
+    renderWithNav({ index: 0, goTo: vi.fn(), next: vi.fn(), prev: vi.fn() });
+    const inactive = screen.getByRole("button", { name: "Tasks" });
+    expect(inactive.className).toContain(FOCUS_RING);
+    expect(inactive.className).toContain("hover:bg-surface-sunken");
+    expect(screen.getByRole("button", { name: "Previous page" }).className).toContain(FOCUS_RING);
+    expect(screen.getByRole("button", { name: "Next page" }).className).toContain(FOCUS_RING);
   });
 });

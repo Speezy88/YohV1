@@ -17,6 +17,7 @@
  * already focused — type — Enter. Three actions, as before.
  */
 import { openChatPanel } from "../lib/chatPanel.ts";
+import { CONTROL_TRANSITION, FOCUS_RING } from "../lib/controlStyles.ts";
 
 export function AskYohPill(): React.JSX.Element {
   return (
@@ -26,7 +27,7 @@ export function AskYohPill(): React.JSX.Element {
         data-testid="ask-yoh-pill"
         aria-label="Ask Yoh (Command K)"
         onClick={openChatPanel}
-        className="notification-glass pointer-events-auto flex h-[46px] items-center gap-2.5 rounded-full py-0 pl-2 pr-4.5 font-body text-small font-bold text-ink-primary shadow-extruded-md"
+        className={`notification-glass pointer-events-auto flex h-[46px] items-center gap-2.5 rounded-full py-0 pl-2 pr-4.5 font-body text-small font-bold text-ink-primary shadow-extruded-md hover:shadow-extruded-lg active:shadow-inset ${FOCUS_RING} ${CONTROL_TRANSITION}`}
       >
         <span
           aria-hidden="true"

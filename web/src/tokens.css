@@ -200,6 +200,10 @@
 
   /* Story 13.4: the Remembered Receipt line fades in after the reply has streamed. */
   --duration-receipt-fade: 300ms;
+
+  /* Polish 6 (P6-R2): the shared control transition (hover, pressed, focus). */
+  --duration-control: 150ms;
+  --ease-control: cubic-bezier(0.2, 0, 0, 1);
 }
 
 :root {
@@ -318,6 +322,33 @@ body {
    layered ones), which is why 7.7's card never showed its bar. */
 .glass-accent-bar {
   border-left: 3px solid var(--color-accent-solid);
+}
+
+/* Polish 6 (P6-R3): pointer cursor on every enabled control, not-allowed on
+   disabled ones; unlayered so it wins over Tailwind's preflight cursor reset. */
+button:not(:disabled),
+[role="button"]:not([aria-disabled="true"]),
+[role="option"],
+a[href],
+summary {
+  cursor: pointer;
+}
+button:disabled,
+[role="button"][aria-disabled="true"] {
+  cursor: not-allowed;
+}
+
+/* Polish 6 (P6-R2): under reduced motion the control state still changes,
+   instantly. */
+@media (prefers-reduced-motion: reduce) {
+  button,
+  [role="button"],
+  [role="option"],
+  a[href],
+  summary,
+  [data-checkbox-box] {
+    transition: none !important;
+  }
 }
 
 /* Story 7.7, "Toast enter": 0.55s ease-out, 5px drop + fade normally;
