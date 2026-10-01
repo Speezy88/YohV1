@@ -114,6 +114,45 @@ describe("chatStore", () => {
     ]);
   });
 
+  const PROPOSAL_ITEM = { requestId: QUESTION.requestId, promptText: QUESTION.text, question: QUESTION } as unknown as OpenItem;
+  const PROPOSAL_TURNS = [
+    { id: "t1", role: "user", text: "add a task to draft the memo", truncated: false, createdAt: "2026-08-22T10:00:00Z" },
+    { id: "t2", role: "assistant", text: "Here's the draft.\n\nCreate it?", truncated: false, createdAt: "2026-08-22T10:00:01Z" },
+  ];
+
+  it("appendPendingOpenItem leaves the message text empty when the card already says the same words", () => {
+    const { result } = renderHook(() => useChatStore());
+    act(() => appendPendingOpenItem(PROPOSAL_ITEM));
+    expect(messagesOf(result.current)).toHaveLength(1);
+    expect(messagesOf(result.current)[0]).toMatchObject({ text: "", question: QUESTION });
+  });
+
+  it("a pending question whose words are already in a restored turn becomes that turn's card (history first)", async () => {
+    historyGet.mockReset();
+    historyGet.mockResolvedValue({ json: async () => ({ ok: true, value: { date: "2026-08-22", turns: PROPOSAL_TURNS } }) });
+    const { result } = renderHook(() => useChatStore());
+    await act(async () => hydrateChatHistory());
+    act(() => appendPendingOpenItem(PROPOSAL_ITEM));
+    expect(messagesOf(result.current).map((m) => [m.role, m.text, m.question])).toEqual([
+      ["user", "add a task to draft the memo", undefined],
+      ["assistant", "Here's the draft.", QUESTION],
+    ]);
+  });
+
+  it("a pending question whose words are already in a restored turn becomes that turn's card (open items first)", async () => {
+    historyGet.mockReset();
+    historyGet.mockResolvedValue({ json: async () => ({ ok: true, value: { date: "2026-08-22", turns: PROPOSAL_TURNS } }) });
+    const { result } = renderHook(() => useChatStore());
+    act(() => appendPendingOpenItem(PROPOSAL_ITEM));
+    await act(async () => hydrateChatHistory());
+    expect(messagesOf(result.current).map((m) => [m.role, m.text, m.question])).toEqual([
+      ["user", "add a task to draft the memo", undefined],
+      ["assistant", "Here's the draft.", QUESTION],
+    ]);
+    act(() => appendPendingOpenItem(PROPOSAL_ITEM));
+    expect(messagesOf(result.current)).toHaveLength(2);
+  });
+
   it("hydrated is false until the history fetch settles, then true (success or failure)", async () => {
     historyGet.mockReset();
     historyGet.mockResolvedValue({ json: async () => ({ ok: true, value: { date: "2026-08-22", turns: [] } }) });

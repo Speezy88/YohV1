@@ -201,6 +201,31 @@ function messageEntries(entries: readonly StreamEntry[]): ReadonlyArray<Extract<
   return entries.filter((e): e is Extract<StreamEntry, { kind: "message" }> => e.kind === "message");
 }
 
+/**
+ * The server stores a question-bearing reply as `reply\n\nquestion text`, so
+ * after a reload a still-pending question's words are already in a restored
+ * turn. Returns `entries` with the question moved onto the newest such turn
+ * (and its words taken out of that turn's text — the card says them), or
+ * `undefined` when no restored turn carries them.
+ */
+function attachToStoredTurn(entries: readonly StreamEntry[], question: OpenItemQuestion): StreamEntry[] | undefined {
+  const suffix = `\n\n${question.text}`;
+  const index = entries.findLastIndex(
+    (e) =>
+      e.kind === "message" &&
+      e.message.id.startsWith("stored-") &&
+      e.message.role === "assistant" &&
+      e.message.question === undefined &&
+      (e.message.text === question.text || e.message.text.endsWith(suffix)),
+  );
+  if (index === -1) return undefined;
+  return entries.map((e, i) => {
+    if (i !== index || e.kind !== "message") return e;
+    const text = e.message.text === question.text ? "" : e.message.text.slice(0, -suffix.length);
+    return { ...e, message: { ...e.message, text, question } };
+  });
+}
+
 function patchMessage(id: string, patch: (message: ChatViewMessage) => Partial<ChatViewMessage>): void {
   set({
     ...state,
@@ -284,7 +309,15 @@ export async function hydrateChatHistory(): Promise<void> {
       const message: ChatViewMessage = { id: `stored-${turn.id}`, role: turn.role, text: turn.text, receipts: [], status: "done" };
       return { kind: "message", id: message.id, message };
     });
-    set({ ...state, entries: [...restored, ...state.entries], hydrated: true });
+    // A pending question appended before this read settled moves onto the restored turn that asked it.
+    let merged = restored;
+    const kept = state.entries.filter((e) => {
+      if (e.kind !== "message" || e.message.question === undefined || e.message.text !== "") return true;
+      const attached = attachToStoredTurn(merged, e.message.question);
+      if (attached) merged = attached;
+      return attached === undefined;
+    });
+    set({ ...state, entries: [...merged, ...kept], hydrated: true });
   } catch {
     // The panel simply starts empty.
     set({ ...state, hydrated: true });
@@ -426,8 +459,15 @@ export function appendPendingOpenItem(item: OpenItem): void {
   const key = pendingItemKey(item.requestId, item.question.questionId);
   if (shownPendingRequestIds.has(key)) return;
   shownPendingRequestIds.add(key);
+  const attached = attachToStoredTurn(state.entries, item.question);
+  if (attached) {
+    set({ ...state, entries: attached });
+    return;
+  }
   const id = `chat-${++nextId}`;
-  appendMessage({ id, role: "assistant", text: item.promptText, receipts: [], question: item.question, status: "done" });
+  // A proposal's prompt is the question text itself: the card says it, so the words are not shown twice.
+  const text = item.promptText === item.question.text ? "" : item.promptText;
+  appendMessage({ id, role: "assistant", text, receipts: [], question: item.question, status: "done" });
 }
 
 /**
