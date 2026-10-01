@@ -109,7 +109,7 @@
  * two rules for a date that ISN'T today: no now-line at all (there's no
  * "current moment" to mark on a day that isn't today), and the mount-time
  * auto-scroll targets the first event's start, or 8am on a genuinely empty
- * day, rather than "now." An empty non-today day also says so plainly
+ * day, rather than "now." An empty day (Polish 6 Task 7: today included) also says so plainly
  * ("Nothing on the calendar") rather than showing a bare, contentless grid.
  * `Home.tsx`'s header (the shown date + prev/next-day/Today controls) lives
  * one level up, in `CalendarColumn` — this component only ever renders the
@@ -416,7 +416,7 @@ export function CalendarDayView({ blocks, timeZone, now = () => new Date(), isTo
     {/* `py-3`: the first and last hour labels are centred ON their rule
         (half above it), so without this inset the scroll box clips them. */}
     <div ref={scrollRef} data-testid="calendar-day-view" className="relative h-full overflow-y-auto overflow-x-hidden rounded-lg py-3">
-      {!isToday && isEmpty && (
+      {isEmpty && (
         <p data-testid="calendar-day-empty" className="pointer-events-none absolute inset-x-0 top-4 z-10 px-4 text-center font-body text-small text-ink-secondary" style={{ left: HOUR_LABEL_WIDTH_PX }}>
           Nothing on the calendar
         </p>

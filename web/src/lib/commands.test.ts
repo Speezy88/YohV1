@@ -27,9 +27,21 @@ describe("commands store", () => {
     expect(apiClient.api.commands.$get).toHaveBeenCalledTimes(1);
   });
 
-  it("a failed fetch resolves to an empty list rather than throwing", async () => {
+  it("a failed fetch rejects, so callers can tell failure from an empty registry", async () => {
     (apiClient.api.commands.$get as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("network"));
-    expect(await fetchCommands()).toEqual([]);
+    await expect(fetchCommands()).rejects.toThrow();
+  });
+
+  it("a not-ok result rejects too", async () => {
+    (apiClient.api.commands.$get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ json: async () => ({ ok: false }) });
+    await expect(fetchCommands()).rejects.toThrow();
+  });
+
+  it("does not cache a failure: the next call refetches", async () => {
+    (apiClient.api.commands.$get as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("network"));
+    await expect(fetchCommands()).rejects.toThrow();
+    expect(await fetchCommands()).toEqual(REGISTRY);
+    expect(apiClient.api.commands.$get).toHaveBeenCalledTimes(2);
   });
 });
 

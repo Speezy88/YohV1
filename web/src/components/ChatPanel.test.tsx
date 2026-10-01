@@ -71,6 +71,17 @@ describe("ChatPanel", () => {
     expect(offer).toHaveBeenCalledTimes(1);
   });
 
+  it("shows the welcome line with no entries, outside the log, and drops it once there is a turn", () => {
+    renderOpenPanel();
+    const welcome = screen.getByText("Ask about your day, add a Task, or type / for commands.");
+    expect(welcome).toBeInTheDocument();
+    expect(screen.getByRole("log", { name: "Conversation" })).not.toContainElement(welcome);
+    act(() => {
+      appendStreamEntry({ kind: "sandbox-finale", status: "done", savedCount: 1, failedTitles: [] });
+    });
+    expect(screen.queryByText("Ask about your day, add a Task, or type / for commands.")).not.toBeInTheDocument();
+  });
+
   it("renders nothing while closed", () => {
     render(<ChatPanel />);
     expect(screen.queryByTestId("chat-panel")).not.toBeInTheDocument();

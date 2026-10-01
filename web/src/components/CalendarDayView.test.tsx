@@ -509,9 +509,9 @@ describe("CalendarDayView", () => {
       expect(screen.queryByTestId("calendar-day-empty")).not.toBeInTheDocument();
     });
 
-    it("isToday defaults to true: an empty TODAY view never shows the non-today empty message", () => {
+    it("isToday defaults to true: an empty TODAY view says 'Nothing on the calendar' too", () => {
       render(<CalendarDayView blocks={[]} timeZone={UTC} now={NOON_UTC} />);
-      expect(screen.queryByTestId("calendar-day-empty")).not.toBeInTheDocument();
+      expect(screen.getByTestId("calendar-day-empty")).toHaveTextContent("Nothing on the calendar");
     });
   });
 });

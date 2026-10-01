@@ -13,7 +13,7 @@ import type { CommandDescriptor } from "../../../src/types/api.ts";
 let cached: readonly CommandDescriptor[] | undefined;
 let inflight: Promise<readonly CommandDescriptor[]> | undefined;
 
-/** Fetches the registry once and caches it; concurrent callers before the first response share one in-flight request. A failed fetch resolves to an empty list rather than throwing — the Command Palette then shows "No matching command" for every query rather than crashing. */
+/** Fetches the registry once and caches a SUCCESS; concurrent callers before the first response share one in-flight request. A failed fetch rejects and is never cached — the next call (the palette's next open, or its "Try again") refetches — so callers can tell a failure from an empty registry. */
 export async function fetchCommands(): Promise<readonly CommandDescriptor[]> {
   if (cached) return cached;
   if (!inflight) {
@@ -21,13 +21,12 @@ export async function fetchCommands(): Promise<readonly CommandDescriptor[]> {
       try {
         const res = await apiClient.api.commands.$get();
         const result = await res.json();
-        cached = result.ok ? result.value.commands : [];
-      } catch {
-        cached = [];
+        if (!result.ok) throw new Error("commands unavailable");
+        cached = result.value.commands;
+        return cached;
       } finally {
         inflight = undefined;
       }
-      return cached;
     })();
   }
   return inflight;

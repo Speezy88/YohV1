@@ -19,6 +19,27 @@ describe("CommandPalette", () => {
     vi.spyOn(commands, "fetchCommands").mockResolvedValue(REGISTRY);
   });
 
+  it("while loading shows 3 skeleton rows and no 'No matching command'", () => {
+    vi.spyOn(commands, "fetchCommands").mockReturnValue(new Promise(() => {}));
+    const onHighlight = vi.fn();
+    render(<CommandPalette query="/m" onRun={() => {}} onClose={() => {}} onHighlightedOptionChange={onHighlight} />);
+    expect(screen.getAllByTestId("command-row-skeleton")).toHaveLength(3);
+    expect(screen.queryByText("No matching command")).not.toBeInTheDocument();
+    expect(onHighlight).toHaveBeenLastCalledWith(undefined);
+  });
+
+  it("a failed load shows the error and Try again refetches", async () => {
+    const spy = vi.spyOn(commands, "fetchCommands").mockRejectedValueOnce(new Error("boom")).mockResolvedValueOnce(REGISTRY);
+    render(<CommandPalette query="/m" onRun={() => {}} onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByText("Couldn't load commands.")).toBeInTheDocument());
+    expect(screen.queryByText("No matching command")).not.toBeInTheDocument();
+    expect(screen.queryByText("boom")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(screen.getByTestId("command-row-/morning")).toBeInTheDocument());
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText("Couldn't load commands.")).not.toBeInTheDocument();
+  });
+
   it("lists every command, filtered live by query", async () => {
     render(<CommandPalette query="/m" onRun={() => {}} onClose={() => {}} />);
     await waitFor(() => expect(screen.getByTestId("command-row-/morning")).toBeInTheDocument());

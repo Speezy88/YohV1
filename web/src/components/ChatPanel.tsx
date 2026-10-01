@@ -50,6 +50,7 @@ import { useChatPanel, closeChatPanel } from "../lib/chatPanel.ts";
 import { useMissingDataCount, missingDataChipLabel, openMissingData } from "../lib/missingData.ts";
 import { startOpenItemsStream, useOpenItems } from "../lib/openItems.ts";
 import { useReducedMotion } from "../hooks/useReducedMotion.ts";
+import { StateMessage } from "./StateMessage.tsx";
 import { ChatMessage } from "./ChatMessage.tsx";
 import { ChatInput } from "./ChatInput.tsx";
 import { SandboxCard } from "./SandboxCard.tsx";
@@ -181,6 +182,12 @@ export function ChatPanel(): React.JSX.Element | null {
         </div>
 
         <div className="relative min-h-0 flex-1">
+          {/* Polish 6 (P6-R8): text-only welcome while the chat has no turns. Outside the role="log" region so it is never announced as a turn. */}
+          {entries.length === 0 && (
+            <div data-testid="chat-welcome" className="pointer-events-none absolute inset-0 flex items-center justify-center px-6 text-center">
+              <StateMessage variant="empty" message="Ask about your day, add a Task, or type / for commands." />
+            </div>
+          )}
           <div ref={streamRef} data-testid="chat-stream" onScroll={handleScroll} className="h-full min-h-0 flex-1 overflow-y-auto">
             <div role="log" aria-label="Conversation" className="mx-auto flex min-h-full w-full max-w-2xl flex-col justify-end gap-4 px-1 py-2">
               {entries.map((entry) =>

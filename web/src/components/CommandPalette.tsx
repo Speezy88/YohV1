@@ -26,7 +26,9 @@
  * command as ↑/↓ move it, without moving DOM focus off the input.
  */
 import { ROW_HOVER_FLAT } from "../lib/controlStyles.ts";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { useReducedMotion } from "../hooks/useReducedMotion.ts";
+import { StateMessage } from "./StateMessage.tsx";
 import { fetchCommands, filterCommands } from "../lib/commands.ts";
 import type { CommandDescriptor } from "../../../src/types/api.ts";
 
@@ -45,17 +47,29 @@ function optionId(command: CommandDescriptor): string {
 
 export function CommandPalette({ query, onRun, onClose, onHighlightedOptionChange }: CommandPaletteProps): React.JSX.Element {
   const [commands, setCommands] = useState<readonly CommandDescriptor[]>([]);
+  const [loadState, setLoadState] = useState<"loading" | "ready" | "failed">("loading");
   const [highlighted, setHighlighted] = useState(0);
+  const reducedMotion = useReducedMotion();
 
-  useEffect(() => {
+  const load = useCallback((): (() => void) => {
     let cancelled = false;
-    void fetchCommands().then((c) => {
-      if (!cancelled) setCommands(c);
-    });
+    setLoadState("loading");
+    fetchCommands().then(
+      (c) => {
+        if (cancelled) return;
+        setCommands(c);
+        setLoadState("ready");
+      },
+      () => {
+        if (!cancelled) setLoadState("failed");
+      },
+    );
     return () => {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => load(), [load]);
 
   const filtered = filterCommands(commands, query);
   const rows = filtered.length === 0 ? commands : filtered;
@@ -108,7 +122,12 @@ export function CommandPalette({ query, onRun, onClose, onHighlightedOptionChang
 
   return (
     <div role="listbox" aria-label="Command palette" data-testid="command-palette" className="notification-glass absolute bottom-full left-0 z-10 mb-2 w-full rounded-md p-2">
-      {filtered.length === 0 && <div className="px-2 py-1 font-body text-body text-ink-secondary">No matching command</div>}
+      {loadState === "loading" &&
+        [0, 1, 2].map((i) => (
+          <div key={i} data-testid="command-row-skeleton" className={`my-1 h-7 rounded-sm bg-surface-sunken ${reducedMotion ? "" : "animate-pulse"}`} />
+        ))}
+      {loadState === "failed" && <StateMessage variant="error" className="px-2 py-1" message="Couldn't load commands." onRetry={() => void load()} />}
+      {loadState === "ready" && filtered.length === 0 && <div className="px-2 py-1 font-body text-body text-ink-secondary">No matching command</div>}
       {rows.map((c, i) => (
         <div
           key={c.name}
