@@ -15,7 +15,7 @@ async function openChat(page: Page): Promise<void> {
 }
 
 async function say(page: Page, text: string): Promise<void> {
-  const input = page.getByTestId("chat-panel").getByRole("textbox", { name: "Message Yoh" });
+  const input = page.getByTestId("chat-panel").getByRole("combobox", { name: "Message Yoh" });
   await input.fill(text);
   await input.press("Enter");
 }

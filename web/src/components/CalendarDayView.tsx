@@ -314,7 +314,7 @@ interface BlockShellProps {
 function BlockShell({ id, draggable, fromTime, reducedMotion, moved, className, style, attrs, children }: BlockShellProps): React.JSX.Element {
   const { ref, isDragging } = useBlockDrag({ id, disabled: !draggable });
   const motion = reducedMotion ? (moved ? "calendar-block--fade" : "") : "calendar-block--glide";
-  const lifted = isDragging ? `outline outline-[1.5px] -outline-offset-1 outline-accent-solid z-20 ${reducedMotion ? "" : "calendar-block--lifted"}` : "";
+  const lifted = isDragging ? `outline outline-[1.5px] -outline-offset-1 outline-accent-solid z-(--z-popover) ${reducedMotion ? "" : "calendar-block--lifted"}` : "";
   return (
     <div
       {...attrs}
@@ -417,7 +417,7 @@ export function CalendarDayView({ blocks, timeZone, now = () => new Date(), isTo
         (half above it), so without this inset the scroll box clips them. */}
     <div ref={scrollRef} data-testid="calendar-day-view" className="relative h-full overflow-y-auto overflow-x-hidden rounded-lg py-3">
       {isEmpty && (
-        <p data-testid="calendar-day-empty" className="pointer-events-none absolute inset-x-0 top-4 z-10 px-4 text-center font-body text-small text-ink-secondary" style={{ left: HOUR_LABEL_WIDTH_PX }}>
+        <p data-testid="calendar-day-empty" className="pointer-events-none absolute inset-x-0 top-4 z-(--z-raised) px-4 text-center font-body text-small text-ink-secondary" style={{ left: HOUR_LABEL_WIDTH_PX }}>
           Nothing on the calendar
         </p>
       )}
@@ -528,7 +528,7 @@ export function CalendarDayView({ blocks, timeZone, now = () => new Date(), isTo
                 // A sibling of the draggable, not a child: nested interactive content is
                 // presentational inside dnd-kit's role="button", and a click here must not start a drag.
                 <span
-                  className="absolute z-10 flex items-center rounded-full bg-surface-sunken text-ink-secondary"
+                  className="absolute z-(--z-raised) flex items-center rounded-full bg-surface-sunken text-ink-secondary"
                   style={{ top: top + PIN_INSET_PX, ...(width !== undefined ? { left: `calc(${typeof left === "number" ? `${left}px` : left} + ${width} - ${PIN_SIZE_PX + PIN_INSET_PX}px)` } : { right: 8 + PIN_INSET_PX }) }}
                 >
                   <button

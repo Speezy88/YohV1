@@ -50,3 +50,28 @@ describe("UndoToast generalization (Story 13.9)", () => {
     vi.useRealTimers();
   });
 });
+
+describe("UndoToast reachability (Task 8, polish-6)", () => {
+  it("Undo is the next Tab stop after the control that triggered it, and Shift+Tab from Undo returns there", () => {
+    const trigger = document.createElement("button");
+    trigger.textContent = "Check off";
+    document.body.appendChild(trigger);
+    trigger.focus();
+    render(<UndoToast id="x" label="Deleted" serverHold={false} durationMs={5000} onUndo={async () => {}} onExpire={() => {}} />);
+    const undo = screen.getByRole("button", { name: "Undo" });
+    expect(fireEvent.keyDown(trigger, { key: "Tab" })).toBe(false);
+    expect(undo).toHaveFocus();
+    expect(fireEvent.keyDown(undo, { key: "Tab", shiftKey: true })).toBe(false);
+    expect(trigger).toHaveFocus();
+    trigger.remove();
+  });
+
+  it("Tab from any other element is left to the browser", () => {
+    const other = document.createElement("button");
+    document.body.appendChild(other);
+    render(<UndoToast id="x" label="Deleted" serverHold={false} durationMs={5000} onUndo={async () => {}} onExpire={() => {}} />);
+    other.focus();
+    expect(fireEvent.keyDown(other, { key: "Tab" })).toBe(true);
+    other.remove();
+  });
+});

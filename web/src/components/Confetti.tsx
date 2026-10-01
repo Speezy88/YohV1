@@ -69,7 +69,7 @@ export function Confetti({ today }: { readonly today: string }): React.JSX.Eleme
   };
 
   return (
-    <div data-testid="confetti" aria-hidden="true" className="pointer-events-none fixed inset-0 z-30 overflow-hidden">
+    <div data-testid="confetti" aria-hidden="true" className="pointer-events-none fixed inset-0 z-(--z-confetti) overflow-hidden">
       {pieces.map((i) => (
         <span
           key={i}

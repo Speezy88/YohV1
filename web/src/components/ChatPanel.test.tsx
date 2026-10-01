@@ -27,7 +27,7 @@ function setScrollGeometry(el: HTMLElement, geometry: { scrollHeight: number; cl
 }
 
 function pressEnterWith(text: string): void {
-  const input = screen.getByRole("textbox", { name: "Message Yoh" });
+  const input = screen.getByRole("combobox", { name: "Message Yoh" });
   fireEvent.change(input, { target: { value: text } });
   fireEvent.keyDown(input, { key: "Enter" });
 }
@@ -99,13 +99,45 @@ describe("ChatPanel", () => {
 
   it("focuses the Chat Input's textarea as soon as it opens (capture flow: click/⌘K, type, Enter)", () => {
     renderOpenPanel();
-    expect(screen.getByRole("textbox", { name: "Message Yoh" })).toHaveFocus();
+    expect(screen.getByRole("combobox", { name: "Message Yoh" })).toHaveFocus();
   });
 
   it("Esc closes the panel", () => {
     renderOpenPanel();
     fireEvent.keyDown(screen.getByTestId("chat-panel"), { key: "Escape" });
     expect(screen.queryByTestId("chat-panel")).not.toBeInTheDocument();
+  });
+
+  it("Task 8: Tab from the last control wraps to the first, and Shift+Tab from the first wraps to the last", () => {
+    renderOpenPanel();
+    const panel = screen.getByTestId("chat-panel");
+    const focusables = Array.from(panel.querySelectorAll<HTMLElement>("button:not([disabled]), textarea, a[href], input, [tabindex]:not([tabindex='-1'])"));
+    const first = focusables[0]!;
+    const last = focusables[focusables.length - 1]!;
+    last.focus();
+    const forward = fireEvent.keyDown(last, { key: "Tab" });
+    expect(forward).toBe(false); // default prevented: the panel moves focus itself
+    expect(first).toHaveFocus();
+    const backward = fireEvent.keyDown(first, { key: "Tab", shiftKey: true });
+    expect(backward).toBe(false);
+    expect(last).toHaveFocus();
+  });
+
+  it("Task 8: Tab between inner controls is left to the browser", () => {
+    renderOpenPanel();
+    const input = screen.getByRole("combobox", { name: "Message Yoh" });
+    expect(fireEvent.keyDown(input, { key: "Tab", shiftKey: true })).toBe(true);
+  });
+
+  it("Task 8: closing returns focus to the element that opened the panel", () => {
+    const opener = document.createElement("button");
+    document.body.appendChild(opener);
+    opener.focus();
+    renderOpenPanel();
+    expect(opener).not.toHaveFocus();
+    fireEvent.keyDown(screen.getByTestId("chat-panel"), { key: "Escape" });
+    expect(opener).toHaveFocus();
+    opener.remove();
   });
 
   it("dims the page behind the panel with the scrim token", () => {

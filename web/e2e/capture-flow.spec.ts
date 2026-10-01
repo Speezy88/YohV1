@@ -24,7 +24,7 @@ async function openPanel(page: Page): Promise<void> {
 }
 
 function messageInput(page: Page) {
-  return page.getByRole("textbox", { name: "Message Yoh" });
+  return page.getByRole("combobox", { name: "Message Yoh" });
 }
 
 test.beforeEach(async ({ request }) => {

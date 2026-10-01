@@ -59,9 +59,13 @@ export function openChatPanel(): void {
   set({ open: true });
 }
 
-/** Closes the panel and returns focus to whatever had it before `openChatPanel` — a no-op if that element is gone from the DOM. */
+/** Closes the panel. Focus goes back to the opener via `restoreChatPanelFocus`, which `ChatPanel` calls once React has committed the close (while the page was still inert, a focus call here would be ignored). */
 export function closeChatPanel(): void {
   set({ open: false });
+}
+
+/** Returns focus to whatever had it before `openChatPanel` — a no-op if that element is gone from the DOM. Called after the close has rendered. */
+export function restoreChatPanelFocus(): void {
   restoreFocusTo?.focus();
   restoreFocusTo = undefined;
 }

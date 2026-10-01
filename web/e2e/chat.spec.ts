@@ -25,7 +25,7 @@ test.beforeEach(async ({ request }) => {
 test("Enter shows Spencer's turn and the Thinking Indicator at once, then Yoh's reply streams in over POST /api/chat", async ({ page }) => {
   await openChat(page);
   const chat = page.getByTestId("chat-panel");
-  const input = chat.getByRole("textbox", { name: "Message Yoh" });
+  const input = chat.getByRole("combobox", { name: "Message Yoh" });
   await input.fill("Hello Yoh");
 
   const chatResponse = page.waitForResponse((r) => r.url().endsWith("/api/chat") && r.request().method() === "POST");
@@ -46,7 +46,7 @@ test("Enter shows Spencer's turn and the Thinking Indicator at once, then Yoh's 
 test("Esc closes the Chat panel; the unsent draft and the transcript survive close and reopen", async ({ page }) => {
   await openChat(page);
   const chat = page.getByTestId("chat-panel");
-  const input = chat.getByRole("textbox", { name: "Message Yoh" });
+  const input = chat.getByRole("combobox", { name: "Message Yoh" });
   await input.fill("First message");
   await input.press("Enter");
   await expect(chat.getByText(FIXTURE_CHAT_REPLY)).toBeVisible({ timeout: 5_000 });

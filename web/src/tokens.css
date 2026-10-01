@@ -171,6 +171,21 @@
   --duration-notification-enter: 550ms;
   --duration-notification-pulse: 2200ms;
 
+  /* Task 8 (polish-6): the stacking layers, defined once. Ascending order:
+     in-page popovers < Ask Yoh pill < confetti < Chat backdrop < Chat panel
+     < notifications and the Undo Toast (they stay operable over an open
+     Chat panel) < the skip link < splash/Screensaver (always the top layer).
+     Components use `z-(--z-name)`; never a bare number. */
+  --z-raised: 10;
+  --z-popover: 20;
+  --z-pill: 30;
+  --z-confetti: 35;
+  --z-chat-backdrop: 40;
+  --z-chat: 41;
+  --z-toast: 50;
+  --z-skip-link: 55;
+  --z-splash: 60;
+
   /* Story 7.8, DESIGN.md `Birthday Confetti`, UX-DR46: one short burst.
      Fix round 1 (reviewer finding #5): the ONE defining place for the
      per-piece fall duration — `Confetti.tsx` reads it via `var(...)` in its

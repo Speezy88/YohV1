@@ -41,6 +41,9 @@ export interface CommandPaletteProps {
 }
 
 /** A stable DOM id for `command`'s row — `aria-activedescendant` needs an id it can point at; `/` is stripped since it reads oddly in an id. */
+/** The listbox id; the Chat Input combobox points aria-controls at it. */
+export const COMMAND_PALETTE_ID = "command-palette-listbox";
+
 function optionId(command: CommandDescriptor): string {
   return `command-option-${command.name.replace(/\//g, "")}`;
 }
@@ -121,7 +124,7 @@ export function CommandPalette({ query, onRun, onClose, onHighlightedOptionChang
   }, [filtered, highlighted, onRun, onClose]);
 
   return (
-    <div role="listbox" aria-label="Command palette" data-testid="command-palette" className="notification-glass absolute bottom-full left-0 z-10 mb-2 w-full rounded-md p-2">
+    <div id={COMMAND_PALETTE_ID} role="listbox" aria-label="Command palette" data-testid="command-palette" className="notification-glass absolute bottom-full left-0 z-(--z-raised) mb-2 w-full rounded-md p-2">
       {loadState === "loading" &&
         [0, 1, 2].map((i) => (
           <div key={i} data-testid="command-row-skeleton" className={`my-1 h-7 rounded-sm bg-surface-sunken ${reducedMotion ? "" : "animate-pulse"}`} />

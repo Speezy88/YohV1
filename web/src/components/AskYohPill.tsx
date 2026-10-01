@@ -21,7 +21,7 @@ import { CONTROL_TRANSITION, FOCUS_RING } from "../lib/controlStyles.ts";
 
 export function AskYohPill(): React.JSX.Element {
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-[30px] z-30 flex justify-center">
+    <div className="pointer-events-none fixed inset-x-0 bottom-[30px] z-(--z-pill) flex justify-center">
       <button
         type="button"
         data-testid="ask-yoh-pill"

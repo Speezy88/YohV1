@@ -43,7 +43,10 @@ import { startEventBus } from "../lib/eventBus.ts";
 import { Sidebar } from "./Sidebar.tsx";
 import { AskYohPill } from "./AskYohPill.tsx";
 import { ChatPanel } from "./ChatPanel.tsx";
+import { FOCUS_RING } from "../lib/controlStyles.ts";
 import { toggleChatPanel, useChatPanel } from "../lib/chatPanel.ts";
+
+const MAIN_ID = "main-content";
 
 const PAGE_COMPONENTS = { home: HomePage, tasks: TasksPage, desk: DeskPage, research: ResearchHubPage, memory: MemoryPage } as const;
 
@@ -137,9 +140,30 @@ export function PageShell(): React.JSX.Element {
 
   return (
     <PageNavigationContext.Provider value={nav}>
-      <div ref={rootRef} data-testid="page-shell-root" className="relative flex h-dvh overflow-hidden" style={{ overscrollBehaviorY: "none" }}>
+      {/* Task 8 (polish-6): first tab stop; visible only while focused. */}
+      <a
+        href={`#${MAIN_ID}`}
+        onClick={(e) => {
+          e.preventDefault();
+          document.getElementById(MAIN_ID)?.focus();
+        }}
+        className={`fixed left-4 top-4 z-(--z-skip-link) -translate-y-24 rounded-md bg-surface-raised px-4 py-2 font-body text-body font-bold text-ink-primary shadow-extruded-md focus:translate-y-0 ${FOCUS_RING}`}
+      >
+        Skip to content
+      </a>
+      <div
+        ref={rootRef}
+        data-testid="page-shell-root"
+        // Task 8 (polish-6): the Chat panel is a modal — everything outside it
+        // (Sidebar, pill, pages) is inert while it is open. The panel,
+        // notifications and the Undo Toast are siblings of this root.
+        inert={chatOpen ? true : undefined}
+        className="relative flex h-dvh overflow-hidden"
+        style={{ overscrollBehaviorY: "none" }}
+      >
         <Sidebar />
         <div className="relative min-w-0 flex-1 overflow-hidden">
+          <main id={MAIN_ID} tabIndex={-1} className="h-full outline-none">
           <div
             className={reducedMotion ? "relative h-full" : "flex h-full flex-col ease-out"}
             style={{
@@ -188,6 +212,7 @@ export function PageShell(): React.JSX.Element {
               );
             })}
           </div>
+          </main>
           <AskYohPill />
         </div>
         {splashVisible && (
@@ -198,7 +223,7 @@ export function PageShell(): React.JSX.Element {
             // painted opaque, no transition runs and `transitionend` never
             // fires, which would otherwise leave an invisible layer on top.
             aria-hidden={splashFadingOut || undefined}
-            className={`absolute inset-0 z-50 transition-opacity ${splashFadingOut ? "pointer-events-none opacity-0" : "opacity-100"}`}
+            className={`absolute inset-0 z-(--z-splash) transition-opacity ${splashFadingOut ? "pointer-events-none opacity-0" : "opacity-100"}`}
             style={{ transitionDuration: "var(--duration-splash-fade)" }}
             // `e.target === e.currentTarget` guards against a bubbled
             // transitionend from some future descendant animation — only this

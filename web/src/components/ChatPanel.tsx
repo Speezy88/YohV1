@@ -46,7 +46,7 @@
 import { CONTROL_TRANSITION, FOCUS_RING, ICON_BUTTON } from "../lib/controlStyles.ts";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { appendPendingOpenItem, hydrateChatHistory, useChatStore } from "../lib/chatStore.ts";
-import { useChatPanel, closeChatPanel } from "../lib/chatPanel.ts";
+import { useChatPanel, closeChatPanel, restoreChatPanelFocus } from "../lib/chatPanel.ts";
 import { useMissingDataCount, missingDataChipLabel, openMissingData } from "../lib/missingData.ts";
 import { startOpenItemsStream, useOpenItems } from "../lib/openItems.ts";
 import { useReducedMotion } from "../hooks/useReducedMotion.ts";
@@ -105,6 +105,14 @@ export function ChatPanel(): React.JSX.Element | null {
     panelRef.current?.querySelector<HTMLElement>('textarea[aria-label="Message Yoh"]')?.focus();
   }, [open]);
 
+  // Task 8: hand focus back to the opener once the close has rendered (the
+  // shell is no longer inert by then, so the focus call can land).
+  const wasOpen = useRef(false);
+  useEffect(() => {
+    if (wasOpen.current && !open) restoreChatPanelFocus();
+    wasOpen.current = open;
+  }, [open]);
+
   useLayoutEffect(() => {
     const stream = streamRef.current;
     if (!stream || !autoScroll || !open) return;
@@ -134,7 +142,7 @@ export function ChatPanel(): React.JSX.Element | null {
         data-testid="chat-panel-backdrop"
         aria-hidden="true"
         onClick={closeChatPanel}
-        className="fixed inset-0 z-30 bg-scrim"
+        className="fixed inset-0 z-(--z-chat-backdrop) bg-scrim"
       />
       <div
         ref={panelRef}
@@ -143,11 +151,29 @@ export function ChatPanel(): React.JSX.Element | null {
         aria-label="Chat with Yoh"
         aria-modal="true"
         onKeyDown={(e) => {
+          if (e.key === "Tab") {
+            // Task 8: Tab cycles within the modal panel.
+            const focusables = Array.from(
+              e.currentTarget.querySelectorAll<HTMLElement>("button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex='-1'])"),
+            );
+            const first = focusables[0];
+            const last = focusables[focusables.length - 1];
+            if (!first || !last) return;
+            const active = document.activeElement;
+            if (!e.shiftKey && active === last) {
+              e.preventDefault();
+              first.focus();
+            } else if (e.shiftKey && active === first) {
+              e.preventDefault();
+              last.focus();
+            }
+            return;
+          }
           if (e.key !== "Escape") return;
           e.preventDefault();
           closeChatPanel();
         }}
-        className="fixed bottom-6 left-[268px] right-6 top-6 z-30 flex flex-col gap-4 rounded-2xl border-[length:var(--rim-width)] border-rim-structural bg-surface-raised p-8 shadow-extruded-lg"
+        className="fixed bottom-6 left-[268px] right-6 top-6 z-(--z-chat) flex flex-col gap-4 rounded-2xl border-[length:var(--rim-width)] border-rim-structural bg-surface-raised p-8 shadow-extruded-lg"
       >
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">

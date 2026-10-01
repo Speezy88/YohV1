@@ -300,4 +300,50 @@ describe("PageShell", () => {
     fireEvent.click(screen.getByRole("button", { name: /ask yoh/i }));
     expect(screen.getByTestId("chat-panel")).toBeInTheDocument();
   });
+  // Task 8 (polish-6): landmarks and the modal chat panel.
+  it("renders one main landmark around the page stack, with a Skip to content link first in tab order", () => {
+    render(<PageShell />);
+    const mains = screen.getAllByRole("main");
+    expect(mains).toHaveLength(1);
+    expect(mains[0]).toContainElement(screen.getByTestId("page-home"));
+    const skip = screen.getByRole("link", { name: "Skip to content" });
+    expect(skip).toHaveAttribute("href", `#${mains[0]!.id}`);
+    const focusables = Array.from(document.querySelectorAll<HTMLElement>("a[href], button:not([disabled]), textarea, input"));
+    expect(focusables[0]).toBe(skip);
+  });
+
+  it("activating Skip to content moves focus to the main landmark", () => {
+    render(<PageShell />);
+    fireEvent.click(screen.getByRole("link", { name: "Skip to content" }));
+    expect(document.activeElement).toBe(screen.getByRole("main"));
+  });
+
+  it("while the Chat panel is open everything outside it (sidebar, pill) is inert; closing restores it", () => {
+    render(<PageShell />);
+    const root = screen.getByTestId("page-shell-root");
+    expect(root).not.toHaveAttribute("inert");
+    fireEvent.keyDown(document, { key: "k", metaKey: true });
+    expect(root).toHaveAttribute("inert");
+    expect(root).toContainElement(screen.getByRole("navigation"));
+    expect(root).not.toContainElement(screen.getByTestId("chat-panel"));
+    fireEvent.keyDown(document, { key: "k", metaKey: true });
+    expect(root).not.toHaveAttribute("inert");
+  });
+
+  it("closing the Chat panel returns focus to the opener only after the shell is no longer inert", () => {
+    render(<PageShell />);
+    const pill = screen.getByRole("button", { name: /ask yoh/i });
+    pill.focus();
+    const root = screen.getByTestId("page-shell-root");
+    let inertWhenFocused: boolean | undefined;
+    const realFocus = pill.focus.bind(pill);
+    pill.focus = () => {
+      inertWhenFocused = root.hasAttribute("inert");
+      realFocus();
+    };
+    fireEvent.click(pill);
+    fireEvent.keyDown(screen.getByTestId("chat-panel"), { key: "Escape" });
+    expect(inertWhenFocused).toBe(false);
+    expect(document.activeElement).toBe(pill);
+  });
 });

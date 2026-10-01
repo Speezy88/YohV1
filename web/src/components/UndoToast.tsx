@@ -56,6 +56,30 @@ export function UndoToast({ id, taskName, label, serverHold = true, durationMs, 
   const onExpireRef = useRef(onExpire);
   onExpireRef.current = onExpire;
 
+  // Task 8 (polish-6): the toast is portalled to the end of <body>, so keyboard
+  // users would otherwise tab through the whole page to reach Undo. Remember
+  // the control that had focus when the toast appeared; Tab from it lands on
+  // Undo next, and Shift+Tab from Undo goes back. The timer-pause-on-focus
+  // behaviour is unchanged (focusing Undo already holds it).
+  const undoRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const trigger = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : undefined;
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key !== "Tab" || !trigger?.isConnected) return;
+      const undo = undoRef.current;
+      if (!undo) return;
+      if (!e.shiftKey && document.activeElement === trigger) {
+        e.preventDefault();
+        undo.focus();
+      } else if (e.shiftKey && document.activeElement === undo) {
+        e.preventDefault();
+        trigger.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   useEffect(() => {
     if (runMs === undefined) return;
     startedAt.current = Date.now();
@@ -116,7 +140,7 @@ export function UndoToast({ id, taskName, label, serverHold = true, durationMs, 
         sync();
       }}
       className={
-        "notification-glass glass-accent-bar fixed bottom-22 left-1/2 z-40 flex max-w-xl -translate-x-1/2 items-center gap-3 rounded-md px-4 py-2 font-body text-body text-ink-primary " +
+        "notification-glass glass-accent-bar fixed bottom-22 left-1/2 z-(--z-toast) flex max-w-xl -translate-x-1/2 items-center gap-3 rounded-md px-4 py-2 font-body text-body text-ink-primary " +
         (reducedMotion ? "notification-card--reduced-motion" : "notification-card")
       }
     >
@@ -125,6 +149,7 @@ export function UndoToast({ id, taskName, label, serverHold = true, durationMs, 
         ·
       </span>{" "}
       <button
+        ref={undoRef}
         type="button"
         disabled={busy}
         onClick={() => {

@@ -103,7 +103,7 @@ test("View in Memory on a receipt opens the Memory page on that item", async ({ 
   await page.goto("/");
   await page.getByRole("button", { name: /ask yoh/i }).click();
   const chat = page.getByTestId("chat-panel");
-  const input = chat.getByRole("textbox", { name: "Message Yoh" });
+  const input = chat.getByRole("combobox", { name: "Message Yoh" });
   await input.fill("remember that Chem club is a club, not a class");
   await input.press("Enter");
   await expect(chat.getByTestId("remembered-receipt")).toContainText("Remembered:", { timeout: 10_000 });

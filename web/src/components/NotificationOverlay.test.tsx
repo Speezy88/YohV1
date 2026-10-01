@@ -6,12 +6,13 @@
  * click, close control, up-to-3-visible/newest-first, reduced-motion entry.
  */
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within, act } from "@testing-library/react";
 import { NotificationOverlay } from "./NotificationOverlay.tsx";
 import { PageNavigationContext } from "../lib/navigationContext.tsx";
 import * as reducedMotionModule from "../hooks/useReducedMotion.ts";
 import * as notificationsModule from "../lib/notifications.ts";
 import * as chatPanelModule from "../lib/chatPanel.ts";
+import { FOCUS_RING } from "../lib/controlStyles.ts";
 import type { NotificationRecord } from "../../../src/types/api.ts";
 
 function renderWithNav(records: readonly NotificationRecord[], goTo = vi.fn()) {
@@ -81,22 +82,43 @@ describe("NotificationOverlay", () => {
     expect(goTo).not.toHaveBeenCalled();
   });
 
-  it("is keyboard-operable: Enter on the focused card activates it, same as a click (UX-DR51: every control keyboard-reachable)", () => {
+  it("Task 8: the card is not a button; the message is the primary button and Show more / Dismiss are its siblings (no nested interactive)", () => {
+    const longBody = "word ".repeat(60).trim();
+    renderWithNav([{ id: "n1", kind: "sandbox-complete", title: "Saved 3 Tasks", body: longBody, createdAt: "2026-01-01T00:00:00.000Z", deepLink: "/desk" }]);
+    const card = screen.getByTestId("notification-card");
+    expect(card).not.toHaveAttribute("role", "button");
+    expect(card).not.toHaveAttribute("tabindex");
+    const buttons = within(card).getAllByRole("button");
+    expect(buttons.map((b) => b.getAttribute("aria-label") ?? b.textContent?.trim())).toEqual([expect.stringContaining("word"), "Show more", "Dismiss notification"]);
+    for (const b of buttons) expect(b.querySelector("button, [role='button']")).toBeNull();
+  });
+
+  it("Task 8: activating the message button (keyboard-operable natively) navigates and dismisses", () => {
     const dismiss = vi.spyOn(notificationsModule, "dismissNotification");
     const { goTo } = renderWithNav([{ id: "n1", kind: "sandbox-complete", title: "Saved 3 Tasks", body: "Saved 3 Tasks", createdAt: "2026-01-01T00:00:00.000Z", deepLink: "/desk" }]);
-    const card = screen.getByTestId("notification-card");
-    card.focus();
-    fireEvent.keyDown(card, { key: "Enter" });
+    const message = within(screen.getByTestId("notification-card")).getAllByRole("button")[0]!;
+    message.focus();
+    fireEvent.click(message);
     expect(goTo).toHaveBeenCalledWith(2); // PAGES index of "desk"
     expect(dismiss).toHaveBeenCalledWith("n1");
   });
 
-  it("Enter while the nested dismiss button has focus only dismisses — it does not also activate the card", () => {
-    const dismiss = vi.spyOn(notificationsModule, "dismissNotification");
-    const { goTo } = renderWithNav([{ id: "n1", kind: "sandbox-complete", title: "Saved 3 Tasks", body: "Saved 3 Tasks", createdAt: "2026-01-01T00:00:00.000Z", deepLink: "/desk" }]);
-    fireEvent.click(screen.getByRole("button", { name: /dismiss/i }));
-    expect(dismiss).toHaveBeenCalledTimes(1);
-    expect(goTo).not.toHaveBeenCalled();
+  it("Task 8: Dismiss has a target of at least 24px, the shared focus ring and a hover state", () => {
+    renderWithNav([{ id: "n1", kind: "operational", title: "x", body: "x", createdAt: "2026-01-01T00:00:00.000Z", deepLink: null }]);
+    const dismiss = screen.getByRole("button", { name: "Dismiss notification" });
+    expect(dismiss.className).toMatch(/\bsize-(8|9|10|11)\b/);
+    expect(dismiss.className).toContain(FOCUS_RING);
+    expect(dismiss.className).toMatch(/\bhover:/);
+  });
+
+  it("Task 8: while the Chat panel is open the stack sits below the panel's header band", () => {
+    renderWithNav([{ id: "n1", kind: "operational", title: "x", body: "x", createdAt: "2026-01-01T00:00:00.000Z", deepLink: null }]);
+    const stack = screen.getByRole("status");
+    expect(stack).toHaveClass("top-4");
+    act(() => chatPanelModule.openChatPanel());
+    expect(stack).toHaveClass("top-28");
+    expect(stack).not.toHaveClass("top-4");
+    act(() => chatPanelModule.__resetChatPanelForTests());
   });
 
   it("shows at most 3 cards, newest-first, even when the store holds more (render-time cap)", () => {

@@ -31,7 +31,7 @@ export function Screensaver({ variant }: ScreensaverProps): React.JSX.Element {
 
   return (
     <div
-      className={`${variant === "idle" ? "fixed" : "absolute"} inset-0 z-50 bg-surface-base`}
+      className={`${variant === "idle" ? "fixed" : "absolute"} inset-0 z-(--z-splash) bg-surface-base`}
       role={variant === "idle" ? "dialog" : undefined}
       aria-label={variant === "idle" ? "Idle — any input returns to Yoh" : undefined}
     >

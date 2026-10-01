@@ -141,7 +141,7 @@ export function ItemOverflowMenu({ itemText, currentFolder, origin, expiresOn, f
           role={view === "expiry" ? "group" : "menu"}
           aria-label={view === "expiry" ? "Set expiry" : view === "move" ? "Move to folder" : "Item actions"}
           onKeyDown={onMenuKeyDown}
-          className="absolute right-0 top-full z-30 mt-1 flex min-w-[220px] flex-col gap-0.5 rounded-md bg-surface-raised p-1.5 shadow-extruded-md"
+          className="absolute right-0 top-full z-(--z-popover) mt-1 flex min-w-[220px] flex-col gap-0.5 rounded-md bg-surface-raised p-1.5 shadow-extruded-md"
         >
           {view === "root" && (
             <>

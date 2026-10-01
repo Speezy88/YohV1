@@ -190,7 +190,7 @@ function CellEditor({ field, initial, label, options, onCommit, onCancel }: Edit
         <div
           role="group"
           aria-label="Duration presets"
-          className="absolute left-0 top-full z-20 mt-2 flex gap-1.5 rounded-lg bg-surface-raised p-2 shadow-extruded-md"
+          className="absolute left-0 top-full z-(--z-popover) mt-2 flex gap-1.5 rounded-lg bg-surface-raised p-2 shadow-extruded-md"
         >
           {DURATION_PRESETS.map((minutes) => (
             <button

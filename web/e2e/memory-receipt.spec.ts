@@ -22,7 +22,7 @@ test.beforeEach(async ({ request }) => {
 test("remember shows the receipt line and Undo removes it", async ({ page }) => {
   await openChat(page);
   const chat = page.getByTestId("chat-panel");
-  const input = chat.getByRole("textbox", { name: "Message Yoh" });
+  const input = chat.getByRole("combobox", { name: "Message Yoh" });
   await input.fill(REMEMBER);
   await input.press("Enter");
 
@@ -36,7 +36,7 @@ test("remember shows the receipt line and Undo removes it", async ({ page }) => 
 test("after another message the line no longer offers Undo", async ({ page }) => {
   await openChat(page);
   const chat = page.getByTestId("chat-panel");
-  const input = chat.getByRole("textbox", { name: "Message Yoh" });
+  const input = chat.getByRole("combobox", { name: "Message Yoh" });
   await input.fill(REMEMBER);
   await input.press("Enter");
   await expect(chat.getByTestId("remembered-receipt")).toHaveText(LINE, { timeout: 10_000 });

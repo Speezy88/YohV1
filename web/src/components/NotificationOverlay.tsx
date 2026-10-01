@@ -42,7 +42,8 @@ import { PAGES } from "../lib/pages.ts";
 import { usePageNavigationContext } from "../lib/navigationContext.tsx";
 import { dismissNotification, useNotifications } from "../lib/notifications.ts";
 import { useReducedMotion } from "../hooks/useReducedMotion.ts";
-import { openChatWithCommand } from "../lib/chatPanel.ts";
+import { openChatWithCommand, useChatPanel } from "../lib/chatPanel.ts";
+import { BUTTON_TEXT, CONTROL_TRANSITION, FOCUS_RING } from "../lib/controlStyles.ts";
 import { Icon } from "./icons/Icon.tsx";
 import type { NotificationRecord } from "../../../src/types/api.ts";
 
@@ -68,6 +69,8 @@ export function NotificationOverlay(): React.JSX.Element {
   const notifications = useNotifications();
   const nav = usePageNavigationContext();
   const reducedMotion = useReducedMotion();
+  // Task 8: while the Chat panel is open, sit below its header band (title + close control) rather than over it.
+  const { open: chatOpen } = useChatPanel();
   const visible = notifications.slice(0, MAX_VISIBLE);
   const hiddenCount = notifications.length - visible.length;
   // Which cards' long bodies are expanded past their 3-line clamp — a local
@@ -104,7 +107,7 @@ export function NotificationOverlay(): React.JSX.Element {
   };
 
   return (
-    <div className="pointer-events-none fixed right-4 top-4 z-40 flex flex-col gap-2" role="status" aria-live="polite">
+    <div className={`pointer-events-none fixed right-4 ${chatOpen ? "top-28" : "top-4"} z-(--z-toast) flex flex-col gap-2`} role="status" aria-live="polite">
       {visible.map((n) => {
         const showTitle = n.title.length > 0 && n.title !== n.body;
         const isLong = n.body.length > CLAMP_THRESHOLD_CHARS;
@@ -113,19 +116,8 @@ export function NotificationOverlay(): React.JSX.Element {
           <div
             key={n.id}
             data-testid="notification-card"
-            role="button"
-            tabIndex={0}
-            aria-label={n.body}
-            onClick={() => activate(n)}
-            onKeyDown={(e) => {
-              if (e.target !== e.currentTarget) return; // let the nested Dismiss/Show-more buttons handle their own Enter/Space
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                activate(n);
-              }
-            }}
             className={
-              "notification-glass shadow-extruded-sm pointer-events-auto flex w-80 cursor-pointer items-start gap-2 rounded-md glass-accent-bar p-3 text-body text-ink-primary " +
+              "notification-glass shadow-extruded-sm pointer-events-auto flex w-80 items-start gap-2 rounded-md glass-accent-bar p-3 text-body text-ink-primary " +
               (reducedMotion ? "notification-card--reduced-motion" : "notification-card")
             }
           >
@@ -135,16 +127,20 @@ export function NotificationOverlay(): React.JSX.Element {
               className={"mt-1 size-2 shrink-0 rounded-full bg-accent-solid" + (reducedMotion ? "" : " notification-dot")}
             />
             <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-              {showTitle && <span className="font-bold">{n.title}</span>}
-              <span className={isLong && !expanded ? "line-clamp-3" : ""}>{n.body}</span>
+              {/* Task 8 (polish-6): the message is the primary button; Show more and Dismiss are its siblings, never nested inside it. */}
+              <button
+                type="button"
+                onClick={() => activate(n)}
+                className={`flex min-w-0 flex-col gap-0.5 rounded-xs text-left ${FOCUS_RING}`}
+              >
+                {showTitle && <span className="font-bold">{n.title}</span>}
+                <span className={isLong && !expanded ? "line-clamp-3" : ""}>{n.body}</span>
+              </button>
               {isLong && (
                 <button
                   type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    toggleExpanded(n.id);
-                  }}
-                  className="self-start text-caption font-bold text-ink-accent"
+                  onClick={() => toggleExpanded(n.id)}
+                  className={`${BUTTON_TEXT} min-h-6 self-start text-caption font-bold ${FOCUS_RING}`}
                 >
                   {expanded ? "Show less" : "Show more"}
                 </button>
@@ -153,11 +149,8 @@ export function NotificationOverlay(): React.JSX.Element {
             <button
               type="button"
               aria-label="Dismiss notification"
-              onClick={(e) => {
-                e.stopPropagation();
-                dismissNotification(n.id);
-              }}
-              className="shrink-0"
+              onClick={() => dismissNotification(n.id)}
+              className={`flex size-8 shrink-0 items-center justify-center rounded-sm hover:bg-surface-sunken ${FOCUS_RING} ${CONTROL_TRANSITION}`}
             >
               <Icon path="M6 6 L18 18 M18 6 L6 18" label="Dismiss" />
             </button>

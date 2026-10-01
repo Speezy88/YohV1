@@ -21,7 +21,7 @@
  */
 import { send, useChatStore } from "../lib/chatStore.ts";
 import { useCommandPaletteInput } from "../hooks/useCommandPaletteInput.ts";
-import { CommandPalette } from "./CommandPalette.tsx";
+import { CommandPalette, COMMAND_PALETTE_ID } from "./CommandPalette.tsx";
 import { CONTROL_DISABLED, CONTROL_TRANSITION, FOCUS_RING } from "../lib/controlStyles.ts";
 
 export function ChatInput(): React.JSX.Element {
@@ -42,7 +42,12 @@ export function ChatInput(): React.JSX.Element {
       <textarea
         rows={1}
         value={draft}
+        role="combobox"
         aria-label="Message Yoh"
+        aria-expanded={showPalette}
+        aria-autocomplete="list"
+        aria-haspopup="listbox"
+        aria-controls={showPalette ? COMMAND_PALETTE_ID : undefined}
         placeholder="Ask Yoh, or type / for commands"
         aria-activedescendant={activeDescendant}
         className="field-sizing-content max-h-32 min-w-0 flex-1 resize-none self-center bg-transparent py-2.5 font-body text-body text-ink-primary outline-none placeholder:text-ink-secondary"

@@ -71,7 +71,7 @@ test("/morning carries the card and reopening the panel shows no second one that
   );
   await openChat(page);
   const chat = page.getByTestId("chat-panel");
-  const input = chat.getByRole("textbox", { name: "Message Yoh" });
+  const input = chat.getByRole("combobox", { name: "Message Yoh" });
   await input.fill("/morning");
   await input.press("Enter");
   await expect(chat.getByText("Fixture morning.")).toBeVisible({ timeout: 10_000 });

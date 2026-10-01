@@ -12,7 +12,7 @@ import * as chatStreamModule from "../lib/chatStream.ts";
 import * as commands from "../lib/commands.ts";
 
 function box(): HTMLElement {
-  return screen.getByRole("textbox", { name: "Message Yoh" });
+  return screen.getByRole("combobox", { name: "Message Yoh" });
 }
 
 const COMMAND_REGISTRY = [
