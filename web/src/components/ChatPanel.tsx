@@ -133,7 +133,7 @@ export function ChatPanel(): React.JSX.Element | null {
         data-testid="chat-panel-backdrop"
         aria-hidden="true"
         onClick={closeChatPanel}
-        className={`fixed inset-0 z-30 bg-scrim${reducedMotion ? "" : "transition-opacity"}`}
+        className="fixed inset-0 z-30 bg-scrim"
       />
       <div
         ref={panelRef}

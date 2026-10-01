@@ -97,6 +97,11 @@ describe("ChatPanel", () => {
     expect(screen.queryByTestId("chat-panel")).not.toBeInTheDocument();
   });
 
+  it("dims the page behind the panel with the scrim token", () => {
+    renderOpenPanel();
+    expect(screen.getByTestId("chat-panel-backdrop")).toHaveClass("bg-scrim");
+  });
+
   it("clicking the backdrop closes the panel", () => {
     renderOpenPanel();
     fireEvent.click(screen.getByTestId("chat-panel-backdrop"));
