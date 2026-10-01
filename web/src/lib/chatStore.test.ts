@@ -129,6 +129,30 @@ describe("chatStore", () => {
     expect(second.result.current.hydrated).toBe(true);
   });
 
+  it("a turn sent while history is still loading is not shown twice when the server already stored it", async () => {
+    const stream = controllableStream();
+    let resolveHistory!: (value: unknown) => void;
+    historyGet.mockReset();
+    historyGet.mockReturnValue(new Promise((resolve) => (resolveHistory = resolve)));
+    const { result } = renderHook(() => useChatStore());
+    let hydrating!: Promise<void>;
+    act(() => void (hydrating = hydrateChatHistory()));
+    act(() => void send("search: boots"));
+    // The server stored the in-flight turn (and its reply) before the history read returned.
+    const stored = [...TURNS, { id: "t3", role: "user", text: "search: boots" }, { id: "t4", role: "assistant", text: "Searching…" }];
+    await act(async () => {
+      resolveHistory({ json: async () => ({ ok: true, value: { date: "2026-08-22", turns: stored } }) });
+      await hydrating;
+    });
+    expect(messagesOf(result.current).map((m) => [m.role, m.text])).toEqual([
+      ["user", "hello"],
+      ["assistant", "hi there"],
+      ["user", "search: boots"],
+      ["assistant", ""],
+    ]);
+    await stream.finish();
+  });
+
   it("a failed hydrate leaves the transcript empty", async () => {
     historyGet.mockReset();
     historyGet.mockRejectedValue(new Error("offline"));

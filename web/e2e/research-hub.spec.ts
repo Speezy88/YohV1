@@ -45,10 +45,10 @@ test("the ask box opens the Chat panel with the typed question, as Spencer's own
 
   const chat = page.getByTestId("chat-panel");
   await expect(chat).toBeVisible();
-  // `.last()`: the fixture server keeps chat history for the whole run, so a
-  // retry (or an earlier ask of the same question) leaves stored turns with
-  // the same text above the new one.
-  await expect(chat.getByText("AP Bio registration deadline").last()).toBeVisible();
+  // Strict on purpose: exactly one turn carries the question. The panel loads
+  // stored history while this send is in flight, and a duplicate here means
+  // the stored copy was shown beside the live one (`hydrateChatHistory`).
+  await expect(chat.getByText("AP Bio registration deadline")).toBeVisible();
   await expect(ask).toHaveValue("");
   await chatResponse;
 });

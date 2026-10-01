@@ -240,6 +240,8 @@ function appendMessage(message: ChatViewMessage): void {
 }
 
 let hydrateStarted = false;
+/** Turns sent before the history read settled — the server may already have stored them by the time it answers. */
+let sentBeforeHydrated: string[] = [];
 
 /**
  * Story 13.1: restores today's Conversation from the server, once per page
@@ -247,6 +249,11 @@ let hydrateStarted = false;
  * done messages, in front of anything already present (a pending open item
  * may have been appended first). A stored question is text only — nothing
  * here re-runs an action. A failed fetch leaves the panel as it was.
+ *
+ * A turn sent while this read was in flight (the Research Hub ask box opens
+ * the panel and sends in one go) is already on screen; if the server stored
+ * it before answering, the stored copy — and anything after it, which is that
+ * same exchange — is dropped rather than shown twice.
  */
 export async function hydrateChatHistory(): Promise<void> {
   if (hydrateStarted) return;
@@ -254,11 +261,16 @@ export async function hydrateChatHistory(): Promise<void> {
   try {
     const res = await apiClient.api["chat-history"].today.$get();
     const result = await res.json();
-    if (!result.ok || result.value.turns.length === 0) {
+    let turns = result.ok ? result.value.turns : [];
+    for (const text of sentBeforeHydrated) {
+      const lastUser = turns.findLastIndex((turn) => turn.role === "user");
+      if (lastUser !== -1 && turns[lastUser]!.text === text) turns = turns.slice(0, lastUser);
+    }
+    if (turns.length === 0) {
       set({ ...state, hydrated: true });
       return;
     }
-    const restored: StreamEntry[] = result.value.turns.map((turn) => {
+    const restored: StreamEntry[] = turns.map((turn) => {
       const message: ChatViewMessage = { id: `stored-${turn.id}`, role: turn.role, text: turn.text, receipts: [], status: "done" };
       return { kind: "message", id: message.id, message };
     });
@@ -292,6 +304,7 @@ export async function send(message: string): Promise<void> {
   const userId = `chat-${++nextId}`;
   const assistantId = `chat-${++nextId}`;
   const request: ChatTurnRequest = { message: trimmed };
+  if (!state.hydrated) sentBeforeHydrated.push(trimmed);
   settleUndoableReceipts();
   dismissOpenRatings();
   appendMessage({ id: userId, role: "user", text: trimmed, receipts: [], status: "done" });
@@ -444,4 +457,5 @@ export function __resetChatStoreForTests(): void {
   nextId = 0;
   shownPendingRequestIds.clear();
   hydrateStarted = false;
+  sentBeforeHydrated = [];
 }
