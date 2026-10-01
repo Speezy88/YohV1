@@ -15,6 +15,7 @@ import TasksPage from "./Tasks.tsx";
 import { apiClient } from "../lib/apiClient.ts";
 import * as notifications from "../lib/notifications.ts";
 import { __resetMissingDataFilterForTests, setMissingDataFilterActive } from "../lib/missingDataFilter.ts";
+import { FOCUS_RING } from "../lib/controlStyles.ts";
 import type { TasksViewResponse } from "../../../src/types/api.ts";
 
 vi.mock("../lib/apiClient.ts", () => ({
@@ -442,5 +443,62 @@ describe("TasksPage", () => {
     render(<TasksPage />);
     expect(screen.getAllByTestId("task-row-skeleton").length).toBeGreaterThan(0);
     expect(screen.getByRole("textbox", { name: "New task" })).toBeEnabled();
+  });
+  // Polish 6, Task 4.
+  describe("Polish 6 controls", () => {
+    it("a successful cell save shows a check + 'Saved' for ~1.5s, then the value again", async () => {
+      api.tasks[":id"].field.$post.mockResolvedValue(envelope({ ok: true, value: { receipt: "Estimated Duration set to 45 min." } }));
+      await renderLoaded();
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      fireEvent.click(within(row("Calc problem set 4")).getByRole("button", { name: /^Duration for Calc problem set 4/ }));
+      const editor = screen.getByRole("spinbutton", { name: "Duration for Calc problem set 4" });
+      fireEvent.change(editor, { target: { value: "45" } });
+      await act(async () => {
+        fireEvent.keyDown(editor, { key: "Enter" });
+      });
+      const cell = within(row("Calc problem set 4")).getByRole("button", { name: /^Duration for Calc problem set 4/ });
+      expect(within(cell).getByText("Saved")).toBeInTheDocument();
+      expect(screen.getByRole("status").textContent).toBe("Estimated Duration set to 45 min.");
+      await act(async () => {
+        vi.advanceTimersByTime(1600);
+      });
+      expect(within(row("Calc problem set 4")).queryByText("Saved")).not.toBeInTheDocument();
+      expect(within(row("Calc problem set 4")).getByText("45 min")).toBeInTheDocument();
+    });
+
+    it("with Missing data on and nothing missing, the empty line says so", async () => {
+      api.tasks.$get.mockResolvedValue(envelope({ ok: true, value: { ...VIEW, groups: VIEW.groups.slice(0, 2) } }));
+      render(<TasksPage />);
+      await screen.findByText("Calc problem set 4");
+      fireEvent.click(screen.getByTestId("tasks-filter-missing-data"));
+      expect(screen.getByText("No Tasks are missing data.")).toBeInTheDocument();
+      expect(screen.queryByText(/No Tasks yet/)).not.toBeInTheDocument();
+    });
+
+    it("a failed quick-add preview shows one caption line", async () => {
+      api.tasks.parse.$post.mockResolvedValue(envelope({ ok: false, error: { kind: "unreachable", message: "x" } }));
+      await renderLoaded();
+      fireEvent.change(screen.getByRole("textbox", { name: "New task" }), { target: { value: "Call the dentist" } });
+      expect(await screen.findByText("Couldn't preview that — you can still add it.")).toBeInTheDocument();
+    });
+
+    it("the quick-add field and the dock controls carry the shared focus treatment; cell buttons are at least 24px tall targets", async () => {
+      await renderLoaded();
+      const field = screen.getByRole("textbox", { name: "New task" }).closest("label") as HTMLElement;
+      expect(field.className).toContain("has-[:focus-visible]:outline-accent-solid");
+      expect(screen.getByTestId("tasks-filter-missing-data").className).toContain(FOCUS_RING);
+      expect(screen.getByTestId("tasks-filter-missing-data").className).toContain("transition-[color");
+      const cell = within(row("Calc problem set 4")).getByRole("button", { name: /^Duration for Calc problem set 4/ });
+      expect(cell.className).toContain(FOCUS_RING);
+      const badge = within(row("College essay brainstorm")).getByText("Add time");
+      expect(badge.className).toContain("min-h-6");
+    });
+
+    it("date and duration cells use tabular numerals", async () => {
+      await renderLoaded();
+      const r = row("Calc problem set 4");
+      expect(within(r).getByText("60 min").className).toContain("tabular-nums");
+      expect(within(r).getByText("Today").className).toContain("tabular-nums");
+    });
   });
 });

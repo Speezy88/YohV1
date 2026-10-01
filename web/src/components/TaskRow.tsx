@@ -20,6 +20,7 @@ import { useEffect, useRef, useState } from "react";
 import type { TaskListItem } from "../../../src/types/api.ts";
 import type { EditableTaskField, TaskFieldOptions } from "../../../src/types/domain.ts";
 import { DURATION_PRESETS, MISSING_BADGE, PRIORITY_MISSING_BADGE, formatDue, formatDuration, optionLabel } from "../lib/tasks.ts";
+import { CONTROL_TRANSITION, FOCUS_RING } from "../lib/controlStyles.ts";
 import { Checkbox } from "./Checkbox.tsx";
 
 export const TASK_ROW_GRID = "grid grid-cols-[44px_minmax(0,1fr)_130px_100px_120px_100px_130px_130px] items-center gap-x-3";
@@ -39,7 +40,6 @@ const FIELD_NAMES: Record<EditableTaskField, string> = {
   priority: "Priority",
 };
 
-const FOCUS_RING = "focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid";
 const EDITOR_BASE =
   "h-10 w-full min-w-0 rounded-md border-[length:var(--rim-width)] border-accent-solid bg-surface-sunken px-3 font-body text-ink-primary shadow-inset outline-none";
 const EDITOR_CLASS = `${EDITOR_BASE} text-small`;
@@ -55,6 +55,8 @@ export interface TaskRowProps {
   readonly editing: TaskEditField | undefined;
   /** Cells with a write in flight (shown busy). */
   readonly saving: ReadonlySet<TaskEditField>;
+  /** Cells whose write just succeeded: show a check + "Saved" in place of the value (the page clears it after ~1.5s). */
+  readonly saved?: ReadonlySet<TaskEditField>;
   readonly checked: boolean;
   /** A just-typed Task still being created: nothing on it can be edited yet. */
   readonly creating?: boolean;
@@ -230,6 +232,7 @@ export function TaskRow({
   options,
   editing,
   saving,
+  saved,
   checked,
   creating = false,
   onCheck,
@@ -291,7 +294,7 @@ export function TaskRow({
             aria-busy={saving.has("title") || undefined}
             title={item.title}
             onClick={() => onStartEdit("title")}
-            className={`-ml-2 flex h-10 w-[calc(100%+8px)] min-w-0 items-center rounded-md px-2 text-left hover:bg-surface-sunken disabled:hover:bg-transparent ${FOCUS_RING} ${saving.has("title") ? "opacity-60" : ""}`}
+            className={`-ml-2 flex h-10 w-[calc(100%+8px)] min-w-0 items-center rounded-md px-2 text-left hover:bg-surface-sunken disabled:hover:bg-transparent ${FOCUS_RING} ${CONTROL_TRANSITION} ${saving.has("title") ? "opacity-60" : ""}`}
           >
             <span className={`truncate text-body font-medium text-ink-primary ${completed ? "line-through" : ""}`}>{item.title}</span>
           </button>
@@ -313,6 +316,7 @@ export function TaskRow({
         // otherwise looks, just without the gate's involvement.
         const missing = field === "priority" ? shown === undefined : shown === undefined && item.missing.includes(field);
         const busy = saving.has(field);
+        const justSaved = saved?.has(field) === true && !busy;
         return (
           <span key={field} data-col={i + 1} className="min-w-0">
             <button
@@ -322,14 +326,21 @@ export function TaskRow({
               aria-label={`${label}: ${shown ?? "not set"}`}
               aria-busy={busy || undefined}
               onClick={() => onStartEdit(field)}
-              className={`-mx-2 flex h-10 w-[calc(100%+16px)] min-w-0 items-center rounded-md px-2 text-left hover:bg-surface-sunken disabled:hover:bg-transparent ${FOCUS_RING} ${busy ? "opacity-60" : ""}`}
+              className={`-mx-2 flex h-10 w-[calc(100%+16px)] min-w-0 items-center rounded-md px-2 text-left hover:bg-surface-sunken active:shadow-inset disabled:hover:bg-transparent ${FOCUS_RING} ${CONTROL_TRANSITION} ${busy ? "opacity-60" : ""}`}
             >
-              {missing ? (
-                <span className="inline-flex h-[26px] items-center whitespace-nowrap rounded-full border-[length:var(--rim-width)] border-accent-solid px-2.5 text-label font-bold text-ink-accent">
+              {justSaved ? (
+                <span data-testid="cell-saved" className="inline-flex items-center gap-1.5 font-bold text-ink-accent">
+                  <svg aria-hidden="true" viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" className="shrink-0">
+                    <path d="M5 12.5 10 17.5 19 7.5" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  Saved
+                </span>
+              ) : missing ? (
+                <span className="inline-flex min-h-6 items-center whitespace-nowrap rounded-full border-[length:var(--rim-width)] border-accent-solid px-2.5 text-label font-bold text-ink-accent">
                   {field === "priority" ? PRIORITY_MISSING_BADGE : MISSING_BADGE[field]}
                 </span>
               ) : (
-                <span className={`truncate ${field === "dueDate" && item.overdue ? "font-bold text-ink-danger" : "text-ink-secondary"}`}>{shown ?? "—"}</span>
+                <span className={`truncate ${field === "dueDate" || field === "estimatedDurationMinutes" ? "tabular-nums" : ""} ${field === "dueDate" && item.overdue ? "font-bold text-ink-danger" : "text-ink-secondary"}`}>{shown ?? "—"}</span>
               )}
             </button>
           </span>

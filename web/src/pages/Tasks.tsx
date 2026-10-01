@@ -46,6 +46,7 @@ import { loadGroupBy, requestCreateTask, requestRenameTask, requestUpdateTaskFie
 import { remainingMs, requestCheckOff, requestUndo } from "../lib/checkOff.ts";
 import { addLocalFailureNotice } from "../lib/notifications.ts";
 import { setMissingDataFilterActive, useMissingDataFilterActive } from "../lib/missingDataFilter.ts";
+import { CONTROL_TRANSITION, FIELD_FOCUS_WITHIN, FOCUS_RING } from "../lib/controlStyles.ts";
 import { useReducedMotion } from "../hooks/useReducedMotion.ts";
 import { TaskRow, type TaskEditField } from "../components/TaskRow.tsx";
 import { TaskQuickAdd } from "../components/TaskQuickAdd.tsx";
@@ -55,6 +56,8 @@ const TASKS_PAGE_INDEX = PAGES.findIndex((p) => p.id === "tasks");
 const SEARCH_DEBOUNCE_MS = 200;
 /** How long a saved-but-not-yet-listed value is kept on screen, waiting for Notion's list to catch up. */
 const RECONCILE_GRACE_MS = 10_000;
+/** How long a saved cell shows its check + "Saved" before the value returns. */
+const SAVED_FLASH_MS = 1_500;
 
 const GROUP_OPTIONS: ReadonlyArray<{ readonly value: TasksGroupBy; readonly label: string }> = [
   { value: "due", label: "Due" },
@@ -135,11 +138,35 @@ export default function TasksPage(): React.JSX.Element {
   const [editing, setEditing] = useState<{ readonly taskId: string; readonly field: TaskEditField } | undefined>(undefined);
   const [toast, setToast] = useState<ToastState | undefined>(undefined);
   const [receipt, setReceipt] = useState("");
+  /** Cells showing "Saved" right now, keyed `${taskId}|${field}`; each clears itself after SAVED_FLASH_MS. */
+  const [savedCells, setSavedCells] = useState<ReadonlySet<string>>(new Set());
+  const savedTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
 
   const rootRef = useRef<HTMLDivElement>(null);
   const quickAddRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const pendingCounter = useRef(0);
+
+  useEffect(() => {
+    const timers = savedTimers.current;
+    return () => {
+      for (const t of timers.values()) clearTimeout(t);
+      timers.clear();
+    };
+  }, []);
+
+  const flashSaved = (taskId: string, field: TaskEditField): void => {
+    const key = `${taskId}|${field}`;
+    clearTimeout(savedTimers.current.get(key));
+    setSavedCells((prev) => new Set(prev).add(key));
+    savedTimers.current.set(
+      key,
+      setTimeout(() => {
+        savedTimers.current.delete(key);
+        setSavedCells((prev) => new Set([...prev].filter((k) => k !== key)));
+      }, SAVED_FLASH_MS),
+    );
+  };
 
   const focusQuickAdd = useCallback(() => quickAddRef.current?.focus({ preventScroll: true }), []);
 
@@ -220,6 +247,7 @@ export default function TasksPage(): React.JSX.Element {
     const outcome = field === "title" ? await requestRenameTask(item.id, raw) : await requestUpdateTaskField(item.id, field, raw);
     if (outcome.ok) {
       if (showable) setOverride(item.id, field, { value, state: "saved", at: Date.now() });
+      flashSaved(item.id, field);
       setReceipt(outcome.value.receipt);
       void refetch();
       return;
@@ -363,7 +391,7 @@ export default function TasksPage(): React.JSX.Element {
             <p className="m-0 p-5 font-body text-body text-ink-secondary">Couldn't load Tasks right now. {state.message}</p>
           ) : groups.length === 0 ? (
             <p className="m-0 p-5 font-body text-body text-ink-secondary">
-              {query ? `No Tasks match "${query}".` : "No Tasks yet. Type one above and press Enter."}
+              {query ? `No Tasks match "${query}".` : missingDataFilterActive ? "No Tasks are missing data." : "No Tasks yet. Type one above and press Enter."}
             </p>
           ) : (
             groups.map((group) => (
@@ -376,6 +404,7 @@ export default function TasksPage(): React.JSX.Element {
                     const item = today ? withOverrides(raw, overrides.get(raw.id), today) : raw;
                     const checked = item.status === "completed" || checks.has(item.id);
                     const saving = new Set([...(overrides.get(raw.id) ?? [])].filter(([, o]) => o.state === "saving").map(([f]) => f));
+                    const saved = new Set(([...savedCells].filter((k) => k.startsWith(`${raw.id}|`)).map((k) => k.slice(raw.id.length + 1))) as TaskEditField[]);
                     return (
                       <TaskRow
                         key={raw.id}
@@ -385,6 +414,7 @@ export default function TasksPage(): React.JSX.Element {
                         options={options ?? { area: [], energy: [], status: [] }}
                         editing={editing?.taskId === raw.id ? editing.field : undefined}
                         saving={saving}
+                        saved={saved}
                         checked={checked}
                         creating={creating}
                         onCheck={() => void toggleCheck(item, checked)}
@@ -417,7 +447,7 @@ export default function TasksPage(): React.JSX.Element {
         />
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-3">
-            <label className="flex h-[46px] w-[280px] items-center gap-2.5 rounded-full bg-surface-sunken px-4 shadow-inset has-[:focus-visible]:outline-[length:var(--focus-ring-width)] has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent-solid">
+            <label className={`flex h-12 w-[280px] items-center gap-2.5 rounded-full bg-surface-sunken px-4 shadow-inset ${FIELD_FOCUS_WITHIN}`}>
               <svg aria-hidden="true" viewBox="0 0 24 24" width={18} height={18} fill="none" stroke="currentColor" className="shrink-0 text-ink-secondary">
                 <path d="M11 17a6 6 0 1 0 0-12 6 6 0 0 0 0 12z M20 20l-4.5-4.5" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
               </svg>
@@ -445,10 +475,10 @@ export default function TasksPage(): React.JSX.Element {
               aria-pressed={missingDataFilterActive}
               onClick={() => setMissingDataFilterActive(!missingDataFilterActive)}
               className={
-                "h-[38px] rounded-full px-4 font-body text-small focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid " +
+                `h-9 rounded-full px-4 font-body text-small ${FOCUS_RING} ${CONTROL_TRANSITION} ` +
                 (missingDataFilterActive
-                  ? "bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end font-bold text-on-accent-solid shadow-extruded-sm"
-                  : "bg-surface-sunken text-ink-secondary shadow-inset hover:text-ink-primary")
+                  ? "bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end font-bold text-on-accent-solid shadow-extruded-sm hover:brightness-105 active:brightness-95"
+                  : "bg-surface-sunken text-ink-secondary shadow-inset hover:text-ink-primary active:shadow-inset")
               }
             >
               Missing data
@@ -467,9 +497,9 @@ export default function TasksPage(): React.JSX.Element {
                     saveGroupBy(option.value);
                   }}
                   className={
-                    "h-[38px] rounded-md px-4 font-body text-small focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid " +
+                    `h-9 rounded-md px-4 font-body text-small ${FOCUS_RING} ${CONTROL_TRANSITION} ` +
                     (pressed
-                      ? "bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end font-bold text-on-accent-solid shadow-extruded-sm"
+                      ? "bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end font-bold text-on-accent-solid shadow-extruded-sm hover:brightness-105 active:brightness-95"
                       : "text-ink-secondary hover:text-ink-primary")
                   }
                 >

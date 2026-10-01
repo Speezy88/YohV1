@@ -8,6 +8,10 @@
 export const FOCUS_RING =
   "focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid";
 
+/** Visible focus on a wrapping field (a `<label>` around an input): the same outline, drawn when the input inside has keyboard focus. */
+export const FIELD_FOCUS_WITHIN =
+  "has-[:focus-visible]:outline-[length:var(--focus-ring-width)] has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent-solid";
+
 /** Paint-only transition (never `all`, never layout), driven by the motion tokens. */
 export const CONTROL_TRANSITION =
   "transition-[color,background-color,border-color,box-shadow,opacity,filter] duration-(--duration-control) ease-(--ease-control)";

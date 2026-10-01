@@ -26,6 +26,7 @@
  */
 import { forwardRef, useEffect, useRef, useState } from "react";
 import type { QuickAddPreviewResponse } from "../../../src/types/api.ts";
+import { FIELD_FOCUS_WITHIN } from "../lib/controlStyles.ts";
 import { formatDue, formatDuration, optionLabel, requestQuickAddPreview } from "../lib/tasks.ts";
 import type { TaskFieldOptions, TaskStatus } from "../../../src/types/domain.ts";
 
@@ -75,18 +76,22 @@ export const TaskQuickAdd = forwardRef<HTMLInputElement, TaskQuickAddProps>(func
   const [text, setText] = useState("");
   const [preview, setPreview] = useState<{ readonly text: string; readonly value: QuickAddPreviewResponse } | undefined>(undefined);
   const [focused, setFocused] = useState(false);
+  const [previewFailed, setPreviewFailed] = useState(false);
   const latest = useRef(0);
 
   useEffect(() => {
     const trimmed = text.trim();
     if (trimmed === "") {
       setPreview(undefined);
+      setPreviewFailed(false);
       return;
     }
     const seq = ++latest.current;
     const timer = setTimeout(() => {
       void requestQuickAddPreview(trimmed, options?.area, options?.priority).then((outcome) => {
-        if (seq === latest.current && outcome.ok) setPreview({ text: trimmed, value: outcome.value });
+        if (seq !== latest.current) return;
+        if (outcome.ok) setPreview({ text: trimmed, value: outcome.value });
+        setPreviewFailed(!outcome.ok);
       });
     }, PREVIEW_DEBOUNCE_MS);
     return () => clearTimeout(timer);
@@ -102,6 +107,7 @@ export const TaskQuickAdd = forwardRef<HTMLInputElement, TaskQuickAddProps>(func
     onSubmit(trimmed, current);
     setText("");
     setPreview(undefined);
+    setPreviewFailed(false);
     latest.current++;
   };
 
@@ -153,9 +159,14 @@ export const TaskQuickAdd = forwardRef<HTMLInputElement, TaskQuickAddProps>(func
           ))}
         </div>
       )}
+      {previewFailed && !hasReads && (
+        <p aria-live="polite" className="m-0 pl-1 font-body text-small text-ink-secondary">
+          Couldn't preview that — you can still add it.
+        </p>
+      )}
       <label
         className={
-          "flex h-[58px] items-center gap-3.5 rounded-lg border-[length:var(--rim-width)] bg-surface-sunken px-4 shadow-inset " +
+          "flex h-[58px] items-center gap-3.5 rounded-lg border-[length:var(--rim-width)] bg-surface-sunken px-4 shadow-inset " + FIELD_FOCUS_WITHIN + " " +
           (focused ? "border-accent-solid" : "border-transparent")
         }
       >

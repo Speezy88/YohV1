@@ -23,6 +23,7 @@ import { useRef, useState } from "react";
 import { openChatPanel } from "../lib/chatPanel.ts";
 import { send } from "../lib/chatStore.ts";
 import { formatResearchDate, useResearchList } from "../lib/research.ts";
+import { FIELD_FOCUS_WITHIN, ROW_HOVER_RAISED } from "../lib/controlStyles.ts";
 import { useReducedMotion } from "../hooks/useReducedMotion.ts";
 import type { ResearchListItem } from "../../../src/types/api.ts";
 
@@ -38,7 +39,7 @@ function ResearchRow({ item }: { readonly item: ResearchListItem }): React.JSX.E
       href={item.url}
       target="_blank"
       rel="noopener noreferrer"
-      className="flex items-center justify-between gap-4 rounded-lg bg-surface-raised px-[18px] py-4 font-body shadow-extruded-sm transition-shadow hover:shadow-extruded-md focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid"
+      className={`flex items-center justify-between gap-4 rounded-lg bg-surface-raised px-[18px] py-4 font-body shadow-extruded-sm ${ROW_HOVER_RAISED}`}
     >
       <div className="flex min-w-0 flex-col gap-1">
         <span className="truncate text-body font-medium text-ink-primary">{item.title}</span>
@@ -79,7 +80,7 @@ function AskResearchBox(): React.JSX.Element {
     <section aria-label="Ask a research question" data-wheel-nav="off" className="flex flex-col gap-3 rounded-xl bg-surface-raised px-[18px] py-4 shadow-extruded-lg">
       <label
         className={
-          "flex h-[58px] items-center gap-3.5 rounded-lg border-[length:var(--rim-width)] bg-surface-sunken px-4 shadow-inset " +
+          "flex h-[58px] items-center gap-3.5 rounded-lg border-[length:var(--rim-width)] bg-surface-sunken px-4 shadow-inset " + FIELD_FOCUS_WITHIN + " " +
           (focused ? "border-accent-solid" : "border-transparent")
         }
       >

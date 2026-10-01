@@ -14,6 +14,7 @@ import ResearchHubPage from "./ResearchHub.tsx";
 import { apiClient } from "../lib/apiClient.ts";
 import { openChatPanel } from "../lib/chatPanel.ts";
 import { send } from "../lib/chatStore.ts";
+import { ROW_HOVER_RAISED } from "../lib/controlStyles.ts";
 import type { ResearchListResponse } from "../../../src/types/api.ts";
 
 vi.mock("../lib/apiClient.ts", () => ({
@@ -90,5 +91,13 @@ describe("ResearchHubPage", () => {
     fireEvent.keyDown(input, { key: "Enter" });
     expect(openChatPanel).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalled();
+  });
+  it("Research rows use the raised-row hover and the ask field shows a visible focus treatment", async () => {
+    api.research.$get.mockResolvedValue(envelope({ ok: true, value: VIEW }));
+    render(<ResearchHubPage />);
+    const rows = await screen.findAllByTestId("research-row");
+    expect(rows[0]!.className).toContain(ROW_HOVER_RAISED);
+    const field = screen.getByRole("textbox", { name: "Ask a research question" }).closest("label") as HTMLElement;
+    expect(field.className).toContain("has-[:focus-visible]:outline-accent-solid");
   });
 });
