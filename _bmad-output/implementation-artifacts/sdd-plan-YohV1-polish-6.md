@@ -195,5 +195,21 @@ Depends on Tasks 2–8 (touches many files last, mechanically). Two commits allo
 
 Write `_bmad-output/planning-artifacts/ux-designs/ux-YohV1-2026-08-21/responsive-proposal-2026-10-01.md`: breakpoints, what the sidebar becomes at narrow widths, Home's column stacking, the task row at narrow widths, the chat panel as a full-screen sheet, touch targets, `theme-color`, and the open questions only Spencer can answer. No code.
 
+## Task 11: Memory states (added after Task 5's findings)
+
+Depends on Task 6 (`StateMessage`). Source: `reports/task-5-report.md` findings 1–5 and 8 in the Polish-6 ledger. Runs after Task 7, before Task 8.
+
+**Owns:** `web/src/pages/Memory.tsx`, `web/src/components/memory/ChatHistoryPane.tsx`, `MemorySearch.tsx`, `ChangedSettingsPane.tsx` (+ tests).
+
+**Behavior:**
+1. Load errors on Memory (the list area), Chat History (list and transcript) and Memory search render `StateMessage` error with "Try again" wired to that surface's existing load/refetch. Copy stays "Couldn't load memory right now." (EXPERIENCE.md), defined once and imported where reused.
+2. Empty states render through `StateMessage` empty; copy unchanged. The duplicated `MUTED` class constants are removed.
+3. The Memory loading skeleton includes the rail (group captions + rows) and list rows in the loaded layout's grid, so nothing shifts when data arrives; the three `h-[74px]` skeleton copies become one shared skeleton row component used by all three sites. Skeletons honour `useReducedMotion`.
+4. Inline write-error notes on these surfaces use one treatment: `role="alert"`, `text-ink-danger`, `text-small` (the one MemoryItemRow / NeedsReviewPane already use).
+
+**Tests:** each error surface shows the button and it reloads; skeleton has the rail and list landmarks; the write-error note has `role="alert"`.
+
+**Commit:** `feat(web): Memory empty/error states with retry; skeleton matches the loaded layout`
+
 ## Out of scope
 Month-view day markers (needs new server data), a persistent connection indicator (needs a decision on where it lives), list virtualization, any `src/` change, the responsive build.
