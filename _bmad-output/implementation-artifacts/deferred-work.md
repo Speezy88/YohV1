@@ -61,3 +61,24 @@ The final whole-branch review triaged every item below as "defer": none blocks m
 - History items on the Memory page show no Not-loaded reason.
 - Other e2e specs' settleAnimations helpers may await infinite animations; Renew/Keep show no success text (the refetch moves the item).
 - T1 minors 5–6, T3 bare `{}` block + slip_events DDL per call, T4 minor 3 (lunch/community overlap), T6b minors, T7 missing tests, T14a minors 1/3/4 (request clear after Yes tx; 3 outbox rows per overrun Yes; windowStart DST edge).
+
+## Polish 6 (final review, 2026-10-01)
+
+Review: `ledgers/polish-6/final-review.md` (Yoh-previews). Fixed in the fix rounds: M1–M4, S1–S11, and OK-TO-DEFER 1, 10 (cell editors), 12, 14, 18, 20. Still open:
+
+- Undo Toast: Shift+Tab from Undo calls `trigger.focus()` without checking the trigger is enabled.
+- NotificationOverlay at `top-28` (chat open): the first card sits ~2.5px under the chat Close button and clips its focus ring.
+- Chat Input is `role="combobox"` on a multi-line textarea; attributes are right, screen-reader behaviour untested. `role="log"` and the alerts are likewise untested with a screen reader. Safari/Firefox untested (Safari doesn't focus buttons on click — affects the Undo trigger and chat-opener logic).
+- TaskQuickAdd preview-failure line: `aria-live` on a node that mounts with its text already present isn't reliably announced.
+- StateMessage "Try again" has no pending state; a retry that fails again looks like nothing happened.
+- PlanChecklist: the truncated label has no `title`; the "missing …" marker is a phrase at `text-label` (11.5px).
+- MemorySearch: the field outline also shows while "Clear search" has focus.
+- Light-mode `rim-interactive` on `surface-sunken` is 2.98:1 (checkbox box) — older than Polish 6; needs a token decision.
+- TaskRow duration presets and title button only partly use the shared control states.
+- Memory link buttons stay underlined `ink-primary` while RememberedReceipt's use `BUTTON_TEXT`: two "Undo"-style link looks.
+- Chat Send stays 40px (off the 36/44/48 scale).
+- Glyph dedupe is partial (close path in NotificationOverlay, inline check in Checkbox, local IncompleteGlyph / MoreGlyph).
+- Hash navigation: wheel and arrow-key paging push one history entry per step, so Back retraces every page passed through (as P6-R12 was written).
+- Copy/behaviour nits: "I couldn't reach Yoh's server just now." speaks of Yoh in the third person; SandboxCard's required-field line stays until the next Save; Home's "showing Home from {time}" formats in the browser's zone, not the host's.
+- From the audit, not in Polish 6's scope: Month view marks nothing on any day (needs server data); no persistent connection indicator (SSE drop = one toast); the pale highlight band above the top card on Desk/Research; Ask Yoh pill centres on the viewport, not the content column; `theme-color` is the brand accent in both themes; Tasks list is not virtualized; responsive layout (proposal: `planning-artifacts/ux-designs/ux-YohV1-2026-08-21/responsive-proposal-2026-10-01.md`).
+- e2e: the fixture server keeps chat history for the whole run, so specs that match a chat turn by text must use `.last()` (fixed in research-hub.spec.ts; others may need it).

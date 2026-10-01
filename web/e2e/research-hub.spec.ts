@@ -45,7 +45,10 @@ test("the ask box opens the Chat panel with the typed question, as Spencer's own
 
   const chat = page.getByTestId("chat-panel");
   await expect(chat).toBeVisible();
-  await expect(chat.getByText("AP Bio registration deadline")).toBeVisible();
+  // `.last()`: the fixture server keeps chat history for the whole run, so a
+  // retry (or an earlier ask of the same question) leaves stored turns with
+  // the same text above the new one.
+  await expect(chat.getByText("AP Bio registration deadline").last()).toBeVisible();
   await expect(ask).toHaveValue("");
   await chatResponse;
 });
