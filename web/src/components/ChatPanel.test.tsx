@@ -171,6 +171,13 @@ describe("ChatPanel", () => {
       expect(screen.getByTestId("missing-data-chip").className).toContain("tabular-nums");
     });
 
+    it("is a pill with the shared Secondary hover/press states, and Close is a shared icon button", () => {
+      vi.spyOn(missingDataModule, "useMissingDataCount").mockReturnValue({ status: "loaded", count: 1 });
+      renderOpenPanel();
+      expect(screen.getByTestId("missing-data-chip")).toHaveClass("rounded-full", "hover:shadow-extruded-md", "active:shadow-inset");
+      expect(screen.getByRole("button", { name: "Close chat" })).toHaveClass("hover:shadow-extruded-md", "h-11", "w-11");
+    });
+
     it("shows 'N need data' for a count greater than 1", () => {
       vi.spyOn(missingDataModule, "useMissingDataCount").mockReturnValue({ status: "loaded", count: 3 });
       renderOpenPanel();

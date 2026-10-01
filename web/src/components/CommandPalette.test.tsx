@@ -41,6 +41,17 @@ describe("CommandPalette", () => {
     expect(onRun).toHaveBeenCalledWith("/night");
   });
 
+  it("moving the mouse over a row moves the same highlight the arrow keys use", async () => {
+    const onRun = vi.fn();
+    render(<CommandPalette query="/" onRun={onRun} onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByTestId("command-row-/morning")).toBeInTheDocument());
+    fireEvent.mouseMove(screen.getByTestId("command-row-/night"));
+    expect(screen.getByTestId("command-row-/night")).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByTestId("command-row-/morning")).toHaveAttribute("aria-selected", "false");
+    fireEvent.keyDown(document, { key: "Enter" });
+    expect(onRun).toHaveBeenCalledWith("/night");
+  });
+
   it("↑ from the top row stays at the top row (no wrap-under)", async () => {
     const onRun = vi.fn();
     render(<CommandPalette query="/" onRun={onRun} onClose={() => {}} />);

@@ -25,6 +25,7 @@
  * `onHighlightedOptionChange`, so a screen reader announces the highlighted
  * command as ↑/↓ move it, without moving DOM focus off the input.
  */
+import { ROW_HOVER_FLAT } from "../lib/controlStyles.ts";
 import { useEffect, useState } from "react";
 import { fetchCommands, filterCommands } from "../lib/commands.ts";
 import type { CommandDescriptor } from "../../../src/types/api.ts";
@@ -116,8 +117,11 @@ export function CommandPalette({ query, onRun, onClose, onHighlightedOptionChang
           data-testid={`command-row-${c.name}`}
           aria-selected={filtered.length > 0 && i === highlighted}
           onClick={() => onRun(c.name)}
+          onMouseMove={() => {
+            if (filtered.length > 0 && i !== highlighted) setHighlighted(i);
+          }}
           className={
-            "flex cursor-pointer items-baseline justify-between gap-2 rounded-sm border-[length:var(--rim-width)] px-2 py-1 " +
+            `flex cursor-pointer items-baseline justify-between gap-2 rounded-sm border-[length:var(--rim-width)] px-2 py-1 ${ROW_HOVER_FLAT} ` +
             (filtered.length > 0 && i === highlighted ? "border-accent-solid" : "border-transparent")
           }
         >

@@ -34,14 +34,36 @@ describe("SandboxCard", () => {
     expect(screen.getByText(/2 remaining/i)).toBeInTheDocument();
   });
 
-  it("Save stays disabled until both Due Date and Estimated Duration are filled", () => {
+  it("Save stays enabled; pressing it with a required field empty names the field, focuses it, and makes no API call", () => {
+    const saveCard = vi.spyOn(sandboxModule, "saveCard").mockResolvedValue({ ok: true });
     render(<SandboxCard view={VIEW} status="pending" />);
     const save = screen.getByRole("button", { name: "Save" });
-    expect(save).toBeDisabled();
-    fireEvent.change(screen.getByLabelText(/Due Date/i), { target: { value: "2026-09-30" } });
-    expect(save).toBeDisabled();
-    fireEvent.change(screen.getByLabelText(/Estimated Duration/i), { target: { value: "45" } });
     expect(save).toBeEnabled();
+    fireEvent.click(save);
+    expect(screen.getByRole("alert")).toHaveTextContent(/Due Date/);
+    expect(screen.getByLabelText(/Due Date/i)).toHaveFocus();
+    expect(saveCard).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText(/Due Date/i), { target: { value: "2026-09-30" } });
+    fireEvent.click(save);
+    expect(screen.getByRole("alert")).toHaveTextContent(/Estimated Duration/);
+    expect(screen.getByLabelText(/Estimated Duration/i)).toHaveFocus();
+    expect(saveCard).not.toHaveBeenCalled();
+  });
+
+  it("Enter in a field saves", async () => {
+    const saveCard = vi.spyOn(sandboxModule, "saveCard").mockResolvedValue({ ok: true });
+    render(<SandboxCard view={VIEW} status="pending" />);
+    fireEvent.change(screen.getByLabelText(/Due Date/i), { target: { value: "2026-09-30" } });
+    fireEvent.change(screen.getByLabelText(/Estimated Duration/i), { target: { value: "45" } });
+    fireEvent.keyDown(screen.getByLabelText(/Estimated Duration/i), { key: "Enter" });
+    await waitFor(() => expect(saveCard).toHaveBeenCalledTimes(1));
+  });
+
+  it("field labels and the error line are at least text-caption-lg", () => {
+    render(<SandboxCard view={VIEW} status="pending" />);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(screen.getByRole("alert").className).toMatch(/text-caption-lg|text-small|text-body/);
+    expect(screen.getByText(/Due Date/i, { selector: "label" }).className).toMatch(/text-caption-lg|text-small|text-body/);
   });
 
   it("Save calls sandbox.ts's saveCard with the typed values", async () => {

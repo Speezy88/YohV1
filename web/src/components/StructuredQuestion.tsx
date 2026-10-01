@@ -27,6 +27,7 @@
  * any new prop to this component.
  */
 import { useLayoutEffect, useRef, useState } from "react";
+import { BUTTON_PRIMARY, BUTTON_SECONDARY, CONTROL_MD, FOCUS_RING } from "../lib/controlStyles.ts";
 
 export interface StructuredQuestionOption {
   readonly label: string;
@@ -94,13 +95,7 @@ export function StructuredQuestion({ text, options, allowsFreeText, busy = false
                 disabled={busy}
                 aria-pressed={selected}
                 onClick={() => pick(option.value)}
-                className={
-                  "h-[42px] rounded-full border-[length:var(--rim-width)] px-4 font-body text-body font-semibold shadow-extruded-sm " +
-                  "focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid " +
-                  (selected
-                    ? "border-transparent bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end text-on-accent-solid"
-                    : "border-rim-interactive bg-surface-raised text-ink-primary")
-                }
+                className={`${selected ? BUTTON_PRIMARY : BUTTON_SECONDARY} ${CONTROL_MD}`}
               >
                 {option.label}
               </button>
@@ -123,19 +118,13 @@ export function StructuredQuestion({ text, options, allowsFreeText, busy = false
                 submitFreeText();
               }
             }}
-            className={
-              "h-[42px] min-w-0 flex-1 rounded-full border-[length:var(--rim-width)] border-rim-interactive bg-surface-raised px-4 font-body text-body text-ink-primary shadow-extruded-sm " +
-              "focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid"
-            }
+            className={`h-11 min-w-0 flex-1 rounded-sm border-[length:var(--rim-width)] border-rim-interactive bg-surface-raised px-4 font-body text-body text-ink-primary shadow-extruded-sm ${FOCUS_RING}`}
           />
           <button
             type="button"
             disabled={busy || freeText.trim() === ""}
             onClick={submitFreeText}
-            className={
-              "h-[42px] rounded-full border-[length:var(--rim-width)] border-rim-interactive bg-surface-raised px-4 font-body text-body font-semibold text-ink-primary shadow-extruded-sm " +
-              "focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid"
-            }
+            className={`${BUTTON_SECONDARY} ${CONTROL_MD}`}
           >
             Send
           </button>

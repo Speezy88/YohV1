@@ -43,6 +43,7 @@
  * run on every render without tracking what it already showed. `OpenItems.tsx`
  * is gone (nothing else used it); the server route/store it read stay.
  */
+import { CONTROL_TRANSITION, FOCUS_RING, ICON_BUTTON } from "../lib/controlStyles.ts";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { appendPendingOpenItem, hydrateChatHistory, useChatStore } from "../lib/chatStore.ts";
 import { useChatPanel, closeChatPanel } from "../lib/chatPanel.ts";
@@ -161,7 +162,7 @@ export function ChatPanel(): React.JSX.Element | null {
                 type="button"
                 data-testid="missing-data-chip"
                 onClick={() => openMissingData()}
-                className="rounded-full border-[length:var(--rim-width)] border-rim-interactive px-3 py-1.5 font-body text-small tabular-nums text-ink-secondary shadow-extruded-sm hover:text-ink-primary"
+                className={`h-9 rounded-full border-[length:var(--rim-width)] border-rim-interactive px-3 font-body text-small tabular-nums text-ink-secondary shadow-extruded-sm hover:text-ink-primary hover:shadow-extruded-md active:shadow-inset ${FOCUS_RING} ${CONTROL_TRANSITION}`}
               >
                 {chipLabel}
               </button>
@@ -170,7 +171,7 @@ export function ChatPanel(): React.JSX.Element | null {
               type="button"
               aria-label="Close chat"
               onClick={closeChatPanel}
-              className="flex size-[42px] items-center justify-center rounded-md border-[length:var(--rim-width)] border-rim-interactive text-ink-secondary shadow-extruded-sm hover:text-ink-primary"
+              className={`${ICON_BUTTON} h-11 w-11`}
             >
               <svg aria-hidden="true" viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round">
                 <path d="M6 6l12 12M18 6L6 18" />
@@ -205,7 +206,7 @@ export function ChatPanel(): React.JSX.Element | null {
                 type="button"
                 data-testid="jump-to-latest"
                 onClick={jumpToLatest}
-                className="notification-glass pointer-events-auto rounded-full px-4 py-1 font-body text-small font-bold text-ink-primary"
+                className={`notification-glass pointer-events-auto h-9 rounded-full px-4 font-body text-small font-bold text-ink-primary hover:brightness-105 active:brightness-95 ${FOCUS_RING} ${CONTROL_TRANSITION}`}
               >
                 Jump to latest
               </button>

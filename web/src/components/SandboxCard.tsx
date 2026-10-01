@@ -4,8 +4,8 @@
  * Story 9.2, UX-DR39: one Sandbox Card — a `neumorphic-card` at `rounded-md`
  * rendered inline in the Chat stream. Task name in `typography.title`, Due
  * Date/Estimated Duration rimmed and required, Area/Energy optional, a
- * Secondary "Skip" and a Primary "Save" (disabled until both required
- * fields are filled — a client-side convenience only; the server re-checks
+ * Secondary "Skip" and a Primary "Save" (enabled while idle; pressing it with a required
+ * field empty names that field inline and focuses it — the server re-checks
  * regardless, AD-17), and "N remaining" in tabular numerals. A rejected save
  * (an unresolvable Area/Energy) re-prompts INLINE, on this same card,
  * showing the server's own message — the card never advances or leaves
@@ -17,7 +17,8 @@
  * (with a fixed "Couldn't skip — try again." rather than the server's own
  * message) and leaves the card pending and usable.
  */
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { BUTTON_PRIMARY, BUTTON_SECONDARY, CONTROL_MD, FOCUS_RING } from "../lib/controlStyles.ts";
 import { saveCard, skipCard } from "../lib/sandbox.ts";
 import { useReducedMotion } from "../hooks/useReducedMotion.ts";
 import { optionLabel } from "../lib/tasks.ts";
@@ -30,17 +31,11 @@ export interface SandboxCardProps {
 }
 
 const RIM_INPUT =
-  "h-10 w-full min-w-0 rounded-md border-[length:var(--rim-width)] border-accent-solid bg-surface-sunken px-3 font-body text-small text-ink-primary shadow-inset outline-none " +
-  "focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid";
+  `h-11 w-full min-w-0 rounded-md border-[length:var(--rim-width)] border-accent-solid bg-surface-sunken px-3 font-body text-small text-ink-primary shadow-inset outline-none ${FOCUS_RING}`;
 const PLAIN_INPUT =
-  "h-10 w-full min-w-0 rounded-md border-[length:var(--rim-width)] border-rim-interactive bg-surface-raised px-3 font-body text-small text-ink-primary shadow-extruded-sm outline-none " +
-  "focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid";
-const PRIMARY_BUTTON =
-  "h-[42px] rounded-full border-transparent bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end px-5 font-bold text-on-accent-solid shadow-extruded-sm disabled:opacity-40 " +
-  "focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid";
-const SECONDARY_BUTTON =
-  "h-[42px] rounded-full border-[length:var(--rim-width)] border-rim-interactive bg-surface-raised px-5 font-bold text-ink-primary shadow-extruded-sm disabled:opacity-40 " +
-  "focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid";
+  `h-11 w-full min-w-0 rounded-md border-[length:var(--rim-width)] border-rim-interactive bg-surface-raised px-3 font-body text-small text-ink-primary shadow-extruded-sm outline-none ${FOCUS_RING}`;
+const PRIMARY_BUTTON = `${BUTTON_PRIMARY} ${CONTROL_MD}`;
+const SECONDARY_BUTTON = `${BUTTON_SECONDARY} ${CONTROL_MD}`;
 
 const SETTLED_LABEL: Record<Exclude<SandboxCardProps["status"], "pending">, string> = {
   saved: "Saved",
@@ -73,6 +68,8 @@ export function SandboxCard({ view, status, receipt }: SandboxCardProps): React.
   const [energy, setEnergy] = useState(view.energy ?? "");
   const [busy, setBusy] = useState(false);
   const [errorText, setErrorText] = useState<string | undefined>(undefined);
+  const dueDateRef = useRef<HTMLInputElement>(null);
+  const durationRef = useRef<HTMLInputElement>(null);
 
   // Task 6 (polish-5): a PERSISTENT status region — mounted from the card's
   // very first (pending) render, not created fresh on settle. Only its text
@@ -106,7 +103,6 @@ export function SandboxCard({ view, status, receipt }: SandboxCardProps): React.
     );
   }
 
-  const canSave = dueDate.trim() !== "" && estimatedDurationMinutes.trim() !== "";
   const areaOptions = withCurrent(
     view.options.area.map((a) => ({ value: a, label: a })),
     area,
@@ -117,6 +113,17 @@ export function SandboxCard({ view, status, receipt }: SandboxCardProps): React.
   );
 
   const onSave = async (): Promise<void> => {
+    if (busy) return;
+    if (dueDate.trim() === "") {
+      setErrorText("Due Date is required — pick a date.");
+      dueDateRef.current?.focus();
+      return;
+    }
+    if (estimatedDurationMinutes.trim() === "") {
+      setErrorText("Estimated Duration is required — enter the minutes.");
+      durationRef.current?.focus();
+      return;
+    }
     setBusy(true);
     setErrorText(undefined);
     const outcome = await saveCard(view.taskId, {
@@ -147,31 +154,40 @@ export function SandboxCard({ view, status, receipt }: SandboxCardProps): React.
     }
   };
 
+  const onFieldKeyDown = (e: React.KeyboardEvent): void => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      void onSave();
+    }
+  };
+
   return (
     <div data-testid="sandbox-card" className="flex flex-col gap-3 rounded-md bg-surface-raised p-5 font-body text-body text-ink-primary shadow-extruded-sm">
       <p className="m-0 font-medium text-title">{view.taskTitle}</p>
       {errorText && (
-        <p role="alert" className="m-0 text-caption text-ink-danger">
+        <p role="alert" className="m-0 text-caption-lg text-ink-danger">
           {errorText}
         </p>
       )}
       <div className="grid grid-cols-2 gap-3">
-        <label className="flex flex-col gap-1 text-caption text-ink-secondary">
+        <label className="flex flex-col gap-1 text-caption-lg text-ink-secondary">
           Due Date
-          <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className={RIM_INPUT} />
+          <input ref={dueDateRef} type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} onKeyDown={onFieldKeyDown} className={RIM_INPUT} />
         </label>
-        <label className="flex flex-col gap-1 text-caption text-ink-secondary">
+        <label className="flex flex-col gap-1 text-caption-lg text-ink-secondary">
           Estimated Duration (minutes)
           <input
+            ref={durationRef}
             type="number"
             inputMode="numeric"
             min={1}
             value={estimatedDurationMinutes}
             onChange={(e) => setEstimatedDurationMinutes(e.target.value)}
+            onKeyDown={onFieldKeyDown}
             className={RIM_INPUT}
           />
         </label>
-        <label className="flex flex-col gap-1 text-caption text-ink-secondary">
+        <label className="flex flex-col gap-1 text-caption-lg text-ink-secondary">
           Area (optional)
           {view.options.area.length > 0 ? (
             <select value={area} onChange={(e) => setArea(e.target.value)} className={PLAIN_INPUT}>
@@ -183,10 +199,10 @@ export function SandboxCard({ view, status, receipt }: SandboxCardProps): React.
               ))}
             </select>
           ) : (
-            <input type="text" value={area} onChange={(e) => setArea(e.target.value)} className={PLAIN_INPUT} />
+            <input type="text" value={area} onChange={(e) => setArea(e.target.value)} onKeyDown={onFieldKeyDown} className={PLAIN_INPUT} />
           )}
         </label>
-        <label className="flex flex-col gap-1 text-caption text-ink-secondary">
+        <label className="flex flex-col gap-1 text-caption-lg text-ink-secondary">
           Energy (optional)
           {view.options.energy.length > 0 ? (
             <select value={energy} onChange={(e) => setEnergy(e.target.value)} className={PLAIN_INPUT}>
@@ -198,7 +214,7 @@ export function SandboxCard({ view, status, receipt }: SandboxCardProps): React.
               ))}
             </select>
           ) : (
-            <input type="text" placeholder="low / medium / high" value={energy} onChange={(e) => setEnergy(e.target.value)} className={PLAIN_INPUT} />
+            <input type="text" placeholder="low / medium / high" value={energy} onChange={(e) => setEnergy(e.target.value)} onKeyDown={onFieldKeyDown} className={PLAIN_INPUT} />
           )}
         </label>
       </div>
@@ -208,7 +224,7 @@ export function SandboxCard({ view, status, receipt }: SandboxCardProps): React.
           <button type="button" disabled={busy} onClick={() => void onSkip()} className={SECONDARY_BUTTON}>
             Skip
           </button>
-          <button type="button" disabled={busy || !canSave} onClick={() => void onSave()} className={PRIMARY_BUTTON}>
+          <button type="button" disabled={busy} onClick={() => void onSave()} className={PRIMARY_BUTTON}>
             Save
           </button>
         </div>

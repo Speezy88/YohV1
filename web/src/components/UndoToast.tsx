@@ -20,6 +20,7 @@
  * (DESIGN.md: one row for "toast / notification appears"), with its
  * fade-only variant under reduced motion.
  */
+import { BUTTON_SECONDARY, CONTROL_SM } from "../lib/controlStyles.ts";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useReducedMotion } from "../hooks/useReducedMotion.ts";
@@ -131,10 +132,7 @@ export function UndoToast({ id, taskName, label, serverHold = true, durationMs, 
           setBusy(true);
           void onUndo().finally(() => setBusy(false));
         }}
-        className={
-          "rounded-sm border-[length:var(--rim-width)] border-rim-interactive bg-transparent px-3 py-1 font-bold text-ink-primary " +
-          "focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid"
-        }
+        className={`${BUTTON_SECONDARY} ${CONTROL_SM}`}
       >
         Undo
       </button>

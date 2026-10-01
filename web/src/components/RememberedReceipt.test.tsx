@@ -32,6 +32,11 @@ describe("RememberedReceipt", () => {
     expect(screen.getByRole("button", { name: "Undo" }).tagName).toBe("BUTTON");
   });
 
+  it("Undo is a shared text button", () => {
+    render(<RememberedReceipt messageId="m1" receipt={CHEM} state="undoable" />);
+    expect(screen.getByRole("button", { name: "Undo" })).toHaveClass("hover:underline", "text-ink-accent", "disabled:opacity-50");
+  });
+
   it("adds scope and until-date, and joins two items with ' ; '", () => {
     const receipt: Receipt = {
       receiptId: "r2",

@@ -39,16 +39,18 @@ describe("StructuredQuestion", () => {
     expect(p).not.toHaveClass("font-bold");
   });
 
-  it("uses the body type-scale token, semibold weight (never font-bold), for a chip and for Other/Send", () => {
+  // Polish 6: chips and Send use the shared Secondary style (rounded-sm, Figtree
+  // 500 — no 600 ships), and a picked chip flips to the shared Primary style.
+  it("chips and Send are shared Secondary buttons (rounded-sm, no font-semibold); Other keeps the body token", () => {
     render(<StructuredQuestion text="Q" options={[{ label: "Yes", value: "yes" }]} allowsFreeText onAnswer={vi.fn()} />);
     const chip = screen.getByRole("button", { name: "Yes" });
-    expect(chip).toHaveClass("text-body", "font-semibold");
-    expect(chip).not.toHaveClass("font-bold");
+    expect(chip).toHaveClass("text-body", "rounded-sm", "hover:shadow-extruded-md", "active:shadow-inset");
+    expect(chip).not.toHaveClass("font-semibold", "rounded-full");
     const other = screen.getByLabelText("Other");
     expect(other).toHaveClass("text-body");
     const send = screen.getByRole("button", { name: "Send" });
-    expect(send).toHaveClass("text-body", "font-semibold");
-    expect(send).not.toHaveClass("font-bold");
+    expect(send).toHaveClass("text-body", "rounded-sm", "hover:shadow-extruded-md");
+    expect(send).not.toHaveClass("font-semibold");
   });
 
   it("picking a chip calls onAnswer with its value and flips the chip to the Primary style", () => {
@@ -56,7 +58,7 @@ describe("StructuredQuestion", () => {
     render(<StructuredQuestion text="Q" options={[{ label: "Yes", value: "yes" }]} allowsFreeText={false} onAnswer={onAnswer} />);
     fireEvent.click(screen.getByRole("button", { name: "Yes" }));
     expect(onAnswer).toHaveBeenCalledWith("yes");
-    expect(screen.getByRole("button", { name: "Yes" })).toHaveClass("bg-gradient-to-br", "from-accent-gradient-start", "to-accent-gradient-end");
+    expect(screen.getByRole("button", { name: "Yes" })).toHaveClass("bg-gradient-to-br", "from-accent-gradient-start", "to-accent-gradient-end", "hover:brightness-105", "active:brightness-95");
   });
 
   it("chips and Other are native <button>/<input> — reachable by Tab, activatable by Enter/Space with no custom handling", () => {

@@ -10,6 +10,7 @@
  * prompt with an inline retry line. State lives on the chat message
  * (`MessageRating`) so a new message can close an open prompt locally.
  */
+import { BUTTON_PRIMARY, BUTTON_SECONDARY, BUTTON_TEXT, CONTROL_MD, FOCUS_RING } from "../lib/controlStyles.ts";
 import { useRef, useState } from "react";
 import { useReducedMotion } from "../hooks/useReducedMotion.ts";
 import { submitRating } from "../lib/ratingApi.ts";
@@ -17,9 +18,7 @@ import type { MessageRating } from "../lib/chatStore.ts";
 import type { RememberedReceipt } from "../../../src/types/api.ts";
 
 const CAPTION = "font-body text-small text-ink-secondary";
-const FOCUS = "focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid";
-const CHIP = `h-[42px] rounded-full border-[length:var(--rim-width)] px-4 font-body text-body font-semibold shadow-extruded-sm ${FOCUS}`;
-const TEXT_BUTTON = `font-body text-small text-ink-secondary underline underline-offset-2 disabled:opacity-60 ${FOCUS}`;
+const TEXT_BUTTON = `${BUTTON_TEXT} px-2 text-small`;
 
 export const RATING_FAILED_COPY = "Couldn't save that. Try again.";
 
@@ -118,11 +117,7 @@ export function RatingPrompt({ rating, onChange, onReceipt }: RatingPromptProps)
                 disabled={busy}
                 onFocus={() => setFocusIndex(i)}
                 onClick={() => void pick(option.score)}
-                className={`${CHIP} ${
-                  rating.score === option.score
-                    ? "border-transparent bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end text-on-accent-solid"
-                    : "border-rim-interactive bg-surface-raised text-ink-primary"
-                }`}
+                className={`${rating.score === option.score ? BUTTON_PRIMARY : BUTTON_SECONDARY} ${CONTROL_MD}`}
               >
                 {option.score} {option.label}
               </button>
@@ -161,13 +156,13 @@ export function RatingPrompt({ rating, onChange, onReceipt }: RatingPromptProps)
                 void sendNote();
               }
             }}
-            className={`h-[42px] min-w-0 flex-1 rounded-full border-[length:var(--rim-width)] border-rim-interactive bg-surface-raised px-4 font-body text-body text-ink-primary shadow-extruded-sm ${FOCUS}`}
+            className={`h-11 min-w-0 flex-1 rounded-sm border-[length:var(--rim-width)] border-rim-interactive bg-surface-raised px-4 font-body text-body text-ink-primary shadow-extruded-sm ${FOCUS_RING}`}
           />
           <button
             type="button"
             disabled={busy || note.trim() === ""}
             onClick={() => void sendNote()}
-            className={`${CHIP} border-rim-interactive bg-surface-raised text-ink-primary`}
+            className={`${BUTTON_SECONDARY} ${CONTROL_MD}`}
           >
             Send
           </button>

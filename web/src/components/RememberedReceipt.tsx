@@ -8,6 +8,7 @@
  * next message; then the line settles, offering View in Memory once the
  * Memory page exists. The line fades in unless reduced motion is on.
  */
+import { BUTTON_TEXT } from "../lib/controlStyles.ts";
 import { useState } from "react";
 import { useReducedMotion } from "../hooks/useReducedMotion.ts";
 import { hasMemoryPage, MEMORY_FOLDER_LABELS, undoMemoryReceipt, useOpenInMemory } from "../lib/memoryApi.ts";
@@ -15,9 +16,7 @@ import { setReceiptOutcome, type ReceiptState } from "../lib/chatStore.ts";
 import type { RememberedReceipt as Receipt } from "../../../src/types/api.ts";
 
 const CAPTION = "font-body text-small text-ink-secondary";
-const LINK_BUTTON =
-  "font-body text-small font-semibold text-ink-primary underline underline-offset-2 disabled:opacity-60 " +
-  "focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid";
+const LINK_BUTTON = `${BUTTON_TEXT} min-h-6 px-1 text-small`;
 
 export const FILING_FAILED_COPY = "Couldn't save that to memory.";
 export const UNDO_FAILED_COPY = "Couldn't undo that.";

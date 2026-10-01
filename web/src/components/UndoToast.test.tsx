@@ -14,6 +14,11 @@ describe("UndoToast generalization (Story 13.9)", () => {
     expect(screen.getByTestId("undo-toast")).not.toHaveTextContent("Checked off");
   });
 
+  it("Undo is a shared Secondary button", () => {
+    render(<UndoToast id="x" label="Deleted" durationMs={1000} onUndo={async () => {}} onExpire={() => {}} />);
+    expect(screen.getByRole("button", { name: "Undo" })).toHaveClass("hover:shadow-extruded-md", "active:shadow-inset", "disabled:opacity-50");
+  });
+
   it("keeps the default check-off copy", () => {
     render(<UndoToast id="x" taskName="Read ch. 4" durationMs={1000} onUndo={async () => {}} onExpire={() => {}} />);
     expect(screen.getByTestId("undo-toast")).toHaveTextContent("Checked off Read ch. 4");

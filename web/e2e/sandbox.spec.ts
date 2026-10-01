@@ -110,10 +110,14 @@ test("/sandbox: Skip on the first card writes nothing and advances; Save on the 
   await expect(nextCard.getByText("0 remaining")).toBeVisible();
 
   const save = nextCard.getByRole("button", { name: "Save" });
-  await expect(save).toBeDisabled();
+  // Save stays enabled; with a required field empty it names the field
+  // inline, focuses it, and writes nothing.
+  await expect(save).toBeEnabled();
+  await save.click();
+  await expect(nextCard.getByRole("alert")).toContainText("Due Date");
+  await expect(nextCard.getByLabel("Due Date")).toBeFocused();
   await nextCard.getByLabel("Due Date").fill("2026-10-05");
   await nextCard.getByLabel("Estimated Duration").fill("30");
-  await expect(save).toBeEnabled();
 
   const saveResponse = page.waitForResponse((r) => r.url().includes("/api/sandbox/") && r.url().endsWith("/save"));
   await save.click();
