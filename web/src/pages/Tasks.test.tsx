@@ -119,6 +119,24 @@ describe("TasksPage", () => {
     expect(screen.getByRole("heading", { name: "Tasks", level: 1 }).closest('[data-wheel-nav="off"]')).toBeNull();
   });
 
+  it("a first-load error is an alert with Try again that refetches the list", async () => {
+    api.tasks.$get.mockResolvedValueOnce(envelope({ ok: false, error: { kind: "unreachable", message: "I couldn't reach Notion right now; nothing was changed." } }));
+    render(<TasksPage />);
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Couldn't load Tasks right now.");
+    expect(alert).toHaveTextContent("I couldn't reach Notion right now");
+    fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
+    await screen.findByText("Calc problem set 4");
+    expect(api.tasks.$get).toHaveBeenCalledTimes(2);
+  });
+
+  it("the empty list renders as a status-free empty message (no alert)", async () => {
+    api.tasks.$get.mockResolvedValue(envelope({ ok: true, value: { ...VIEW, groups: [], total: 0 } }));
+    render(<TasksPage />);
+    await screen.findByText("No Tasks yet. Type one above and press Enter.");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("renders the server's groups with counts, overdue dates in danger ink, and Add badges for missing fields", async () => {
     await renderLoaded();
     expect(screen.getByRole("heading", { name: "Overdue · 1" })).toHaveClass("text-ink-danger");

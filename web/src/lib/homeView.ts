@@ -16,7 +16,7 @@ import type { HomeViewResponse } from "../../../src/types/api.ts";
 
 export type HomeViewState =
   | { readonly status: "loading" }
-  | { readonly status: "loaded"; readonly value: HomeViewResponse }
+  | { readonly status: "loaded"; readonly value: HomeViewResponse; readonly refreshFailed?: { readonly message: string; readonly at: Date } }
   | { readonly status: "error"; readonly message: string };
 
 let state: HomeViewState = { status: "loading" };
@@ -29,13 +29,22 @@ function snapshot(): HomeViewState {
   return state;
 }
 
+/** Fixed copy for a thrown failure — a caught Error's own text is never stored or shown. */
+const UNREACHABLE_COPY = "I couldn't reach Yoh's server just now.";
+
+function fail(message: string): void {
+  // Stale beats blank (P6-R7): after a successful load, keep the view.
+  state = state.status === "loaded" ? { ...state, refreshFailed: { message, at: new Date() } } : { status: "error", message };
+}
+
 async function refetch(): Promise<void> {
   try {
     const res = await apiClient.api.home.$get();
     const result = await res.json();
-    state = result.ok ? { status: "loaded", value: result.value } : { status: "error", message: result.error.message };
-  } catch (err) {
-    state = { status: "error", message: err instanceof Error ? err.message : String(err) };
+    if (result.ok) state = { status: "loaded", value: result.value };
+    else fail(result.error.message);
+  } catch {
+    fail(UNREACHABLE_COPY);
   }
   notify();
 }

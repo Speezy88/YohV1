@@ -9,7 +9,7 @@
  * copy, and the ask box opening the Chat panel with the typed question.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
 import ResearchHubPage from "./ResearchHub.tsx";
 import { apiClient } from "../lib/apiClient.ts";
 import { openChatPanel } from "../lib/chatPanel.ts";
@@ -65,6 +65,18 @@ describe("ResearchHubPage", () => {
     api.research.$get.mockResolvedValue(envelope({ ok: false, error: { kind: "unreachable", message: "I couldn't reach Notion right now; nothing was changed." } }));
     render(<ResearchHubPage />);
     await screen.findByText(/Couldn't load your Research Vault right now/);
+  });
+
+  it("a first-load error is an alert with Try again that refetches the list", async () => {
+    api.research.$get.mockResolvedValueOnce(envelope({ ok: false, error: { kind: "unreachable", message: "I couldn't reach Notion right now; nothing was changed." } }));
+    api.research.$get.mockResolvedValue(envelope({ ok: true, value: { items: [] } }));
+    render(<ResearchHubPage />);
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("I couldn't reach Notion right now");
+    fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
+    await screen.findByText('Nothing saved yet. Ask a question, then say "save that".');
+    expect(api.research.$get).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("Enter in the ask box opens the Chat panel with the typed question, and clears the box", async () => {

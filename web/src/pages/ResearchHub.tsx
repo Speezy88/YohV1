@@ -25,6 +25,7 @@ import { send } from "../lib/chatStore.ts";
 import { formatResearchDate, useResearchList } from "../lib/research.ts";
 import { FIELD_FOCUS_WITHIN, ROW_HOVER_RAISED } from "../lib/controlStyles.ts";
 import { useReducedMotion } from "../hooks/useReducedMotion.ts";
+import { StateMessage } from "../components/StateMessage.tsx";
 import type { ResearchListItem } from "../../../src/types/api.ts";
 
 function RowSkeleton({ reducedMotion }: { readonly reducedMotion: boolean }): React.JSX.Element {
@@ -120,7 +121,7 @@ function AskResearchBox(): React.JSX.Element {
 }
 
 export default function ResearchHubPage(): React.JSX.Element {
-  const { state } = useResearchList();
+  const { state, refetch } = useResearchList();
   const reducedMotion = useReducedMotion();
   const items = state.status === "loaded" ? state.value.items : [];
 
@@ -144,9 +145,9 @@ export default function ResearchHubPage(): React.JSX.Element {
           {state.status === "loading" ? (
             [0, 1, 2].map((i) => <RowSkeleton key={i} reducedMotion={reducedMotion} />)
           ) : state.status === "error" ? (
-            <p className="m-0 p-5 font-body text-body text-ink-secondary">Couldn't load your Research Vault right now. {state.message}</p>
+            <StateMessage variant="error" className="p-5" message="Couldn't load your Research Vault right now." detail={state.message} onRetry={() => void refetch()} />
           ) : items.length === 0 ? (
-            <p className="m-0 p-5 font-body text-body text-ink-secondary">Nothing saved yet. Ask a question, then say "save that".</p>
+            <StateMessage variant="empty" className="p-5" message={'Nothing saved yet. Ask a question, then say "save that".'} />
           ) : (
             items.map((item) => <ResearchRow key={item.id} item={item} />)
           )}

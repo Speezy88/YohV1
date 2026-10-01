@@ -134,6 +134,53 @@ describe("HomePage", () => {
     expect(screen.getByText(/couldn't load home/i)).toBeInTheDocument();
   });
 
+  it("a first-load error is an alert with Try again wired to refetchHomeView; the server's message is the detail", () => {
+    mockState({ status: "error", message: "I couldn't reach Notion right now." });
+    const refetch = vi.spyOn(homeViewModule, "refetchHomeView").mockResolvedValue();
+    render(<HomePage />);
+    expect(screen.getByRole("alert")).toHaveTextContent("I couldn't reach Notion right now.");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("a failed refresh after a load keeps the page and shows the Couldn't refresh line with the time", () => {
+    mockState({ ...loaded(), refreshFailed: { message: "x", at: new Date(2026, 8, 25, 9, 5) } });
+    render(<HomePage />);
+    expect(screen.getByTestId("home-greeting")).toBeInTheDocument();
+    expect(screen.getByText(/Couldn't refresh — showing Home from \d{1,2}:05/)).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("no refresh line when the last refresh succeeded", () => {
+    mockState(loaded());
+    render(<HomePage />);
+    expect(screen.queryByText(/Couldn't refresh/)).toBeNull();
+  });
+
+  it("the loading skeleton mirrors the loaded layout: same outer + grid classes, header, Plan card with heading, Calendar card", () => {
+    mockState({ status: "loading" });
+    const { container, unmount } = render(<HomePage />);
+    const skeletonOuter = (container.firstElementChild as HTMLElement).className;
+    const skeletonGrid = screen.getByTestId("home-skeleton-grid").className;
+    expect(screen.getByTestId("home-skeleton-header")).toBeInTheDocument();
+    expect(screen.getByTestId("home-skeleton-plan")).toBeInTheDocument();
+    expect(screen.getByTestId("home-skeleton-plan-heading")).toBeInTheDocument();
+    expect(screen.getByTestId("calendar-skeleton")).toBeInTheDocument();
+    unmount();
+
+    mockState(loaded());
+    const { container: c2 } = render(<HomePage />);
+    expect((c2.firstElementChild as HTMLElement).className).toBe(skeletonOuter);
+    expect(screen.getByTestId("home-grid").className).toBe(skeletonGrid);
+  });
+
+  it("skeleton pulse honours reduced motion", () => {
+    vi.spyOn(window, "matchMedia").mockImplementation((q: string) => ({ matches: q.includes("reduce"), media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, dispatchEvent: () => false, onchange: null }) as unknown as MediaQueryList);
+    mockState({ status: "loading" });
+    render(<HomePage />);
+    expect(screen.getByTestId("calendar-skeleton").className).not.toContain("animate-pulse");
+  });
+
   it("renders the Confetti component with the server's 'today', never the browser's date", () => {
     mockState(loaded({ today: "2026-02-19" }));
     render(<HomePage />);

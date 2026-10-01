@@ -83,6 +83,25 @@ describe("homeView store", () => {
     const { result } = renderHook(() => useHomeView());
     stops.push(startHomeViewStream());
     await waitFor(() => expect(result.current.status).toBe("error"));
+    // A thrown error's own text is never stored: fixed copy only.
+    expect(JSON.stringify(result.current)).not.toContain("network down");
+  });
+
+  it("a failed refetch after a successful load keeps the loaded value and sets refreshFailed; the next success clears it", async () => {
+    const home = apiClient.api.home.$get as ReturnType<typeof vi.fn>;
+    const { result } = renderHook(() => useHomeView());
+    stops.push(startHomeViewStream());
+    await waitFor(() => expect(result.current.status).toBe("loaded"));
+    home.mockRejectedValueOnce(new Error("network down"));
+    act(() => hintCb({ seq: 1, topic: "plan", entityId: "x" }));
+    await waitFor(() => expect(result.current.status === "loaded" && result.current.refreshFailed !== undefined).toBe(true));
+    if (result.current.status === "loaded") {
+      expect(result.current.value.today).toBe("2026-09-25");
+      expect(result.current.refreshFailed?.at).toBeInstanceOf(Date);
+      expect(JSON.stringify(result.current.refreshFailed)).not.toContain("network down");
+    }
+    act(() => hintCb({ seq: 2, topic: "plan", entityId: "x" }));
+    await waitFor(() => expect(result.current.status === "loaded" && result.current.refreshFailed === undefined).toBe(true));
   });
 
   it("re-fetches when the tab regains focus, and stops after the stream stops", async () => {

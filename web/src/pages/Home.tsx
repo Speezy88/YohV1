@@ -43,10 +43,11 @@
  * that date's own "plan" hint).
  */
 import { useEffect, useState } from "react";
-import { startHomeViewStream, useHomeView } from "../lib/homeView.ts";
+import { refetchHomeView, startHomeViewStream, useHomeView } from "../lib/homeView.ts";
 import { retryCalendarDay, useCalendarDay } from "../lib/calendarDay.ts";
 import { useReadinessGate } from "../lib/readiness.ts";
 import { CalendarDayView } from "../components/CalendarDayView.tsx";
+import { StateMessage } from "../components/StateMessage.tsx";
 import { Confetti } from "../components/Confetti.tsx";
 import { PlanChecklist } from "../components/PlanChecklist.tsx";
 import { TimeBudgetWidget } from "../components/TimeBudgetWidget.tsx";
@@ -83,6 +84,13 @@ function greetingForHour(hour: number): string {
   if (hour < 18) return "Good afternoon";
   return "Good evening";
 }
+
+/** The page's outer, grid and card classes, shared by the loaded page and its skeleton so nothing jumps when data arrives. */
+const HOME_PAGE_CLASS = "flex h-full min-h-0 flex-col gap-6 p-8 pb-24";
+const HOME_GRID_CLASS = "grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_520px] gap-7";
+const PLAN_CARD_CLASS = "flex min-h-0 flex-col gap-4 rounded-2xl bg-surface-raised p-7 shadow-extruded-lg";
+const PLAN_LIST_CLASS = "-mx-4 -mt-3 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 pb-4 pt-3";
+const CALENDAR_CARD_CLASS = "flex min-h-0 flex-col rounded-2xl bg-surface-raised p-5 shadow-extruded-lg";
 
 function PlanRowSkeleton(): React.JSX.Element {
   const reducedMotion = useReducedMotion();
@@ -145,20 +153,36 @@ export default function HomePage(): React.JSX.Element {
   const reducedMotion = useReducedMotion();
 
   if (state.status === "loading") {
+    const pulse = reducedMotion ? "" : "animate-pulse";
     return (
-      <div className="grid h-full grid-cols-[minmax(0,1fr)_520px] gap-7 p-8 pb-24">
-        <div className="flex flex-col gap-3">
-          {[0, 1, 2, 3].map((i) => (
-            <PlanRowSkeleton key={i} />
-          ))}
+      <div className={HOME_PAGE_CLASS}>
+        <div data-testid="home-skeleton-header" className="flex flex-col gap-1.5">
+          <div className={`h-5 w-48 rounded-md bg-surface-sunken ${pulse}`} />
+          <div className={`h-10 w-80 rounded-md bg-surface-sunken ${pulse}`} />
         </div>
-        <div data-testid="calendar-skeleton" className={`rounded-2xl bg-surface-sunken ${reducedMotion ? "" : "animate-pulse"}`} />
+        <div data-testid="home-skeleton-grid" className={HOME_GRID_CLASS}>
+          <section data-testid="home-skeleton-plan" className={PLAN_CARD_CLASS}>
+            <div data-testid="home-skeleton-plan-heading" className={`h-6 w-40 rounded-md bg-surface-sunken ${pulse}`} />
+            <div className={PLAN_LIST_CLASS}>
+              {[0, 1, 2, 3].map((i) => (
+                <PlanRowSkeleton key={i} />
+              ))}
+            </div>
+          </section>
+          <div data-testid="calendar-skeleton" className={CALENDAR_CARD_CLASS}>
+            <div className={`h-full min-h-40 rounded-lg bg-surface-sunken ${pulse}`} />
+          </div>
+        </div>
       </div>
     );
   }
 
   if (state.status === "error") {
-    return <div className="flex h-full items-center justify-center p-5 font-body text-body text-ink-secondary">Couldn't load Home right now.</div>;
+    return (
+      <div className="flex h-full items-center justify-center p-5">
+        <StateMessage variant="error" message="Couldn't load Home right now." detail={state.message} onRetry={() => void refetchHomeView()} />
+      </div>
+    );
   }
 
   const { today, plan, calendar, timeBudget, timeZone } = state.value;
@@ -166,9 +190,14 @@ export default function HomePage(): React.JSX.Element {
   const allDone = plan !== undefined && rows.every((r) => r.completed);
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-6 p-8 pb-24">
+    <div className={HOME_PAGE_CLASS}>
       <Confetti today={today} />
       <HomeHeader today={today} />
+      {state.refreshFailed && (
+        <p className="m-0 shrink-0 font-body text-small text-ink-secondary">
+          Couldn't refresh — showing Home from {state.refreshFailed.at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.
+        </p>
+      )}
       {/* Polish-2 (real bug: this grid row used to hold a MiniMonth card
           PLUS a fixed h-[380px] Calendar Day View card, together taller
           than a real viewport — no fixed pixel heights below this line;
@@ -176,13 +205,13 @@ export default function HomePage(): React.JSX.Element {
           row's own height, so nothing can ever grow past it and bleed into
           the next page's slot (`PageShell.tsx`'s per-page `overflow-hidden`
           is the other, structural half of this fix). */}
-      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_520px] gap-7">
+      <div data-testid="home-grid" className={HOME_GRID_CLASS}>
         {/* Polish-4 addendum (wheel paging only outside cards): a wheel
             gesture over this raised card always scrolls its own content,
             never changes page, even at an edge (`data-wheel-nav="off"`,
             `lib/wheelNav.ts`) — the greeting above stays un-opted-out, so a
             wheel gesture there still changes page. */}
-        <section data-wheel-nav="off" className="flex min-h-0 flex-col gap-4 rounded-2xl bg-surface-raised p-7 shadow-extruded-lg">
+        <section data-wheel-nav="off" className={PLAN_CARD_CLASS}>
           <div className="flex items-baseline justify-between">
             <h2 className="m-0 font-body text-heading font-bold text-ink-primary">Today's Plan</h2>
             <TimeBudgetWidget timeBudget={timeBudget} />
@@ -190,11 +219,11 @@ export default function HomePage(): React.JSX.Element {
           {/* The negative margin + matching padding gives each row's extruded
               shadow room inside this scroll box (same idiom as the Tasks
               list) — flush against the edge, the shadow was clipped square. */}
-          <div className="-mx-4 -mt-3 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 pb-4 pt-3">
+          <div className={PLAN_LIST_CLASS}>
             {plan === undefined ? (
-              <p className="font-body text-body text-ink-secondary">No Plan yet today. Type /plan to build it now.</p>
+              <StateMessage variant="empty" message="No Plan yet today. Type /plan to build it now." />
             ) : allDone ? (
-              <p className="font-body text-body text-ink-secondary">Nothing left on today's Plan.</p>
+              <StateMessage variant="empty" message="Nothing left on today's Plan." />
             ) : (
               <PlanChecklist rows={rows} timeZone={timeZone} />
             )}
@@ -319,7 +348,7 @@ function CalendarColumn({ today, blocks, timeZone, reshuffle }: CalendarColumnPr
   return (
     // Polish-4 addendum (wheel paging only outside cards): same opt-out as
     // the Plan card above.
-    <aside aria-label="Calendar" data-wheel-nav="off" className="flex min-h-0 flex-col rounded-2xl bg-surface-raised p-5 shadow-extruded-lg">
+    <aside aria-label="Calendar" data-wheel-nav="off" className={CALENDAR_CARD_CLASS}>
       <header className="flex shrink-0 items-center justify-between pb-4">
         <h2 className="m-0 font-body text-heading font-bold text-ink-primary">Calendar</h2>
         <CalendarViewToggle view={view} onChange={changeView} />

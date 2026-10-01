@@ -48,6 +48,7 @@ import { addLocalFailureNotice } from "../lib/notifications.ts";
 import { setMissingDataFilterActive, useMissingDataFilterActive } from "../lib/missingDataFilter.ts";
 import { CONTROL_TRANSITION, FIELD_FOCUS_WITHIN, FOCUS_RING } from "../lib/controlStyles.ts";
 import { useReducedMotion } from "../hooks/useReducedMotion.ts";
+import { StateMessage } from "../components/StateMessage.tsx";
 import { TaskRow, type TaskEditField } from "../components/TaskRow.tsx";
 import { TaskQuickAdd } from "../components/TaskQuickAdd.tsx";
 import { UndoToast } from "../components/UndoToast.tsx";
@@ -388,11 +389,13 @@ export default function TasksPage(): React.JSX.Element {
           {state.status === "loading" && justAdded.length === 0 ? (
             [0, 1, 2, 3, 4].map((i) => <RowSkeleton key={i} reducedMotion={reducedMotion} />)
           ) : state.status === "error" && justAdded.length === 0 ? (
-            <p className="m-0 p-5 font-body text-body text-ink-secondary">Couldn't load Tasks right now. {state.message}</p>
+            <StateMessage variant="error" className="p-5" message="Couldn't load Tasks right now." detail={state.message} onRetry={() => void refetch()} />
           ) : groups.length === 0 ? (
-            <p className="m-0 p-5 font-body text-body text-ink-secondary">
-              {query ? `No Tasks match "${query}".` : missingDataFilterActive ? "No Tasks are missing data." : "No Tasks yet. Type one above and press Enter."}
-            </p>
+            <StateMessage
+              variant="empty"
+              className="p-5"
+              message={query ? `No Tasks match "${query}".` : missingDataFilterActive ? "No Tasks are missing data." : "No Tasks yet. Type one above and press Enter."}
+            />
           ) : (
             groups.map((group) => (
               <section key={group.key} aria-label={group.label} className="flex flex-col gap-2">
