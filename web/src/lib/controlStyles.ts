@@ -28,8 +28,8 @@ export const BUTTON_PRIMARY = `inline-flex items-center justify-center gap-2 rou
 /** Rimmed, extruded; hover steps the shadow up, press insets. */
 export const BUTTON_SECONDARY = `inline-flex items-center justify-center gap-2 rounded-sm border-[length:var(--rim-width)] border-rim-interactive bg-surface-base font-body font-medium text-ink-secondary shadow-extruded-sm hover:text-ink-primary hover:shadow-extruded-md active:shadow-inset ${BASE}`;
 
-/** Text-only button; hover underlines. */
-export const BUTTON_TEXT = `inline-flex items-center justify-center rounded-xs font-body font-medium text-accent-solid hover:underline ${BASE}`;
+/** Text-only button; hover underlines. `ink-accent`, not `accent-solid`: accent-solid text fails 4.5:1 (DESIGN.md, Undo Toast note). */
+export const BUTTON_TEXT = `inline-flex items-center justify-center rounded-xs font-body font-medium text-ink-accent hover:underline ${BASE}`;
 
 /** Square, rimmed, extruded icon button; pair with a CONTROL_* height and a matching width. */
 export const ICON_BUTTON = `inline-flex items-center justify-center rounded-md border-[length:var(--rim-width)] border-rim-interactive bg-surface-base text-ink-secondary shadow-extruded-sm hover:text-ink-primary hover:shadow-extruded-md active:shadow-inset ${BASE}`;
