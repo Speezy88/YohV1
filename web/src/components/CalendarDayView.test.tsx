@@ -77,17 +77,17 @@ describe("CalendarDayView", () => {
     expect(label).toHaveClass("text-ink-secondary");
   });
 
-  it("a Work event's title is semibold on its solid (non-translucent) accent fill", () => {
+  it("a Work event's title is bold on its solid (non-translucent) accent fill", () => {
     render(<CalendarDayView blocks={[block({ id: "b1", kind: "work" })]} timeZone={UTC} now={NOON_UTC} />);
     const el = screen.getByTestId("calendar-block");
-    expect(el).toHaveClass("font-semibold");
+    expect(el).toHaveClass("font-bold");
     expect(el).toHaveClass("text-small"); // 15px, >= the 13px floor
     expect(el.className).not.toMatch(/\/\d\d\)|opacity-[0-5]\d\b/); // no translucency modifier on the fill itself
   });
 
-  it("a fixed anchor's title is also semibold", () => {
+  it("a fixed anchor's title is also bold", () => {
     render(<CalendarDayView blocks={[block({ id: "e1", kind: "fixed" })]} timeZone={UTC} now={NOON_UTC} />);
-    expect(screen.getByTestId("calendar-block")).toHaveClass("font-semibold");
+    expect(screen.getByTestId("calendar-block")).toHaveClass("font-bold");
   });
 
   it("two back-to-back (touching) blocks, both above the min-height floor, render with a visible gap between them — not seamlessly flush", () => {

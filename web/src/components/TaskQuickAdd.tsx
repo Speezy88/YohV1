@@ -27,6 +27,7 @@
 import { forwardRef, useEffect, useRef, useState } from "react";
 import type { QuickAddPreviewResponse } from "../../../src/types/api.ts";
 import { FIELD_FOCUS_WITHIN } from "../lib/controlStyles.ts";
+import { PlusGlyph } from "./icons/Glyphs.tsx";
 import { formatDue, formatDuration, optionLabel, requestQuickAddPreview } from "../lib/tasks.ts";
 import type { TaskFieldOptions, TaskStatus } from "../../../src/types/domain.ts";
 
@@ -171,9 +172,7 @@ export const TaskQuickAdd = forwardRef<HTMLInputElement, TaskQuickAddProps>(func
         }
       >
         <span aria-hidden="true" className="flex size-7 shrink-0 items-center justify-center rounded-sm bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end">
-          <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" className="text-on-accent-solid">
-            <path d="M12 5v14 M5 12h14" strokeWidth={2.6} strokeLinecap="round" />
-          </svg>
+          <PlusGlyph className="text-on-accent-solid" />
         </span>
         <input
           ref={ref}

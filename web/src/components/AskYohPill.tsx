@@ -18,6 +18,7 @@
  */
 import { openChatPanel } from "../lib/chatPanel.ts";
 import { CONTROL_TRANSITION, FOCUS_RING } from "../lib/controlStyles.ts";
+import { ChatGlyph } from "./icons/Glyphs.tsx";
 
 export function AskYohPill(): React.JSX.Element {
   return (
@@ -27,15 +28,13 @@ export function AskYohPill(): React.JSX.Element {
         data-testid="ask-yoh-pill"
         aria-label="Ask Yoh (Command K)"
         onClick={openChatPanel}
-        className={`notification-glass pointer-events-auto flex h-[46px] items-center gap-2.5 rounded-full py-0 pl-2 pr-4.5 font-body text-small font-bold text-ink-primary shadow-extruded-md hover:shadow-extruded-lg active:shadow-inset ${FOCUS_RING} ${CONTROL_TRANSITION}`}
+        className={`notification-glass pointer-events-auto flex h-[46px] items-center gap-2.5 rounded-full py-0 pl-2 pr-4 font-body text-small font-bold text-ink-primary shadow-extruded-md hover:shadow-extruded-lg active:shadow-inset ${FOCUS_RING} ${CONTROL_TRANSITION}`}
       >
         <span
           aria-hidden="true"
           className="flex size-[30px] items-center justify-center rounded-full bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end shadow-extruded-sm"
         >
-          <svg viewBox="0 0 24 24" width={15} height={15} fill="none" stroke="var(--color-on-accent-solid)" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
-            <path d="M4 5h16v11H9l-5 4z" />
-          </svg>
+          <ChatGlyph size={15} className="text-on-accent-solid" />
         </span>
         Ask Yoh
         <span className="pl-1 font-body text-caption font-medium text-ink-secondary">⌘K</span>

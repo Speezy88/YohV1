@@ -47,6 +47,7 @@ import { remainingMs, requestCheckOff, requestUndo } from "../lib/checkOff.ts";
 import { addLocalFailureNotice } from "../lib/notifications.ts";
 import { setMissingDataFilterActive, useMissingDataFilterActive } from "../lib/missingDataFilter.ts";
 import { CONTROL_TRANSITION, FIELD_FOCUS_WITHIN, FOCUS_RING } from "../lib/controlStyles.ts";
+import { SearchGlyph } from "../components/icons/Glyphs.tsx";
 import { useReducedMotion } from "../hooks/useReducedMotion.ts";
 import { StateMessage } from "../components/StateMessage.tsx";
 import { TaskRow, type TaskEditField } from "../components/TaskRow.tsx";
@@ -362,7 +363,7 @@ export default function TasksPage(): React.JSX.Element {
     // this subtree only ever scrolls Tasks' own content, even at an edge
     // that would otherwise trigger a page change. Sidebar clicks and the
     // ↑/↓ buttons/keys are unaffected.
-    <div ref={rootRef} className="flex h-full flex-col gap-[18px] p-8 pb-24">
+    <div ref={rootRef} className="flex h-full flex-col gap-5 p-8 pb-24">
       <h1 className="m-0 shrink-0 font-body text-display font-bold tracking-tight text-ink-primary">Tasks</h1>
 
       {/* Polish-3 (Spencer: "make the text box and filtering at the bottom,
@@ -381,7 +382,7 @@ export default function TasksPage(): React.JSX.Element {
           over the title still changes page. */}
       <section aria-label="All tasks" data-wheel-nav="off" className="flex min-h-0 flex-1 flex-col gap-2">
         {state.status === "loaded" && state.refreshFailed && (
-          <p className="m-0 shrink-0 px-[18px] font-body text-small text-ink-secondary">
+          <p className="m-0 shrink-0 px-4 font-body text-small text-ink-secondary">
             Couldn't refresh from Notion — showing the list from {state.refreshFailed.at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.
           </p>
         )}
@@ -399,7 +400,7 @@ export default function TasksPage(): React.JSX.Element {
           ) : (
             groups.map((group) => (
               <section key={group.key} aria-label={group.label} className="flex flex-col gap-2">
-                <h2 className={`m-0 px-[18px] pb-0.5 pt-2.5 font-body text-small font-bold uppercase tracking-wide ${TONE_CLASS[group.tone]}`}>
+                <h2 className={`m-0 px-4 pb-0.5 pt-2.5 font-body text-small font-bold uppercase tracking-wide ${TONE_CLASS[group.tone]}`}>
                   {group.label} · {group.rows.length}
                 </h2>
                 <ul className="m-0 flex list-none flex-col gap-2 p-0">
@@ -438,7 +439,7 @@ export default function TasksPage(): React.JSX.Element {
           away, keeps clear of the floating Ask Yoh pill via the same
           `pb-24` bottom clearance every page reserves for it) — quick-add
           full width on top, search + grouping on one row underneath. */}
-      <div data-testid="tasks-dock" data-wheel-nav="off" className="flex shrink-0 flex-col gap-3 rounded-xl bg-surface-raised px-[18px] py-4 shadow-extruded-lg">
+      <div data-testid="tasks-dock" data-wheel-nav="off" className="flex shrink-0 flex-col gap-3 rounded-2xl bg-surface-raised px-4 py-4 shadow-extruded-lg">
         <TaskQuickAdd
           ref={quickAddRef}
           today={today}
@@ -451,9 +452,7 @@ export default function TasksPage(): React.JSX.Element {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-3">
             <label className={`flex h-12 w-[280px] items-center gap-2.5 rounded-full bg-surface-sunken px-4 shadow-inset ${FIELD_FOCUS_WITHIN}`}>
-              <svg aria-hidden="true" viewBox="0 0 24 24" width={18} height={18} fill="none" stroke="currentColor" className="shrink-0 text-ink-secondary">
-                <path d="M11 17a6 6 0 1 0 0-12 6 6 0 0 0 0 12z M20 20l-4.5-4.5" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
+              <SearchGlyph size={18} className="shrink-0 text-ink-secondary" />
               <input
                 type="search"
                 aria-label="Search tasks"

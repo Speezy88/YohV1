@@ -44,6 +44,7 @@
  * is gone (nothing else used it); the server route/store it read stay.
  */
 import { CONTROL_TRANSITION, FOCUS_RING, ICON_BUTTON } from "../lib/controlStyles.ts";
+import { CloseGlyph } from "./icons/Glyphs.tsx";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { appendPendingOpenItem, hydrateChatHistory, useChatStore } from "../lib/chatStore.ts";
 import { useChatPanel, closeChatPanel, restoreChatPanelFocus } from "../lib/chatPanel.ts";
@@ -173,7 +174,7 @@ export function ChatPanel(): React.JSX.Element | null {
           e.preventDefault();
           closeChatPanel();
         }}
-        className="fixed bottom-6 left-[268px] right-6 top-6 z-(--z-chat) flex flex-col gap-4 rounded-2xl border-[length:var(--rim-width)] border-rim-structural bg-surface-raised p-8 shadow-extruded-lg"
+        className="fixed bottom-6 left-[268px] right-6 top-6 z-(--z-chat) flex flex-col gap-4 rounded-2xl border-[length:var(--rim-width)] border-rim-structural bg-surface-raised p-6 shadow-extruded-lg"
       >
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -200,9 +201,7 @@ export function ChatPanel(): React.JSX.Element | null {
               onClick={closeChatPanel}
               className={`${ICON_BUTTON} h-11 w-11`}
             >
-              <svg aria-hidden="true" viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round">
-                <path d="M6 6l12 12M18 6L6 18" />
-              </svg>
+              <CloseGlyph />
             </button>
           </div>
         </div>

@@ -72,7 +72,7 @@ const CAPTION = "font-body text-small text-ink-secondary";
 const ALLOWED_MARKDOWN_ELEMENTS = ["p", "strong", "em", "ul", "ol", "li", "br", "code", "a"];
 const MEMORY_LINK_PREFIX = "#memory-item-";
 const MEMORY_LINK_BUTTON =
-  "inline border-0 bg-transparent p-0 text-left font-body text-body font-semibold text-ink-primary underline underline-offset-2 " +
+  "inline border-0 bg-transparent p-0 text-left font-body text-body font-bold text-ink-primary underline underline-offset-2 " +
   "focus-visible:outline-[length:var(--focus-ring-width)] focus-visible:outline-offset-2 focus-visible:outline-accent-solid";
 
 function failureCaption(message: ChatViewMessage): string {

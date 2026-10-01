@@ -150,7 +150,7 @@ export function CommandPalette({ query, onRun, onClose, onHighlightedOptionChang
           <span className="shrink-0 font-body text-body font-bold text-ink-primary">{c.name}</span>
           <span className="min-w-0 flex-1 truncate px-2 font-body text-body text-ink-secondary">{c.description}</span>
           {/* A no-argument command's example is just its own name — repeating it adds nothing. */}
-          {c.example !== c.name && <span className="shrink-0 font-body text-caption text-ink-secondary">{c.example}</span>}
+          {c.example !== c.name && <span className="shrink-0 font-body text-caption-lg text-ink-secondary">{c.example}</span>}
         </div>
       ))}
     </div>

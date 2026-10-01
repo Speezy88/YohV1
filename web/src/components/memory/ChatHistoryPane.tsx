@@ -172,7 +172,7 @@ export function ChatHistoryPane({
                 <button
                   type="button"
                   onClick={() => onOpen(c.id)}
-                  className={`w-full rounded-lg bg-surface-raised px-[18px] py-4 text-left font-body text-body text-ink-primary shadow-extruded-sm ${ROW_HOVER_RAISED}`}
+                  className={`w-full rounded-lg bg-surface-raised px-4 py-4 text-left font-body text-body text-ink-primary shadow-extruded-sm ${ROW_HOVER_RAISED}`}
                 >
                   {formatConversationDay(c.date)} · {c.turnCount} {c.turnCount === 1 ? "turn" : "turns"} · {c.firstLine}
                 </button>

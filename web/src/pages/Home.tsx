@@ -57,6 +57,7 @@ import { ReshufflePreviewCard } from "../components/ReshufflePreviewCard.tsx";
 import { approveReshuffle, discardReshuffle, requestReshuffle, useReshuffle, type ReshuffleView } from "../lib/reshuffle.ts";
 import { useReducedMotion } from "../hooks/useReducedMotion.ts";
 import { BUTTON_SECONDARY, BUTTON_TEXT, CONTROL_SM, CONTROL_TRANSITION, FOCUS_RING, ICON_BUTTON } from "../lib/controlStyles.ts";
+import { ChevronGlyph } from "../components/icons/Glyphs.tsx";
 import type { HomeCalendarBlock } from "../../../src/types/api.ts";
 
 /** Weekday + month + day, e.g. "SUNDAY, SEPTEMBER 27" — the server's own host-timezone `today` (AD-17), never `new Date()`. */
@@ -86,11 +87,11 @@ function greetingForHour(hour: number): string {
 }
 
 /** The page's outer, grid and card classes, shared by the loaded page and its skeleton so nothing jumps when data arrives. */
-const HOME_PAGE_CLASS = "flex h-full min-h-0 flex-col gap-6 p-8 pb-24";
-const HOME_GRID_CLASS = "grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_520px] gap-7";
-const PLAN_CARD_CLASS = "flex min-h-0 flex-col gap-4 rounded-2xl bg-surface-raised p-7 shadow-extruded-lg";
+const HOME_PAGE_CLASS = "flex h-full min-h-0 flex-col gap-5 p-8 pb-24";
+const HOME_GRID_CLASS = "grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_520px] gap-6";
+const PLAN_CARD_CLASS = "flex min-h-0 flex-col gap-4 rounded-2xl bg-surface-raised p-6 shadow-extruded-lg";
 const PLAN_LIST_CLASS = "-mx-4 -mt-3 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 pb-4 pt-3";
-const CALENDAR_CARD_CLASS = "flex min-h-0 flex-col rounded-2xl bg-surface-raised p-5 shadow-extruded-lg";
+const CALENDAR_CARD_CLASS = "flex min-h-0 flex-col rounded-2xl bg-surface-raised p-6 shadow-extruded-lg";
 
 function PlanRowSkeleton(): React.JSX.Element {
   const reducedMotion = useReducedMotion();
@@ -271,9 +272,7 @@ function DayNavHeader({
             onClick={onPrevDay}
             className={`size-9 ${ICON_BUTTON}`}
           >
-            <svg aria-hidden="true" viewBox="0 0 24 24" width={14} height={14} fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round">
-              <path d="M15 5l-7 7 7 7" />
-            </svg>
+            <ChevronGlyph direction="left" size={14} />
           </button>
           <button
             type="button"
@@ -281,9 +280,7 @@ function DayNavHeader({
             onClick={onNextDay}
             className={`size-9 ${ICON_BUTTON}`}
           >
-            <svg aria-hidden="true" viewBox="0 0 24 24" width={14} height={14} fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round">
-              <path d="M9 5l7 7-7 7" />
-            </svg>
+            <ChevronGlyph direction="right" size={14} />
           </button>
           <button
             type="button"

@@ -15,11 +15,11 @@ import type { useMemorySearch } from "../../lib/memory.ts";
 type Search = ReturnType<typeof useMemorySearch>;
 
 const CAPTION = "font-body text-small text-ink-secondary";
-const HIT = `flex w-full flex-col gap-1 rounded-lg bg-surface-raised px-[18px] py-4 text-left font-body shadow-extruded-sm ${ROW_HOVER_RAISED}`;
+const HIT = `flex w-full flex-col gap-1 rounded-lg bg-surface-raised px-4 py-4 text-left font-body shadow-extruded-sm ${ROW_HOVER_RAISED}`;
 
 export function MemorySearchBox({ search }: { readonly search: Search }): React.JSX.Element {
   return (
-    <div data-wheel-nav="off" className={`flex items-center gap-2 rounded-xl bg-surface-sunken px-4 py-2 shadow-inset ${FIELD_FOCUS_WITHIN}`}>
+    <div data-wheel-nav="off" className={`flex items-center gap-2 rounded-lg bg-surface-sunken px-4 py-2 shadow-inset ${FIELD_FOCUS_WITHIN}`}>
       <input
         type="search"
         aria-label="Search memory"

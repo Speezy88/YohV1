@@ -97,7 +97,7 @@ export function MemoryRail({
       data-captures-arrow-keys
       data-wheel-nav="off"
       onKeyDown={onKeyDown}
-      className="flex w-60 shrink-0 flex-col gap-0.5 overflow-y-auto rounded-xl bg-surface-sunken p-2 shadow-inset"
+      className="flex w-60 shrink-0 flex-col gap-0.5 overflow-y-auto rounded-2xl bg-surface-sunken p-2 shadow-inset"
     >
       {order.map(entry)}
       {groups.map((g) => (

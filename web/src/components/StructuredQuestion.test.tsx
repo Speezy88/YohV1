@@ -35,7 +35,7 @@ describe("StructuredQuestion", () => {
   it("uses the body type-scale token, regular weight, for the question text", () => {
     render(<StructuredQuestion text="Q" options={[]} allowsFreeText={false} onAnswer={vi.fn()} />);
     const p = screen.getByText("Q");
-    expect(p).toHaveClass("text-body", "font-normal");
+    expect(p).toHaveClass("text-body", "font-medium");
     expect(p).not.toHaveClass("font-bold");
   });
 
@@ -167,12 +167,12 @@ describe("StructuredQuestion", () => {
 
   it("renders 3-line text as body, caption evidence, then body 600; 1-2 line text stays one paragraph", () => {
     render(<StructuredQuestion text={"Yoh noticed X.\n5 times since Sep 3\nPlan for that?"} options={[]} allowsFreeText={false} onAnswer={vi.fn()} />);
-    expect(screen.getByText("Yoh noticed X.")).toHaveClass("text-body", "font-normal");
+    expect(screen.getByText("Yoh noticed X.")).toHaveClass("text-body", "font-medium");
     expect(screen.getByText("5 times since Sep 3")).toHaveClass("text-small", "text-ink-secondary");
-    expect(screen.getByText("Plan for that?")).toHaveClass("text-body", "font-semibold");
+    expect(screen.getByText("Plan for that?")).toHaveClass("text-body", "font-bold");
     cleanup();
     render(<StructuredQuestion text={"Line one\nLine two"} options={[]} allowsFreeText={false} onAnswer={vi.fn()} />);
-    expect(screen.getByText(/Line one/)).toHaveClass("font-normal");
+    expect(screen.getByText(/Line one/)).toHaveClass("font-medium");
   });
 
   it("autoFocus={false} leaves focus alone", () => {

@@ -79,7 +79,7 @@ export function PendingPatterns({ questions, emptyNote }: { readonly questions: 
         <li className="list-none p-5 font-body text-body text-ink-secondary">{emptyNote}</li>
       )}
       {settled.map((s) => (
-        <li key={`settled-${s.key}`} aria-live="polite" className="flex list-none flex-col gap-1 px-[18px] py-2">
+        <li key={`settled-${s.key}`} aria-live="polite" className="flex list-none flex-col gap-1 px-4 py-2">
           {s.message !== "" && <p className="m-0 font-body text-body text-ink-primary">{s.message}</p>}
           {s.receiptLine && <p className={CAPTION}>{s.receiptLine}</p>}
         </li>

@@ -81,7 +81,7 @@ export function TimeBudgetWidget({ timeBudget }: TimeBudgetWidgetProps): React.J
           e.preventDefault();
           void save();
         }}
-        className="flex flex-wrap items-center gap-2.5 rounded-lg bg-surface-sunken px-4.5 py-3 font-body text-small text-ink-primary shadow-inset"
+        className="flex flex-wrap items-center gap-2.5 rounded-lg bg-surface-sunken px-4 py-3 font-body text-small text-ink-primary shadow-inset"
       >
         <label htmlFor="time-budget-hours" className="sr-only">
           Today's Time Budget, in hours
@@ -132,7 +132,7 @@ export function TimeBudgetWidget({ timeBudget }: TimeBudgetWidgetProps): React.J
       type="button"
       data-testid="time-budget-widget"
       onClick={startEdit}
-      className={`flex items-center gap-2.5 rounded-lg bg-surface-raised px-4.5 py-3 font-body text-small tabular-nums text-ink-primary shadow-extruded-sm hover:shadow-extruded-md ${FOCUS_RING} ${CONTROL_TRANSITION}`}
+      className={`flex items-center gap-2.5 rounded-lg bg-surface-raised px-4 py-3 font-body text-small tabular-nums text-ink-primary shadow-extruded-sm hover:shadow-extruded-md ${FOCUS_RING} ${CONTROL_TRANSITION}`}
     >
       <span aria-hidden="true" className="size-2.5 rounded-full bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end" />
       {timeBudget ? (

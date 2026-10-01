@@ -18,7 +18,7 @@ const RESULT_HOLD_MS = 3000;
 const capitalize = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1);
 const rowKey = (s: ChangedSettingView): string => `${s.key}:${s.area ?? ""}`;
 const BUTTON = SMALL_BUTTON_CLASS;
-const CARD = "flex list-none flex-col gap-1 rounded-lg bg-surface-raised px-[18px] py-4 font-body shadow-extruded-sm";
+const CARD = "flex list-none flex-col gap-1 rounded-lg bg-surface-raised px-4 py-4 font-body shadow-extruded-sm";
 
 interface Reverted {
   readonly setting: ChangedSettingView;

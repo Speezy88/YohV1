@@ -33,7 +33,6 @@
   --color-ink-secondary: light-dark(#5b6472, #a8b3c4);
   --color-rim-interactive: light-dark(#7c8798, #7a8699);
   --color-rim-structural: light-dark(#7c8798, #6a7688);
-  --color-rim-highlight: light-dark(rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.06));
   --color-shadow-light: light-dark(rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0.07));
   --color-shadow-dark: light-dark(rgba(163, 177, 198, 0.5), rgba(0, 0, 0, 0.6));
   /* The dimming layer behind a modal panel. Its own token because it must

@@ -140,7 +140,7 @@ export function NotificationOverlay(): React.JSX.Element {
                 <button
                   type="button"
                   onClick={() => toggleExpanded(n.id)}
-                  className={`${BUTTON_TEXT} min-h-6 self-start text-caption font-bold ${FOCUS_RING}`}
+                  className={`${BUTTON_TEXT} min-h-6 self-start text-caption-lg font-bold ${FOCUS_RING}`}
                 >
                   {expanded ? "Show less" : "Show more"}
                 </button>

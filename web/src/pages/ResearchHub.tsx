@@ -24,6 +24,7 @@ import { openChatPanel } from "../lib/chatPanel.ts";
 import { send } from "../lib/chatStore.ts";
 import { formatResearchDate, useResearchList } from "../lib/research.ts";
 import { FIELD_FOCUS_WITHIN, ROW_HOVER_RAISED } from "../lib/controlStyles.ts";
+import { ExternalLinkGlyph, SearchGlyph } from "../components/icons/Glyphs.tsx";
 import { useReducedMotion } from "../hooks/useReducedMotion.ts";
 import { StateMessage } from "../components/StateMessage.tsx";
 import type { ResearchListItem } from "../../../src/types/api.ts";
@@ -40,7 +41,7 @@ function ResearchRow({ item }: { readonly item: ResearchListItem }): React.JSX.E
       href={item.url}
       target="_blank"
       rel="noopener noreferrer"
-      className={`flex items-center justify-between gap-4 rounded-lg bg-surface-raised px-[18px] py-4 font-body shadow-extruded-sm ${ROW_HOVER_RAISED}`}
+      className={`flex items-center justify-between gap-4 rounded-lg bg-surface-raised px-4 py-4 font-body shadow-extruded-sm ${ROW_HOVER_RAISED}`}
     >
       <div className="flex min-w-0 flex-col gap-1">
         <span className="truncate text-body font-medium text-ink-primary">{item.title}</span>
@@ -49,9 +50,7 @@ function ResearchRow({ item }: { readonly item: ResearchListItem }): React.JSX.E
           {item.sourceCount} {sourceWord}
         </span>
       </div>
-      <svg aria-hidden="true" viewBox="0 0 24 24" width={18} height={18} fill="none" stroke="currentColor" className="shrink-0 text-ink-secondary">
-        <path d="M7 17 17 7 M9 7h8v8" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
+      <ExternalLinkGlyph size={18} className="shrink-0 text-ink-secondary" />
     </a>
   );
 }
@@ -78,7 +77,7 @@ function AskResearchBox(): React.JSX.Element {
     // Polish-4 addendum (wheel paging only outside cards): this raised card
     // opts out of wheel page-navigation (`data-wheel-nav="off"`,
     // `lib/wheelNav.ts`).
-    <section aria-label="Ask a research question" data-wheel-nav="off" className="flex flex-col gap-3 rounded-xl bg-surface-raised px-[18px] py-4 shadow-extruded-lg">
+    <section aria-label="Ask a research question" data-wheel-nav="off" className="flex flex-col gap-3 rounded-2xl bg-surface-raised px-4 py-4 shadow-extruded-lg">
       <label
         className={
           "flex h-[58px] items-center gap-3.5 rounded-lg border-[length:var(--rim-width)] bg-surface-sunken px-4 shadow-inset " + FIELD_FOCUS_WITHIN + " " +
@@ -86,9 +85,7 @@ function AskResearchBox(): React.JSX.Element {
         }
       >
         <span aria-hidden="true" className="flex size-7 shrink-0 items-center justify-center rounded-sm bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end">
-          <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" className="text-on-accent-solid">
-            <path d="M11 17a6 6 0 1 0 0-12 6 6 0 0 0 0 12z M20 20l-4.5-4.5" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
+          <SearchGlyph className="text-on-accent-solid" />
         </span>
         <input
           ref={inputRef}
@@ -126,7 +123,7 @@ export default function ResearchHubPage(): React.JSX.Element {
   const items = state.status === "loaded" ? state.value.items : [];
 
   return (
-    <div className="flex h-full flex-col gap-[22px] p-8 pb-24">
+    <div className="flex h-full flex-col gap-5 p-8 pb-24">
       <header>
         <h1 className="m-0 font-body text-display font-bold tracking-tight text-ink-primary">Research Hub</h1>
       </header>
@@ -137,7 +134,7 @@ export default function ResearchHubPage(): React.JSX.Element {
           as the "Ask a research question" card above. */}
       <section aria-label="Recent research" data-wheel-nav="off" className="flex min-h-0 flex-1 flex-col gap-2">
         {state.status === "loaded" && state.refreshFailed && (
-          <p className="m-0 px-[18px] font-body text-small text-ink-secondary">
+          <p className="m-0 px-4 font-body text-small text-ink-secondary">
             Couldn't refresh from Notion — showing the list from {state.refreshFailed.at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.
           </p>
         )}

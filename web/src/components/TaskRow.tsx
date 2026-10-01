@@ -21,6 +21,7 @@ import type { TaskListItem } from "../../../src/types/api.ts";
 import type { EditableTaskField, TaskFieldOptions } from "../../../src/types/domain.ts";
 import { DURATION_PRESETS, MISSING_BADGE, PRIORITY_MISSING_BADGE, formatDue, formatDuration, optionLabel } from "../lib/tasks.ts";
 import { CONTROL_TRANSITION, FOCUS_RING } from "../lib/controlStyles.ts";
+import { CheckGlyph } from "./icons/Glyphs.tsx";
 import { Checkbox } from "./Checkbox.tsx";
 
 export const TASK_ROW_GRID = "grid grid-cols-[44px_minmax(0,1fr)_130px_100px_120px_100px_130px_130px] items-center gap-x-3";
@@ -277,7 +278,7 @@ export function TaskRow({
       data-task-id={item.id}
       data-row-index={rowIndex}
       aria-busy={creating || saving.size > 0 || undefined}
-      className={`${TASK_ROW_GRID} h-[58px] rounded-lg bg-surface-raised px-[18px] font-body text-small shadow-extruded-sm ${completed ? "opacity-55" : ""} ${creating ? "opacity-70" : ""}`}
+      className={`${TASK_ROW_GRID} h-[58px] rounded-lg bg-surface-raised px-4 font-body text-small shadow-extruded-sm ${completed ? "opacity-55" : ""} ${creating ? "opacity-70" : ""}`}
     >
       <span data-col="0" className="flex items-center">
         <Checkbox label={item.title} checked={checked} disabled={creating} size="lg" onCheck={onCheck} />
@@ -330,9 +331,7 @@ export function TaskRow({
             >
               {justSaved ? (
                 <span data-testid="cell-saved" className="inline-flex items-center gap-1.5 font-bold text-ink-accent">
-                  <svg aria-hidden="true" viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" className="shrink-0">
-                    <path d="M5 12.5 10 17.5 19 7.5" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
+                  <CheckGlyph className="shrink-0" />
                   Saved
                 </span>
               ) : missing ? (

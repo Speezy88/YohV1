@@ -19,8 +19,8 @@ export interface ReshufflePreviewCardProps {
 
 export function ReshufflePreviewCard({ preview, busy = false, error, notice, onApprove, onDiscard }: ReshufflePreviewCardProps): React.JSX.Element {
   return (
-    <div data-testid="reshuffle-preview-card" className="flex shrink-0 flex-col gap-3 rounded-2xl bg-surface-sunken p-4 font-body text-body text-ink-primary">
-      <p className="m-0 font-semibold">
+    <div data-testid="reshuffle-preview-card" className="flex shrink-0 flex-col gap-3 rounded-lg bg-surface-sunken p-4 font-body text-body text-ink-primary">
+      <p className="m-0 font-bold">
         {preview.rejectedReason ?? preview.summary}
       </p>
       {preview.unplacedRoutineLabels.length > 0 && (

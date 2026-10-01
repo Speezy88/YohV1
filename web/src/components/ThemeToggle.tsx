@@ -41,7 +41,7 @@ export function ThemeToggle(): React.JSX.Element {
       type="button"
       onClick={flip}
       aria-label={label}
-      className={`flex h-12 items-center gap-3 rounded-full border-[length:var(--rim-width)] border-rim-interactive px-4.5 font-body text-small font-medium text-ink-secondary shadow-extruded-sm hover:text-ink-primary hover:shadow-extruded-md active:shadow-inset ${FOCUS_RING} ${CONTROL_TRANSITION} ${CONTROL_DISABLED}`}
+      className={`flex h-12 items-center gap-3 rounded-full border-[length:var(--rim-width)] border-rim-interactive px-4 font-body text-small font-medium text-ink-secondary shadow-extruded-sm hover:text-ink-primary hover:shadow-extruded-md active:shadow-inset ${FOCUS_RING} ${CONTROL_TRANSITION} ${CONTROL_DISABLED}`}
     >
       {/* DESIGN.md specifies ink-primary for this one glyph; the shared Icon
           convention's neutral/active coloring (ink-secondary/accent-solid)

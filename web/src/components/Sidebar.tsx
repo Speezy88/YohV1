@@ -20,18 +20,17 @@ import { PAGES } from "../lib/pages.ts";
 import { PageIndicator } from "./PageIndicator.tsx";
 import { ThemeToggle } from "./ThemeToggle.tsx";
 import { YohMark } from "./YohMark.tsx";
+import { CHEVRON_DOWN_PATH, CHEVRON_UP_PATH, SEARCH_PATH } from "./icons/Glyphs.tsx";
 import { CONTROL_DISABLED, CONTROL_TRANSITION, FOCUS_RING, ICON_BUTTON } from "../lib/controlStyles.ts";
 
 const PAGE_ICON_PATHS: Record<(typeof PAGES)[number]["id"], string> = {
   home: "M3 11l9-7 9 7 M5 10v10h14V10",
   tasks: "M9 6h11 M9 12h11 M9 18h11 M4 6l1 1 2-2 M4 12l1 1 2-2 M4 18l1 1 2-2",
   desk: "M3 4h18v12H3z M8 20h8 M12 16v4",
-  research: "M11 17a6 6 0 1 0 0-12 6 6 0 0 0 0 12z M20 20l-4.5-4.5",
+  research: SEARCH_PATH,
   memory: "M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z M5 17a3 3 0 0 1 3-3h11",
 };
 
-const UP_ARROW_PATH = "M6 15l6-6 6 6";
-const DOWN_ARROW_PATH = "M6 9l6 6 6-6";
 
 /**
  * A purely decorative glyph (`aria-hidden`) whose stroke color comes from
@@ -58,7 +57,7 @@ export function Sidebar(): React.JSX.Element {
 
   return (
     <nav aria-label="Pages" className="flex h-full w-[248px] shrink-0 flex-col gap-2.5 p-8">
-      <div className="flex items-center gap-3 px-2.5 pb-7">
+      <div className="flex items-center gap-3 px-2.5 pb-5">
         <YohMark className="size-10 rounded-lg shadow-extruded-sm" />
         <span className="font-wordmark text-[26px] font-extrabold tracking-tight text-ink-primary">Yoh</span>
       </div>
@@ -92,7 +91,7 @@ export function Sidebar(): React.JSX.Element {
           aria-label="Previous page"
           className={`h-11 flex-1 ${ICON_BUTTON}`}
         >
-          <DecorativeGlyph path={UP_ARROW_PATH} />
+          <DecorativeGlyph path={CHEVRON_UP_PATH} />
         </button>
         <button
           type="button"
@@ -101,7 +100,7 @@ export function Sidebar(): React.JSX.Element {
           aria-label="Next page"
           className={`h-11 flex-1 ${ICON_BUTTON}`}
         >
-          <DecorativeGlyph path={DOWN_ARROW_PATH} />
+          <DecorativeGlyph path={CHEVRON_DOWN_PATH} />
         </button>
       </div>
 

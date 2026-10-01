@@ -124,6 +124,7 @@ import { displayLabel } from "../lib/labels.ts";
 import { formatClockTime, localMinutesSinceMidnight } from "../lib/hostTime.ts";
 import { layoutOverlappingIntervals } from "../lib/calendarLayout.ts";
 import { CONTROL_TRANSITION, FOCUS_RING } from "../lib/controlStyles.ts";
+import { PinGlyph } from "./icons/Glyphs.tsx";
 
 const DAY_START_HOUR = 6;
 const DAY_END_HOUR = 23;
@@ -176,7 +177,7 @@ const VERY_SHORT_MINUTES = 45;
  * fits one `text-small` line plus the compact block's own minimal vertical
  * padding (`py-0.5`, see the single-line className below).
  * Polish-2: bumped from 22px to 28px alongside the hour-height/font-size
- * increase, so a bumped-up block comfortably fits the now-`font-semibold`,
+ * increase, so a bumped-up block comfortably fits the now-`font-bold`,
  * >=13px event title.
  */
 const MIN_BLOCK_HEIGHT_PX = 28;
@@ -331,16 +332,6 @@ function BlockShell({ id, draggable, fromTime, reducedMotion, moved, className, 
   );
 }
 
-/** 1.8px-stroke pin glyph, aria-hidden (the button or the block's own label carries the name). */
-function PinGlyph(): React.JSX.Element {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" width={12} height={12} fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
-      <path d="M9 4h6l-1 6 3 3H7l3-3-1-6z" />
-      <line x1="12" y1="13" x2="12" y2="20" />
-    </svg>
-  );
-}
-
 /** The Unpin pill is 24px (size-5, the minimum target) and sits 4px in from the block's top-right corner. */
 const PIN_SIZE_PX = 24;
 const PIN_INSET_PX = 4;
@@ -487,12 +478,12 @@ export function CalendarDayView({ blocks, timeZone, now = () => new Date(), isTo
           // deliberately quiet (an outline, no fill, not bold) so it never
           // competes with Work/fixed events.
           const kindClasses = isFixed
-            ? "border border-rim-structural bg-[repeating-linear-gradient(45deg,var(--color-event-fixed-stripe-a),var(--color-event-fixed-stripe-a)_6px,var(--color-event-fixed-stripe-b)_6px,var(--color-event-fixed-stripe-b)_12px)] text-event-fixed-ink font-semibold"
+            ? "border border-rim-structural bg-[repeating-linear-gradient(45deg,var(--color-event-fixed-stripe-a),var(--color-event-fixed-stripe-a)_6px,var(--color-event-fixed-stripe-b)_6px,var(--color-event-fixed-stripe-b)_12px)] text-event-fixed-ink font-bold"
             : isBreak
               ? "border border-dashed border-rim-structural/60 bg-transparent text-ink-secondary"
               : isRoutine
-                ? "border border-accent-solid bg-surface-raised text-ink-primary font-semibold"
-                : "bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end text-on-accent-solid shadow-extruded-sm font-semibold";
+                ? "border border-accent-solid bg-surface-raised text-ink-primary font-bold"
+                : "bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end text-on-accent-solid shadow-extruded-sm font-bold";
           const moved = (b as { moved?: boolean }).moved === true;
           const pinControl = b.pinned === true && b.taskId !== undefined && onUnpin !== undefined;
           return (

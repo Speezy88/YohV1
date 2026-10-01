@@ -23,6 +23,7 @@ import { send, useChatStore } from "../lib/chatStore.ts";
 import { useCommandPaletteInput } from "../hooks/useCommandPaletteInput.ts";
 import { CommandPalette, COMMAND_PALETTE_ID } from "./CommandPalette.tsx";
 import { CONTROL_DISABLED, CONTROL_TRANSITION, FOCUS_RING } from "../lib/controlStyles.ts";
+import { SendGlyph } from "./icons/Glyphs.tsx";
 
 export function ChatInput(): React.JSX.Element {
   const { draft, sending } = useChatStore();
@@ -65,9 +66,7 @@ export function ChatInput(): React.JSX.Element {
         aria-label="Send"
         className={`flex size-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-accent-gradient-start to-accent-gradient-end text-on-accent-solid hover:brightness-105 active:brightness-95 ${FOCUS_RING} ${CONTROL_TRANSITION} ${CONTROL_DISABLED}`}
       >
-        <svg aria-hidden="true" viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
-          <path d="M5 12h14M13 6l6 6-6 6" />
-        </svg>
+        <SendGlyph />
       </button>
     </div>
   );

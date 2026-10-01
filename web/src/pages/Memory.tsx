@@ -29,7 +29,7 @@ function LoadingLayout(): React.JSX.Element {
   const railRow = "h-9 rounded-lg";
   return (
     <>
-      <div aria-hidden="true" data-testid="memory-skeleton-rail" className="flex w-60 shrink-0 flex-col gap-0.5 overflow-y-auto rounded-xl bg-surface-sunken p-2 shadow-inset">
+      <div aria-hidden="true" data-testid="memory-skeleton-rail" className="flex w-60 shrink-0 flex-col gap-0.5 overflow-y-auto rounded-2xl bg-surface-sunken p-2 shadow-inset">
         {[3, 3, 2].map((rows, g) => (
           <div key={g} className="flex flex-col gap-0.5 pt-3">
             {Array.from({ length: rows }, (_, i) => (
@@ -119,7 +119,7 @@ export default function MemoryPage(): React.JSX.Element {
   useEffect(() => startMemoryStream(), []);
 
   return (
-    <div className="flex h-full flex-col gap-[22px] p-8 pb-24">
+    <div className="flex h-full flex-col gap-5 p-8 pb-24">
       <header className="flex flex-wrap items-center justify-between gap-4">
         <h1 className="m-0 font-body text-display font-bold tracking-tight text-ink-primary">Memory</h1>
         {view.status === "loaded" && (

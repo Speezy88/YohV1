@@ -111,7 +111,7 @@ export function MemoryItemRow({ item, reason, onOpenSource, folders, onDelete, d
       inert={dissolving || undefined}
       data-dissolving={dissolving || undefined}
       className={
-        "group relative flex list-none flex-col gap-1.5 rounded-lg bg-surface-raised px-[18px] py-4 font-body shadow-extruded-sm hover:shadow-extruded-md " +
+        "group relative flex list-none flex-col gap-1.5 rounded-lg bg-surface-raised px-4 py-4 font-body shadow-extruded-sm hover:shadow-extruded-md " +
         "transition-[opacity,max-height,padding,margin,box-shadow] duration-[var(--duration-page-transition)] " +
         (dissolving ? "pointer-events-none my-0 max-h-0 overflow-hidden py-0 opacity-0" : "max-h-[600px]")
       }

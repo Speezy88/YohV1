@@ -101,7 +101,7 @@ export function RatingPrompt({ rating, onChange, onReceipt }: RatingPromptProps)
   if (rating.phase === "open") {
     return (
       <div data-testid="rating-prompt" className={`flex flex-col gap-2 pt-1${fade}`}>
-        <p className="m-0 font-body text-body font-normal">How is Yoh doing?</p>
+        <p className="m-0 font-body text-body font-medium">How is Yoh doing?</p>
         <div className="flex flex-wrap items-center gap-2">
           <div role="radiogroup" aria-label="How is Yoh doing?" onKeyDown={onGroupKeyDown} className="flex flex-wrap gap-2">
             {OPTIONS.map((option, i) => (
