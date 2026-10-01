@@ -19,7 +19,7 @@ Make **exactly one commit** with the message from the brief. Squash any WIP comm
 `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`
 This is Spencer's explicit instruction, and it overrides any attribution guidance in your environment: no model-specific trailer and no `Claude-Session:` line.
 
-**Spencer's LIVE server and rituals run on this Mac** (launchd `com.yoh.server` on port 8787, `com.yoh.morning`, etc., from `/Users/spencerhatch/Documents/GitHub/YohV1`). Never `pkill`/`killall` by pattern (e.g. `node`, `server.ts`, `fixture-server`). Only kill a process you started, by its exact PID. Never touch port 8787, launchd, or the main checkout. Use other ports (the e2e fixture uses 8788).
+**Spencer's LIVE server and rituals run on the Raspberry Pi** (`yoh`: systemd `yoh-server` on port 8787, rituals in its crontab, from `~/yoh`), not on this Mac. Never ssh to the Pi, deploy to it, or restart it. Never `pkill`/`killall` by pattern (e.g. `node`, `server.ts`, `fixture-server`). Only kill a process you started, by its exact PID. Never touch the main checkout (`/Users/spencerhatch/Documents/GitHub/YohV1`, Spencer's working copy). Use port 8788 for the e2e fixture, never 8787.
 
 Never use bare `git stash`. Never push, merge, or touch files outside this worktree. Never commit `.env` or secrets. Do not dispatch subagents of any kind.
 

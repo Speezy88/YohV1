@@ -7,11 +7,13 @@ disagrees with the code, the code wins; report the drift.
 ## What Yoh is
 A single-user daily-planning assistant for Spencer: Notion (Tasks/Projects) +
 Google Calendar + Claude (Haiku 4.5 for classify/capture/answer) + Perplexity
-(web search) + Pushover/SMTP notifications. Runs on Spencer's Mac under launchd.
+(web search) + Pushover/SMTP notifications. Runs on Spencer's Raspberry Pi
+(`yoh`) under systemd, reached over the tailnet; the Mac is for development only.
 
 - Server: Node 24 with native TypeScript type-stripping (no build step), Hono, SQLite (better-sqlite3).
 - Web: React + Vite + Tailwind v4 in `web/`, served by the server.
-- Scheduled rituals: `src/shell/ritual-cli.ts` (morning, night-prompt, night-escalate) and `src/shell/backup-cli.ts`, run by launchd.
+- Scheduled rituals: `src/shell/ritual-cli.ts` (morning, night-prompt, night-escalate) and `src/shell/backup-cli.ts`, run by the Pi's crontab.
+- Deploy and update steps: `deploy/RASPBERRY-PI.md` (section 9 is the update one-liner).
 
 ## Where things live
 ```
@@ -65,7 +67,7 @@ and read only failures and the summary.
 - **Tests with fakes:** each `tests/app-*.test.ts` builds fake deps inline; copy the nearest one.
 
 ## Safety (non-negotiable)
-- Spencer's live server runs from the main checkout on port 8787 (launchd `com.yoh.server`). Never touch port 8787, launchd, or the main checkout. Use port 8788 for the fixture server.
+- Spencer's live server runs on the Pi: systemd `yoh-server`, port 8787 on loopback, from `~/yoh` on `main`, with the rituals in the Pi's crontab. Nothing Yoh runs on the Mac (no launchd jobs, nothing on 8787). Never deploy to, restart, or write on the Pi — Spencer deploys; read-only checks over ssh are fine. Leave the main checkout alone (it is Spencer's working copy). Use port 8788 for the fixture server.
 - Never `pkill`/`killall` by pattern. Stop only processes you started, by exact PID.
 - Never write to Spencer's real Notion or Calendar. Never print or commit `.env` secrets.
 - Never use bare `git stash`. Never push or merge (the coordinator does).
