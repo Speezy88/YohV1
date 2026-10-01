@@ -8,6 +8,8 @@ import "@testing-library/jest-dom/vitest";
 // cleanup is wired explicitly here instead.
 afterEach(() => {
   cleanup();
+  // The current page lives in location.hash (P6-R12); don't leak it between tests.
+  window.history.replaceState(null, "", "/");
 });
 
 // jsdom (27.0.0) does not implement window.matchMedia at all. A default

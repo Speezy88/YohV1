@@ -35,6 +35,14 @@ describe("PageShell", () => {
     expect(screen.getByTestId("page-home")).toBeVisible();
   });
 
+  it("opens on the page named by the URL hash and keeps the hash in step with navigation (P6-R12)", () => {
+    window.history.replaceState(null, "", "/#research");
+    render(<PageShell />);
+    expect(screen.getByTestId("page-research")).toBeVisible();
+    fireEvent.keyDown(document, { key: "ArrowUp" });
+    expect(window.location.hash).toBe("#desk");
+  });
+
   // Task 6B: arriving on Tasks focuses its quick-add row, so the NEXT key
   // lands on that input (as it would in a real browser) — fired at the
   // focused element, not at `document` directly. The quick-add hands an

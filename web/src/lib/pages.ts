@@ -11,7 +11,7 @@
  * retired everywhere (`web/src/lib/swipe.ts` is deleted); the page stack is
  * now vertical, not horizontal.
  */
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export const PAGES = [
   { id: "home", label: "Home" },
@@ -34,11 +34,55 @@ function clamp(i: number): number {
   return Math.max(0, Math.min(PAGES.length - 1, i));
 }
 
+/**
+ * P6-R12: the index of the page named by `location.hash` (`#tasks`), or
+ * `undefined` for an empty or unknown hash.
+ */
+function indexFromHash(): number | undefined {
+  const id = location.hash.replace(/^#/, "");
+  const i = PAGES.findIndex((page) => page.id === id);
+  return i === -1 ? undefined : i;
+}
+
+function hashFor(index: number): string {
+  return `#${PAGES[index].id}`;
+}
+
 export function usePageNavigation(initialIndex = 0): PageNavigation {
-  const [index, setIndex] = useState(initialIndex);
-  const goTo = useCallback((i: number) => setIndex(clamp(i)), []);
-  const next = useCallback(() => setIndex((i) => clamp(i + 1)), []);
-  const prev = useCallback(() => setIndex((i) => clamp(i - 1)), []);
+  const [index, setIndex] = useState(() => indexFromHash() ?? clamp(initialIndex));
+  const indexRef = useRef(index);
+
+  // Initial normalisation: an empty or unknown hash becomes the real page's
+  // hash, replacing the entry (no extra Back step).
+  useEffect(() => {
+    if (location.hash !== hashFor(indexRef.current)) {
+      history.replaceState(null, "", hashFor(indexRef.current));
+    }
+  }, []);
+
+  // Back/Forward (and a hand-edited hash) move the page; an unknown hash is Home.
+  useEffect(() => {
+    function onPopState(): void {
+      const known = indexFromHash();
+      const target = known ?? 0;
+      if (known === undefined) history.replaceState(null, "", hashFor(0));
+      indexRef.current = target;
+      setIndex(target);
+    }
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
+  // `pushState`, not `location.hash =`, so the browser does not scroll.
+  const goTo = useCallback((i: number) => {
+    const target = clamp(i);
+    if (target === indexRef.current) return;
+    indexRef.current = target;
+    setIndex(target);
+    history.pushState(null, "", hashFor(target));
+  }, []);
+  const next = useCallback(() => goTo(indexRef.current + 1), [goTo]);
+  const prev = useCallback(() => goTo(indexRef.current - 1), [goTo]);
   return { index, goTo, next, prev };
 }
 
