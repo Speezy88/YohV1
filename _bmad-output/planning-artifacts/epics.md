@@ -2615,25 +2615,56 @@ So that I can find anything without opening Notion.
 
 *Amended 2026-09-27 (Spencer): the Research Hub page shell (Task 6C) ships in the 2026-09-27 fixes + UI plan, ahead of this story — a fourth page (Home, Tasks, Desk, Research Hub) rather than a column on Tasks. This story's Research Box content lands there; the async `/research` job (Story 11.3) and the one-time offer (Story 11.4) remain Epic 11's job.*
 
+*Re-scoped 2026-10-01 to what is left after the early shell. Checked against `main` at 698b7f5.*
+
+**Already delivered by the shell (Task 6C and later polish) — not part of this story any more:**
+- The Research Hub page itself, with the Research Vault listed as rows: title, date, source count, newest first, read through `readResearchVault` (`app/research-list.ts`, `GET /api/research`).
+- The "ask a research question" box, which opens the Chat panel and sends the question as an explicit `search:` line.
+- The empty state, "Nothing saved yet. Ask a question, then say "save that".", plus loading skeletons, a load-failure message with retry, and the "couldn't refresh" line.
+- A live refetch when a "save that" files a new document (the `research` hint).
+
+**What the shell does not do:** it never shows a document's content. Each row is only a link out to its Notion page, and the list stops at the 20 most recent.
+
 As Spencer,
-I want my latest research up front on Research Hub and my whole Research Vault browsable underneath it,
-So that research answers live in one obvious place.
+I want to read my latest research on Research Hub itself, and open any other saved document there,
+So that I can read an answer without leaving Yoh for Notion.
 
 **Acceptance Criteria:**
 
-**Given** the Research Hub page
+**Given** the Research Hub page and a Research Vault with at least one document
 **When** it loads
-**Then** the Research Box shows the latest research output first (a title-style heading, the body, and a source list), with the Research Vault library listed as rows below, read through `notion-adapter.ts` reads (FR-43, UX-DR43)
-**And** an "ask a research question" box sends the question into the Chat panel
-**And** clicking a library row opens that document in the box
+**Then** the Research Box shows the most recent document's content up front, above the library rows: a title-style heading, the body, and a source list (FR-43, UX-DR43)
+**And** the body is that document's "Key Findings" and the source list is its "Sources" lines, both read from the Research Vault properties `app/save-search-result.ts` already writes — still a read through `notion-adapter.ts`, with nothing written
+**And** each source that is a link opens in a new tab, and the document keeps a link to its own Notion page
+
+**Given** the library rows
+**When** Spencer clicks one (or activates it from the keyboard)
+**Then** that document opens in the Research Box in place of the one shown, without leaving the page
+**And** the row for the open document is marked as current
+
+**Given** a specific document id
+**When** Research Hub is opened for that id
+**Then** that document is the one shown in the Research Box (Story 11.3's `research-ready` notification lands here)
+**And** an id that no longer exists falls back to the most recent document, with no error state
+
+**Given** a document whose body or sources are empty
+**When** it is shown in the box
+**Then** the heading still renders and the empty part is simply absent — no placeholder text, no error
 
 **Given** an empty Research Vault
-**When** the box renders
-**Then** it reads "Nothing saved yet. Ask a question, then say "save that"."
+**When** the page renders
+**Then** the box is absent and the existing empty state is unchanged
 
 **Given** Desk
 **When** it is built (Epic 12)
 **Then** it has no research surface, because the Research Box is the only one
+
+**Given** a Research Vault with more than 20 documents *(decided 2026-10-01, Spencer: add a "Show more")*
+**When** the library renders
+**Then** it shows the 20 most recent, followed by a "Show more" button that adds the next 20 below them, newest first, until the whole vault is listed
+**And** the button is absent once every document is shown, and absent for a vault of 20 or fewer
+**And** the ordering and the page size stay server-side (AD-17): the page asks for more, it never sorts or slices the vault itself
+**And** a failed "Show more" keeps the rows already listed and says so, with a way to try again
 
 ### Story 11.3: /research Runs as a Background Job
 
