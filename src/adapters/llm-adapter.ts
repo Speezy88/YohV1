@@ -69,6 +69,7 @@ import { writeStructuredLog } from "./logger.ts";
 import { isMemoryFolder, MEMORY_FOLDERS_IN_ORDER } from "../core/memory-folders.ts";
 import { formatAlwaysMemoryBlock, formatRelevantMemoryBlock, type MemoryContext } from "../core/memory-context.ts";
 import { recordLlmUsage, type LlmUsagePurpose } from "./llm-usage-store.ts";
+import type { ChatToolDefinition } from "../core/chat-tools.ts";
 import type { SqliteConnection } from "./sqlite.ts";
 import type {
   ChatIntent,
@@ -547,6 +548,53 @@ export async function* streamGeneralQuestion(
   if (!sawText) {
     throw new Error("llm-adapter: Claude returned no text content for a streamed general Q&A response");
   }
+}
+
+// ============================================================================
+// runToolTurn (Epic 14 Task 3: chat tool loop) — one model call with tools
+// ============================================================================
+
+/** The model the chat tool loop runs on (`app/chat-agent.ts`). The one place to change it. */
+export const CHAT_AGENT_MODEL: Anthropic.Model = CLAUDE_CHAT_MODEL_FAST;
+
+export type ToolTurnMessage = Anthropic.MessageParam;
+
+export interface ToolTurnResult {
+  readonly text: string;
+  readonly toolUses: readonly { readonly id: string; readonly name: string; readonly input: unknown }[];
+  /** The assistant content blocks, to be echoed back as the next request's assistant message. */
+  readonly assistantContent: Anthropic.ContentBlock[];
+}
+
+/** One model call of the chat tool loop. Throws on a transport failure; `app/chat-agent.ts` converts that to a Result. */
+export async function runToolTurn(
+  client: AnthropicMessagesClient,
+  input: {
+    readonly systemPrompt: string;
+    readonly messages: readonly ToolTurnMessage[];
+    readonly tools: readonly ChatToolDefinition[];
+    readonly memory?: MemoryContext;
+    readonly connection?: SqliteConnection;
+  },
+): Promise<ToolTurnResult> {
+  const blocks = memorySystemBlocks(input.memory);
+  const message = await client.messages.create({
+    model: CHAT_AGENT_MODEL,
+    max_tokens: CLAUDE_CHAT_MAX_TOKENS,
+    system: [cacheableSystemBlock(input.systemPrompt), ...blocks.always, ...blocks.relevant],
+    tools: input.tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.input_schema as Anthropic.Tool.InputSchema })),
+    messages: [...input.messages],
+  });
+  recordUsageSafely(input.connection, "agent", CHAT_AGENT_MODEL, message.usage);
+  const text = message.content
+    .filter((b): b is Anthropic.TextBlock => b.type === "text")
+    .map((b) => b.text)
+    .join("\n")
+    .trim();
+  const toolUses = message.content
+    .filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use")
+    .map((b) => ({ id: b.id, name: b.name, input: b.input }));
+  return { text, toolUses, assistantContent: message.content };
 }
 
 // ============================================================================

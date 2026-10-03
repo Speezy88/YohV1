@@ -36,9 +36,10 @@ import type { SqliteConnection } from "./sqlite.ts";
  * `streamGeneralQuestion` — both are the same "general Q&A" capability),
  * `draft-notion` (`draftNotionPageFields`), `draft-calendar`
  * (`draftCalendarEditRequest`), `suggest-field` (`suggestFieldValue`),
- * `quick-add-normalize` (Polish 4 Task 1: `normalizeQuickAddLine`).
+ * `quick-add-normalize` (Polish 4 Task 1: `normalizeQuickAddLine`),
+ * `agent` (`runToolTurn`).
  */
-export type LlmUsagePurpose = "classify" | "capture" | "answer" | "draft-notion" | "draft-calendar" | "suggest-field" | "quick-add-normalize" | "extract-memories";
+export type LlmUsagePurpose = "classify" | "capture" | "answer" | "draft-notion" | "draft-calendar" | "suggest-field" | "quick-add-normalize" | "extract-memories" | "agent";
 
 /** One recorded Claude API call. Field names are camelCase (this codebase's usual TS convention — mirrors `notification-store.ts`'s `CreateNotificationInput`'s `deepLink` vs. its own `deep_link` SQL column); the SQL table itself uses `snake_case` columns, per Task 9's own column list. */
 export interface LlmUsageRecord {
