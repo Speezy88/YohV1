@@ -435,15 +435,39 @@ export interface ChatTurn {
 
 /**
  * CalendarEditChange — FR-27's `Proposal<T>` payload (AD-3/AD-13). A union
- * of exactly `move`/`resize`/`create` — there is deliberately no `delete`
- * variant, so a non-Yoh event cannot be deleted through this path even by a
- * future coding mistake; it isn't a value the type system can construct
- * here, not merely a rule someone has to remember.
+ * of `move`/`resize`/`create`/`delete`. A `delete` is allowed only for an
+ * event carrying a Yoh marker; `applyCalendarEdit` re-checks that against
+ * the live event at apply time and refuses anything else.
  */
 export type CalendarEditChange =
   | { readonly kind: "move"; readonly eventId: ExternalId; readonly calendarId: string; readonly newStart: IsoDateTime; readonly newEnd: IsoDateTime }
   | { readonly kind: "resize"; readonly eventId: ExternalId; readonly calendarId: string; readonly newEnd: IsoDateTime }
-  | { readonly kind: "create"; readonly calendarId: string; readonly title: string; readonly start: IsoDateTime; readonly end: IsoDateTime };
+  | { readonly kind: "create"; readonly calendarId: string; readonly title: string; readonly start: IsoDateTime; readonly end: IsoDateTime }
+  | { readonly kind: "delete"; readonly eventId: ExternalId; readonly calendarId: string };
+
+/** One staged change in a chat change set. `label` is the entity's display name at staging time, used only for copy. */
+export type ChangeSetItem =
+  | { readonly kind: "create-event"; readonly title: string; readonly start: IsoDateTime; readonly end: IsoDateTime }
+  | { readonly kind: "move-event"; readonly eventId: ExternalId; readonly label: string; readonly etag: string; readonly newStart: IsoDateTime; readonly newEnd: IsoDateTime }
+  | { readonly kind: "resize-event"; readonly eventId: ExternalId; readonly label: string; readonly etag: string; readonly newEnd: IsoDateTime }
+  | { readonly kind: "delete-event"; readonly eventId: ExternalId; readonly label: string; readonly etag: string }
+  | { readonly kind: "create-task"; readonly properties: Readonly<Record<string, string>> }
+  | { readonly kind: "update-task"; readonly taskId: ExternalId; readonly label: string; readonly field: "dueDate" | "estimatedDurationMinutes" | "priority"; readonly value: string }
+  | { readonly kind: "rename-task"; readonly taskId: ExternalId; readonly label: string; readonly newTitle: string }
+  | { readonly kind: "complete-task"; readonly taskId: ExternalId; readonly label: string }
+  | { readonly kind: "plan-day" }
+  | { readonly kind: "refit-plan" };
+
+export interface ChangeSet {
+  readonly items: readonly ChangeSetItem[];
+}
+
+export interface ChangeSetItemResult {
+  readonly item: ChangeSetItem;
+  readonly ok: boolean;
+  /** Past-tense receipt when `ok`; user-facing failure copy otherwise. */
+  readonly text: string;
+}
 
 // ============================================================================
 // Plan / PlanBlock (FR-1, FR-6–FR-8, AD-9)
@@ -597,6 +621,10 @@ export interface CalendarEvent {
   readonly title: string;
   readonly start: IsoDateTime;
   readonly end: IsoDateTime;
+  /** The event's Google etag, used as a Proposal's `entityVersion` for a move, resize or delete. Absent on a fake or pre-existing fixture event. */
+  readonly etag?: string;
+  /** `true` when the event carries a Yoh marker (a Plan block or an event created through chat). Only such an event may be deleted by chat. */
+  readonly yohCreated?: true;
   /**
    * The source calendar id this event was read from, when it is one of
    * `YOH_EXTRA_CALENDAR_IDS`'s read-only extra calendars (Task 2). Absent
