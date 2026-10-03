@@ -55,7 +55,7 @@ const PAST: Readonly<Record<ChangeSetItem["kind"], readonly [string, string]>> =
   "rename-task": ["Rename", "Renamed"],
   "complete-task": ["Mark", "Marked"],
   "plan-day": ["Build", "Built"],
-  "refit-plan": ["Re-fit", "Re-fit"],
+  "refit-plan": ["Re-fit", "Re-fitted"],
 };
 
 function receipt(item: ChangeSetItem, timeZone: string, extra?: string): string {
@@ -123,6 +123,38 @@ async function applyItem(deps: ApplyChangeSetDeps, item: ChangeSetItem): Promise
   }
 }
 
+const nonEmpty = (v: unknown): boolean => typeof v === "string" && v.length > 0;
+const REQUIRED_STRINGS: Readonly<Record<ChangeSetItem["kind"], readonly string[]>> = {
+  "create-event": ["title", "start", "end"],
+  "move-event": ["eventId", "label", "etag", "newStart", "newEnd"],
+  "resize-event": ["eventId", "label", "etag", "newEnd"],
+  "delete-event": ["eventId", "label", "etag"],
+  "create-task": [],
+  "update-task": ["taskId", "label", "field", "value"],
+  "rename-task": ["taskId", "label", "newTitle"],
+  "complete-task": ["taskId", "label"],
+  "plan-day": [],
+  "refit-plan": [],
+};
+
+function isValidItem(raw: unknown): boolean {
+  if (typeof raw !== "object" || raw === null) return false;
+  const rec = raw as Record<string, unknown>;
+  const kind = rec["kind"];
+  if (typeof kind !== "string" || !Object.hasOwn(REQUIRED_STRINGS, kind)) return false;
+  if (!REQUIRED_STRINGS[kind as ChangeSetItem["kind"]].every((k) => nonEmpty(rec[k]))) return false;
+  if (kind === "update-task" && !["dueDate", "estimatedDurationMinutes", "priority"].includes(rec["field"] as string)) return false;
+  if (kind === "create-task") {
+    const props = rec["properties"];
+    if (typeof props !== "object" || props === null || Array.isArray(props)) return false;
+    if (!nonEmpty((props as Record<string, unknown>)["title"])) return false;
+    if (!Object.values(props).every((v) => typeof v === "string")) return false;
+  }
+  return true;
+}
+
+const GENERIC_FAILURE = "something went wrong, so that change was skipped.";
+
 export async function applyChangeSet(
   deps: ApplyChangeSetDeps,
   input: { readonly changeSet: ChangeSet },
@@ -131,20 +163,28 @@ export async function applyChangeSet(
   if (!Array.isArray(items) || items.length === 0) {
     return { ok: false, error: { kind: "validation", message: "There was nothing to apply." } };
   }
+  if (!items.every(isValidItem)) {
+    return { ok: false, error: { kind: "validation", message: "That change set is no longer valid, so nothing was changed. Ask again." } };
+  }
   const results: ChangeSetItemResult[] = [];
   for (const item of orderForApply(items)) {
-    let outcome: Result<string | undefined, YohError>;
     try {
-      outcome = await applyItem(deps, item);
+      const outcome = await applyItem(deps, item);
+      if (!outcome) throw new Error("no outcome");
+      results.push(
+        outcome.ok
+          ? { item, ok: true, text: receipt(item, deps.timeZone, outcome.value) }
+          : { item, ok: false, text: failureText(item, deps.timeZone, errorCopy(outcome.error, serviceContext(item))) },
+      );
     } catch (err) {
-      results.push({ item, ok: false, text: failureText(item, deps.timeZone, errorCopyForThrown(err, serviceContext(item))) });
-      continue;
+      let text: string;
+      try {
+        text = failureText(item, deps.timeZone, errorCopyForThrown(err, serviceContext(item)));
+      } catch {
+        text = `Couldn't apply one change: ${GENERIC_FAILURE}`;
+      }
+      results.push({ item, ok: false, text });
     }
-    results.push(
-      outcome.ok
-        ? { item, ok: true, text: receipt(item, deps.timeZone, outcome.value) }
-        : { item, ok: false, text: failureText(item, deps.timeZone, errorCopy(outcome.error, serviceContext(item))) },
-    );
   }
   return { ok: true, value: { results } };
 }

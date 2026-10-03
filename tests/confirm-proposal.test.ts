@@ -899,3 +899,20 @@ test("change-set: a stale item is reported in plain copy and the rest still appl
     assert.doesNotMatch(result.value.message ?? "", /calendar-adapter/);
   }
 });
+
+test("change-set: a malformed set returns the validation error, writes nothing, and clears the request", async () => {
+  const store = tempStore();
+  let called = false;
+  const never = async () => { called = true; return { ok: true as const, value: undefined as never }; };
+  const proposal = { id: "cs4", kind: "change-set", entityId: "chat", entityVersion: "", reason: "x", createdAt: "2026-10-03T16:00:00.000Z",
+    suggested: { items: [{ kind: "complete-task", taskId: "t1", label: "Lab report" }, { kind: "nope" }] } };
+  putOpenInteractionRequest(store, "cs4-request", { requestKind: "proposal", promptText: "x", detail: { proposal }, createdAt: NOW });
+  const result = await confirmProposal(
+    { store, changeSet: { timeZone: "America/New_York", now: () => new Date(), applyCalendarEdit: never, createPage: never, updateTaskField: never, renameTask: never, completeTask: never, planDay: never, refitPlan: never } },
+    { proposal, accept: true, requestId: "cs4-request" },
+  );
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.error.kind, "validation");
+  assert.equal(called, false);
+  assert.equal(getOpenInteractionRequest(store, "cs4-request"), undefined);
+});

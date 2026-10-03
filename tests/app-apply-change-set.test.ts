@@ -84,3 +84,27 @@ test("an empty change set is a validation error", async () => {
   const result = await applyChangeSet(deps, { changeSet: { items: [] } });
   assert.equal(result.ok, false);
 });
+
+test("a malformed change set is rejected before any write", async () => {
+  const bad: unknown[] = [
+    [workout, { kind: "nope" }, { kind: "complete-task", taskId: "t1", label: "Lab" }],
+    [workout, null, { kind: "complete-task", taskId: "t1", label: "Lab" }],
+    [workout, { kind: "move-event", eventId: "e1", label: "Dentist", etag: "v1", newEnd: "2026-10-03T20:00:00.000Z" }],
+  ];
+  for (const items of bad) {
+    const { deps, log } = fakeDeps();
+    const result = await applyChangeSet(deps, { changeSet: { items: items as never } });
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.error.kind, "validation");
+      assert.equal(result.error.message, "That change set is no longer valid, so nothing was changed. Ask again.");
+    }
+    assert.deepEqual(log, []);
+  }
+});
+
+test("the refit receipt is past tense", async () => {
+  const { deps } = fakeDeps();
+  const result = await applyChangeSet(deps, { changeSet: { items: [{ kind: "refit-plan" }] } });
+  assert.equal(result.ok && result.value.results[0]!.text, "Re-fitted the rest of today's Plan. Moved 2 blocks.");
+});
