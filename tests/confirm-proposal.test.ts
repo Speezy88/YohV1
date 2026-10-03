@@ -835,3 +835,67 @@ test("M2: a pattern No clears the request and records declinedAt in one transact
   assert.equal(r.ok, false);
   assert.ok(getOpenInteractionRequest(h.store, h.requestId), "the card is still open");
 });
+
+test("change-set: accept applies the items and returns one receipt per applied item plus failures in message", async () => {
+  const store = tempStore();
+  const proposal = { id: "cs1", kind: "change-set", entityId: "chat", entityVersion: "", reason: "Here's what I'd change:", createdAt: "2026-10-03T16:00:00.000Z",
+    suggested: { items: [{ kind: "complete-task", taskId: "t1", label: "Lab report" }, { kind: "create-task", properties: { title: "Read ch. 4" } }] } };
+  const result = await confirmProposal(
+    { store, changeSet: {
+        timeZone: "America/New_York", now: () => new Date("2026-10-03T16:00:00.000Z"),
+        applyCalendarEdit: async () => ({ ok: true, value: { eventId: "e", calendarId: "primary" } }),
+        createPage: async () => ({ ok: false, error: { kind: "unreachable", message: "raw" } }),
+        updateTaskField: async () => ({ ok: true, value: { receipt: "" } }),
+        renameTask: async () => ({ ok: true, value: { receipt: "" } }),
+        completeTask: async () => ({ ok: true, value: undefined }),
+        planDay: async () => ({ ok: true, value: { reply: "" } }),
+        refitPlan: async () => ({ ok: true, value: { reply: "" } }),
+    } },
+    { proposal, accept: true },
+  );
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.value.applied, true);
+    assert.deepEqual(result.value.receipts, ['Marked "Lab report" done.']);
+    assert.match(result.value.message ?? "", /Couldn't create the Task "Read ch. 4"/);
+  }
+});
+
+test("change-set: decline writes nothing", async () => {
+  let called = false;
+  const never = async () => { called = true; return { ok: true as const, value: undefined as never }; };
+  const result = await confirmProposal(
+    { store: tempStore(), changeSet: { timeZone: "America/New_York", now: () => new Date(), applyCalendarEdit: never, createPage: never, updateTaskField: never, renameTask: never, completeTask: never, planDay: never, refitPlan: never } },
+    { proposal: { id: "cs2", kind: "change-set", entityId: "chat", entityVersion: "", reason: "", createdAt: "2026-10-03T16:00:00.000Z", suggested: { items: [{ kind: "plan-day" }] } }, accept: false },
+  );
+  assert.deepEqual(result, { ok: true, value: { applied: false, receipts: [] } });
+  assert.equal(called, false);
+});
+
+test("change-set: a stale item is reported in plain copy and the rest still applies", async () => {
+  const proposal = { id: "cs3", kind: "change-set", entityId: "chat", entityVersion: "", reason: "", createdAt: "2026-10-03T16:00:00.000Z",
+    suggested: { items: [
+      { kind: "move-event", eventId: "e1", label: "Dentist", etag: "v1", newStart: "2026-10-03T19:00:00.000Z", newEnd: "2026-10-03T20:00:00.000Z" },
+      { kind: "complete-task", taskId: "t1", label: "Lab report" },
+    ] } };
+  const result = await confirmProposal(
+    { store: tempStore(), changeSet: {
+        timeZone: "America/New_York", now: () => new Date("2026-10-03T16:00:00.000Z"),
+        applyCalendarEdit: async () => ({ ok: false, error: { kind: "stale-proposal", message: "calendar-adapter: event changed" } }),
+        createPage: async () => ({ ok: true, value: { pageId: "p" } }),
+        updateTaskField: async () => ({ ok: true, value: { receipt: "" } }),
+        renameTask: async () => ({ ok: true, value: { receipt: "" } }),
+        completeTask: async () => ({ ok: true, value: undefined }),
+        planDay: async () => ({ ok: true, value: { reply: "" } }),
+        refitPlan: async () => ({ ok: true, value: { reply: "" } }),
+    } },
+    { proposal, accept: true },
+  );
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.value.applied, true);
+    assert.deepEqual(result.value.receipts, ['Marked "Lab report" done.']);
+    assert.match(result.value.message ?? "", /^Couldn't move "Dentist"/);
+    assert.doesNotMatch(result.value.message ?? "", /calendar-adapter/);
+  }
+});

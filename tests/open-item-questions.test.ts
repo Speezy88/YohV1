@@ -200,3 +200,12 @@ test("buildProposalQuestion: a pattern proposal is Yes/No only (no free text)", 
   const q = buildProposalQuestion("proposal:pattern-1", "x", { id: "pattern-1", kind: "pattern", entityId: "k", entityVersion: "new", suggested: {}, reason: "x", createdAt: "2026-09-30T00:00:00.000Z" });
   assert.equal(q.allowsFreeText, false);
 });
+
+test("buildProposalQuestion: a change-set proposal reads Approve / Discard with no free text", () => {
+  const q = buildProposalQuestion("proposal:cs-1", "x", { id: "cs-1", kind: "change-set", entityId: "chat", entityVersion: "", suggested: { items: [] }, reason: "x", createdAt: "2026-10-03T00:00:00.000Z" });
+  assert.deepEqual(q.options, [
+    { label: "Approve", value: "approve" },
+    { label: "Discard", value: "discard" },
+  ]);
+  assert.equal(q.allowsFreeText, false);
+});

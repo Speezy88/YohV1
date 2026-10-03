@@ -51,9 +51,11 @@ import { ruleChangeConfirmedCopy, ruleChangeDeclinedCopy, ruleValuesEqual } from
 import { parsePlanningFieldValue, PLANNING_FIELD_LABELS } from "../core/planning-field-value.ts";
 import { localIsoDate } from "../rituals/ritual-shared.ts";
 import { approveReshuffle, discardReshuffle, type ApproveReshuffleDeps } from "./approve-reshuffle.ts";
+import { applyChangeSet, CHANGE_SET_PROPOSAL_KIND, type ApplyChangeSetDeps } from "./apply-change-set.ts";
 import type { CalendarEditProposal } from "./calendar-edit.ts";
 import type {
   CalendarEditChange,
+  ChangeSet,
   FieldValueSuggestion,
   NotionDatabaseTarget,
   NotionPageDraft,
@@ -225,6 +227,8 @@ interface PatternStateLike {
 
 export interface ConfirmProposalDeps {
   readonly store: MemoryStore;
+  /** Needed only for a `"change-set"` proposal (the chat tool loop). */
+  readonly changeSet?: ApplyChangeSetDeps;
   /** `notion-adapter.ts`'s `updateTaskField`, pre-bound to its client/config — required only for the `"field-value"` kind. */
   readonly updateTaskField?: (
     taskId: string,
@@ -615,6 +619,20 @@ export async function confirmProposal(
     // `receiptText` at all.
     const calendarProposal = proposal as CalendarEditProposal;
     return { ok: true, value: { applied: true, receipts: [calendarProposal.receiptText ?? proposal.reason] } };
+  }
+
+  if (proposal.kind === CHANGE_SET_PROPOSAL_KIND) {
+    if (!deps.changeSet) {
+      clearRequestIfGiven(deps.store, requestId);
+      return missingDependency(proposal.kind, "changeSet");
+    }
+    const applied = await applyChangeSet(deps.changeSet, { changeSet: proposal.suggested as ChangeSet });
+    clearRequestIfGiven(deps.store, requestId);
+    if (!applied.ok) return applied;
+    const done = applied.value.results.filter((r) => r.ok).map((r) => r.text);
+    const failed = applied.value.results.filter((r) => !r.ok).map((r) => r.text);
+    if (deps.connection) deps.connection.writeTx((db) => appendOutboxInTx(db, { topic: PLAN_TOPIC, entityId: "" }));
+    return { ok: true, value: { applied: done.length > 0, receipts: done, ...(failed.length > 0 ? { message: failed.join("\n") } : {}) } };
   }
 
   clearRequestIfGiven(deps.store, requestId);

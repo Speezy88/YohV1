@@ -234,10 +234,10 @@ export function buildProposalQuestion(requestId: string, promptText: string, pro
     options:
       proposal.kind === "notion-page-draft"
         ? CREATE_CANCEL_OPTIONS
-        : proposal.kind === "reshuffle"
+        : proposal.kind === "reshuffle" || proposal.kind === "change-set"
           ? APPROVE_DISCARD_OPTIONS
           : YES_NO_OPTIONS,
-    allowsFreeText: proposal.kind !== "rule-change" && proposal.kind !== "pattern",
+    allowsFreeText: proposal.kind !== "rule-change" && proposal.kind !== "pattern" && proposal.kind !== "change-set",
     proposal,
   };
 }
