@@ -29,10 +29,11 @@
  * `CalendarBroadClient` (built from the SECOND, broader-scoped `OAuth2Client`
  * `token-store.ts` holds), plus `resolveCalendarEditRoute` /
  * `proposeCalendarEdit` / `proposeNewCalendarEvent` / `applyCalendarEdit` —
- * confirm-gated move/resize/create of Calendar events beyond Yoh's own.
- * `CalendarEditChange` has no `delete` variant, and `CalendarBroadClient`
- * has no `delete` member, so an external event cannot be deleted through
- * this file even by mistake.
+ * confirm-gated move/resize/create/delete of Calendar events beyond Yoh's own.
+ * `CalendarEditChange` has a `delete` variant and `CalendarBroadClient` a
+ * `delete` member, but `applyCalendarEdit` deletes only an event that carries
+ * a Yoh marker (re-checked against the live event), so an external event
+ * cannot be deleted through this file.
  *
  * Per AD-10 of the Architecture Spine, this file receives an
  * already-authenticated `OAuth2Client` (constructed and held solely by
@@ -272,7 +273,7 @@ export interface CalendarWriteClient {
 // from CalendarReadClient/CalendarWriteClient, same reasoning as those two:
 // shares no member, built from the SECOND, broader-scoped OAuth2Client
 // token-store.ts holds (never the narrow one AD-4's automatic path uses).
-// Deliberately has no `delete` member. "Primary only" for this path is
+// Its `delete` member is used only behind `applyCalendarEdit`'s Yoh-marker check. "Primary only" for this path is
 // enforced by `assertPrimaryCalendar` in this file's FR-27 functions (see
 // below), not by this client's scope (AD-13 — Google's scope catalog has no
 // narrower "primary only" grant).
@@ -286,6 +287,7 @@ export interface CalendarBroadClient {
       options?: { readonly headers?: Record<string, string> },
     ) => Promise<{ readonly data: calendar_v3.Schema$Event }>;
     readonly insert: (params: calendar_v3.Params$Resource$Events$Insert) => Promise<{ readonly data: calendar_v3.Schema$Event }>;
+    readonly delete: (params: calendar_v3.Params$Resource$Events$Delete, options?: { readonly headers?: Record<string, string> }) => Promise<unknown>;
   };
 }
 
@@ -585,6 +587,14 @@ export const YOH_PLAN_CALENDAR_SUMMARY = "Yoh Plan";
  * mechanism.
  */
 export const PLAN_BLOCK_ID_EXTENDED_PROPERTY = "yohPlanBlockId";
+
+/** Stamped on every event `applyCalendarEdit` creates, so chat can later tell it apart from an event Spencer or someone else made. */
+export const CHAT_CREATED_EXTENDED_PROPERTY = "yohChatCreated";
+
+function hasYohMarker(event: calendar_v3.Schema$Event): boolean {
+  const priv = event.extendedProperties?.private;
+  return Boolean(priv?.[PLAN_BLOCK_ID_EXTENDED_PROPERTY] || priv?.[CHAT_CREATED_EXTENDED_PROPERTY]);
+}
 
 /**
  * Ensures the dedicated "Yoh Plan" secondary calendar exists, creating it via
@@ -966,7 +976,12 @@ export async function applyCalendarEdit(
     try {
       const response = await client.events.insert({
         calendarId: change.calendarId,
-        requestBody: { summary: change.title, start: { dateTime: change.start }, end: { dateTime: change.end } },
+        requestBody: {
+          summary: change.title,
+          start: { dateTime: change.start },
+          end: { dateTime: change.end },
+          extendedProperties: { private: { [CHAT_CREATED_EXTENDED_PROPERTY]: "1" } },
+        },
       });
       const eventId = response.data.id;
       if (!eventId) {
@@ -1009,6 +1024,27 @@ export async function applyCalendarEdit(
         detail: { eventId: change.eventId, expectedVersion: proposal.entityVersion, actualVersion: liveEvent.etag },
       },
     };
+  }
+
+  if (change.kind === "delete") {
+    if (!hasYohMarker(liveEvent)) {
+      return {
+        ok: false,
+        error: { kind: "validation", message: "calendar-adapter: only an event Yoh created can be deleted", detail: { eventId: change.eventId } },
+      };
+    }
+    try {
+      await client.events.delete(
+        { calendarId: change.calendarId, eventId: change.eventId },
+        proposal.entityVersion ? { headers: { "If-Match": proposal.entityVersion } } : undefined,
+      );
+      return { ok: true, value: { eventId: change.eventId, calendarId: change.calendarId } };
+    } catch (err) {
+      return {
+        ok: false,
+        error: { kind: "unreachable", message: `calendar-adapter: could not delete the event — ${err instanceof Error ? err.message : String(err)}`, detail: err },
+      };
+    }
   }
 
   const requestBody: calendar_v3.Schema$Event =
@@ -1349,6 +1385,8 @@ function toCalendarEvent(event: calendar_v3.Schema$Event): CalendarEvent {
     start: toIsoDateTime(event.start),
     end: toIsoDateTime(event.end),
     ...(isAllDayEvent(event) ? { allDay: true as const } : {}),
+    ...(event.etag ? { etag: event.etag } : {}),
+    ...(hasYohMarker(event) ? { yohCreated: true as const } : {}),
   };
 }
 

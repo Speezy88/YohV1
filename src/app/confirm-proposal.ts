@@ -77,9 +77,8 @@ import type { ConfirmProposalResponse } from "../types/api.ts";
  * confirmed `"calendar-edit"`, so `web/src/lib/calendarDay.ts`'s per-date
  * cache refetches the right day instead of every cached date. `"move"` and
  * `"create"` both carry a real start; `"resize"` carries only `newEnd` (its
- * own start isn't part of `CalendarEditChange` — there's deliberately no
- * `"delete"` variant either, see that type's own doc comment) — `undefined`
- * for either of those, same as a date this can't derive for any other
+ * own start isn't part of `CalendarEditChange`; `"delete"` has no new time
+ * at all) — `undefined` for either of those, same as a date this can't derive for any other
  * reason, tells the caller to fall back to a topic-only hint (no entityId),
  * which `calendarDay.ts` treats as "refetch every cached date."
  */
@@ -90,6 +89,7 @@ function calendarEditEventDate(change: CalendarEditChange, timeZone: string): st
     case "create":
       return localIsoDate(new Date(change.start), timeZone);
     case "resize":
+    case "delete":
       return undefined;
   }
 }

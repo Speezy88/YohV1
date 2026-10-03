@@ -33,8 +33,6 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import type { calendar_v3 } from "@googleapis/calendar";
 import type { GlobalOptions } from "@googleapis/calendar";
 import {
@@ -51,6 +49,7 @@ import {
   writeTodaysPlanToCalendar,
   YOH_PLAN_CALENDAR_SUMMARY,
   PLAN_BLOCK_ID_EXTENDED_PROPERTY,
+  CHAT_CREATED_EXTENDED_PROPERTY,
   type CalendarReadClient,
   type CalendarWriteClient,
   type CalendarBroadClient,
@@ -953,6 +952,7 @@ function fakeBroadClient(overrides: {
   throwOnPatch?: Error;
   throwOnInsert?: Error;
 } = {}): CalendarBroadClient & {
+  readonly deleteCalls: calendar_v3.Params$Resource$Events$Delete[];
   readonly getCalls: calendar_v3.Params$Resource$Events$Get[];
   readonly patchCalls: calendar_v3.Params$Resource$Events$Patch[];
   readonly insertCalls: calendar_v3.Params$Resource$Events$Insert[];
@@ -960,8 +960,10 @@ function fakeBroadClient(overrides: {
   const getCalls: calendar_v3.Params$Resource$Events$Get[] = [];
   const patchCalls: calendar_v3.Params$Resource$Events$Patch[] = [];
   const insertCalls: calendar_v3.Params$Resource$Events$Insert[] = [];
+  const deleteCalls: calendar_v3.Params$Resource$Events$Delete[] = [];
   return {
     getCalls,
+    deleteCalls,
     patchCalls,
     insertCalls,
     events: {
@@ -987,6 +989,10 @@ function fakeBroadClient(overrides: {
         insertCalls.push(params);
         if (overrides.throwOnInsert) throw overrides.throwOnInsert;
         return { data: overrides.insertResult ?? { id: "evt-new" } };
+      },
+      delete: async (params) => {
+        deleteCalls.push(params);
+        return {};
       },
     },
   };
@@ -1088,6 +1094,7 @@ test("applyCalendarEdit (create) inserts the new event directly, with no re-read
     summary: "Focus block",
     start: { dateTime: "2026-09-18T14:00:00.000Z" },
     end: { dateTime: "2026-09-18T15:00:00.000Z" },
+    extendedProperties: { private: { [CHAT_CREATED_EXTENDED_PROPERTY]: "1" } },
   });
 });
 
@@ -1106,14 +1113,6 @@ test("createCalendarBroadClient wraps an auth client without making a network ca
   assert.equal(typeof client.events.get, "function");
   assert.equal(typeof client.events.patch, "function");
   assert.equal(typeof client.events.insert, "function");
-});
-
-test("CalendarEditChange has no delete variant — structurally impossible to construct one", () => {
-  // A grep-based structural guard, the same convention notion-adapter.ts's
-  // AD-12 test already uses: this file's source can never construct a
-  // 'delete' kind for CalendarEditChange.
-  const source = readFileSync(join(import.meta.dirname, "..", "src", "adapters", "calendar-adapter.ts"), "utf8");
-  assert.doesNotMatch(source, /kind:\s*["']delete["']/, "no delete variant may ever be constructed for CalendarEditChange (AD-13)");
 });
 
 // ---- Review fixes: primary-only guard, datetime validation, all-day, If-Match ----
@@ -1472,4 +1471,67 @@ test("writeTodaysPlanToCalendar marks the write in flight and always finishes it
   ];
   await assert.rejects(writeTodaysPlanToCalendar(client, new FakeCalendarIdStore("cal"), blocks, { now: WRITE_FIXED_NOW, timeZone: "UTC", snapshot }), /db down/);
   assert.deepEqual(calls, [`begin:${SNAP_DATE}`, "replace", `finish:${SNAP_DATE}`]);
+});
+
+// ============================================================================
+// Chat tool loop: Yoh marker, marker-gated delete, etag on read
+// ============================================================================
+
+const chatMarker = { extendedProperties: { private: { [CHAT_CREATED_EXTENDED_PROPERTY]: "1" } } };
+
+const deleteProposal = (etag: string) => ({
+  id: "p1",
+  kind: "calendar-edit",
+  entityId: "e1",
+  entityVersion: etag,
+  reason: "",
+  createdAt: "2026-10-03T00:00:00.000Z",
+  suggested: { kind: "delete" as const, eventId: "e1", calendarId: "primary" },
+});
+
+test("applyCalendarEdit deletes an event that carries the chat marker", async () => {
+  const client = fakeBroadClient({ getResult: { id: "e1", etag: "v1", ...chatMarker } });
+  const result = await applyCalendarEdit(client, deleteProposal("v1"));
+  assert.deepEqual(result, { ok: true, value: { eventId: "e1", calendarId: "primary" } });
+  assert.equal(client.deleteCalls.length, 1);
+});
+
+test("applyCalendarEdit refuses to delete an event with no Yoh marker", async () => {
+  const client = fakeBroadClient({ getResult: { id: "e1", etag: "v1" } });
+  const result = await applyCalendarEdit(client, deleteProposal("v1"));
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.error.kind, "validation");
+  assert.equal(client.deleteCalls.length, 0);
+});
+
+test("applyCalendarEdit reports a stale delete when the etag moved", async () => {
+  const client = fakeBroadClient({ getResult: { id: "e1", etag: "v2", ...chatMarker } });
+  const result = await applyCalendarEdit(client, deleteProposal("v1"));
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.error.kind, "stale-proposal");
+  assert.equal(client.deleteCalls.length, 0);
+});
+
+test("applyCalendarEdit stamps the chat marker on a created event", async () => {
+  const client = fakeBroadClient();
+  await applyCalendarEdit(client, {
+    id: "p2",
+    kind: "calendar-edit",
+    entityId: "new",
+    entityVersion: "",
+    reason: "",
+    createdAt: "2026-10-03T00:00:00.000Z",
+    suggested: { kind: "create", calendarId: "primary", title: "Workout", start: "2026-10-03T17:10:00.000Z", end: "2026-10-03T18:50:00.000Z" },
+  });
+  assert.equal(client.insertCalls[0]?.requestBody?.extendedProperties?.private?.[CHAT_CREATED_EXTENDED_PROPERTY], "1");
+});
+
+test("readCalendarEvents returns etag and yohCreated, and omits yohCreated when unmarked", async () => {
+  const marked = { ...makeEvent({ id: "m", summary: "Workout", startDateTime: "2026-08-22T14:00:00-04:00", endDateTime: "2026-08-22T15:00:00-04:00" }), etag: "v9", ...chatMarker };
+  const plain = makeEvent({ id: "p", summary: "Dentist", startDateTime: "2026-08-22T16:00:00-04:00", endDateTime: "2026-08-22T17:00:00-04:00" });
+  const client = new FakeCalendarReadClient([{ items: [marked, plain] }]);
+  const events = await readCalendarEvents(client, { now: FIXED_NOW, timeZone: "UTC" });
+  assert.equal(events[0]?.etag, "v9");
+  assert.equal(events[0]?.yohCreated, true);
+  assert.equal("yohCreated" in (events[1] ?? {}), false);
 });

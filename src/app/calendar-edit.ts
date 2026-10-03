@@ -141,6 +141,8 @@ function describeCalendarEditPreview(change: CalendarEditChange, eventTitle: str
       const assumedNote = durationAssumed ? formatAssumedDurationNote(change.start, change.end) : "";
       return `Create "${eventTitle}" on ${day}, ${startTime}–${endTime}${assumedNote}?`;
     }
+    case "delete":
+      return `Delete "${eventTitle}"`;
   }
 }
 
@@ -160,6 +162,8 @@ function describeCalendarEditReceipt(change: CalendarEditChange, eventTitle: str
       return `Resized "${eventTitle}" — now ends ${formatLocalDay(change.newEnd, timeZone)}, ${formatLocalClock(change.newEnd, timeZone)}.`;
     case "create":
       return `Added "${eventTitle}" to Google Calendar — ${formatLocalDay(change.start, timeZone)}, ${formatLocalClock(change.start, timeZone)}–${formatLocalClock(change.end, timeZone)}.`;
+    case "delete":
+      return `Deleted "${eventTitle}".`;
   }
 }
 
