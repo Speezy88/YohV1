@@ -69,6 +69,7 @@ import { startNightCloseOut } from "./night-close-out.ts";
 import { planDay, type PlanDayDeps } from "./plan-day.ts";
 import { showPlan } from "./plan-view.ts";
 import { queueResearch } from "./queue-research.ts";
+import { openProposal } from "./open-proposal.ts";
 import { saveSearchResult, type SaveSearchResultDeps } from "./save-search-result.ts";
 import { sandboxQueue } from "./sandbox-queue.ts";
 import { declareTimeBudget } from "./time-budget.ts";
@@ -84,7 +85,8 @@ import { buildMemoryForgetQuestion } from "../core/open-item-questions.ts";
 import type { MemoryContext } from "../core/memory-context.ts";
 import { errorCopyForThrown } from "../core/error-copy.ts";
 import type { ChatStreamEvent, ChatTurnRequest, ChatTurnResponse, MorningViewResponse } from "../types/api.ts";
-import type { CalendarEvent, ChatTurn, ExternalId, IsoDate, MemoryItem, PlanBlock, Result, Task, YohError } from "../types/domain.ts";
+import { parseResearchOffer, researchOfferKey, RESEARCH_OFFER_KIND, RESEARCH_OFFER_PROMPT } from "../core/research-offer.ts";
+import type { CalendarEvent, ChatTurn, ExternalId, IsoDate, MemoryItem, PlanBlock, Proposal, Result, Task, YohError } from "../types/domain.ts";
 
 /**
  * The largest number of `ChatTurn`s `chatTurn` will ever send to Claude —
@@ -469,6 +471,11 @@ async function routeChatTurn(
     // or no draft could be built — fall through to the tool loop below.
   }
 
+  // Story 11.4: an obviously research-sized line gets a one-time Yes/No offer
+  // (no model call, no search) — before the non-prefix search check below.
+  const offered = await offerResearch(deps, input.message);
+  if (offered) return offered;
+
   // A deterministic, zero-model-call pre-check (`core/search-intent.ts`),
   // after every recognizer above and before the tool loop: a search-shaped
   // line goes straight to searchWeb.
@@ -483,6 +490,30 @@ async function routeChatTurn(
   }
 
   return runAgent(deps, input, reachedLlm);
+}
+
+/**
+ * Story 11.4 (E11-R14): offers research once per message. Returns undefined — take the normal path — when the line
+ * isn't research-sized, was already offered this session, or an offer for the same question is still open.
+ */
+async function offerResearch(deps: ChatTurnDeps, message: string): Promise<Result<ChatTurnResponse, YohError> | undefined> {
+  const key = researchOfferKey(message);
+  if (deps.session.researchOffered.has(key)) return undefined;
+  const offer = parseResearchOffer(message);
+  if (!offer) return undefined;
+  const proposal: Proposal<{ readonly question: string }> = {
+    id: randomUUID(),
+    kind: RESEARCH_OFFER_KIND,
+    entityId: researchOfferKey(offer.question),
+    entityVersion: "",
+    suggested: { question: offer.question },
+    reason: RESEARCH_OFFER_PROMPT,
+    createdAt: deps.now().toISOString(),
+  };
+  const opened = await openProposal({ store: deps.store, now: deps.now }, { proposal });
+  if (!opened.ok) return undefined;
+  deps.session.researchOffered.add(key);
+  return { ok: true, value: { reply: "", receipts: [], question: opened.value } };
 }
 
 /** The final step of routing: the tool loop. Everything no deterministic recognizer handled ends here. */

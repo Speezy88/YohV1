@@ -19,7 +19,7 @@ function memory(): MemoryItemStore {
 function deps(memoryItems: MemoryItemStore | undefined, extra: Partial<ChatTurnDeps> = {}): ChatTurnDeps {
   return {
     memoryItems,
-    session: { recentMessages: [], lastSearchAnswer: undefined },
+    session: { recentMessages: [], lastSearchAnswer: undefined, researchOffered: new Set<string>() },
     timeZone: "America/New_York",
     now: () => new Date("2026-09-29T16:00:00Z"),
     turn: { conversationId: "conv-1", userTurnId: "turn-1" },

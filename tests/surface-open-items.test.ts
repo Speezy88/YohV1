@@ -18,7 +18,7 @@ function tempStore() {
   return createMemoryStore(connection);
 }
 function makeSession(): ChatSession {
-  return { recentMessages: [], lastSearchAnswer: undefined };
+  return { recentMessages: [], lastSearchAnswer: undefined, researchOffered: new Set<string>() };
 }
 
 test("surfaceOpenItems returns no items when nothing is open", async () => {
@@ -55,7 +55,7 @@ test("surfaceOpenItems attaches an FR-25 suggestion when the LLM confidently inf
   const store = tempStore();
   const reports: MissingFieldReport[] = [{ taskId: "t1", taskTitle: "Call dentist", missingFields: ["estimatedDurationMinutes"] }];
   putOpenInteractionRequest(store, "data-completeness", { requestKind: "data-completeness", promptText: "x", detail: { incomplete: reports }, createdAt: "2026-09-25T00:00:00.000Z" });
-  const session: ChatSession = { recentMessages: ["that dentist call will take about half an hour"], lastSearchAnswer: undefined };
+  const session: ChatSession = { recentMessages: ["that dentist call will take about half an hour"], lastSearchAnswer: undefined, researchOffered: new Set<string>() };
   const llmClient = { messages: { create: async () => ({ content: [{ type: "text", text: "CONFIDENT: 30 | Spencer said it'll take about half an hour", citations: null }] }) } } as never;
   const result = await surfaceOpenItems({ store, session, llmClient }, {});
   assert.equal(result.ok, true);
@@ -68,7 +68,7 @@ test("surfaceOpenItems falls straight to the blind ask when a suggestion was alr
   const reports: MissingFieldReport[] = [{ taskId: "t1", taskTitle: "Call dentist", missingFields: ["estimatedDurationMinutes"] }];
   putOpenInteractionRequest(store, "data-completeness", { requestKind: "data-completeness", promptText: "x", detail: { incomplete: reports, cursor: { declinedSuggestions: ["t1:estimatedDurationMinutes"] } }, createdAt: "2026-09-25T00:00:00.000Z" });
   const llmClient = { messages: { create: async () => { throw new Error("must not be called"); } } } as never;
-  const result = await surfaceOpenItems({ store, session: { recentMessages: ["x"], lastSearchAnswer: undefined }, llmClient }, {});
+  const result = await surfaceOpenItems({ store, session: { recentMessages: ["x"], lastSearchAnswer: undefined, researchOffered: new Set<string>() }, llmClient }, {});
   assert.equal(result.ok, true);
   if (result.ok) assert.equal(result.value.items[0]!.question.questionId, "t1:estimatedDurationMinutes");
   store.close();

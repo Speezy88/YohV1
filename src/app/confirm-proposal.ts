@@ -54,6 +54,8 @@ import { approveReshuffle, discardReshuffle, type ApproveReshuffleDeps } from ".
 import { changeSetIsStale } from "../core/chat-tools.ts";
 import { applyChangeSet, CHANGE_SET_PROPOSAL_KIND, type ApplyChangeSetDeps } from "./apply-change-set.ts";
 import type { CalendarEditProposal } from "./calendar-edit.ts";
+import { queueResearch, type QueueResearchDeps } from "./queue-research.ts";
+import { RESEARCH_OFFER_KIND } from "../core/research-offer.ts";
 import type {
   CalendarEditChange,
   ChangeSet,
@@ -259,6 +261,8 @@ export interface ConfirmProposalDeps {
     getPatternState?(kind: string, area: string): PatternStateLike | undefined;
     putPatternState?(state: PatternStateLike): void;
   };
+  /** Required only for the `"research-offer"` kind's Yes: what `queueResearch` needs. Absent, a Yes replies that research is unavailable. */
+  readonly research?: QueueResearchDeps;
   /** Clock for the rule-change 7-day expiry; defaults to the real clock. */
   readonly now?: () => Date;
 }
@@ -510,6 +514,17 @@ export async function confirmProposal(
 
   if (proposal.kind === "pattern") {
     return confirmPattern(deps, proposal as Proposal<PatternProposal>, accept, requestId);
+  }
+
+  if (proposal.kind === RESEARCH_OFFER_KIND) {
+    clearRequestIfGiven(deps.store, requestId);
+    if (!accept) return { ok: true, value: { applied: false, receipts: [], message: "Okay. Nothing queued." } };
+    if (!deps.research) return { ok: true, value: { applied: false, receipts: [], message: "Background research isn't available right now." } };
+    const question = (proposal.suggested as { readonly question?: unknown } | undefined)?.question;
+    if (typeof question !== "string") return { ok: false, error: { kind: "validation", message: "confirm-proposal: a research offer needs a question" } };
+    const queued = await queueResearch(deps.research, { question });
+    if (!queued.ok) return queued;
+    return { ok: true, value: { applied: false, receipts: [], message: queued.value.reply } };
   }
 
   // Every other kind: extracted-payload write functions, no generic

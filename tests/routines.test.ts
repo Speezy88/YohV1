@@ -125,7 +125,7 @@ test("chat: routine lines route before plan-edit and LLM steps", async () => {
     now: () => new Date("2026-08-22T18:00:00.000Z"),
     readTasks: async () => { throw new Error("readTasks must not be called"); },
     llmClient,
-    session: { recentMessages: [], lastSearchAnswer: undefined },
+    session: { recentMessages: [], lastSearchAnswer: undefined, researchOffered: new Set<string>() },
     getCompletedTaskIdsToday: () => new Set(),
   } as unknown as ChatTurnDeps;
   const added = await chatTurn(deps, { message: "my commute is 3:00–3:30 on weekdays" });

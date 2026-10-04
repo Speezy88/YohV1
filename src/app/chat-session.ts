@@ -14,6 +14,8 @@ import type { SearchAnswer } from "../types/domain.ts";
 export interface ChatSession {
   recentMessages: string[];
   lastSearchAnswer: { readonly query: string; readonly answer: SearchAnswer } | undefined;
+  /** Story 11.4: normalized messages already offered "Do you want to do research on this?" — each is offered once per session. */
+  researchOffered: Set<string>;
 }
 
 /** The largest number of Spencer's own recent (non-blank) chat lines kept for FR-25 inference — mirrors `chat-cli.ts`'s pre-Epic-8 `RECENT_MESSAGES_WINDOW`. */

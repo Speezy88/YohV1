@@ -22,6 +22,7 @@ import { initNotificationStoreSchema } from "../src/adapters/notification-store.
 import { initJobStoreSchema } from "../src/adapters/job-store.ts";
 import { createMemoryItemStore, initMemoryItemStoreSchema } from "../src/adapters/memory-item-store.ts";
 import { PLAN_EDIT_HOW_TO_REPLY } from "../src/core/plan-edit-commands.ts";
+import { confirmProposal } from "../src/app/confirm-proposal.ts";
 import { chatTurn, MAX_CHAT_HISTORY_TURNS, STATUS_THINKING, type ChatTurnDeps } from "../src/app/chat-turn.ts";
 import { COMMANDS } from "../src/app/commands.ts";
 import type { AnthropicMessagesClient } from "../src/adapters/llm-adapter.ts";
@@ -78,7 +79,7 @@ function makeFakeLlmClient(responseText = "I don't have a specific answer for th
 }
 
 function makeSession(): ChatSession {
-  return { recentMessages: [], lastSearchAnswer: undefined };
+  return { recentMessages: [], lastSearchAnswer: undefined, researchOffered: new Set<string>() };
 }
 
 /** A real chat store on in-memory SQLite, pre-seeded with today's (2026-08-22, New York) turns. */
@@ -1618,4 +1619,83 @@ test("/research with no question, no vault, or no search replies plainly and que
   assert.ok(c.ok && c.value.reply === "Web search isn't set up yet (it needs a Perplexity key).");
   assert.deepEqual([empty.jobs(), noVault.jobs(), noSearch.jobs()], [[], [], []]);
   assert.equal(empty.llm.calls.length + noVault.llm.calls.length + noSearch.llm.calls.length, 0);
+});
+
+// ---- Story 11.4: a research-sized message gets a one-time offer ----
+function researchOfferDeps(t: ReturnType<typeof researchDeps>) {
+  return { connection: t.deps.connection!, webSearchAvailable: true, getNotionCreatePageBinding: vaultReady.getNotionCreatePageBinding, now: () => new Date("2026-08-22T18:00:00.000Z") };
+}
+
+test("a research-sized message gets a Yes/No offer: no model call, no search, nothing queued", async () => {
+  const t = researchDeps(vaultReady);
+  const r = await chatTurn(t.deps, { message: "give me a deep dive on heat pumps" });
+  assert.ok(r.ok);
+  if (!r.ok) return;
+  assert.equal(r.value.question?.text, "Do you want to do research on this?");
+  assert.deepEqual(r.value.question?.options.map((o) => o.label), ["Yes", "No"]);
+  assert.equal(r.value.question?.allowsFreeText, false);
+  assert.equal(r.value.question?.proposal?.kind, "research-offer");
+  assert.deepEqual(r.value.question?.proposal?.suggested, { question: "give me a deep dive on heat pumps" });
+  assert.equal(t.llm.calls.length, 0);
+  assert.equal(t.searchCalls(), 0);
+  assert.deepEqual(t.jobs(), []);
+});
+
+test("an imperative 'research X' line offers first and searches at once only when sent a second time", async () => {
+  const t = researchDeps(vaultReady);
+  const first = await chatTurn(t.deps, { message: "research best budget laptops" });
+  assert.ok(first.ok && first.value.question?.proposal?.kind === "research-offer");
+  assert.equal(t.searchCalls(), 0);
+  const second = await chatTurn(t.deps, { message: "  Research   best budget laptops " });
+  assert.ok(second.ok);
+  assert.equal(t.searchCalls(), 1);
+  assert.equal(t.jobs().length, 0);
+});
+
+test("answering Yes to the offer queues exactly one job; No queues nothing", async () => {
+  const t = researchDeps(vaultReady);
+  const offer = await chatTurn(t.deps, { message: "pros and cons of nuclear power" });
+  assert.ok(offer.ok && offer.value.question);
+  const q = offer.value.question!;
+  const yes = await confirmProposal({ store: t.deps.store, research: researchOfferDeps(t) }, { proposal: q.proposal!, accept: true, requestId: q.requestId });
+  assert.ok(yes.ok);
+  assert.equal(yes.ok && yes.value.message, "Queued. You'll get a notification when it's on Research Hub.");
+  assert.deepEqual(t.jobs(), [{ question: "pros and cons of nuclear power", status: "queued" }]);
+
+  const t2 = researchDeps(vaultReady);
+  const offer2 = await chatTurn(t2.deps, { message: "pros and cons of nuclear power" });
+  assert.ok(offer2.ok && offer2.value.question);
+  const q2 = offer2.value.question!;
+  const no = await confirmProposal({ store: t2.deps.store }, { proposal: q2.proposal!, accept: false, requestId: q2.requestId });
+  assert.ok(no.ok);
+  assert.equal(no.ok && no.value.message, "Okay. Nothing queued.");
+  assert.deepEqual(t2.jobs(), []);
+});
+
+test("Yes with no research deps replies that research is unavailable and queues nothing", async () => {
+  const t = researchDeps(vaultReady);
+  const offer = await chatTurn(t.deps, { message: "pros and cons of nuclear power" });
+  assert.ok(offer.ok && offer.value.question);
+  const q = offer.value.question!;
+  const yes = await confirmProposal({ store: t.deps.store }, { proposal: q.proposal!, accept: true, requestId: q.requestId });
+  assert.equal(yes.ok && yes.value.message, "Background research isn't available right now.");
+  assert.deepEqual(t.jobs(), []);
+});
+
+test("an offer still open for the same question falls through to the normal path", async () => {
+  const t = researchDeps(vaultReady);
+  const a = await chatTurn(t.deps, { message: "research best budget laptops" });
+  assert.ok(a.ok && a.value.question);
+  t.deps.session.researchOffered.clear(); // e.g. a restart: the session forgot, the store did not
+  const b = await chatTurn(t.deps, { message: "research best budget laptops" });
+  assert.ok(b.ok);
+  assert.equal(b.ok && b.value.question, undefined);
+  assert.equal(t.searchCalls(), 1);
+});
+
+test("plain factual questions get no offer", async () => {
+  const t = researchDeps(vaultReady);
+  const r = await chatTurn(t.deps, { message: "what's the latest AI news" });
+  assert.ok(r.ok && r.value.question === undefined);
+  assert.equal(t.searchCalls(), 1);
 });

@@ -49,7 +49,7 @@
 const EXPLICIT_SEARCH_PREFIX_RE = /^search:\s*(.+)$/is;
 
 /** A leading polite/address phrase before an imperative ("hey Yoh, can you please look up …"). */
-const POLITE_LEAD = String.raw`(?:(?:hey\s+)?yoh[,:]?\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?`;
+export const POLITE_LEAD =String.raw`(?:(?:hey\s+)?yoh[,:]?\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?`;
 
 /** A search verb used as an imperative — only at the start of the message (after an optional polite lead), so "I need to research colleges" or "remind me to look up flights" stay tasks/captures. */
 const SEARCH_VERB_RE = new RegExp(
@@ -64,7 +64,7 @@ const CURRENT_INFO_CUE_RE =
 const INFO_REQUEST_RE =
   /^\s*(?:(?:what|what's|whats|who|who's|when|where|which|why|how|how's|is|are|was|were|did|does|do|any|tell\s+me|give\s+me|show\s+me)\b|(?:news|latest|price\s+of|weather|current\s+events|today'?s|this\s+week'?s)\b)|\?\s*$/i;
 
-const PLANNING_NOUN_RE = /\b(?:plan|tasks?|schedule|calendar|priorit\w*|due|homework|assignments?|essays?|working\s+on|work\s+on)\b/i;
+export const PLANNING_NOUN_RE =/\b(?:plan|tasks?|schedule|calendar|priorit\w*|due|homework|assignments?|essays?|working\s+on|work\s+on)\b/i;
 
 /**
  * I1 (final-review): checked ONLY on the current-info CUE path below (never
@@ -74,7 +74,7 @@ const PLANNING_NOUN_RE = /\b(?:plan|tasks?|schedule|calendar|priorit\w*|due|home
  * as Spencer asking about himself or his own work, not a request for a
  * real-world fact, even when it also contains a current-info cue word.
  */
-const CUE_PATH_FIRST_PERSON_RE = /\b(?:i|i'm|me|my|mine)\b/i;
+export const CUE_PATH_FIRST_PERSON_RE =/\b(?:i|i'm|me|my|mine)\b/i;
 
 export interface SearchIntent {
   readonly query: string;

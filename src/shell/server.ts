@@ -949,7 +949,7 @@ export function createApp(deps: ServerDeps) {
   const checkOffDeps: CheckOffDeps | undefined = deps.checkOff
     ? { ...deps.checkOff, connection: deps.connection, now: deps.checkOff.now ?? (() => new Date()), log }
     : undefined;
-  const chatSession: ChatSession = deps.chatSession ?? { recentMessages: [], lastSearchAnswer: undefined };
+  const chatSession: ChatSession = deps.chatSession ?? { recentMessages: [], lastSearchAnswer: undefined, researchOffered: new Set<string>() };
   // Task 6B: one merged deps object serves all three Tasks-page app/
   // functions (each reads only its own fields). Spread, never re-keyed, so
   // the write binding's name never appears in this file (AD-16).
@@ -1727,7 +1727,7 @@ export function startServer(
 ): ServerHandle {
   const port = parsePort(env["YOH_SERVER_PORT"]);
   // Contract C3: one ChatSession per server process, shared by every chat route.
-  const chatSession: ChatSession = { recentMessages: [], lastSearchAnswer: undefined };
+  const chatSession: ChatSession = { recentMessages: [], lastSearchAnswer: undefined, researchOffered: new Set<string>() };
   const app = createApp({
     connection,
     chatSession,
@@ -2241,6 +2241,8 @@ function buildChatDeps(
     ...bindNotionCreatePage(getNotionCreatePageBinding),
     ...bindCalendarApply(getCalendarApplyBinding),
     changeSetWrites: { ...bindNotionCreatePage(getNotionCreatePageBinding), ...bindCalendarApply(getCalendarApplyBinding) },
+    // Story 11.4: a Yes on the research offer queues exactly as `/research` does.
+    research: { connection, webSearchAvailable: Boolean(perplexityApiKey), getNotionCreatePageBinding, now: () => new Date() },
     readFieldOptions,
     recordCompletion,
     lookupTask,

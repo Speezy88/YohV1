@@ -146,7 +146,7 @@ test("answering approve to the open reshuffle question through answerOpenItem ap
   const req = await post(s.app, "/api/plan/reshuffle", { kind: "reflow-now" });
   const q = req.body.value.question as { requestId: string; questionId: string };
   const deps = {
-    store: s.store, session: { recentMessages: [], lastSearchAnswer: undefined },
+    store: s.store, session: { recentMessages: [], lastSearchAnswer: undefined, researchOffered: new Set<string>() },
     updateTaskField: async () => ({ ok: true as const, value: undefined }),
     setTaskStatus: async () => ({ ok: true as const, value: undefined }),
     recordCompletion: () => {}, lookupTask: async () => undefined, today: "2026-08-22", random: () => 0,

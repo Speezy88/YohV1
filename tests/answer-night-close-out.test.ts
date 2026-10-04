@@ -30,7 +30,7 @@ function openReq(store: ReturnType<typeof tempStore>, tasks: NightCloseOutTaskDe
 }
 const deps = (store: ReturnType<typeof tempStore>, setTaskStatus = makeSetTaskStatus()) => ({
   store,
-  session: { recentMessages: [], lastSearchAnswer: undefined },
+  session: { recentMessages: [], lastSearchAnswer: undefined, researchOffered: new Set<string>() },
   setTaskStatus,
   recordCompletion: () => {},
   lookupTask: async () => undefined,

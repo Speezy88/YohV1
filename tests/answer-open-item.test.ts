@@ -19,7 +19,7 @@ function tempStore() {
 function fullDeps(store: ReturnType<typeof tempStore>) {
   return {
     store,
-    session: { recentMessages: [], lastSearchAnswer: undefined },
+    session: { recentMessages: [], lastSearchAnswer: undefined, researchOffered: new Set<string>() },
     updateTaskField: async () => ({ ok: true as const, value: undefined }),
     setTaskStatus: async () => ({ ok: true as const, value: undefined }),
     recordCompletion: () => {},
