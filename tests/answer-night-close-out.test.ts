@@ -254,6 +254,16 @@ test("E12-R1: no night-close-out-done record while the request is open, nor when
   store.close();
 });
 
+test("E12-R1: a skip on an earlier turn still means no record after the last Task is answered", async () => {
+  const store = tempStore();
+  openReq(store, [{ taskId: "t1", taskTitle: "Draft the memo" }, { taskId: "t2", taskTitle: "Book the flights" }]);
+  await answerNightCloseOut(deps(store), { requestId: "night-close-out", questionId: "t1", answer: "skip" });
+  const last = await answerNightCloseOut(deps(store), { requestId: "night-close-out", questionId: "t2", answer: "completed" });
+  assert.equal(last.ok, true);
+  assert.equal(listNightCloseOutDone(store).length, 0);
+  store.close();
+});
+
 test("E12-R1: a failure to write the record never fails the close-out", async () => {
   const store = tempStore();
   openReq(store, [{ taskId: "t1", taskTitle: "Draft the memo" }], "2026-09-25");

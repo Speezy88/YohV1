@@ -39,6 +39,9 @@ function readCursor(detail: (NightCloseOutRequestDetail & { readonly cursor?: Ni
   return { resolvedTaskIds: new Set(detail?.cursor?.resolvedTaskIds ?? []), skippedTaskIds: new Set(detail?.cursor?.skippedTaskIds ?? []) };
 }
 
+/** Stands in for a close-out request that carries no date; never recorded as a finished night. */
+const UNKNOWN_CLOSE_OUT_DATE: IsoDate = "1970-01-01";
+
 async function withNext(
   deps: AnswerNightCloseOutDeps,
   requestId: string,
@@ -74,7 +77,8 @@ async function withNext(
     // that), so night-prompt will not re-ask tonight even for a skipped Task.
     recordNightCloseOutHandledWithoutPrompt(deps.store, closeOutDate, new Date().toISOString());
     // Ruling E12-R1: a close-out finished with nothing skipped is a "done" night. A failed write never fails the close-out.
-    if (skippedTaskIds.size === 0) {
+    // Not when the request vanished mid-answer (its other Tasks may be unanswered) or carried no date.
+    if (skippedTaskIds.size === 0 && current !== undefined && closeOutDate !== UNKNOWN_CLOSE_OUT_DATE) {
       recordNightCloseOutDone(deps.store, closeOutDate, new Date().toISOString(), "answered", writeStructuredLog);
     }
     const skippedTitles = tasks.filter((t) => skippedTaskIds.has(t.taskId)).map((t) => t.taskTitle);
@@ -102,7 +106,7 @@ export async function answerNightCloseOut(deps: AnswerNightCloseOutDeps, input: 
   if (!record) return { ok: false, error: { kind: "conflict", message: "answer-night-close-out: no open close-out request" } };
   const detail = record.data.detail as (NightCloseOutRequestDetail & { readonly cursor?: NightCloseOutCursor }) | undefined;
   const tasks = detail?.tasks ?? [];
-  const closeOutDate: IsoDate = detail?.date ?? "1970-01-01";
+  const closeOutDate: IsoDate = detail?.date ?? UNKNOWN_CLOSE_OUT_DATE;
   const { resolvedTaskIds, skippedTaskIds } = readCursor(detail);
   const pending = nextNightCloseOutTask({ tasks, resolvedTaskIds, skippedTaskIds });
   if (!pending || pending.taskId !== input.questionId) {
