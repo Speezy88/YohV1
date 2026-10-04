@@ -466,7 +466,15 @@ export interface ReviewMemoryRequest {
   readonly expiresOn?: IsoDate;
 }
 
-/** `POST /api/memory/{move,expiry,delete,review}` value (`itemId` is the new version's id where one exists). */
+/** `POST /api/memory/sort-feedback` request: is the item in the right folder, and why. `belongsIn` only with "wrong". */
+export interface SortFeedbackRequest {
+  readonly itemId: string;
+  readonly verdict: "right" | "wrong";
+  readonly reason: string;
+  readonly belongsIn?: MemoryFolder;
+}
+
+/** `POST /api/memory/{move,expiry,delete,review,sort-feedback}` value (`itemId` is the new version's id where one exists). */
 export interface MemoryWriteResponse {
   readonly itemId?: string;
 }
@@ -594,6 +602,8 @@ export interface MemoryItemView {
   /** Absent when the item has no source turn; "deleted" when the turn is gone. */
   readonly source?: { readonly conversationId: string; readonly turnId: string; readonly date: IsoDate } | "deleted";
   readonly earlierVersions: readonly { readonly id: string; readonly text: string; readonly confirmedAt: IsoDateTime; readonly confirmedOn: IsoDate }[];
+  /** Spencer's verdict on this item's current folder; absent once the item has moved since. */
+  readonly sortFeedback?: { readonly verdict: "right" | "wrong"; readonly reason: string; readonly belongsIn?: MemoryFolder };
 }
 
 /** `count` is the number of current items; all eight folders, PRD order. */

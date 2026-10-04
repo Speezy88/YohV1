@@ -125,7 +125,7 @@ import {
   undoCheckOff,
   type CheckOffDeps,
 } from "../app/check-off.ts";
-import { deleteMemoryItem, editMemoryItem, moveMemoryItem, reviewMemoryItem, setMemoryExpiry } from "../app/memory-edit.ts";
+import { deleteMemoryItem, editMemoryItem, moveMemoryItem, recordSortFeedback, reviewMemoryItem, setMemoryExpiry } from "../app/memory-edit.ts";
 import { revertPlanningSetting } from "../app/settings-revert.ts";
 import { undoMemoryReceipt } from "../app/memory-undo.ts";
 import { viewMemory } from "../app/memory-view.ts";
@@ -154,6 +154,7 @@ import type {
   EditMemoryRequest,
   MoveMemoryRequest,
   SetMemoryExpiryRequest,
+  SortFeedbackRequest,
   DeleteMemoryRequest,
   ReviewMemoryRequest,
   RevertSettingRequest,
@@ -1517,6 +1518,16 @@ export function createApp(deps: ServerDeps) {
         async (c) => {
           if (!deps.memoryItems) return c.json(MEMORY_NOT_CONFIGURED, httpStatus(MEMORY_NOT_CONFIGURED));
           const result = wire(await moveMemoryItem(memoryPageDeps(deps, deps.memoryItems), c.req.valid("json")));
+          return c.json(result, httpStatus(result));
+        },
+      )
+      .post(
+        "/api/memory/sort-feedback",
+        validator("json", validateMemoryBody<SortFeedbackRequest>("memory/sort-feedback", (b) =>
+          itemIdProblem(b) ?? (b["verdict"] !== "right" && b["verdict"] !== "wrong" ? "verdict must be right or wrong" : typeof b["reason"] !== "string" ? "missing reason" : b["belongsIn"] !== undefined && typeof b["belongsIn"] !== "string" ? "bad belongsIn" : undefined))),
+        async (c) => {
+          if (!deps.memoryItems) return c.json(MEMORY_NOT_CONFIGURED, httpStatus(MEMORY_NOT_CONFIGURED));
+          const result = wire(await recordSortFeedback(memoryPageDeps(deps, deps.memoryItems), c.req.valid("json")));
           return c.json(result, httpStatus(result));
         },
       )

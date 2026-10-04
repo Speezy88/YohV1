@@ -285,7 +285,15 @@ function recordUsageSafely(connection: SqliteConnection | undefined, purpose: Ll
 
 const EXTRACT_MEMORIES_MAX_TOKENS = 600;
 
-function extractMemoriesSystemPrompt(opts: { forceStated: boolean; forceFolder?: MemoryFolder }): string {
+export interface ExtractMemoriesOptions {
+  forceStated: boolean;
+  forceFolder?: MemoryFolder;
+  /** Lines from `sortingExampleLines` (core/memory-sort-feedback.ts): Spencer's verdicts on past filings. */
+  sortingExamples?: readonly string[];
+}
+
+function extractMemoriesSystemPrompt(opts: ExtractMemoriesOptions): string {
+  const examples = opts.sortingExamples ?? [];
   return [
     "You are Yoh's memory filer. From Spencer's typed message, propose at most 2 short facts worth remembering.",
     "Reply with ONLY a JSON array (no prose). Each element: {\"folder\", \"text\", \"origin\", optional \"scope\", \"expiresOn\", \"entityRef\", \"restatesId\", \"contradictsId\", \"sensitive\", \"ruleChange\"}.",
@@ -299,6 +307,9 @@ function extractMemoriesSystemPrompt(opts: { forceStated: boolean; forceFolder?:
     'ruleChange: {"key", "value"} only when Spencer states a planning rule (keys: schoolDayWorkStart, otherDayWorkStart, lunchWindow, communityWindow, areaDurationPadding).',
     opts.forceStated ? "Spencer explicitly asked you to remember this, so origin is \"stated\"." : "",
     opts.forceFolder ? `File it in the folder ${opts.forceFolder}.` : "",
+    examples.length > 0
+      ? `Spencer's past sorting corrections (a fact, the folder it was filed in, whether that was right, and his reason). Follow them when choosing a folder:\n${examples.join("\n")}`
+      : "",
     "If nothing is worth remembering, reply [].",
   ]
     .filter((l) => l !== "")
@@ -347,7 +358,7 @@ export async function extractMemories(
   client: AnthropicMessagesClient,
   typedText: string,
   alwaysLoaded: readonly MemoryItem[],
-  opts: { forceStated: boolean; forceFolder?: MemoryFolder },
+  opts: ExtractMemoriesOptions,
   connection?: SqliteConnection,
 ): Promise<readonly MemoryCandidate[]> {
   const existing = alwaysLoaded.length === 0 ? "(none)" : alwaysLoaded.map((i) => `- ${i.id} [${i.folder}] ${i.text}`).join("\n");

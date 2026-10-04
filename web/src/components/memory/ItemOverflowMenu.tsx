@@ -25,11 +25,13 @@ export interface ItemOverflowMenuProps {
   readonly deleteOnly?: boolean;
   onMove(folder: MemoryFolder): void;
   onSetExpiry(expiresOn: string | null): void;
+  /** When given, the menu offers "Sorting feedback" (the row opens its panel). */
+  onSortFeedback?(): void;
   onDelete(): void;
 }
 
 /** Folders that hold only things Spencer said; mirrors the server's rule, whose message the disabled item repeats. */
-const STATED_ONLY: readonly MemoryFolder[] = ["feedback", "planning-preferences"];
+export const STATED_ONLY: readonly MemoryFolder[] = ["feedback", "planning-preferences"];
 
 const MENU_ITEM =
   `block w-full rounded-sm px-3 py-2 text-left font-body text-body text-ink-primary aria-disabled:text-ink-secondary ${ROW_HOVER_FLAT}`;
@@ -46,7 +48,7 @@ function MoreGlyph(): React.JSX.Element {
   );
 }
 
-export function ItemOverflowMenu({ itemText, currentFolder, origin, expiresOn, folders, deleteOnly = false, onMove, onSetExpiry, onDelete }: ItemOverflowMenuProps): React.JSX.Element {
+export function ItemOverflowMenu({ itemText, currentFolder, origin, expiresOn, folders, deleteOnly = false, onMove, onSetExpiry, onSortFeedback, onDelete }: ItemOverflowMenuProps): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<View>("root");
   const [date, setDate] = useState(expiresOn ?? "");
@@ -158,6 +160,20 @@ export function ItemOverflowMenu({ itemText, currentFolder, origin, expiresOn, f
               {!deleteOnly && expiresOn && (
                 <button type="button" role="menuitem" onClick={() => choose(() => onSetExpiry(null))} className={MENU_ITEM}>
                   Clear expiry
+                </button>
+              )}
+              {onSortFeedback && (
+                // The panel takes focus itself, so the menu closes without pulling focus back to the trigger.
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    close(false);
+                    onSortFeedback();
+                  }}
+                  className={MENU_ITEM}
+                >
+                  Sorting feedback
                 </button>
               )}
               <button type="button" role="menuitem" onClick={() => choose(onDelete)} className={MENU_ITEM}>

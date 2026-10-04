@@ -46,6 +46,19 @@ export interface MemoryItem {
   lastMatchedAt?: IsoDateTime;
 }
 
+/** Spencer's verdict on where a memory item was filed; the filer reads these as examples. */
+export interface MemorySortFeedback {
+  itemId: string;
+  /** The item's text and folder when the verdict was given. */
+  text: string;
+  folder: MemoryFolder;
+  verdict: "right" | "wrong";
+  reason: string;
+  /** A "wrong" verdict may name the folder it should have gone to. */
+  belongsIn?: MemoryFolder;
+  createdAt: IsoDateTime;
+}
+
 /** A memory item proposed for filing (Story 13.4); validated by `core/memory-filing.ts`. */
 export interface MemoryCandidate {
   folder: MemoryFolder;
