@@ -16,3 +16,9 @@ export function researchVaultProperties(input: {
     sources: input.citations.join("\n"),
   };
 }
+
+/** The question as it reads in a notification title: cut to 80 characters with an ellipsis (E11-R12). */
+export function researchTopic(question: string): string {
+  const text = question.trim();
+  return text.length <= 80 ? text : `${text.slice(0, 79)}…`;
+}

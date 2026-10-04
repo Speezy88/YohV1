@@ -46,6 +46,7 @@ import {
   readNotionTasks,
   readResearchVault,
   readTaskFieldOptions,
+  type NotionCreatePageClient,
   type NotionCreatePageConfig,
 } from "../../src/adapters/notion-adapter.ts";
 import { CHANGE_SET_PROPOSAL_KIND } from "../../src/app/apply-change-set.ts";
@@ -60,7 +61,10 @@ import { recognizeMemoryCommand } from "../../src/core/memory-commands.ts";
 import { firstCardView } from "../../src/core/sandbox-card-view.ts";
 import { startNightCloseOut } from "../../src/app/night-close-out.ts";
 import { localIsoDate } from "../../src/rituals/ritual-shared.ts";
-import { startCheckOffCommitSweep, startServer, type ChatTurnFn, type ServerDeps } from "../../src/shell/server.ts";
+import { startCheckOffCommitSweep, startResearchJobRunner, startServer, type ChatTurnFn, type ServerDeps } from "../../src/shell/server.ts";
+import { queueResearch } from "../../src/app/queue-research.ts";
+import type { NotionCreatePageBindingFn } from "../../src/app/create-item.ts";
+import type { SearchFn } from "../../src/app/web-search.ts";
 import type { AnthropicMessagesClient } from "../../src/adapters/llm-adapter.ts";
 import type { ChangeSetItem, Plan, PlanBlock, Proposal, PlanCalendarSnapshotEntry, Task, YohPlanEvent } from "../../src/types/domain.ts";
 import { createFakeNotionStatusClient } from "../fakes/fake-notion-status-client.ts";
@@ -390,6 +394,14 @@ const runChatTurn: ChatTurnFn = async (deps, input) => {
     if (!card) return { ok: true, value: { reply: "Nothing's missing a Due Date or Duration.", receipts: [] } };
     return { ok: true, value: { reply: "", receipts: [], sandboxCard: card } };
   }
+  // Story 11.3: `/research <question>` queues a job through the REAL `queueResearch`; the runner below does the rest.
+  const researchMatch = /^\/research(?:\s+([\s\S]*))?$/.exec(input.message.trim());
+  if (researchMatch) {
+    return queueResearch(
+      { connection, webSearchAvailable: true, getNotionCreatePageBinding: researchVaultBinding, now: () => new Date() },
+      { question: researchMatch[1] ?? "" },
+    );
+  }
   // Story 13.11: `/morning` is a substantive turn, so the rating schedule may prompt after it.
   if (input.message.trim() === "/morning") {
     // Story 13.13: the REAL offerPattern, so the once-per-day rule is the server's own.
@@ -555,6 +567,58 @@ const researchVaultRows = [
   // The oldest row: an empty body and no sources (page 2).
   researchVaultPage(FIXTURE_RESEARCH_EMPTY.id, FIXTURE_RESEARCH_EMPTY.title, "2026-07-31", []),
 ];
+// Story 11.3: the research runner's fake vault. The REAL `createPage("ResearchVault", ...)` runs against this client, and each
+// created page joins `researchVaultRows` so the Research Hub list and document reads see it.
+const richTextOf = (prop: unknown): string =>
+  ((prop as { rich_text?: Array<{ text?: { content?: string } }> } | undefined)?.rich_text ?? []).map((t) => t.text?.content ?? "").join("");
+const researchVaultCreateSchema = {
+  object: "data_source",
+  id: "research-vault-ds",
+  title: [],
+  description: [],
+  parent: { type: "database_id", database_id: "research-vault-ds-db" },
+  database_parent: { type: "database_id", database_id: "research-vault-ds-db" },
+  is_inline: false,
+  in_trash: false,
+  archived: false,
+  created_time: "2026-08-01T09:00:00.000Z",
+  last_edited_time: "2026-08-01T09:00:00.000Z",
+  created_by: { object: "user", id: "user-1" },
+  last_edited_by: { object: "user", id: "user-1" },
+  icon: null,
+  cover: null,
+  url: "https://notion.so/research-vault-ds",
+  public_url: null,
+  properties: {
+    "Research Title": { id: "title", name: "Research Title", description: null, type: "title", title: {} },
+    "Key Findings": { id: "kf", name: "Key Findings", description: null, type: "rich_text", rich_text: {} },
+    Query: { id: "q", name: "Query", description: null, type: "rich_text", rich_text: {} },
+    Date: { id: "date", name: "Date", description: null, type: "date", date: {} },
+    Sources: { id: "src", name: "Sources", description: null, type: "rich_text", rich_text: {} },
+  },
+} as unknown as Awaited<ReturnType<NotionCreatePageClient["dataSources"]["retrieve"]>>;
+let researchVaultCreated = 0;
+const researchVaultCreateClient: NotionCreatePageClient = {
+  dataSources: { retrieve: (async () => researchVaultCreateSchema) as NotionCreatePageClient["dataSources"]["retrieve"] },
+  pages: {
+    create: (async (params: { properties: Record<string, unknown> }) => {
+      researchVaultCreated += 1;
+      const id = `rv-job-${researchVaultCreated}`;
+      const title = ((params.properties["Research Title"] as { title?: Array<{ text?: { content?: string } }> } | undefined)?.title ?? []).map((t) => t.text?.content ?? "").join("");
+      const date = (params.properties["Date"] as { date?: { start?: string } } | undefined)?.date?.start ?? today;
+      const sources = richTextOf(params.properties["Sources"]).split("\n").filter(Boolean);
+      researchVaultRows.unshift(researchVaultPage(id, title, date, sources, richTextOf(params.properties["Key Findings"])));
+      return { object: "page", id, url: `https://notion.so/${id}` };
+    }) as NotionCreatePageClient["pages"]["create"],
+  },
+};
+const researchVaultBinding: NotionCreatePageBindingFn = () => ({
+  ok: true,
+  value: { client: researchVaultCreateClient, config: { ...NOTION_CREATE_CONFIG, researchVaultDataSourceId: "research-vault-ds" } },
+});
+// The fake search answers any question with one canned answer and one source.
+const fixtureSearch: SearchFn = async (query) => ({ ok: true, value: { answer: `Fixture findings for: ${query}`, citations: ["https://example.com/fixture-research"] } });
+
 const researchVaultClient = {
   dataSources: {
     query: async (params: { data_source_id: string }) => ({
@@ -627,9 +691,15 @@ const handle = startServer(
   { homeView, calendarDay, checkOff, plan: reshufflePlanDeps, planSync: planSyncDeps, chat, chatHistory, memoryItems, ratings, tasks: tasksPage, research, sandbox },
 );
 const sweep = startCheckOffCommitSweep({ connection, ...checkOff, now: () => new Date() }, { log: quiet });
+// Story 11.3: the real research runner over the fake search and the fake vault (short interval so specs stay fast).
+const researchRunner = startResearchJobRunner(
+  { connection, searchFn: fixtureSearch, getNotionCreatePageBinding: researchVaultBinding, timeZone: TIME_ZONE, now: () => new Date() },
+  { intervalMs: 250, log: quiet },
+);
 
 const shutdown = (): void => {
   sweep.stop();
+  researchRunner.stop();
   handle.close();
   connection.close();
   rmSync(dir, { recursive: true, force: true });
