@@ -80,7 +80,7 @@ import type { ChatStore } from "../adapters/chat-store.ts";
 import type { MemoryItemStore } from "../adapters/memory-item-store.ts";
 import type { LogEntry } from "../adapters/logger.ts";
 import type { AnthropicMessagesClient } from "../adapters/llm-adapter.ts";
-import { getPlan, hasOpenProposalOfKind, putOpenInteractionRequest, withdrawRuleProposal, type MemoryStore } from "../adapters/memory-store.ts";
+import { clearInteractionRequest, getPlan, hasOpenProposalOfKind, listOpenInteractionRequests, putOpenInteractionRequest, withdrawRuleProposal, type MemoryStore } from "../adapters/memory-store.ts";
 import { buildMemoryForgetQuestion } from "../core/open-item-questions.ts";
 import type { MemoryContext } from "../core/memory-context.ts";
 import { errorCopyForThrown } from "../core/error-copy.ts";
@@ -278,6 +278,8 @@ async function routeChatTurn(
 ): Promise<Result<ChatTurnResponse, YohError>> {
   recordRecentMessage(deps, input.message);
   emitStatus(deps, STATUS_THINKING);
+  // An offer Spencer ignored by typing something else is gone: the card's Yes works only while it is the latest thing.
+  clearOpenResearchOffers(deps.store);
 
   const line = input.message.trim();
   if (line.startsWith("/")) {
@@ -492,6 +494,30 @@ async function routeChatTurn(
   return runAgent(deps, input, reachedLlm);
 }
 
+/** Clears every open `research-offer` request (a concurrent answer may have cleared one already). */
+function clearOpenResearchOffers(store: MemoryStore): void {
+  try {
+    for (const record of listOpenInteractionRequests(store)) {
+      const proposal = (record.data.detail as { readonly proposal?: { readonly kind?: string } } | undefined)?.proposal;
+      if (record.data.requestKind !== "proposal" || proposal?.kind !== RESEARCH_OFFER_KIND) continue;
+      try {
+        clearInteractionRequest(store, record.id, record.version);
+      } catch {
+        // a concurrent answer already cleared it
+      }
+    }
+  } catch {
+    // an unreadable store must not stop the turn; a stale offer is also hidden by its same-day expiry
+  }
+}
+
+/** True when `queueResearch` could actually run: web search, a vault data source and a connection. */
+function researchCanRun(deps: ChatTurnDeps): boolean {
+  if (!deps.webSearchAvailable || !deps.connection) return false;
+  const binding = deps.getNotionCreatePageBinding();
+  return binding.ok && Boolean(binding.value.config.researchVaultDataSourceId);
+}
+
 /**
  * Story 11.4 (E11-R14): offers research once per message. Returns undefined — take the normal path — when the line
  * isn't research-sized, was already offered this session, or an offer for the same question is still open.
@@ -501,6 +527,7 @@ async function offerResearch(deps: ChatTurnDeps, message: string): Promise<Resul
   if (deps.session.researchOffered.has(key)) return undefined;
   const offer = parseResearchOffer(message);
   if (!offer) return undefined;
+  if (!researchCanRun(deps)) return undefined;
   const proposal: Proposal<{ readonly question: string }> = {
     id: randomUUID(),
     kind: RESEARCH_OFFER_KIND,

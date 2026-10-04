@@ -7,8 +7,9 @@ import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { getMaxOutboxSeq, initNotificationStoreSchema, listUnreadNotifications, tailOutboxSince } from "../src/adapters/notification-store.ts";
 import { claimNextResearchJob, initJobStoreSchema, insertQueuedResearchJobInTx, listRunningResearchJobs } from "../src/adapters/job-store.ts";
 import type { NotionCreatePageClient, NotionCreatePageConfig } from "../src/adapters/notion-adapter.ts";
-import { failInterruptedResearchJobs, runNextResearchJob, RESEARCH_JOB_POLL_INTERVAL_MS, type RunResearchJobDeps } from "../src/app/run-research-job.ts";
+import { failInterruptedResearchJobs, runNextResearchJob, RESEARCH_JOB_POLL_INTERVAL_MS, RESEARCH_SEARCH_TIMEOUT_MS, type RunResearchJobDeps } from "../src/app/run-research-job.ts";
 import { researchTopic } from "../src/core/research-vault-properties.ts";
+import type { LogEntry } from "../src/adapters/logger.ts";
 import type { Result, SearchAnswer, YohError } from "../src/types/domain.ts";
 
 const CONFIG: NotionCreatePageConfig = { tasksDataSourceId: "tasks-ds", projectsDataSourceId: "projects-ds", researchVaultDataSourceId: "research-vault-ds" };
@@ -223,7 +224,7 @@ test("recovery: every running job -> failed with one research-failed each; queue
   const q = ctx.queue("still queued");
   const result = await failInterruptedResearchJobs(ctx.deps, {});
   assert.deepEqual(result, { ok: true, value: { failed: 1 } });
-  const text = "Yoh restarted before it finished. Send /research again to retry.";
+  const text = "Yoh restarted before it finished. It may already be on Research Hub; if not, send /research again.";
   assert.deepEqual(ctx.job(a), { status: "failed", page_id: null, error: text });
   assert.equal(ctx.job(q).status, "queued");
   const notes = listUnreadNotifications(ctx.connection);
@@ -234,5 +235,77 @@ test("recovery: every running job -> failed with one research-failed each; queue
   assert.equal(notes[0]!.deepLink, "chat");
   await runNextResearchJob(ctx.deps, {});
   assert.deepEqual(ctx.searched, ["still queued"]);
+  ctx.connection.close();
+});
+
+test("the search timeout is 120000 ms", () => {
+  assert.equal(RESEARCH_SEARCH_TIMEOUT_MS, 120_000);
+});
+
+/** A connection whose writeTx throws (after running, so the tx rolls back) once a job row would end in one of `statuses`. */
+function failingConnection(real: ReturnType<typeof setup>["connection"], statuses: string[]) {
+  const list = statuses.map((s) => `'${s}'`).join(",");
+  return {
+    ...real,
+    writeTx: <T>(fn: (tx: Parameters<Parameters<typeof real.writeTx>[0]>[0]) => T): T =>
+      real.writeTx((tx) => {
+        const out = fn(tx);
+        if (tx.prepare(`SELECT 1 FROM research_jobs WHERE status IN (${list})`).get()) throw new Error("disk full");
+        return out;
+      }),
+  } as typeof real;
+}
+
+test("M1: a job left running is failed at claim time and the next queued job runs in the same call", async () => {
+  const ctx = setup();
+  const orphan = ctx.queue("orphaned");
+  claimNextResearchJob(ctx.connection, "2026-10-04T14:30:00.000Z");
+  const next = ctx.queue("next up");
+  const result = await runNextResearchJob(ctx.deps, {});
+  assert.deepEqual(result, { ok: true, value: { ran: true, outcome: "done" } });
+  assert.equal(ctx.job(orphan).status, "failed");
+  assert.equal(ctx.job(orphan).error, "Yoh restarted before it finished. It may already be on Research Hub; if not, send /research again.");
+  assert.equal(ctx.job(next).status, "done");
+  assert.deepEqual(listUnreadNotifications(ctx.connection).map((n) => n.kind).sort(), ["research-failed", "research-ready"]);
+  ctx.connection.close();
+});
+
+test("M2: the page was filed but the done write throws -> failed row keeps the page id, honest copy", async () => {
+  const ctx = setup();
+  const id = ctx.queue("filed then lost");
+  const deps: RunResearchJobDeps = { ...ctx.deps, connection: failingConnection(ctx.connection, ["done"]) };
+  const result = await runNextResearchJob(deps, {});
+  assert.deepEqual(result, { ok: true, value: { ran: true, outcome: "failed" } });
+  assert.equal(ctx.vault.createCalls.length, 1);
+  const row = ctx.job(id);
+  assert.equal(row.status, "failed");
+  assert.equal(row.page_id, "new-page-id");
+  const notes = listUnreadNotifications(ctx.connection);
+  assert.deepEqual(notes.map((n) => n.kind), ["research-failed"]);
+  assert.equal(notes[0]!.body, "It was filed, but Yoh couldn't record it. Check Research Hub.");
+  assert.equal(row.error, notes[0]!.body);
+  ctx.connection.close();
+});
+
+test("M2: when the failure write also throws, the call returns ok:false and logs", async () => {
+  const ctx = setup();
+  ctx.queue("double fault");
+  const logs: LogEntry[] = [];
+  const deps: RunResearchJobDeps = { ...ctx.deps, connection: failingConnection(ctx.connection, ["done", "failed"]), log: (e) => logs.push(e) };
+  const result = await runNextResearchJob(deps, {});
+  assert.equal(result.ok, false);
+  assert.equal(!result.ok && result.error.kind, "unreachable");
+  assert.ok(logs.some((l) => l.level === "error"));
+  ctx.connection.close();
+});
+
+test("M5: a search that never settles fails the job with 'The search took too long.'", async () => {
+  const ctx = setup({ search: () => new Promise(() => {}) });
+  const id = ctx.queue("hangs");
+  const deps: RunResearchJobDeps = { ...ctx.deps, searchTimeoutMs: 20 };
+  const result = await runNextResearchJob(deps, {});
+  assert.deepEqual(result, { ok: true, value: { ran: true, outcome: "failed" } });
+  assert.equal(ctx.job(id).error, "The search took too long.");
+  assert.equal(ctx.vault.createCalls.length, 0);
   ctx.connection.close();
 });

@@ -8,7 +8,7 @@ const MATCHES: ReadonlyArray<readonly [string, string]> = [
   ["Hey Yoh, can you please research electric bikes", "electric bikes"],
   ["research", "research"],
   ["give me a deep dive on heat pumps", "give me a deep dive on heat pumps"],
-  ["compare heat pumps, in depth", "compare heat pumps, in depth"],
+  ["compare heat pumps with an in depth analysis", "compare heat pumps with an in depth analysis"],
   ["an in-depth look at index funds", "an in-depth look at index funds"],
   ["a comprehensive overview of the Roman economy", "a comprehensive overview of the Roman economy"],
   ["a thorough comparison of Rust and Go", "a thorough comparison of Rust and Go"],
@@ -16,6 +16,9 @@ const MATCHES: ReadonlyArray<readonly [string, string]> = [
   ["write a report on solid-state batteries", "write a report on solid-state batteries"],
   ["give me a report on the housing market", "give me a report on the housing market"],
   ["put together a report on 3D printing", "put together a report on 3D printing"],
+  ["give me an in-depth look at fusion power", "give me an in-depth look at fusion power"],
+  ["Research: best laptops", "best laptops"],
+  ["  -- research best laptops", "best laptops"],
 ];
 
 for (const [line, question] of MATCHES) {
@@ -44,6 +47,14 @@ const NEAR_MISSES: readonly string[] = [
   "pros and cons of my plan",
   "a thorough analysis of the task list",
   "do my homework in depth",
+  "give me a detailed breakdown of today",
+  "give me a detailed overview of this week",
+  "can you give me a thorough breakdown of tomorrow",
+  "explain photosynthesis in depth",
+  "we covered cells in depth in class today",
+  "research hub is not loading",
+  "research paper is finished",
+  "research project is due",
   "",
   "   ",
 ];

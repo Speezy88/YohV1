@@ -23,7 +23,12 @@ import type { SearchFn } from "./web-search.ts";
 export const RESEARCH_JOB_POLL_INTERVAL_MS = 3000;
 
 const EMPTY_RESULT_COPY = "The search didn't find anything useful.";
-const INTERRUPTED_COPY = "Yoh restarted before it finished. Send /research again to retry.";
+const INTERRUPTED_COPY = "Yoh restarted before it finished. It may already be on Research Hub; if not, send /research again.";
+const FILED_NOT_RECORDED_COPY = "It was filed, but Yoh couldn't record it. Check Research Hub.";
+const SEARCH_TIMEOUT_COPY = "The search took too long.";
+
+/** The longest the runner waits for one search before failing the job (E11 review M5). */
+export const RESEARCH_SEARCH_TIMEOUT_MS = 120_000;
 
 export interface RunResearchJobDeps {
   readonly connection: SqliteConnection;
@@ -32,22 +37,34 @@ export interface RunResearchJobDeps {
   readonly timeZone: string;
   readonly now: () => Date;
   readonly log?: (entry: LogEntry) => void;
+  /** Test seam: overrides `RESEARCH_SEARCH_TIMEOUT_MS`. */
+  readonly searchTimeoutMs?: number;
 }
 
 export type RunNextResearchJobOutput = { readonly ran: false } | { readonly ran: true; readonly outcome: "done" | "failed" };
 
 /** Marks the job failed and raises "Couldn't finish research", in one transaction. */
-function failJob(deps: RunResearchJobDeps, job: ResearchJob, text: string): void {
+function failJob(deps: RunResearchJobDeps, job: ResearchJob, text: string, pageId?: string): void {
   const finishedAt = deps.now().toISOString();
   deps.connection.writeTx((tx) => {
-    markResearchJobFailedInTx(tx, job.id, { error: text, finishedAt });
+    markResearchJobFailedInTx(tx, job.id, { error: text, finishedAt, ...(pageId ? { pageId } : {}) });
     createNotificationInTx(tx, { kind: "research-failed", title: `Couldn't finish research: ${researchTopic(job.question)}`, body: text, deepLink: "chat", createdAt: finishedAt });
   });
 }
 
 /** Search and file one claimed job. Returns the failure copy, or the created page id. */
 async function searchAndFile(deps: RunResearchJobDeps, job: ResearchJob): Promise<{ readonly pageId: string } | { readonly failure: string }> {
-  const searched = await deps.searchFn(job.question);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<"timeout">((resolve) => {
+    timer = setTimeout(() => resolve("timeout"), deps.searchTimeoutMs ?? RESEARCH_SEARCH_TIMEOUT_MS);
+  });
+  let searched: Awaited<ReturnType<SearchFn>> | "timeout";
+  try {
+    searched = await Promise.race([deps.searchFn(job.question), timedOut]);
+  } finally {
+    clearTimeout(timer);
+  }
+  if (searched === "timeout") return { failure: SEARCH_TIMEOUT_COPY };
   if (!searched.ok) return { failure: errorCopy(searched.error, { service: "web search" }) };
   const { answer, citations } = searched.value;
   if (!answer.trim() && citations.length === 0) return { failure: EMPTY_RESULT_COPY };
@@ -61,6 +78,9 @@ async function searchAndFile(deps: RunResearchJobDeps, job: ResearchJob): Promis
 }
 
 export async function runNextResearchJob(deps: RunResearchJobDeps, _input: Record<string, never>): Promise<Result<RunNextResearchJobOutput, YohError>> {
+  // One runner and non-overlapping ticks: a row still `running` here is orphaned, so fail it like startup recovery does.
+  const swept = await failInterruptedResearchJobs(deps, {});
+  if (!swept.ok) return swept;
   let job: ResearchJob | undefined;
   try {
     job = claimNextResearchJob(deps.connection, deps.now().toISOString());
@@ -97,10 +117,14 @@ export async function runNextResearchJob(deps: RunResearchJobDeps, _input: Recor
     return { ok: true, value: { ran: true, outcome: "failed" } };
   } catch (err) {
     // The recording write itself failed: still try to end the job failed, never left running.
+    // If the page was already filed, keep its id and say so.
+    const filedPageId = "pageId" in outcome ? outcome.pageId : undefined;
+    deps.log?.({ level: "error", event: "run-research-job.record-failed", detail: { message: err instanceof Error ? err.message : String(err) } });
     try {
-      failJob(deps, job, errorCopyForThrown(err));
+      failJob(deps, job, filedPageId ? FILED_NOT_RECORDED_COPY : errorCopyForThrown(err), filedPageId);
       return { ok: true, value: { ran: true, outcome: "failed" } };
     } catch (inner) {
+      deps.log?.({ level: "error", event: "run-research-job.fail-record-failed", detail: { message: inner instanceof Error ? inner.message : String(inner) } });
       return { ok: false, error: { kind: "unreachable", message: inner instanceof Error ? inner.message : String(inner) } };
     }
   }

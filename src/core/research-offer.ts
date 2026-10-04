@@ -18,11 +18,15 @@ export interface ResearchOffer {
 }
 
 /** An imperative `research …` at the start of the line (after the optional polite lead), but not "research vault". */
-const RESEARCH_VERB_RE = new RegExp(String.raw`^\s*${POLITE_LEAD}research(?!\s+vault)\b`, "i");
+const RESEARCH_VERB_RE = new RegExp(String.raw`^\s*${POLITE_LEAD}research(?!\s+(?:vault|hub|paper|project)\b)\b`, "i");
 
 /** Explicit depth phrases, anywhere in the line. */
 const DEPTH_PHRASE_RE =
-  /\bdeep\s+dive\s+(?:on|into)\b|\bin[-\s]depth\b|\b(?:comprehensive|detailed|thorough)\s+(?:overview|analysis|breakdown|guide|report|comparison)\b|\bpros\s+and\s+cons\s+of\b|\b(?:write|give\s+me|put\s+together)\s+(?:me\s+)?a\s+report\s+on\b/i;
+  /\bdeep\s+dive\s+(?:on|into)\b|\b(?:comprehensive|detailed|thorough|in[-\s]depth)\s+(?:overview|analysis|breakdown|guide|report|comparison|look)\b|\bpros\s+and\s+cons\s+of\b|\b(?:write|give\s+me|put\s+together)\s+(?:me\s+)?a\s+report\s+on\b/i;
+
+/** A time/day reference or plural first person: the line is about Spencer's own day or group, not a topic. */
+const DEPTH_REJECT_RE =
+  /\b(?:today|tonight|tomorrow|yesterday|this\s+(?:week|morning|afternoon|evening)|the\s+(?:day|week)|weekend|monday|tuesday|wednesday|thursday|friday|saturday|sunday|we|our|us)\b/i;
 
 /** "give me a …" is Yoh's own addressee, not Spencer talking about himself, so it is dropped before the first-person check. */
 const ADDRESSEE_RE = /\b(?:give|write|put\s+together)\s+me\b/gi;
@@ -38,15 +42,21 @@ export function parseResearchOffer(line: string): ResearchOffer | undefined {
   if (trimmed.startsWith("/") || /^search:/i.test(trimmed)) return undefined;
   if (PLANNING_NOUN_RE.test(trimmed)) return undefined;
 
-  const verbMatch = RESEARCH_VERB_RE.exec(trimmed);
+  const lead = trimmed.replace(/^[^\p{L}\p{N}]+/u, "");
+  const verbMatch = RESEARCH_VERB_RE.exec(lead);
   if (verbMatch) {
-    const stripped = (trimmed.slice(0, verbMatch.index) + trimmed.slice(verbMatch.index + verbMatch[0].length))
+    const stripped = (lead.slice(0, verbMatch.index) + lead.slice(verbMatch.index + verbMatch[0].length))
+      .replace(/^[^\p{L}\p{N}]+/u, "")
       .replace(/\s+/g, " ")
       .trim();
     return { question: stripped.length > 0 ? stripped : trimmed };
   }
 
-  if (DEPTH_PHRASE_RE.test(trimmed) && !CUE_PATH_FIRST_PERSON_RE.test(trimmed.replace(ADDRESSEE_RE, " "))) {
+  if (
+    DEPTH_PHRASE_RE.test(trimmed) &&
+    !DEPTH_REJECT_RE.test(trimmed) &&
+    !CUE_PATH_FIRST_PERSON_RE.test(trimmed.replace(ADDRESSEE_RE, " "))
+  ) {
     return { question: trimmed };
   }
   return undefined;

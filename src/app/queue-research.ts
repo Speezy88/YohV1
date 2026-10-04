@@ -7,6 +7,7 @@
  */
 import { insertQueuedResearchJobInTx } from "../adapters/job-store.ts";
 import type { SqliteConnection } from "../adapters/sqlite.ts";
+import { errorCopyForThrown } from "../core/error-copy.ts";
 import type { ChatTurnResponse } from "../types/api.ts";
 import type { Result, YohError } from "../types/domain.ts";
 import type { NotionCreatePageBindingFn } from "./create-item.ts";
@@ -35,6 +36,11 @@ export async function queueResearch(deps: QueueResearchDeps, input: QueueResearc
   }
   if (!deps.connection) return reply("Background research isn't available right now.");
   const createdAt = deps.now().toISOString();
-  deps.connection.writeTx((tx) => insertQueuedResearchJobInTx(tx, { question, createdAt }));
+  const connection = deps.connection;
+  try {
+    connection.writeTx((tx) => insertQueuedResearchJobInTx(tx, { question, createdAt }));
+  } catch (err) {
+    return { ok: false, error: { kind: "unreachable", message: errorCopyForThrown(err) } };
+  }
   return reply("Queued. You'll get a notification when it's on Research Hub.");
 }

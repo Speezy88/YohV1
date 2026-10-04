@@ -517,13 +517,27 @@ export async function confirmProposal(
   }
 
   if (proposal.kind === RESEARCH_OFFER_KIND) {
-    clearRequestIfGiven(deps.store, requestId);
-    if (!accept) return { ok: true, value: { applied: false, receipts: [], message: "Okay. Nothing queued." } };
-    if (!deps.research) return { ok: true, value: { applied: false, receipts: [], message: "Background research isn't available right now." } };
+    if (!accept) {
+      clearRequestIfGiven(deps.store, requestId);
+      return { ok: true, value: { applied: false, receipts: [], message: "Okay. Nothing queued." } };
+    }
+    // Same-day rule as a change set: a Yes on an offer from an earlier day writes nothing.
+    if (deps.timeZone && changeSetIsStale(proposal.createdAt, (deps.now ?? (() => new Date()))(), deps.timeZone)) {
+      clearRequestIfGiven(deps.store, requestId);
+      return { ok: false, error: { kind: "stale-proposal", message: "confirm-proposal: that research offer was made on an earlier day" } };
+    }
+    if (!deps.research) {
+      clearRequestIfGiven(deps.store, requestId);
+      return { ok: true, value: { applied: false, receipts: [], message: "Background research isn't available right now." } };
+    }
     const question = (proposal.suggested as { readonly question?: unknown } | undefined)?.question;
-    if (typeof question !== "string") return { ok: false, error: { kind: "validation", message: "confirm-proposal: a research offer needs a question" } };
+    if (typeof question !== "string") {
+      clearRequestIfGiven(deps.store, requestId);
+      return { ok: false, error: { kind: "validation", message: "confirm-proposal: a research offer needs a question" } };
+    }
     const queued = await queueResearch(deps.research, { question });
-    if (!queued.ok) return queued;
+    if (!queued.ok) return queued; // the offer stays open so Spencer can try again
+    clearRequestIfGiven(deps.store, requestId);
     return { ok: true, value: { applied: false, receipts: [], message: queued.value.reply } };
   }
 

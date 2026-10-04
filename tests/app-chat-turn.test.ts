@@ -16,7 +16,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { initRoutineStoreSchema } from "../src/adapters/routine-store.ts";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
-import { createMemoryStore, getCurrentTimeBudget, getOpenInteractionRequest, getPlan, putOpenInteractionRequest, putPlan, putTimeBudget, type MemoryStore } from "../src/adapters/memory-store.ts";
+import { surfaceOpenItems } from "../src/app/surface-open-items.ts";
+import { createMemoryStore, getCurrentTimeBudget, getOpenInteractionRequest, getPlan, listOpenInteractionRequests, putOpenInteractionRequest, putPlan, putTimeBudget, type MemoryStore } from "../src/adapters/memory-store.ts";
 import { createChatStore, initChatStoreSchema, type ChatStore } from "../src/adapters/chat-store.ts";
 import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
 import { initJobStoreSchema } from "../src/adapters/job-store.ts";
@@ -1682,15 +1683,68 @@ test("Yes with no research deps replies that research is unavailable and queues 
   assert.deepEqual(t.jobs(), []);
 });
 
-test("an offer still open for the same question falls through to the normal path", async () => {
+test("an ignored offer is cleared at the start of the next turn, whatever it says", async () => {
+  const t = researchDeps(vaultReady);
+  const a = await chatTurn(t.deps, { message: "pros and cons of nuclear power" });
+  assert.ok(a.ok && a.value.question);
+  assert.equal(listOpenInteractionRequests(t.deps.store).length, 1);
+  await chatTurn(t.deps, { message: "what's the latest AI news" });
+  assert.equal(listOpenInteractionRequests(t.deps.store).length, 0);
+  const surfaced = await surfaceOpenItems({ store: t.deps.store, session: t.deps.session, now: () => new Date() }, {});
+  assert.ok(surfaced.ok && surfaced.value.items.length === 0);
+});
+
+test("a re-sent research line after the session forgot leaves only the fresh offer open", async () => {
   const t = researchDeps(vaultReady);
   const a = await chatTurn(t.deps, { message: "research best budget laptops" });
   assert.ok(a.ok && a.value.question);
   t.deps.session.researchOffered.clear(); // e.g. a restart: the session forgot, the store did not
   const b = await chatTurn(t.deps, { message: "research best budget laptops" });
-  assert.ok(b.ok);
-  assert.equal(b.ok && b.value.question, undefined);
-  assert.equal(t.searchCalls(), 1);
+  assert.ok(b.ok && b.value.question?.proposal?.kind === "research-offer");
+  assert.equal(listOpenInteractionRequests(t.deps.store).length, 1);
+  assert.equal(t.searchCalls(), 0);
+});
+
+test("no offer when research cannot run: no search key, no vault, or no connection", async () => {
+  const noSearch = researchDeps({ ...vaultReady, webSearchAvailable: false });
+  const noVault = researchDeps({ getNotionCreatePageBinding: () => ({ ok: false as const, error: { kind: "missing-field" as const, message: "no vault" } }) });
+  const noVaultId = researchDeps({ getNotionCreatePageBinding: () => ({ ok: true as const, value: { client: {} as never, config: {} as never } }) });
+  const noConn = researchDeps(vaultReady);
+  const { connection: _drop, ...withoutConnection } = noConn.deps;
+  const deps: ChatTurnDeps = withoutConnection;
+  for (const d of [noSearch.deps, noVault.deps, noVaultId.deps, deps]) {
+    const r = await chatTurn(d, { message: "pros and cons of nuclear power" });
+    assert.ok(r.ok);
+    assert.equal(r.ok && r.value.question?.proposal?.kind, undefined);
+    assert.equal(listOpenInteractionRequests(d.store).length, 0);
+  }
+});
+
+test("Yes to a research offer from an earlier day writes nothing and clears the request", async () => {
+  const t = researchDeps(vaultReady);
+  const offer = await chatTurn(t.deps, { message: "pros and cons of nuclear power" });
+  assert.ok(offer.ok && offer.value.question);
+  const q = offer.value.question!;
+  const later = () => new Date(Date.now() + 3 * 24 * 3600 * 1000);
+  const yes = await confirmProposal({ store: t.deps.store, research: researchOfferDeps(t), timeZone: "UTC", now: later }, { proposal: q.proposal!, accept: true, requestId: q.requestId });
+  assert.equal(yes.ok, false);
+  assert.equal(!yes.ok && yes.error.kind, "stale-proposal");
+  assert.deepEqual(t.jobs(), []);
+  assert.equal(listOpenInteractionRequests(t.deps.store).length, 0);
+});
+
+test("a throwing queue write replies with a failure and keeps the offer open", async () => {
+  const t = researchDeps(vaultReady);
+  const offer = await chatTurn(t.deps, { message: "pros and cons of nuclear power" });
+  assert.ok(offer.ok && offer.value.question);
+  const q = offer.value.question!;
+  const research = { ...researchOfferDeps(t), connection: { ...t.deps.connection!, writeTx: () => { throw new Error("database is locked"); } } as never };
+  const yes = await confirmProposal({ store: t.deps.store, research }, { proposal: q.proposal!, accept: true, requestId: q.requestId });
+  assert.equal(yes.ok, false);
+  assert.equal(!yes.ok && yes.error.kind, "unreachable");
+  assert.equal(!yes.ok && yes.error.message.includes("database is locked"), false);
+  assert.equal(listOpenInteractionRequests(t.deps.store).length, 1);
+  assert.deepEqual(t.jobs(), []);
 });
 
 test("plain factual questions get no offer", async () => {

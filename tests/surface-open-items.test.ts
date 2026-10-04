@@ -4,7 +4,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createMemoryStore, mergeTaskFieldOverride, putOpenInteractionRequest } from "../src/adapters/memory-store.ts";
+import { createMemoryStore, getOpenInteractionRequest, mergeTaskFieldOverride, putOpenInteractionRequest } from "../src/adapters/memory-store.ts";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
 import { buildOpenItemQuestion, surfaceOpenItems } from "../src/app/surface-open-items.ts";
@@ -190,5 +190,18 @@ test("surfaceOpenItems hides a change set staged on an earlier local day but kee
   const result = await surfaceOpenItems({ store, session: makeSession(), timeZone: "America/New_York", now: () => new Date("2026-10-03T16:00:00.000Z") }, {});
   assert.equal(result.ok, true);
   if (result.ok) assert.deepEqual(result.value.items.map((i) => i.requestId), ["proposal:new"]);
+  store.close();
+});
+
+test("surfaceOpenItems skips and clears a research offer made on an earlier local day, keeps a same-day one", async () => {
+  const store = tempStore();
+  const offer = (id: string, createdAt: string) => ({ id, kind: "research-offer", entityId: id, entityVersion: "", suggested: { question: "q" }, reason: "Do you want to do research on this?", createdAt });
+  putOpenInteractionRequest(store, "proposal:old", { requestKind: "proposal", promptText: "old", detail: { proposal: offer("old", "2026-10-02T16:00:00.000Z"), cursor: { questionId: "confirm" } }, createdAt: "2026-10-02T16:00:00.000Z" });
+  putOpenInteractionRequest(store, "proposal:new", { requestKind: "proposal", promptText: "new", detail: { proposal: offer("new", "2026-10-03T14:00:00.000Z"), cursor: { questionId: "confirm" } }, createdAt: "2026-10-03T14:00:00.000Z" });
+  const result = await surfaceOpenItems({ store, session: makeSession(), timeZone: "America/New_York", now: () => new Date("2026-10-03T16:00:00.000Z") }, {});
+  assert.equal(result.ok, true);
+  if (result.ok) assert.deepEqual(result.value.items.map((i) => i.requestId), ["proposal:new"]);
+  assert.equal(getOpenInteractionRequest(store, "proposal:old"), undefined);
+  assert.ok(getOpenInteractionRequest(store, "proposal:new"));
   store.close();
 });

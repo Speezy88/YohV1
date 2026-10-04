@@ -290,3 +290,12 @@ test("E11-R16: only app/queue-research.ts references insertQueuedResearchJobInTx
   assert.deepEqual(offenders, []);
   assert.ok(readFileSync(join(SRC_DIR, "app", "queue-research.ts"), "utf8").includes("insertQueuedResearchJobInTx"));
 });
+
+test("E11 review M9: no raw INSERT INTO research_jobs under src/ outside adapters/job-store.ts", () => {
+  const offenders = listTsFiles(SRC_DIR)
+    .map((f) => relative(SRC_DIR, f).split(sep).join("/"))
+    .filter((name) => /INSERT\s+INTO\s+research_jobs/i.test(readFileSync(join(SRC_DIR, name), "utf8")))
+    .filter((name) => name !== "adapters/job-store.ts");
+  assert.deepEqual(offenders, []);
+  assert.ok(readFileSync(join(SRC_DIR, "adapters", "job-store.ts"), "utf8").includes("INSERT INTO research_jobs"));
+});

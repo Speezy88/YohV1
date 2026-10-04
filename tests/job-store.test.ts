@@ -56,3 +56,22 @@ test("done and failed transitions record page id, error and finish time", () => 
 test("claim returns nothing when the queue is empty", () => {
   assert.equal(claimNextResearchJob(setup(), t0), undefined);
 });
+
+test("M4: a done row cannot be moved to failed, a queued row cannot be marked done", () => {
+  const c = setup();
+  const id = c.writeTx((tx) => insertQueuedResearchJobInTx(tx, { question: "a", createdAt: t0 })) as string;
+  c.writeTx((tx) => markResearchJobDoneInTx(tx, id, { pageId: "p", finishedAt: t1 }));
+  assert.equal((c.db.prepare("SELECT status FROM research_jobs WHERE id = ?").get(id) as { status: string }).status, "queued");
+  claimNextResearchJob(c, t0);
+  c.writeTx((tx) => markResearchJobDoneInTx(tx, id, { pageId: "p", finishedAt: t1 }));
+  c.writeTx((tx) => markResearchJobFailedInTx(tx, id, { error: "late", finishedAt: t1 }));
+  assert.deepEqual({ ...(c.db.prepare("SELECT status, page_id, error FROM research_jobs WHERE id = ?").get(id) as object) }, { status: "done", page_id: "p", error: null });
+});
+
+test("M2: a failed mark can carry the filed page id", () => {
+  const c = setup();
+  const id = c.writeTx((tx) => insertQueuedResearchJobInTx(tx, { question: "a", createdAt: t0 })) as string;
+  claimNextResearchJob(c, t0);
+  c.writeTx((tx) => markResearchJobFailedInTx(tx, id, { error: "e", finishedAt: t1, pageId: "p" }));
+  assert.deepEqual({ ...(c.db.prepare("SELECT status, page_id FROM research_jobs WHERE id = ?").get(id) as object) }, { status: "failed", page_id: "p" });
+});

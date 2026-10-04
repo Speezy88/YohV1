@@ -83,11 +83,17 @@ export function claimNextResearchJob(connection: SqliteConnection, claimedAt: Is
 }
 
 export function markResearchJobDoneInTx(tx: Database.Database, id: string, input: { pageId: string; finishedAt: IsoDateTime }): void {
-  tx.prepare(`UPDATE research_jobs SET status = 'done', page_id = ?, finished_at = ? WHERE id = ?`).run(input.pageId, input.finishedAt, id);
+  tx.prepare(`UPDATE research_jobs SET status = 'done', page_id = ?, finished_at = ? WHERE id = ? AND status = 'running'`).run(input.pageId, input.finishedAt, id);
 }
 
-export function markResearchJobFailedInTx(tx: Database.Database, id: string, input: { error: string; finishedAt: IsoDateTime }): void {
-  tx.prepare(`UPDATE research_jobs SET status = 'failed', error = ?, finished_at = ? WHERE id = ?`).run(input.error, input.finishedAt, id);
+/** Fails a running job. `pageId` keeps the id of a page that WAS filed even though the job could not be recorded as done. */
+export function markResearchJobFailedInTx(tx: Database.Database, id: string, input: { error: string; finishedAt: IsoDateTime; pageId?: string }): void {
+  tx.prepare(`UPDATE research_jobs SET status = 'failed', error = ?, finished_at = ?, page_id = COALESCE(?, page_id) WHERE id = ? AND status = 'running'`).run(
+    input.error,
+    input.finishedAt,
+    input.pageId ?? null,
+    id,
+  );
 }
 
 export function listRunningResearchJobs(connection: SqliteConnection): ResearchJob[] {

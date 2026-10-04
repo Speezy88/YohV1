@@ -44,3 +44,12 @@ test("honest replies and no job for empty, no search, no vault, no connection", 
   const { connection: _omit, ...noConn } = d;
   assert.deepEqual(await queueResearch(noConn, { question: "q" }), { ok: true, value: { reply: "Background research isn't available right now.", receipts: [] } });
 });
+
+test("a throwing write returns an unreachable Result instead of throwing", async () => {
+  const { d, connection } = deps();
+  const broken = { ...connection, writeTx: () => { throw new Error("database is locked"); } } as never;
+  const r = await queueResearch({ ...d, connection: broken }, { question: "q" });
+  assert.equal(r.ok, false);
+  assert.equal(!r.ok && r.error.kind, "unreachable");
+  assert.equal(!r.ok && r.error.message.includes("database is locked"), false);
+});
