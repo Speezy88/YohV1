@@ -84,6 +84,8 @@ export interface MemoryItemStore {
   receiptsForConversation(conversationId: string): MemoryReceipt[];
   markReceiptUndone(receiptId: string, at?: IsoDateTime): void;
   insert(input: NewMemoryItem): MemoryItem;
+  /** Inserts every row in one transaction with one outbox row (an import batch). Throws before writing if any row is invalid. */
+  insertMany(inputs: readonly NewMemoryItem[]): MemoryItem[];
   supersede(oldId: string, next: NewMemoryItem): MemoryItem;
   merge(oldIds: readonly [string, string], next: NewMemoryItem): MemoryItem;
   getItem(id: string): MemoryItem | undefined;
@@ -361,6 +363,16 @@ export function createMemoryItemStore(connection: SqliteConnection): MemoryItemS
         return newId;
       });
       return read(id);
+    },
+    insertMany(inputs) {
+      if (inputs.length === 0) return [];
+      const texts = inputs.map(validate);
+      const ids = connection.writeTx((tx) => {
+        const newIds = inputs.map((input, i) => insertRow(tx, input, texts[i] as string, input.ruleChange ?? "none", null));
+        hint(tx, inputs[0]?.sourceTurnId ?? (newIds[0] as string));
+        return newIds;
+      });
+      return ids.map(read);
     },
     supersede(oldId, next) {
       const text = validate(next);
