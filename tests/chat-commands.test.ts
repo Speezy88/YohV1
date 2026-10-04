@@ -313,7 +313,7 @@ test("isCalendarEditCommand returns false for unrelated input — including a de
 // isCalendarEditCommand broadening (real-use fixes plan, Task 2) — the
 // incident line ("make a event at 10:45 am tommorow to meet with alex...")
 // and its sibling phrasings must all route to the calendar-edit CREATE path,
-// never fall through to detectTaskCapture/classifyCapture and be mistaken
+// never fall through to the chat tool loop and be mistaken
 // for a Notion Task.
 // ============================================================================
 

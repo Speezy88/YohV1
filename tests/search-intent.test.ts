@@ -55,7 +55,7 @@ const PLANNING_NEGATIVE_LINES = [
   // I1 (final-review): the cue path must not send Spencer's own planning
   // questions to Perplexity — first-person lines, and lines about
   // due/homework/assignments/essays/what he's working on, stay on the
-  // deterministic-fallthrough route (classifyCapture/classifyChatIntent).
+  // deterministic-fallthrough route (the chat tool loop).
   "what's due this week?",
   "any homework due this week?",
   "what should I work on right now?",

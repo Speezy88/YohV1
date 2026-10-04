@@ -272,14 +272,14 @@ test("chatTurn recognizes a Time Budget command and never calls the LLM client",
   assert.equal(getCurrentTimeBudget(store)?.data.totalMinutes, 360);
 });
 
-test("Story 8.4: a recognized Plan-view command never reaches classifyChatIntent at all — zero Claude calls, same as every other Task-4/8.3 recognizer", async () => {
+test("Story 8.4: a recognized Plan-view command never reaches the chat tool loop at all — zero Claude calls, same as every other Task-4/8.3 recognizer", async () => {
   const llmClient = makeFakeLlmClient();
   const deps = baseDeps({ llmClient });
 
   const result = await chatTurn(deps, { message: "what's my plan" });
 
   assert.equal(result.ok, true);
-  assert.equal((llmClient as any).calls.length, 0, "a Task-4 recognizer match must short-circuit BEFORE classifyChatIntent ever runs");
+  assert.equal((llmClient as any).calls.length, 0, "a Task-4 recognizer match must short-circuit BEFORE the chat tool loop ever runs");
 });
 
 test("chatTurn falls through to the tool loop for an unmatched line, costing exactly one LLM call when the model answers directly", async () => {
@@ -522,11 +522,11 @@ test("Review Focus #5: session is threaded by reference across two chatTurn call
 // Real-use fixes plan, Task 5 ("the web search is not working"): a
 // deterministic pre-check (`core/search-intent.ts`'s `parseSearchIntent`),
 // checked AFTER every existing deterministic recognizer and BEFORE
-// classifyCapture/classifyChatIntent — a search-shaped line never spends
+// the chat tool loop — a search-shaped line never spends
 // either paid classifier call at all.
 // ============================================================================
 
-test('chatTurn routes a current-information-cue line ("what\'s the latest AI news") straight to search — ZERO LLM calls (neither classifyCapture nor classifyChatIntent ever runs)', async () => {
+test('chatTurn routes a current-information-cue line ("what\'s the latest AI news") straight to search — ZERO LLM calls (the chat tool loop never runs)', async () => {
   const llmClient = makeFakeLlmClient("GENERAL");
   const searchCalls: string[] = [];
   const deps = baseDeps({
@@ -546,7 +546,7 @@ test('chatTurn routes a current-information-cue line ("what\'s the latest AI new
   assert.equal(
     (llmClient as any).calls.length,
     0,
-    "a pre-check hit must short-circuit BEFORE classifyCapture or classifyChatIntent ever runs — zero LLM calls",
+    "a pre-check hit must short-circuit BEFORE the chat tool loop ever runs — zero LLM calls",
   );
 });
 
@@ -564,7 +564,7 @@ test('chatTurn strips the search verb from an explicit-verb line ("search for th
   await chatTurn(deps, { message: "search for the best hiking boots" });
 
   assert.deepEqual(searchCalls, ["the best hiking boots"]);
-  assert.equal((llmClient as any).calls.length, 0, "the pre-check must catch this line before classifyCapture/classifyChatIntent");
+  assert.equal((llmClient as any).calls.length, 0, "the pre-check must catch this line before the chat tool loop");
 });
 
 test('chatTurn treats a leading "search:" prefix (what Research Hub\'s ask box always sends) as an explicit search, query = the rest', async () => {
@@ -1139,7 +1139,7 @@ test("the broadened deterministic calendar recognizer routes the incident line a
     assert.equal(proposal.suggested.kind, "create");
     assert.equal(proposal.suggested.start, start, `expected "${message}" to resolve to the correct ISO start`);
     assert.equal(proposal.suggested.end, end, `expected "${message}" to resolve to the correct ISO end`);
-    assert.equal((llmClient as any).calls.length, 1, `expected exactly one LLM call (draftCalendarEditRequest) for "${message}" — the deterministic recognizer must short-circuit classifyCapture`);
+    assert.equal((llmClient as any).calls.length, 1, `expected exactly one LLM call (draftCalendarEditRequest) for "${message}" — the deterministic recognizer must short-circuit the chat tool loop`);
     // The system prompt gets today's host-TZ date and timezone, not the browser/UTC clock.
     const rawSystem = (llmClient as any).calls[0].system;
     const system: string = typeof rawSystem === "string" ? rawSystem : (rawSystem ?? []).map((b: { text: string }) => b.text).join("\n");

@@ -162,7 +162,7 @@ export function isMidDayReflowCommand(line: string): boolean {
  * Recognizes a request to change WHICH Tasks are in today's Plan ("work on
  * the poster instead of the labs", "change my plan", "swap the essay for
  * reading") — something Yoh can't do yet (only a re-fit exists). Real-use
- * bug 2026-09-28: such a line fell through to `classifyCapture`, which read
+ * bug 2026-09-28: such a line fell through to the capture classifier (since removed), which read
  * it as a new Task and replied with create-item's "couldn't tell what you
  * want" error. Deliberately simple keyword heuristic, not NLU; `chatTurn`
  * answers it honestly before any LLM call.

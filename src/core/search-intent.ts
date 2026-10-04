@@ -7,9 +7,9 @@
  * uses (NOT real free-text NLU). `app/chat-turn.ts` checks this AFTER its
  * existing deterministic planning recognizers (Plan-view, Plan-day,
  * Mid-Day-Reflow, Blocker, why-prioritized, day-view, save-search-result,
- * create-item, calendar-edit/-delete) and BEFORE its paid `classifyCapture`/
- * `classifyChatIntent` LLM calls — the incident this fixes: Haiku's own
- * classifier (`classifyChatIntent`) was returning GENERAL for plainly
+ * create-item, calendar-edit/-delete) and BEFORE the paid chat tool loop
+ * (`app/chat-agent.ts`) — the incident this fixed: the LLM intent classifier
+ * that then followed (since removed) was returning GENERAL for plainly
  * search-shaped questions ("what's the latest AI news", "price of bitcoin"),
  * so PERPLEXITY_API_KEY being present never actually got exercised.
  *
@@ -42,8 +42,8 @@
  *      don't happen to match.
  *
  * Returns `undefined` (not an error) for any line that doesn't match at all,
- * so `chatTurn` can fall through to `classifyCapture`/`classifyChatIntent`
- * exactly as it already does for an unrecognized line.
+ * so `chatTurn` can fall through to the chat tool loop exactly as it
+ * already does for an unrecognized line.
  */
 
 const EXPLICIT_SEARCH_PREFIX_RE = /^search:\s*(.+)$/is;

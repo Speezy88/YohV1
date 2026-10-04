@@ -72,7 +72,7 @@ test("classifyTone: defaults to the casual-peer register for ambiguous/ordinary 
 
 // ============================================================================
 // buildToneSystemPrompt — the instruction strings tone.ts hands
-// llm-adapter.ts's `answerGeneralQuestion`
+// app/chat-agent.ts's `chatAgent`
 // ============================================================================
 
 test("buildToneSystemPrompt: the casual and factual instructions differ meaningfully", () => {

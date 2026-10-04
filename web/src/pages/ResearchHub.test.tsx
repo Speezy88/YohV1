@@ -294,7 +294,7 @@ describe("ResearchHubPage", () => {
     expect(openChatPanel).toHaveBeenCalledTimes(1);
     // Real-use fixes plan, Task 5 (Ruling): the ask box always sends an
     // explicit "search: <question>" line, so it never depends on
-    // classifyChatIntent's classifier — `core/search-intent.ts`'s
+    // the chat model choosing to search — `core/search-intent.ts`'s
     // `parseSearchIntent` treats a leading "search:" as explicit.
     expect(send).toHaveBeenCalledWith("search: AP Bio registration deadline");
     expect(input).toHaveValue("");

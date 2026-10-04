@@ -12,15 +12,12 @@
  *     `ToneRegister` (`"casual-peer"` default, or `"concise-educational"`
  *     for a factual/intellectual question).
  *  2. `buildToneSystemPrompt` — turn a `ToneRegister` into the system-prompt
- *     instruction string `answerGeneralQuestion` sends to Claude as its
- *     `systemPrompt` override (that function's own doc comment names this
- *     file as the expected source of that override — see
- *     `adapters/llm-adapter.ts`).
+ *     instruction string the chat tool loop (`app/chat-agent.ts`'s
+ *     `chatAgent`) sends to Claude as the base of its system prompt.
  *  3. `resolveToneSystemPrompt` — the one-call composition of the above two,
- *     which is what `app/general-question.ts`'s `answerQuestion` actually
- *     calls (Story 8.3: moved from `shell/chat-cli.ts`): classify the line,
- *     then hand `answerGeneralQuestion` the resulting instruction as its
- *     third argument.
+ *     which is what `app/chat-turn.ts`'s `chatTurn` actually calls: classify
+ *     the line, then hand `chatAgent` the resulting instruction as its
+ *     `systemPrompt` input.
  *
  * Result<T, YohError> (AD-8): deliberately NOT used here. AD-8's contract is
  * for functions that can fail; `classifyTone` and `buildToneSystemPrompt`
@@ -96,7 +93,7 @@
  * codebase today that already resolves a specific Task's Slip-Bump level
  * (`computeSlipBumpLevel`) for a chat interaction — but it is a plain,
  * deterministic string-formatting reply that never calls Claude at all (no
- * `answerGeneralQuestion` / `systemPrompt` in its path), so there is nothing
+ * `chatAgent` / `systemPrompt` in its path), so there is nothing
  * for a "system-prompt addition" to attach to there without also turning it
  * into an LLM-backed command — a materially different, out-of-scope change
  * this task does not make. `resolveEscalatedToneSystemPrompt` is therefore
@@ -221,8 +218,8 @@ export function classifyTone(message: string): ToneRegister {
  * a capability it doesn't have. Spencer may genuinely have no
  * `PERPLEXITY_API_KEY` configured (`shell/server.ts` derives this from the
  * env var, threads it as `ChatTurnDeps.webSearchAvailable` — see
- * `app/web-search.ts`'s `WebSearchDeps` — and `app/chat-turn.ts` forwards it
- * into `app/general-question.ts`'s `GeneralQuestionDeps`), so the
+ * `app/web-search.ts`'s `WebSearchDeps` — and `app/chat-turn.ts` passes it
+ * to `resolveToneSystemPrompt`), so the
  * capability text can no longer be a fixed constant — it's built fresh per
  * call from this one boolean, the single source of truth for whether web
  * search is actually wired up right now. `webSearchAvailable = true`
@@ -322,14 +319,14 @@ function buildConciseEducationalInstruction(webSearchAvailable: boolean, command
 
 /**
  * Turns a `ToneRegister` into the system-prompt instruction string
- * `answerGeneralQuestion` (`adapters/llm-adapter.ts`) sends to Claude as its
- * `systemPrompt` override. Total over its input (every `ToneRegister` value
+ * `chatAgent` (`app/chat-agent.ts`) sends to Claude as the base of its
+ * system prompt. Total over its input (every `ToneRegister` value
  * maps to exactly one non-empty instruction) — see this file's module doc
  * comment for why no `Result` wrapper.
  *
  * `webSearchAvailable` (review fix, real-use fixes plan Task 5) defaults to
  * `true` so every caller that predates this flag keeps its exact prior
- * output; `app/general-question.ts`'s `answerQuestion` is the one real
+ * output; `app/chat-turn.ts`'s `chatTurn` is the one real
  * caller that always passes the actual, derived value (from
  * `ChatTurnDeps.webSearchAvailable`, ultimately `shell/server.ts`'s own
  * `Boolean(env["PERPLEXITY_API_KEY"])`).
@@ -344,15 +341,14 @@ export function buildToneSystemPrompt(register: ToneRegister, webSearchAvailable
 }
 
 // ============================================================================
-// resolveToneSystemPrompt — the app/general-question.ts integration seam
-// (Story 8.3: originally shell/chat-cli.ts's own integration seam)
+// resolveToneSystemPrompt — the app/chat-turn.ts integration seam
 // ============================================================================
 
 /**
  * Classifies `message` and returns its resulting tone instruction in one
- * call — this is what `app/general-question.ts`'s `answerQuestion` actually
- * calls before invoking `answerGeneralQuestion`, passing this function's
- * return value as that function's third (`systemPrompt`) argument.
+ * call — this is what `app/chat-turn.ts`'s `chatTurn` actually calls before
+ * invoking `chatAgent`, passing this function's return value as that
+ * function's `systemPrompt` input.
  * `webSearchAvailable` (review fix) is forwarded to `buildToneSystemPrompt`
  * unchanged; see that function's own doc comment.
  */
