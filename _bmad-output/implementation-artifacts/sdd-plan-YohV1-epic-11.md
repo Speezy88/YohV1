@@ -26,6 +26,13 @@ stories leave open.
 - **E11-R15 One builder.** The Research Vault property set (`title`, `keyFindings`, `query`, `searchDate`, `sources`) is built by one pure function in `src/core/`, used by both `save-search-result.ts` and the job runner.
 - **E11-R16 Single writer.** Only `src/app/queue-research.ts` may import the job store's insert function; a test in `tests/layering-rules.test.ts` (or beside it) enforces this by scanning `src/`.
 
+Added in the review rounds (2026-10-04):
+- **E11-R17** refines R14: bare "in depth" does not trigger an offer. It joins the adjective list (`comprehensive|detailed|thorough|in-depth|in depth`) and needs a research noun (`overview|analysis|breakdown|guide|report|comparison|look`). The depth-phrase path also rejects day/time words and `we|our|us`. `research hub|paper|project` are not imperative research. No offer is made when research could not run (no web search, vault or database).
+- **E11-R18** replaces R14's "remembered after a decline": the message is remembered when the offer is made; an open offer is cleared at the start of the next chat turn and is stale after its own calendar day.
+- **E11-R19** A `running` job seen at claim time is failed like a restart-interrupted one. A search gets 120 s (`RESEARCH_SEARCH_TIMEOUT_MS`). When the page was filed but the job could not be recorded, the failed row keeps the page id, the notification is titled `Research filed, but not recorded: {topic}`, links to the page, and the `research` hint is appended.
+- **E11-R20** A typed yes/no while an offer card is open replies `Use Yes or No on the card above.` and keeps the offer.
+- Deferred: each document open reads the whole vault (M8); a timed-out search request is not aborted (N6); an offer card already on screen stays after the server clears it, and its Yes then says it is no longer pending (N8).
+
 ## Task 1: Research documents and paging on the server (Story 11.2)
 
 Behaviour:
