@@ -1560,3 +1560,16 @@ test("a bare yes or discard while a change set is open points at the card: zero 
   assert.equal((llmClient as any).calls.length, 0);
   assert.ok(getOpenInteractionRequest(store, "proposal:cs"), "the card stays open");
 });
+
+test("a bare yes with only an earlier day's change set open does not point at a card that is no longer shown", async () => {
+  const store = tempStore();
+  const createdAt = "2026-08-20T12:00:00.000Z";
+  putOpenInteractionRequest(store, "proposal:cs", {
+    requestKind: "proposal",
+    promptText: "Here's what I'd change:",
+    detail: { proposal: { id: "cs", kind: "change-set", entityId: "chat", entityVersion: "", suggested: { items: [{ kind: "plan-day" }] }, reason: "r", createdAt }, cursor: { questionId: "confirm" } },
+    createdAt,
+  });
+  const result = await chatTurn(baseDeps({ llmClient: makeFakeLlmClient(), store }), { message: "yes" });
+  assert.notEqual(result.ok && result.value.reply, "Use Approve or Discard on the card above.");
+});

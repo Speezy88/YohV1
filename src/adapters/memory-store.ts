@@ -390,12 +390,16 @@ export function listOpenInteractionRequests(store: MemoryStore): StoredRecord<In
   return store.listRecordsByKind<InteractionRequest>(INTERACTION_REQUEST_KIND);
 }
 
-/** True when an open interaction request holds a Proposal of the given kind (e.g. an unanswered chat change set). */
-export function hasOpenProposalOfKind(store: MemoryStore, kind: string): boolean {
+/**
+ * True when an open interaction request holds a Proposal of the given kind (e.g. an unanswered chat change set).
+ * `isStale`, when given, is asked about each match's `createdAt`; a stale one does not count.
+ */
+export function hasOpenProposalOfKind(store: MemoryStore, kind: string, isStale?: (createdAt: string) => boolean): boolean {
   return listOpenInteractionRequests(store).some((record) => {
     if (record.data.requestKind !== "proposal") return false;
-    const proposal = (record.data.detail as { readonly proposal?: { readonly kind?: string } } | undefined)?.proposal;
-    return proposal?.kind === kind;
+    const proposal = (record.data.detail as { readonly proposal?: { readonly kind?: string; readonly createdAt?: string } } | undefined)?.proposal;
+    if (proposal?.kind !== kind) return false;
+    return !isStale?.(proposal.createdAt ?? "");
   });
 }
 

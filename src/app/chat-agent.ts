@@ -15,6 +15,7 @@ import type { SqliteConnection } from "../adapters/sqlite.ts";
 import {
   CHAT_AGENT_MAX_STEPS,
   CHAT_TOOLS,
+  changeSetIsStale,
   changeSetPrompt,
   claimsAWrite,
   NOTHING_CHANGED_NOTE,
@@ -316,7 +317,7 @@ export async function chatAgent(deps: ChatAgentDeps, input: ChatAgentInput): Pro
   if (staged.length > 0) {
     let replacesEarlier = false;
     try {
-      replacesEarlier = hasOpenProposalOfKind(deps.store, CHANGE_SET_PROPOSAL_KIND);
+      replacesEarlier = hasOpenProposalOfKind(deps.store, CHANGE_SET_PROPOSAL_KIND, (createdAt) => changeSetIsStale(createdAt, deps.now(), deps.timeZone));
     } catch {
       // the clear below reports a store failure
     }

@@ -55,7 +55,7 @@ import { tryDraftItem, type CreateItemDeps } from "./create-item.ts";
 import { dayView } from "./day-view.ts";
 import { CHANGE_SET_PROPOSAL_KIND } from "./apply-change-set.ts";
 import { chatAgent, type ChatAgentDeps } from "./chat-agent.ts";
-import { CHANGE_SET_USE_CARD_REPLY } from "../core/chat-tools.ts";
+import { CHANGE_SET_USE_CARD_REPLY, changeSetIsStale } from "../core/chat-tools.ts";
 import { parseProposalAnswer } from "../core/open-item-answers.ts";
 import { recallMemoryContext } from "./memory-recall.ts";
 import { manageRoutine } from "./routines.ts";
@@ -475,7 +475,9 @@ async function routeChatTurn(
   if (searchIntent) return substantive(await searchWeb(deps, { query: searchIntent.query }));
 
   // A bare yes/no while a change set is open has no typed path: the card is the only way to answer it.
-  if (parseProposalAnswer(input.message) !== undefined && hasOpenProposalOfKind(deps.store, CHANGE_SET_PROPOSAL_KIND)) {
+  // A set from an earlier day is no longer shown, so it does not count.
+  const changeSetStale = (createdAt: string) => changeSetIsStale(createdAt, deps.now(), deps.timeZone);
+  if (parseProposalAnswer(input.message) !== undefined && hasOpenProposalOfKind(deps.store, CHANGE_SET_PROPOSAL_KIND, changeSetStale)) {
     return { ok: true, value: { reply: CHANGE_SET_USE_CARD_REPLY, receipts: [] } };
   }
 

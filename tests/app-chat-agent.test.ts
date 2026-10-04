@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
-import { createMemoryStore, listOpenInteractionRequests, putPlan } from "../src/adapters/memory-store.ts";
+import { createMemoryStore, listOpenInteractionRequests, putOpenInteractionRequest, putPlan } from "../src/adapters/memory-store.ts";
 import { errorCopyForThrown } from "../src/core/error-copy.ts";
 import { chatAgent, CHAT_AGENT_STEP_CAP_REPLY, type ChatAgentDeps } from "../src/app/chat-agent.ts";
 import { CHAT_AGENT_MAX_STEPS, CHANGE_SET_PARTIAL_NOTE, CHANGE_SET_REPLACES_NOTE, NOTHING_CHANGED_NOTE, changeSetPrompt } from "../src/core/chat-tools.ts";
@@ -240,6 +240,21 @@ test("a first change set carries no replacement line", async () => {
   const { client } = scripted([[use("1", "create_task", { title: "Read" })], [say("Staged.")]]);
   const result = await chatAgent(deps(client), input("add a task"));
   assert.equal(result.ok && result.value.reply.includes(CHANGE_SET_REPLACES_NOTE), false);
+});
+
+test("a change set left from an earlier day is replaced without the replacement line", async () => {
+  const { client } = scripted([[use("1", "create_task", { title: "Read" })], [say("Staged.")]]);
+  const d = deps(client);
+  const createdAt = "2026-10-01T18:00:00.000Z";
+  putOpenInteractionRequest(d.store, "proposal:old", {
+    requestKind: "proposal",
+    promptText: "Here's what I'd change:",
+    detail: { proposal: { id: "old", kind: "change-set", entityId: "chat", entityVersion: "", suggested: { items: [{ kind: "plan-day" }] }, reason: "r", createdAt }, cursor: { questionId: "confirm" } },
+    createdAt,
+  });
+  const result = await chatAgent(d, input("add a task"));
+  assert.equal(result.ok && result.value.reply.includes(CHANGE_SET_REPLACES_NOTE), false);
+  assert.deepEqual(openChangeSet(d)?.items.map((i) => i.kind), ["create-task"]);
 });
 
 test("plan_day is rejected when today already has a Plan", async () => {
