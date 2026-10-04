@@ -922,7 +922,7 @@ function withChatToolLoopDeps<T extends Omit<ChatTurnDeps, "emit"> & AnswerOpenI
     completeTask: checkOffDeps ? (taskId) => checkOff(checkOffDeps, { taskId }) : NOTION_NOT_SET_UP("mark Tasks done"),
     planDay: () => planDayForChangeSet(planDeps, {}),
     refitPlan: reshuffle
-      ? () => refitPlan({ ...reshuffle, store: chatDeps.store }, {})
+      ? (request) => refitPlan({ ...reshuffle, store: chatDeps.store }, request ? { request } : {})
       : async () => ({ ok: false, error: { kind: "missing-field", message: "I can't re-fit the Plan right now." } }),
   };
   return {

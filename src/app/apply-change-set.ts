@@ -15,6 +15,7 @@ import type {
   ChangeSetItemResult,
   NotionDatabaseTarget,
   Proposal,
+  ReshuffleRequest,
   Result,
   YohError,
 } from "../types/domain.ts";
@@ -36,8 +37,8 @@ export interface ApplyChangeSetDeps {
   readonly completeTask: (taskId: string) => Promise<Result<unknown, YohError>>;
   /** `app/plan-day.ts`'s `planDay`, pre-bound. */
   readonly planDay: () => Promise<Result<{ readonly reply: string; readonly built: boolean }, YohError>>;
-  /** `requestReshuffle({kind:"reflow-now"})` then `approveReshuffle`, pre-bound. */
-  readonly refitPlan: () => Promise<Result<{ readonly reply: string }, YohError>>;
+  /** `app/refit-plan.ts`'s `refitPlan`, pre-bound: `requestReshuffle` then `approveReshuffle`, for a plain re-fit or the single-block request given. */
+  readonly refitPlan: (request?: ReshuffleRequest) => Promise<Result<{ readonly reply: string }, YohError>>;
 }
 
 function calendarProposal(deps: ApplyChangeSetDeps, entityId: string, entityVersion: string, suggested: CalendarEditChange): Proposal<CalendarEditChange> {
@@ -54,6 +55,9 @@ const PAST: Readonly<Record<ChangeSetItem["kind"], readonly [string, string]>> =
   "update-task": ["Set", "Set"],
   "rename-task": ["Rename", "Renamed"],
   "complete-task": ["Mark", "Marked"],
+  "move-block": ["Move", "Moved"],
+  "resize-block": ["Give", "Gave"],
+  "remove-block": ["Drop", "Dropped"],
   "plan-day": ["Build", "Built"],
   "refit-plan": ["Re-fit", "Re-fitted"],
 };
@@ -112,6 +116,20 @@ async function applyItem(deps: ApplyChangeSetDeps, item: ChangeSetItem): Promise
       const r = await deps.completeTask(item.taskId);
       return r.ok ? { ok: true, value: undefined } : r;
     }
+    case "move-block": {
+      const r = await deps.refitPlan(
+        item.subject.kind === "task" ? { kind: "pin-task", taskId: item.subject.taskId, newStart: item.newStart } : { kind: "pin-routine", routineId: item.subject.routineId, newStart: item.newStart },
+      );
+      return r.ok ? { ok: true, value: r.value.reply } : r;
+    }
+    case "resize-block": {
+      const r = await deps.refitPlan({ kind: "resize-task", taskId: item.taskId, durationMinutes: item.durationMinutes });
+      return r.ok ? { ok: true, value: r.value.reply } : r;
+    }
+    case "remove-block": {
+      const r = await deps.refitPlan({ kind: "drop-task", taskId: item.taskId });
+      return r.ok ? { ok: true, value: r.value.reply } : r;
+    }
     case "plan-day": {
       const r = await deps.planDay();
       if (!r.ok) return r;
@@ -136,6 +154,9 @@ const REQUIRED_STRINGS: Readonly<Record<ChangeSetItem["kind"], readonly string[]
   "update-task": ["taskId", "label", "field", "value"],
   "rename-task": ["taskId", "label", "newTitle"],
   "complete-task": ["taskId", "label"],
+  "move-block": ["label", "newStart"],
+  "resize-block": ["taskId", "label"],
+  "remove-block": ["taskId", "label"],
   "plan-day": [],
   "refit-plan": [],
 };
@@ -147,6 +168,12 @@ function isValidItem(raw: unknown): boolean {
   if (typeof kind !== "string" || !Object.hasOwn(REQUIRED_STRINGS, kind)) return false;
   if (!REQUIRED_STRINGS[kind as ChangeSetItem["kind"]].every((k) => nonEmpty(rec[k]))) return false;
   if (kind === "update-task" && !["dueDate", "estimatedDurationMinutes", "priority"].includes(rec["field"] as string)) return false;
+  if (kind === "move-block") {
+    const subject = rec["subject"] as Record<string, unknown> | null | undefined;
+    if (typeof subject !== "object" || subject === null) return false;
+    if (!(subject["kind"] === "task" && nonEmpty(subject["taskId"])) && !(subject["kind"] === "routine" && nonEmpty(subject["routineId"]))) return false;
+  }
+  if (kind === "resize-block" && !(Number.isInteger(rec["durationMinutes"]) && (rec["durationMinutes"] as number) > 0)) return false;
   if (kind === "create-task") {
     const props = rec["properties"];
     if (typeof props !== "object" || props === null || Array.isArray(props)) return false;

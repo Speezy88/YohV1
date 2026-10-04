@@ -471,6 +471,10 @@ export type ChangeSetItem =
   | { readonly kind: "update-task"; readonly taskId: ExternalId; readonly label: string; readonly field: "dueDate" | "estimatedDurationMinutes" | "priority"; readonly value: string }
   | { readonly kind: "rename-task"; readonly taskId: ExternalId; readonly label: string; readonly newTitle: string }
   | { readonly kind: "complete-task"; readonly taskId: ExternalId; readonly label: string }
+  | { readonly kind: "move-block"; readonly subject: DayPin["subject"]; readonly label: string; readonly newStart: IsoDateTime }
+  /** `durationMinutes` is the Task's work time for the rest of today, not counting breaks. */
+  | { readonly kind: "resize-block"; readonly taskId: ExternalId; readonly label: string; readonly durationMinutes: number }
+  | { readonly kind: "remove-block"; readonly taskId: ExternalId; readonly label: string }
   | { readonly kind: "plan-day" }
   | { readonly kind: "refit-plan" };
 
@@ -558,6 +562,9 @@ export type ReshuffleRequest =
   | { readonly kind: "reflow-now" }
   | { readonly kind: "move-block"; readonly planBlockId: string; readonly newStart: IsoDateTime }
   | { readonly kind: "pin-task"; readonly taskId: ExternalId; readonly newStart: IsoDateTime }
+  | { readonly kind: "pin-routine"; readonly routineId: string; readonly newStart: IsoDateTime }
+  /** Gives the Task `durationMinutes` of work for the rest of today, pinned where it already sits. */
+  | { readonly kind: "resize-task"; readonly taskId: ExternalId; readonly durationMinutes: number }
   | { readonly kind: "unpin-task"; readonly taskId: ExternalId }
   | { readonly kind: "drop-task"; readonly taskId: ExternalId }
   | { readonly kind: "swap"; readonly addTaskId: ExternalId; readonly removeTaskId: ExternalId };

@@ -2,14 +2,14 @@
  * src/app/refit-plan.ts
  *
  * "Re-fit the rest of today" as one step for a chat change set: preview a
- * `reflow-now` reshuffle, then approve it. A change set the user already
+ * reshuffle (a plain `reflow-now`, or the single-block request given), then approve it. A change set the user already
  * confirmed is the approval, so no reshuffle card is left open beside it.
  */
 import { clearInteractionRequest, getOpenInteractionRequest } from "../adapters/memory-store.ts";
 import type { MemoryStore } from "../adapters/memory-store.ts";
 import { approveReshuffle, type ApproveReshuffleDeps } from "./approve-reshuffle.ts";
 import { requestReshuffle } from "./request-reshuffle.ts";
-import type { Result, YohError } from "../types/domain.ts";
+import type { ReshuffleRequest, Result, YohError } from "../types/domain.ts";
 
 export type RefitPlanDeps = ApproveReshuffleDeps;
 
@@ -22,8 +22,8 @@ function clearRequest(store: MemoryStore, requestId: string): void {
   }
 }
 
-export async function refitPlan(deps: RefitPlanDeps, _input: Record<string, never>): Promise<Result<{ reply: string }, YohError>> {
-  const requested = await requestReshuffle(deps, { request: { kind: "reflow-now" } });
+export async function refitPlan(deps: RefitPlanDeps, input: { readonly request?: ReshuffleRequest }): Promise<Result<{ reply: string }, YohError>> {
+  const requested = await requestReshuffle(deps, { request: input.request ?? { kind: "reflow-now" } });
   if (!requested.ok) return requested;
   const requestId = requested.value.question.requestId;
   const approved = await approveReshuffle(deps, { proposal: requested.value.proposal, requestId });

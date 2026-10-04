@@ -14,10 +14,12 @@ import {
   filterTasks,
   isWriteTool,
   orderForApply,
+  planBlockEdits,
   resolveEventTimes,
+  resolveLocalTime,
   summarizeTasks,
 } from "../src/core/chat-tools.ts";
-import type { ChangeSetItem, Task } from "../src/types/domain.ts";
+import type { ChangeSetItem, PlanBlock, Task } from "../src/types/domain.ts";
 
 const TZ = "America/New_York";
 
@@ -98,8 +100,42 @@ test("every tool has a name, description and object schema; write tools are clas
   assert.equal(isWriteTool("list_tasks"), false);
   assert.deepEqual(
     CHAT_TOOLS.map((t) => t.name),
-    ["list_tasks", "list_events", "get_plan", "search_memory", "web_search", "create_event", "move_event", "resize_event", "delete_event", "create_task", "update_task", "complete_task", "plan_day", "refit_plan"],
+    ["list_tasks", "list_events", "get_plan", "search_memory", "web_search", "create_event", "move_event", "resize_event", "delete_event", "create_task", "update_task", "complete_task", "move_block", "resize_block", "remove_block", "plan_day", "refit_plan"],
   );
+  assert.equal(isWriteTool("move_block") && isWriteTool("resize_block") && isWriteTool("remove_block"), true);
+});
+
+test("describeChangeSetItem names a block edit as a change to today's Plan", () => {
+  assert.equal(describeChangeSetItem({ kind: "move-block", subject: { kind: "task", taskId: "t" }, label: "Draft", newStart: "2026-10-03T19:00:00.000Z" }, TZ), 'Move "Draft" to 3:00 PM in today\'s Plan');
+  assert.equal(describeChangeSetItem({ kind: "resize-block", taskId: "t", label: "Draft", durationMinutes: 90 }, TZ), 'Give "Draft" 90 min in today\'s Plan');
+  assert.equal(describeChangeSetItem({ kind: "remove-block", taskId: "t", label: "Draft" }, TZ), 'Drop "Draft" from today\'s Plan');
+});
+
+test("orderForApply puts block edits after other writes and before a whole-Plan step", () => {
+  const items: ChangeSetItem[] = [
+    { kind: "refit-plan" },
+    { kind: "remove-block", taskId: "t", label: "A" },
+    { kind: "complete-task", taskId: "t2", label: "B" },
+    { kind: "resize-block", taskId: "t3", label: "C", durationMinutes: 30 },
+  ];
+  assert.deepEqual(orderForApply(items).map((i) => i.kind), ["complete-task", "remove-block", "resize-block", "refit-plan"]);
+});
+
+test("planBlockEdits: a Task block still to come can be moved, resized and removed; a Routine only moved; the rest nothing", () => {
+  const nowMs = Date.parse("2026-10-03T16:00:00.000Z");
+  const block = (kind: PlanBlock["kind"], start: string, extra: Partial<PlanBlock> = {}): PlanBlock => ({ id: "b", kind, start, end: start, label: "x", ...extra });
+  const none = { canMove: false, canResize: false, canRemove: false };
+  assert.deepEqual(planBlockEdits(block("work", "2026-10-03T17:00:00.000Z", { taskId: "t" }), nowMs), { canMove: true, canResize: true, canRemove: true });
+  assert.deepEqual(planBlockEdits(block("routine", "2026-10-03T17:00:00.000Z", { routineId: "r" }), nowMs), { canMove: true, canResize: false, canRemove: false });
+  assert.deepEqual(planBlockEdits(block("work", "2026-10-03T15:00:00.000Z", { taskId: "t" }), nowMs), none);
+  assert.deepEqual(planBlockEdits(block("break", "2026-10-03T17:00:00.000Z"), nowMs), none);
+  assert.deepEqual(planBlockEdits(block("calendar-anchor", "2026-10-03T17:00:00.000Z"), nowMs), none);
+});
+
+test("resolveLocalTime converts a local clock time on a date and rejects malformed input", () => {
+  assert.equal(resolveLocalTime("2026-10-03", "15:00", TZ), "2026-10-03T19:00:00.000Z");
+  assert.equal(resolveLocalTime("2026-10-03", "3pm", TZ), undefined);
+  assert.equal(resolveLocalTime("Oct 3", "15:00", TZ), undefined);
 });
 
 test("claimsAWrite catches claims that something was changed", () => {

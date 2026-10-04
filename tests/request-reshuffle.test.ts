@@ -297,5 +297,53 @@ test("routines: previews include routine blocks; move-block on a routine block p
   const b = s.blocks.find((x) => x.kind === "routine")!;
   assert.equal(b.start, "2026-08-22T21:00:00.000Z");
   assert.equal(b.pinned, true);
+
+  // pin-routine names the Routine itself, so it survives a re-fit that renumbers block ids.
+  const byRoutine = await requestReshuffle(a.deps, { request: { kind: "pin-routine", routineId: "routine-commute", newStart: "2026-08-22T21:00:00.000Z" } });
+  assert.equal(byRoutine.ok, true);
+  if (byRoutine.ok) assert.deepEqual(byRoutine.value.proposal.suggested.pins, s.pins);
+  const unknown = await requestReshuffle(a.deps, { request: { kind: "pin-routine", routineId: "routine-nope", newStart: "2026-08-22T21:00:00.000Z" } });
+  assert.equal(!unknown.ok && unknown.error.kind, "validation");
   a.store.close();
+});
+
+const workMinutes = (blocks: readonly { taskId?: string; start: string; end: string }[], taskId: string): number =>
+  blocks.filter((b) => b.taskId === taskId && Date.parse(b.start) >= NOW.getTime()).reduce((sum, b) => sum + (Date.parse(b.end) - Date.parse(b.start)) / 60_000, 0);
+
+test("resize-task pins the Task where it sits with the new length; a Task with no block to come is a validation failure", async () => {
+  const { store, today, deps } = setup(T3());
+  const r = await requestReshuffle(deps, { request: { kind: "resize-task", taskId: "t2", durationMinutes: 45 } });
+  assert.equal(r.ok, true);
+  if (!r.ok) return;
+  const p = r.value.proposal.suggested;
+  assert.deepEqual(p.pins, [{ date: today, subject: { kind: "task", taskId: "t2" }, start: iso(30), durationMinutes: 45 }]);
+  assert.equal(p.blocks.find((b) => b.taskId === "t2" && Date.parse(b.start) >= NOW.getTime())!.start, iso(30));
+  assert.equal(workMinutes(p.blocks, "t2"), 45);
+
+  const past = await requestReshuffle(deps, { request: { kind: "resize-task", taskId: "t1", durationMinutes: 45 } });
+  assert.equal(!past.ok && past.error.kind, "validation");
+  store.close();
+});
+
+test("resize-task that runs into a fixed event is refused, naming the event", async () => {
+  const { store, deps } = setup(T3(), [{ id: "e1", title: "Dentist", start: iso(70), end: iso(130) }]);
+  const r = await requestReshuffle(deps, { request: { kind: "resize-task", taskId: "t2", durationMinutes: 60 } });
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.match(r.error.message, /Dentist/);
+  assert.equal(listOpenInteractionRequests(store).length, 0);
+  store.close();
+});
+
+test("moving a Task keeps a length set on its pin; a resize keeps the pin's start", async () => {
+  const { store, today, deps } = setup(T3());
+  store.withDb((db) => replaceDayPinsAndDropsInTx(db, today, [{ date: today, subject: { kind: "task", taskId: "t2" }, start: iso(30), durationMinutes: 45 }], []));
+  const moved = await requestReshuffle(deps, { request: { kind: "pin-task", taskId: "t2", newStart: iso(180) } });
+  assert.equal(moved.ok, true);
+  if (moved.ok) assert.deepEqual(moved.value.proposal.suggested.pins, [{ date: today, subject: { kind: "task", taskId: "t2" }, start: iso(180), durationMinutes: 45 }]);
+
+  store.withDb((db) => replaceDayPinsAndDropsInTx(db, today, [{ date: today, subject: { kind: "task", taskId: "t2" }, start: iso(180) }], []));
+  const resized = await requestReshuffle(deps, { request: { kind: "resize-task", taskId: "t2", durationMinutes: 20 } });
+  assert.equal(resized.ok, true);
+  if (resized.ok) assert.deepEqual(resized.value.proposal.suggested.pins, [{ date: today, subject: { kind: "task", taskId: "t2" }, start: iso(180), durationMinutes: 20 }]);
+  store.close();
 });

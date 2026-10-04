@@ -119,3 +119,63 @@ test("the refit receipt is past tense", async () => {
   const result = await applyChangeSet(deps, { changeSet: { items: [{ kind: "refit-plan" }] } });
   assert.equal(result.ok && result.value.results[0]!.text, "Re-fitted the rest of today's Plan. Moved 2 blocks.");
 });
+
+test("block edits each re-fit with their own request, after other writes and before a whole-Plan step", async () => {
+  const requests: unknown[] = [];
+  const { deps, log } = fakeDeps({ refitPlan: async (request) => { requests.push(request); return ok({ reply: "Moved 1 block." }); } });
+  const items: ChangeSetItem[] = [
+    { kind: "refit-plan" },
+    { kind: "move-block", subject: { kind: "task", taskId: "t1" }, label: "Draft", newStart: "2026-10-03T19:00:00.000Z" },
+    { kind: "move-block", subject: { kind: "routine", routineId: "r1" }, label: "Commute", newStart: "2026-10-03T21:00:00.000Z" },
+    { kind: "resize-block", taskId: "t1", label: "Draft", durationMinutes: 90 },
+    { kind: "remove-block", taskId: "t2", label: "Stats" },
+    workout,
+  ];
+  const result = await applyChangeSet(deps, { changeSet: { items } });
+  assert.equal(result.ok, true);
+  assert.deepEqual(log, ["calendar:create"]);
+  assert.deepEqual(requests, [
+    { kind: "pin-task", taskId: "t1", newStart: "2026-10-03T19:00:00.000Z" },
+    { kind: "pin-routine", routineId: "r1", newStart: "2026-10-03T21:00:00.000Z" },
+    { kind: "resize-task", taskId: "t1", durationMinutes: 90 },
+    { kind: "drop-task", taskId: "t2" },
+    undefined,
+  ]);
+  if (result.ok) {
+    assert.deepEqual(result.value.results.map((r) => r.text).slice(1, 5), [
+      'Moved "Draft" to 3:00 PM in today\'s Plan. Moved 1 block.',
+      'Moved "Commute" to 5:00 PM in today\'s Plan. Moved 1 block.',
+      'Gave "Draft" 90 min in today\'s Plan. Moved 1 block.',
+      'Dropped "Stats" from today\'s Plan. Moved 1 block.',
+    ]);
+  }
+});
+
+test("a block edit that can't be honored fails on its own line and the rest still apply", async () => {
+  const { deps } = fakeDeps({
+    refitPlan: async (request) => (request?.kind === "resize-task" ? { ok: false, error: { kind: "validation", message: '"Draft" can\'t go there: it overlaps Dentist.' } } : ok({ reply: "Moved 1 block." })),
+  });
+  const items: ChangeSetItem[] = [
+    { kind: "resize-block", taskId: "t1", label: "Draft", durationMinutes: 90 },
+    { kind: "remove-block", taskId: "t2", label: "Stats" },
+  ];
+  const result = await applyChangeSet(deps, { changeSet: { items } });
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.deepEqual(result.value.results.map((r) => r.ok), [false, true]);
+    assert.match(result.value.results[0]!.text, /^Couldn't give "Draft" 90 min in today's Plan: /);
+  }
+});
+
+test("a malformed block edit invalidates the change set", async () => {
+  const { deps, log } = fakeDeps();
+  for (const bad of [
+    { kind: "move-block", subject: { kind: "task" }, label: "Draft", newStart: "2026-10-03T19:00:00.000Z" },
+    { kind: "resize-block", taskId: "t1", label: "Draft", durationMinutes: 0 },
+    { kind: "remove-block", label: "Stats" },
+  ]) {
+    const result = await applyChangeSet(deps, { changeSet: { items: [bad as unknown as ChangeSetItem] } });
+    assert.equal(result.ok, false);
+  }
+  assert.deepEqual(log, []);
+});

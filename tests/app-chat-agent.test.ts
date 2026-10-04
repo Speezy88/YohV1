@@ -491,3 +491,124 @@ test("P12: a change-set question is substantive", async () => {
   const result = await chatAgent(deps(client), input("add a task A"));
   assert.equal(result.ok && result.value.substantive, true);
 });
+
+// Now is 12:00 PM local: one block already past, a Task block, a break and a Routine still to come.
+const DAY_BLOCKS: Plan["blocks"] = [
+  { id: "b-past", kind: "work", start: "2026-10-03T14:00:00.000Z", end: "2026-10-03T15:00:00.000Z", label: "Reading", taskId: "t-later" },
+  { id: "b-draft", kind: "work", start: "2026-10-03T17:00:00.000Z", end: "2026-10-03T18:00:00.000Z", label: "Draft", taskId: "t-mgp" },
+  { id: "b-break", kind: "break", start: "2026-10-03T18:00:00.000Z", end: "2026-10-03T18:15:00.000Z", label: "Break" },
+  { id: "b-commute", kind: "routine", start: "2026-10-03T19:00:00.000Z", end: "2026-10-03T19:30:00.000Z", label: "Commute", routineId: "r-commute" },
+];
+
+function seedBlocks(d: ChatAgentDeps, blocks: Plan["blocks"] = DAY_BLOCKS): void {
+  putPlan(d.store, { id: "plan-2026-10-03", date: "2026-10-03", blocks, reasoning: "r", version: 1, createdAt: "2026-10-03T00:00:00.000Z", updatedAt: "2026-10-03T00:00:00.000Z" });
+}
+
+const GET_PLAN = use("0", "get_plan", {});
+type ToolResults = { content: string; is_error?: boolean }[];
+const resultsOf = (requests: { messages: unknown[] }[], call: number): ToolResults => (requests[call]!.messages.at(-1) as { content: ToolResults }).content;
+
+test("get_plan returns each block's id and what chat may do to it", async () => {
+  const { client, requests } = scripted([[GET_PLAN], [say("Your next block is Draft at 1.")]]);
+  const d = deps(client);
+  seedBlocks(d);
+  await chatAgent(d, input("what's next"));
+  const blocks = JSON.parse(toolResult(requests, 1)).blocks as Record<string, unknown>[];
+  assert.deepEqual(blocks.map((b) => b["id"]), ["b-past", "b-draft", "b-break", "b-commute"]);
+  assert.deepEqual(blocks.map((b) => [b["canMove"], b["canResize"], b["canRemove"]]), [
+    [false, false, false],
+    [true, true, true],
+    [false, false, false],
+    [true, false, false],
+  ]);
+});
+
+test("move_block and resize_block on a Task block stage side by side; a Routine block moves by its Routine", async () => {
+  const { client } = scripted([
+    [GET_PLAN],
+    [use("1", "move_block", { blockId: "b-draft", startTime: "15:00" }), use("2", "resize_block", { blockId: "b-draft", endTime: "14:30" }), use("3", "move_block", { blockId: "b-commute", startTime: "17:00" })],
+    [say("Staged.")],
+  ]);
+  const d = deps(client);
+  seedBlocks(d);
+  const result = await chatAgent(d, input("push the draft to 3, make it 90 minutes, commute at 5"));
+  assert.equal(result.ok, true);
+  assert.deepEqual(openChangeSet(d)?.items, [
+    { kind: "move-block", subject: { kind: "task", taskId: "t-mgp" }, label: "Draft", newStart: "2026-10-03T19:00:00.000Z" },
+    { kind: "resize-block", taskId: "t-mgp", label: "Draft", durationMinutes: 90 },
+    { kind: "move-block", subject: { kind: "routine", routineId: "r-commute" }, label: "Commute", newStart: "2026-10-03T21:00:00.000Z" },
+  ]);
+  if (result.ok) assert.match(result.value.reply, /Move "Draft" to 3:00 PM in today's Plan/);
+});
+
+test("remove_block replaces an earlier move or resize of the same Task; a later move_block replaces an earlier one", async () => {
+  const { client } = scripted([
+    [GET_PLAN],
+    [
+      use("1", "move_block", { blockId: "b-commute", startTime: "16:00" }),
+      use("2", "move_block", { blockId: "b-draft", startTime: "15:00" }),
+      use("3", "resize_block", { blockId: "b-draft", durationMinutes: 30 }),
+      use("4", "remove_block", { blockId: "b-draft" }),
+      use("5", "move_block", { blockId: "b-commute", startTime: "17:00" }),
+    ],
+    [say("Staged.")],
+  ]);
+  const d = deps(client);
+  seedBlocks(d);
+  await chatAgent(d, input("drop the draft and move commute to 5"));
+  assert.deepEqual(openChangeSet(d)?.items, [
+    { kind: "remove-block", taskId: "t-mgp", label: "Draft" },
+    { kind: "move-block", subject: { kind: "routine", routineId: "r-commute" }, label: "Commute", newStart: "2026-10-03T21:00:00.000Z" },
+  ]);
+});
+
+test("block tools refuse an id get_plan did not return, a block that can't change, and a time that isn't later today", async () => {
+  const { client, requests } = scripted([
+    [use("1", "move_block", { blockId: "b-draft", startTime: "15:00" })],
+    [GET_PLAN],
+    [
+      use("2", "move_block", { blockId: "b-past", startTime: "15:00" }),
+      use("3", "move_block", { blockId: "b-break", startTime: "15:00" }),
+      use("4", "resize_block", { blockId: "b-commute", endTime: "16:00" }),
+      use("5", "remove_block", { blockId: "b-commute" }),
+      use("6", "move_block", { blockId: "b-draft", startTime: "11:00" }),
+      use("7", "move_block", { blockId: "b-draft", startTime: "3pm" }),
+      use("8", "resize_block", { blockId: "b-draft", endTime: "12:30" }),
+      use("9", "resize_block", { blockId: "b-draft", durationMinutes: 0 }),
+      use("10", "resize_block", { blockId: "b-draft" }),
+    ],
+    [say("I can't change those.")],
+  ]);
+  const d = deps(client);
+  seedBlocks(d);
+  const result = await chatAgent(d, input("change things"));
+  assert.equal(result.ok, true);
+  assert.match(resultsOf(requests, 1)[0]!.content, /Call get_plan first/);
+  const refused = resultsOf(requests, 3);
+  assert.equal(refused.length, 9);
+  assert.ok(refused.every((r) => r.is_error === true));
+  assert.match(refused[0]!.content, /can't be moved/);
+  assert.match(refused[2]!.content, /can't be resized/);
+  assert.match(refused[3]!.content, /can't be removed/);
+  assert.match(refused[4]!.content, /later today/);
+  assert.match(refused[6]!.content, /after the block's start/);
+  assert.equal(openChangeSet(d), undefined);
+});
+
+test("resize_block by endTime is refused for a Task split across blocks; durationMinutes is taken as its total", async () => {
+  const split: Plan["blocks"] = [
+    { id: "b-1", kind: "work", start: "2026-10-03T17:00:00.000Z", end: "2026-10-03T18:00:00.000Z", label: "Draft", taskId: "t-mgp" },
+    { id: "b-2", kind: "work", start: "2026-10-03T18:15:00.000Z", end: "2026-10-03T18:45:00.000Z", label: "Draft", taskId: "t-mgp" },
+  ];
+  const { client, requests } = scripted([
+    [GET_PLAN],
+    [use("1", "resize_block", { blockId: "b-1", endTime: "14:30" })],
+    [use("2", "resize_block", { blockId: "b-1", durationMinutes: 120 })],
+    [say("Staged.")],
+  ]);
+  const d = deps(client);
+  seedBlocks(d, split);
+  await chatAgent(d, input("give the draft two hours"));
+  assert.match(resultsOf(requests, 2)[0]!.content, /split across several blocks/);
+  assert.deepEqual(openChangeSet(d)?.items, [{ kind: "resize-block", taskId: "t-mgp", label: "Draft", durationMinutes: 120 }]);
+});
