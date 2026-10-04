@@ -386,7 +386,7 @@ export function buildChatDeps(
   // to the shared `SqliteConnection` — the server's own equivalent of
   // `chat-cli.ts`'s `recordCompletion` closure, before it was retired
   // (Story 8.9). `initCompletionLogSchema`
-  // already runs unconditionally at server startup (below), so this needs
+  // already runs unconditionally at server startup (in `server.ts`), so this needs
   // no lazy guard of its own.
   const recordCompletion = (input: RecordCompletionInput): void => completionLogRecordCompletion(connection, input);
   // Reuses `readTasks` above (the same live Notion read Mid-Day Re-Flow
@@ -472,7 +472,7 @@ export function buildChatDeps(
     // `app/create-item.ts`, `app/calendar-edit.ts`,
     // `app/surface-open-items.ts`) threads its own trailing `connection`
     // argument from this one field, so real usage gets recorded — the
-    // schema is created idempotently above, at startup.
+    // schema is created idempotently at startup, in `server.ts`.
     connection,
     readTasks,
     // Story 8.7 (FR-41): the same completion-log.ts binding

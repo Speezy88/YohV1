@@ -22,7 +22,7 @@ src/core/      pure logic — no I/O, no module state (chat-commands, quick-add,
 src/adapters/  I/O — notion-adapter, calendar-adapter, llm-adapter, search-adapter, sqlite (only DB opener), *-store, logger
 src/app/       one file per interaction use-case (chat-turn, home-view, check-off, confirm-proposal, ...)
 src/rituals/   scheduled workflows (morning-ritual, night-ritual, data-completeness, ...)
-src/shell/     entry points: server.ts (startup; re-exports server-routes.ts = all HTTP routes, server-streams.ts = SSE + sweeps, server-wiring.ts = real deps), ritual-cli.ts, backup-cli.ts
+src/shell/     entry points: server.ts (startup; re-exports server-routes.ts = all HTTP routes and server-streams.ts = SSE + sweeps; imports server-wiring.ts = real deps), ritual-cli.ts, backup-cli.ts
 tests/         node:test files (flat, e.g. tests/app-chat-turn.test.ts); tests/e2e/fixture-server.ts = fake-backed server for Playwright
 web/src/       pages/, components/, lib/ (API clients, stores, eventBus), hooks/, tokens.css (design tokens)
 web/e2e/       Playwright specs (run against the fixture server on port 8788)

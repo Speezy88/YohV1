@@ -97,7 +97,7 @@ import { runEventStream, getPlanSyncRunner, CHAT_NOT_CONFIGURED, sseMessage, run
 // ============================================================================
 
 export interface ServerDeps {
-  /** The process's one SQLite connection (AD-10), opened in `main`. */
+  /** The process's one SQLite connection (AD-10), opened at startup in `server.ts`. */
   readonly connection: SqliteConnection;
   /** One structured log line (Consistency Conventions: single-line JSON to stderr). */
   readonly log?: (entry: LogEntry) => void;
@@ -328,7 +328,7 @@ function wire<T>(result: ApiResult<T>): ApiResult<T> {
 /**
  * The LOCAL calendar date of `instant` in `timeZone` — the same computation
  * `rituals/ritual-shared.ts`'s `localIsoDate` makes, duplicated here rather
- * than imported: `server.ts` never imports `rituals/` at all (AD-5, AD-15 —
+ * than imported: the server never imports `rituals/` at all (AD-5, AD-15 —
  * `tests/server.test.ts`'s own structural rule), the identical small,
  * deliberate duplication that helper's own doc comment already documents
  * between `core/time-budget.ts` and `core/derived-priority.ts`. Callers must pass Spencer's CURRENT local calendar day, computed fresh on
@@ -554,7 +554,7 @@ export function createApp(deps: ServerDeps) {
       })
       // Story 7.8: today's Plan checklist + Calendar Day View, computed
       // server-side (AD-17). `deps.homeView` is absent until Notion/Google
-      // are configured (see `buildHomeViewDeps` below) — reported as a
+      // are configured (see `buildHomeViewDeps` in `server-wiring.ts`) — reported as a
       // clear `unreachable` error rather than a 500.
       .get("/api/home", async (c) => {
         if (!deps.homeView) {
@@ -918,7 +918,7 @@ export function createApp(deps: ServerDeps) {
       // Notion read of the Research Vault, most recent first, server-
       // limited). `deps.research` is absent until Notion +
       // NOTION_RESEARCH_VAULT_DATA_SOURCE_ID are configured
-      // (`buildResearchDeps` below), reported as a clear `unreachable`
+      // (`buildResearchDeps` in `server-wiring.ts`), reported as a clear `unreachable`
       // error rather than a 500.
       .get("/api/research", async (c) => {
         if (!researchDeps) return c.json(RESEARCH_NOT_CONFIGURED, httpStatus(RESEARCH_NOT_CONFIGURED));

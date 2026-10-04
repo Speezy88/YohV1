@@ -40,8 +40,8 @@
  * Story 7.10 adds the check-off routes (transport over `app/check-off.ts`)
  * and AD-20's commit sweep runner, `startCheckOffCommitSweep`: one sweep at
  * startup (records left overdue by a previous process), then one per
- * `CHECK_OFF_COMMIT_TICK_MS`. This file only constructs the Notion client
- * the sweep is given; the Status write itself is made inside `app/`.
+ * `CHECK_OFF_COMMIT_TICK_MS`. The shell only constructs the Notion client
+ * the sweep is given (in `server-wiring.ts`); the Status write itself is made inside `app/`.
  *
  * Story 8.5 adds `POST /api/chat` (AD-18, contract C5): one `chatTurn`
  * call per request, its `status`/`delta` events streamed on that request's
