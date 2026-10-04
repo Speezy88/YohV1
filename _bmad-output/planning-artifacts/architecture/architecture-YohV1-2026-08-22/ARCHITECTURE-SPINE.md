@@ -7,7 +7,7 @@ paradigm: Functional Core / Imperative Shell
 scope: Phase 1 MVP, Phase 1.5, and Phase 2. Covers the Morning/Night Ritual loop, Notion + Google Calendar integration, memory/learning, tone, live Notion/Calendar writes and web search (Phase 1.5), and the Phase 2 Web App (Drag-to-Reshuffle, /sandbox, the four pages, in-app notifications, Completion Log, async /research, CLI retirement), and Epic 13 Memory (persistent chat history, memory items, recall, rule-change settings, Patterns, the Rating). Governs FR-1–FR-60 and their NFRs. Does not govern Phase 3+ (hardware voice pipeline, iOS, Voice Packs, self-calibration).
 status: final
 created: '2026-08-22'
-updated: '2026-09-29'
+updated: '2026-10-04'
 binds:
   - FR-1..FR-60
   - NFR-Reliability
@@ -45,7 +45,6 @@ graph TD
     web["web/ (React SPA — browser)"] -. "HTTP + SSE only" .-> server
     subgraph Host["one host, one SQLite file"]
         server["shell/server.ts (Hono)"] --> app["app/ (interaction use-cases)"]
-        chatcli["shell/chat-cli.ts (until FR-50)"] --> app
         ritualcli["shell/ritual-cli.ts (cron)"] --> rituals
         app --> rituals["rituals/ (orchestration)"]
         app --> core["core/ (pure functions)"]
@@ -165,6 +164,7 @@ graph TD
   **`setTaskStatus` history.** *2026-09-22:* `setTaskStatus` became schema-checked through the same live-option `closestOption` resolution Area and Energy use, after Spencer renamed his Status options. That still holds. The same revision also moved completed Tasks to Notion Trash (`in_trash: true`). **Reverted 2026-09-25 (Spencer):** `setTaskStatus` writes the Status property only and never trashes, from any trigger (Night close-out or FR-41 check-off). This satisfies FR-41 and §9.4 (check-off never deletes) and FR-43 (Tasks shows completed Tasks). Completion history is Yoh's own Completion Log (FR-47, AD-10), not Notion's. No Phase 2 capability deletes anything from Notion.
   **Interactive-only (revised for Phase 2).** All three write functions are called only from `app/*` (AD-16), which only interactive shells reach. They are never called from `rituals/*` or `shell/ritual-cli.ts`, which can't reach `app/` (AD-1). This rule replaces the old "only from `shell/chat-cli.ts`" rule and keeps the property it protected: a cron-triggered run never writes to Notion. Phase 2 callers: FR-41 check-off → `setTaskStatus` (direct-write, committed by AD-20); FR-38 /sandbox cards → `updateTaskField` (direct-write, **synchronous per card**, same guard and re-prompt-on-unresolvable as FR-24; when the session ends, `app/sandbox-submit.ts` raises `sandbox-complete` or `sandbox-failed` only after every card write has settled); FR-51 /research filing → `createPage('ResearchVault', …)` (direct-write, same as FR-29, run by AD-21's job runner inside the server process on Spencer's explicit command). **Tasks-page direct write (amended 2026-09-27, Spencer):** a Task Spencer types himself in the Tasks page's quick-add row calls `createPage('Tasks', …)` directly (Story 11.1/Task 6B) — same draft-time + write-time schema resolution as above, no confirm step, because Spencer's own typed instruction is the confirmation (the same reasoning FR-24 already established). This amends AD-3: only a Task **Yoh** drafts from Chat (FR-26) still goes through Proposal/confirm. `[ADOPTED, revised for FR-26/FR-29, revised 2026-09-22 for setTaskStatus schema-checking, revised 2026-09-25 for Phase 2 + trash-on-completion reverted, revised 2026-09-27 for Tasks-page direct write]`
   **2026-09-27 (Spencer):** the closed write surface gains updateTaskTitle — the title of an existing Task, from Spencer's own edit on the Tasks page only.
+  **2026-10-04 (Spencer):** the closed write surface gains `archiveTask` — the one move-to-Trash (`in_trash: true`), called only by `app/update-task.ts`'s `deleteTask` when Spencer approves a chat change set that contains a `delete-task` item (AD-32). The write surface is now five functions: `setTaskStatus`, `updateTaskField`, `createPage`, `updateTaskTitle`, `archiveTask`. `setTaskStatus` still never trashes; check-off still never deletes. This replaces "No Phase 2 capability deletes anything from Notion" above. `updateTaskTitle` is also reached from an approved change set (`rename-task`). Pinned by the AD-12 test in `tests/notion-adapter.test.ts`.
 
 ### AD-13 — Confirm-gated exception to Calendar ownership (FR-27)
 
@@ -186,6 +186,7 @@ graph TD
   `search-adapter.ts` calls Perplexity's **Agent API** (`/v1/responses`) directly via Node's built-in `fetch` — no SDK dependency, the same minimal-dependency style already used for Pushover — targeting this endpoint from the start rather than the Sonar `/v1/chat/completions` endpoint it replaces, which is deprecated 2026-09-27 (nine days after this AD was written; a build against Sonar chat completions would be dead on arrival). Citation extraction reads the `search_results` item inside the response's `output[]` array and maps it into `SearchAnswer.citations` — the Agent API does not carry a top-level `citations` field the way Sonar chat completions did, so `search-adapter.ts`'s response-parsing must not assume Sonar's shape.
 - **Legitimate no-results is not a `YohError`.** A provider response with zero usable results is a successful `Result` carrying an empty/no-answer payload for `chat-cli.ts` to relay honestly — it is not thrown or wrapped in `YohError`. `YohError.kind: 'unreachable'` / `'rate-limited'` (AD-8) cover the real-failure case (the provider couldn't be reached, or refused the call); `search-adapter.ts` must not conflate "found nothing" with "failed," since FR-28 requires both to be surfaced honestly but they are not the same event.
 - **Honesty note — this Non-Goal's only backstop is classification, not structure.** Unlike AD-13's type-level delete prevention, nothing here structurally prevents a search firing on a misclassified ordinary message — the safeguard is `llm-adapter.ts`'s intent-routing correctness alone. The one mechanism that would act as a hard backstop, a daily call cap, is Deferred (below), not `[ADOPTED]`, and even once built is a warn-Spencer measure, not a blocking one. Named plainly as a residual risk, the same way AD-7 names its own total-outage detection gap, rather than left implicit. `[ADOPTED, corrected 2026-09-18 for Sonar-to-Agent-API deprecation]`
+- **Amended 2026-10-04 (as built, Epic 14 and commit `2e7f544`):** the `ChatIntent` union and the LLM classifiers (`classifyCapture`, `classifyChatIntent`) no longer exist, and `shell/chat-cli.ts` is deleted (FR-50). A search now starts in one of three ways, all in `app/`: (1) the deterministic pre-check `core/search-intent.ts`'s `parseSearchIntent` (an explicit "search: …" / "look up …" or a current-information cue), checked before any model call; (2) the `web_search` read tool inside the chat tool loop (AD-32), which the model may call; (3) the `/research` job runner (AD-21). `search-adapter.ts`'s contract above is unchanged. The honesty note still holds in a new form: route 2's only backstop is the model's choice of tool; the system prompt (`core/tone.ts`, built from `webSearchAvailable`) tells the model whether web search is configured.
 
 ### AD-15 — Process model and hosting: one always-on host, two process kinds, tailnet-only
 
@@ -254,6 +255,7 @@ graph TD
 - **Binds:** FR-51, FR-28/FR-29 (reused), FR-49
 - **Prevents:** a research result lost when Spencer closes the tab; a crash-restart silently re-running a job and filing a duplicate Research Vault page; research running without the explicit command
 - **Rule:** `/research <q>` (or accepting Yoh's one-time Structured Question offer, per UX) calls `app/queue-research.ts`, which inserts a `queued` job in `job-store.ts` and returns immediately. A runner inside the server process claims jobs one at a time. It calls `search-adapter.ts` (AD-14), then `createPage('ResearchVault', …)` (AD-12 direct-write, with FR-29's provenance), then marks the job `done` with the page id and raises `research-ready`, which deep-links to that page in the Tasks research box. A search failure produces a `failed` job and a `research-failed` notification. On server start, a job still marked `running` from a previous crash is set to `failed` with a notification and is **never automatically re-run**. Spencer re-issues it if wanted. Nothing else creates research jobs, so FR-28's no-automatic-search boundary holds structurally. The research prompt and skill design (UX FR-51 note) lives in `llm-adapter.ts`/`search-adapter.ts` and is not an invariant here. `[ADOPTED]`
+- **As built (Epic 11, 2026-10-04):** jobs are rows in the `research_jobs` table (`adapters/job-store.ts`), created at server start; the runner is `app/run-research-job.ts`, started by `shell/server-streams.ts`'s `startResearchJobRunner` only when a search key and the Research Vault are configured. `research-ready` deep-links to the document on the Research Hub page (not a Tasks research box). The one-time offer (Story 11.4) is recognized deterministically (`core/`), and a Yes queues through the same `app/queue-research.ts`. Research notifications are in-app only. Build rulings E11-R1–R20 are in the Epic 11 plan.
 
 ### AD-22 — Public feeds are server-side, cached, and independently failing
 
@@ -312,7 +314,7 @@ graph TD
 - **Rule:** one pure `core/memory-context.ts` selector takes current items, the adapter's relevant matches, and `now`, and returns both the `MemoryContext` for model calls and the per-item load state the Memory page shows ("Not loaded", Needs review reason). Recall and the page call the same selector.
   - **Always-loaded:** current, unexpired items of the five always folders, newest `confirmed_at` first, capped at `ALWAYS_LOADED_CAP` = 60 items `[ASSUMPTION]`; the overflow is not loaded and appears in Needs review. **When relevant:** `memory-item-store` `searchRelevant` (FTS5 bm25, top 5) over Goals & projects and Decisions & commitments on the request text; a match bumps `last_matched_at`. Ideas & notes are read only for "what do you remember about …" and the Memory page.
   - The always-loaded block is a cached stable system block placed after the fixed prompt (the existing `llm-adapter.ts` stable/volatile split). Relevant items go in the volatile block.
-  - Only `answerGeneralQuestion`/`streamGeneralQuestion` and the create-item drafting call (`draftNotionPageFields`) accept a `MemoryContext` parameter. Plan reasoning (`core/plan-reasoning.ts`) is deterministic, with no model call, so memory never reaches it (build ruling E1); the one Epic 13 change there is the Pattern citation (AD-30). `classifyCapture`, `classifyChatIntent`, search-intent, and every other routing or classification function take none, which enforces S4 at the type level. The deterministic scheduler never receives memory text (AD-29). `app/confirm-proposal.ts` and the write-tier logic never read memory, so no memory item can weaken or skip a confirmation.
+  - Only the chat tool loop's model call (`app/chat-agent.ts`, AD-32; it replaced `answerGeneralQuestion`/`streamGeneralQuestion` on 2026-10-03) and the create-item drafting call (`draftNotionPageFields`) accept a `MemoryContext` parameter. Plan reasoning (`core/plan-reasoning.ts`) is deterministic, with no model call, so memory never reaches it (build ruling E1); the one Epic 13 change there is the Pattern citation (AD-30). Search-intent and every other routing or recognizer function take none (the LLM classifiers `classifyCapture` and `classifyChatIntent` were removed 2026-10-04), which enforces S4 at the type level. The deterministic scheduler never receives memory text (AD-29). `app/confirm-proposal.ts` and the write-tier logic never read memory, so no memory item can weaken or skip a confirmation.
   - Needs review reasons: expired; over the cap; `confirmed_at` and `last_matched_at` both older than 120 days (a restate, edit, or renew confirms); or an `entity_ref` Task that is now Done or missing `[ASSUMPTION: live-conflict detection covers entity_ref items only]`.
 
 ### AD-29 — Rule changes are stored settings, never memory text
@@ -344,6 +346,18 @@ graph TD
   - `POST /api/rating {promptId, score | dismissed: true}`. A user turn sent while a prompt is open records a dismissal server-side. An answer resets consecutive dismissals; three in a row set `paused_until` to a week later. A 1 sets `extra_prompt_due`. A 1 with a "What was off?" answer (`POST /api/rating {promptId, score: 1, note}`) files to Feedback through AD-27's explicit path as stated; the route's JSON response carries the same `remembered` receipt payload (`RatingResponse {receipt?}`), which the web renders with the Remembered Receipt component, since this answer is not on a chat stream. No model call ever loads ratings.
   - **Retired:** every Self-Check reference (the `self-check` subcommand and its deps, `rituals/self-check.ts`, `app/answer-self-check.ts`, the open-item question/answer kinds, the escalation and error-copy entries, and the web handling). `grep -ri self-check src web/src` must come back empty. Also retired: the host timer, and open self-check interaction requests (one-time cleanup). Escalate-Under-Strain no longer reads Self-Check scores.
   - Chat history, memory, settings, and ratings live in the one SQLite file that `backup-cli.ts` already copies (AD-10). The FTS tables are external-content and can be rebuilt.
+
+### AD-32 — Chat is deterministic recognizers, then one tool loop that only stages writes
+
+- **Binds:** FR-42, FR-48, FR-23–FR-29 (chat leg), AD-3, AD-12, AD-13, AD-16
+- **Prevents:** chat claiming a write it has no path to make; a model call writing to Notion or Calendar without Spencer's yes; several partial confirmations for one request; an LLM deciding something a deterministic recognizer can decide
+- **Rule (Spencer, 2026-10-03; spec `docs/superpowers/specs/2026-10-03-chat-tool-loop-design.md`, "Decisions"):**
+  - `app/chat-turn.ts`'s `chatTurn` runs the deterministic recognizers first (`core/chat-commands.ts`, `core/search-intent.ts`, `core/memory-commands.ts`). Only a line none of them claims reaches the tool loop, `app/chat-agent.ts`'s `chatAgent`. New deterministic routes go before the loop.
+  - The loop is one model (`CLAUDE_CHAT_MODEL_FAST`, Haiku 4.5, one defining constant) with the tools defined in `core/chat-tools.ts`, capped at `CHAT_AGENT_MAX_STEPS` steps per turn. **Read tools** (`list_tasks`, `list_events`, `get_plan`, `search_memory`, `web_search`) answer. **Write tools** never write: each stages one `ChangeSetItem` (event create/move/resize/delete, Task create/update/rename/complete/delete, Plan block move/resize/remove, plan-day, refit-plan) into ONE `"change-set"` `Proposal` per turn.
+  - **One yes per batch.** The change set is shown as one card; Approve applies every item through `app/apply-change-set.ts`'s `applyChangeSet`, which calls the existing `app/` use-cases (so `complete-task` goes through `checkOff` and keeps the Completion Log entry and undo window); Discard writes nothing. A typed "yes"/"no" does not apply a card. A card is good only on the day it was staged.
+  - **Calendar delete** is offered only for events Yoh created (AD-4/AD-13 ownership check); **Task delete** is the one Notion trash write (AD-12).
+  - **No false claims:** with nothing staged, a reply that claims a write or a staged change is sent back to the model once and then replaced by fixed copy (`claimsAWrite`/`claimsStaging` in `core/chat-tools.ts`). A turn the model was cut off in does not run its tool calls.
+  - Build rulings P1–P14 are in the chat-tool-loop ledger. `[ADOPTED 2026-10-03; delete-task and block tools added 2026-10-04]`
 
 ## Consistency Conventions
 
@@ -431,8 +445,11 @@ src/
     memory-view.ts · memory-edit.ts · memory-undo.ts · memory-search.ts · memory-recall.ts · chat-history.ts · rate.ts · file-memory.ts · pattern-offer.ts · settings-revert.ts   # Epic 13 (names indicative)
   shell/
     ritual-cli.ts                # cron one-shots (AD-5) — never imports app/
-    chat-cli.ts                  # transport over app/ until FR-50 parity, then deleted
-  + server.ts                    # Hono: static web/ bundle, /api/*, /api/events SSE, commit sweep, job runner (AD-15)
+    ~~chat-cli.ts~~              # deleted at FR-50 parity
+  + server.ts                    # entry point: startServer + process startup; re-exports the two files below (AD-15)
+  + server-routes.ts             # Hono: ServerDeps, createApp — static web/ bundle, every /api/* route
+  + server-streams.ts            # /api/events SSE, chat SSE, heartbeat, commit sweep, Plan calendar sync sweep, job runner
+  + server-wiring.ts             # the real build*Deps behind ServerDeps
   types/
     domain.ts                    # locked first (AD-9); + Refining<T>, PlanBlock.kind/routineId, Pin, Routine,
                                  #   ReshufflePreview, Completion, ResearchJob
@@ -498,12 +515,12 @@ graph LR
 | Night Ritual — close-out & escalation (FR-12–FR-14) | `rituals/night-ritual.ts` + `adapters/{notification,email}-adapter.ts` | AD-5, AD-7 |
 | Memory, learning (FR-15–FR-16; FR-17 retired) | `adapters/memory-store.ts` + `core/escalate-under-strain.ts` | AD-5, AD-6, AD-10 |
 | Tone & communication (FR-18–FR-19) | `core/tone.ts` + `adapters/llm-adapter.ts` | AD-6 |
-| Chat intent routing & on-demand interaction | `shell/chat-cli.ts` + `adapters/llm-adapter.ts` | AD-5 |
+| Chat routing & on-demand interaction | `app/chat-turn.ts` (recognizers) + `app/chat-agent.ts` (tool loop) | AD-5, AD-32 |
 | Notion & Calendar integration (FR-20–FR-24) | `adapters/{notion,calendar}-adapter.ts` | AD-4, AD-8, AD-10, AD-12 |
 | Reliability / Observability / Latency (cross-cutting NFRs) | `shell/ritual-cli.ts` + `adapters/notification-adapter.ts` | AD-7, Performance convention |
 | Phase 1.5 — Notion page/DB creation & inferred field-values (FR-25, FR-26, FR-29) | `adapters/notion-adapter.ts` + `core/data-completeness-gate.ts` + `adapters/llm-adapter.ts` | AD-3, AD-11, AD-12 |
 | Phase 1.5 — Confirm-gated Calendar time-block editing (FR-27) | `adapters/calendar-adapter.ts` | AD-3, AD-4, AD-13 |
-| Phase 1.5 — Web search (FR-28) | `adapters/search-adapter.ts` + `adapters/llm-adapter.ts` (trigger classification) | AD-5, AD-14 |
+| Phase 1.5 — Web search (FR-28) | `adapters/search-adapter.ts` + `core/search-intent.ts` (deterministic trigger) + the `web_search` chat tool | AD-5, AD-14, AD-32 |
 | Phase 2 — Drag-to-Reshuffle, Pins, needs-data (FR-30–FR-34) | `app/{request,approve}-reshuffle.ts` + `rituals/reshuffle.ts` + `core/work-break-fit.ts` + `adapters/plan-state-store.ts` | AD-3, AD-4, AD-11, AD-19 |
 | Phase 2 — Routines (FR-35) | `adapters/routine-store.ts` + `app/routines.ts` + `core/work-break-fit.ts` | AD-24, AD-4 |
 | Phase 2 — /sandbox (FR-36–FR-38) | `app/sandbox-{queue,submit}.ts` + `adapters/notion-adapter.ts` | AD-11, AD-12, AD-16, AD-18 |
@@ -513,7 +530,7 @@ graph LR
 | Phase 2 — Tasks page + research box (FR-43) | `app/tasks-view.ts` + `adapters/notion-adapter.ts` (reads) | AD-12, AD-17 |
 | Phase 2 — Desk (FR-44) | `app/desk.ts` + `core/desk-metrics.ts` + `adapters/{completion-log,*-feed}.ts` | AD-22, AD-23 |
 | Phase 2 — Completion/Activity Log (FR-47) | `adapters/completion-log.ts` | AD-10, AD-23 |
-| Phase 2 — Surface-agnostic confirmation, CLI retirement (FR-48, FR-50) | `app/confirm-proposal.ts` + `shell/{server,chat-cli}.ts` | AD-3, AD-5, AD-16 |
+| Phase 2 — Surface-agnostic confirmation, CLI retirement (FR-48, FR-50) | `app/confirm-proposal.ts` + `shell/server.ts` (`chat-cli.ts` deleted) | AD-3, AD-5, AD-16 |
 | Phase 2 — In-app notifications (FR-49) | `adapters/notification-store.ts` + `shell/server.ts` SSE | AD-7, AD-18 |
 | Phase 2 — /research (FR-51) | `app/queue-research.ts` + `adapters/job-store.ts` + server job runner | AD-12, AD-14, AD-21 |
 | Epic 13 — Chat history (FR-52) | `adapters/chat-store.ts` + `app/{chat-exchange,chat-turn,chat-history}.ts` | AD-25 |

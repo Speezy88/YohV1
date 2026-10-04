@@ -35,8 +35,13 @@
 # - New backlog epic-13, "Yoh remembers you" (persistent chat memory), added — queued after epic-9, before
 #   epic-10, per the ledger's queue (fixes+UI plan -> Epic 9 -> this epic -> 10 -> 11 -> 12). Story list is a
 #   sketch only, to be planned in full when this epic starts (see epics.md).
+# AMENDED 2026-10-04 (coordinator, from the Epic 11 ledger and the deploy record):
+# - Epic 11 is done: Stories 11.2, 11.3, 11.4 were merged as a55f3d6 and deployed inside 139e8de (2026-10-04).
+# - Work done outside this file's epics (no epics.md entry, so no rows here): the chat tool loop ("Epic 14",
+#   spec docs/superpowers/specs/2026-10-03-chat-tool-loop-design.md, deployed 2026-10-03), the Claude export
+#   import, and the 2026-10-04 audit batches (fix-first, fix-next, cleanup, the server.ts split).
 generated: 08-22-2026 00:00
-last_updated: 09-29-2026 23:30
+last_updated: 10-04-2026 15:30
 project: YohV1
 project_key: NOKEY
 tracking_system: file-system
@@ -133,11 +138,11 @@ development_status:
   10-5-pin-a-task-and-unpin-it: done
   epic-10-retrospective: optional
 
-  epic-11: backlog
+  epic-11: done
   11-1-tasks-page-every-task-grouped-delivered-early-in-the-2026-09: done
-  11-2-research-box-on-tasks-on-research-hub: backlog
-  11-3-research-runs-as-a-background-job: backlog
-  11-4-one-time-research-offer: backlog
+  11-2-research-box-on-tasks-on-research-hub: done
+  11-3-research-runs-as-a-background-job: done
+  11-4-one-time-research-offer: done
   epic-11-retrospective: optional
 
   epic-12: backlog
