@@ -8,6 +8,7 @@ import {
   CHANGE_SET_REPLACES_NOTE,
   CHANGE_SET_USE_CARD_REPLY,
   claimsAWrite,
+  claimsStaging,
   NOTHING_CHANGED_NOTE,
   describeChangeSetItem,
   filterTasks,
@@ -141,6 +142,30 @@ test("claimsAWrite lets honest answers through", () => {
     assert.equal(claimsAWrite(text), false, text);
   }
   assert.equal(NOTHING_CHANGED_NOTE, "Nothing has been changed.");
+});
+
+test("claimsStaging catches prose that says a change is staged or asks for a typed confirm", () => {
+  for (const text of [
+    "Staging both for deletion:\n\n**Northwestern Supplements** (180 min, due Tue)\n\nConfirm and I'll remove them?",
+    "Staging Golf on your calendar for tomorrow (Sunday, Oct 4):\n\n**Golf**\n9:00 AM - 12:00 PM\n\nConfirm?",
+    "You're right. I staged it, but nothing's written yet. You need to approve it in the staging area.",
+    "Sound right? I'll add them to your Google Calendar once you confirm.",
+    "I've staged the workout for your approval.",
+  ]) {
+    assert.equal(claimsStaging(text), true, text);
+  }
+});
+
+test("claimsStaging lets honest answers through", () => {
+  for (const text of [
+    "You have 105 minutes due Monday across 3 tasks.",
+    "I can't delete a Task from here.",
+    "Nothing is staged.",
+    "Do you want me to add the workout?",
+    "Can you confirm which task you mean?",
+  ]) {
+    assert.equal(claimsStaging(text), false, text);
+  }
 });
 
 test("chatDateContext names today, the time, tomorrow and the week ahead in the host time zone", () => {

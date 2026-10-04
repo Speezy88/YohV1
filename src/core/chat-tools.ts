@@ -258,6 +258,30 @@ export function claimsAWrite(text: string): boolean {
   return WRITE_CLAIM_PATTERNS.some((p) => p.test(text));
 }
 
+const STAGING_CLAIM_PATTERNS: readonly RegExp[] = [
+  /(^|[.!?\n])\s*(staging|staged)\b/i,
+  /\b(i've|i have|i)\s+staged\b/i,
+  /\bstaging area\b/i,
+  /(^|[.!?\n])\s*confirm\b[^.!?\n]*\?/i,
+  /\bonce you (confirm|approve)\b/i,
+];
+
+/**
+ * True when model prose says a change is staged or asks for a typed confirm.
+ * A real staged change is never reported in model prose (the reply is
+ * `changeSetPrompt` and the answer is the card), so with nothing staged this is false.
+ */
+export function claimsStaging(text: string): boolean {
+  return STAGING_CLAIM_PATTERNS.some((p) => p.test(text));
+}
+
+/** Replaces a reply that still claims a write or a staged change when nothing was staged. */
+export const UNSTAGED_CLAIM_REPLY = "Nothing was staged or changed. I described a change without making it. Ask again; if no Approve card appears, it's something I can't do here.";
+
+/** Sent back to the model, once per turn, when its prose claims a write or a staged change and nothing is staged. */
+export const UNSTAGED_CLAIM_CORRECTION =
+  "Nothing is staged and nothing has changed: text alone does neither. If a tool covers the request, call it now. If no tool covers it, say plainly that you can't do that. Do not say anything was staged, changed, or is waiting for a confirm.";
+
 /** A change set is valid only on the local day (host time zone) it was staged. */
 export function changeSetIsStale(createdAt: string, now: Date, timeZone: string): boolean {
   if (Number.isNaN(new Date(createdAt).getTime())) return true;

@@ -5,7 +5,7 @@ import { initNotificationStoreSchema } from "../src/adapters/notification-store.
 import { createMemoryStore, listOpenInteractionRequests, putOpenInteractionRequest, putPlan } from "../src/adapters/memory-store.ts";
 import { errorCopyForThrown } from "../src/core/error-copy.ts";
 import { chatAgent, CHAT_AGENT_STEP_CAP_REPLY, type ChatAgentDeps } from "../src/app/chat-agent.ts";
-import { CHAT_AGENT_MAX_STEPS, CHANGE_SET_PARTIAL_NOTE, CHANGE_SET_REPLACES_NOTE, NOTHING_CHANGED_NOTE, changeSetPrompt } from "../src/core/chat-tools.ts";
+import { CHAT_AGENT_MAX_STEPS, CHANGE_SET_PARTIAL_NOTE, CHANGE_SET_REPLACES_NOTE, NOTHING_CHANGED_NOTE, UNSTAGED_CLAIM_REPLY, changeSetPrompt } from "../src/core/chat-tools.ts";
 import type { AnthropicMessagesClient } from "../src/adapters/llm-adapter.ts";
 import type { CalendarEvent, ChangeSet, Plan, Proposal, Task } from "../src/types/domain.ts";
 
@@ -113,6 +113,8 @@ test("the system prompt carries today's date, the time zone and the never-claim-
   assert.match(system, /2026-10-03/);
   assert.match(system, /America\/New_York/);
   assert.match(system, /never say a change has been made/i);
+  assert.match(system, /never ask Spencer to confirm in text/i);
+  assert.match(system, /deleting a Task/);
 });
 
 test("two events in one message become one change-set question and write nothing", async () => {
@@ -337,20 +339,53 @@ test("step cap with items staged still returns the change-set question", async (
   assert.equal(result.value.question?.proposal?.kind, "change-set");
 });
 
-test("a rejected write followed by a claim gets the nothing-changed note", async () => {
+test("a rejected write followed by a claim is replaced, never shown beside a contradiction", async () => {
   const { client } = scripted([[use("1", "complete_task", { taskId: "made-up" })], [say("Done, I marked it complete.")]]);
   const result = await chatAgent(deps(client), input("mark the essay done"));
   assert.equal(result.ok, true);
   if (!result.ok) return;
-  assert.equal(result.value.reply, `Done, I marked it complete.\n\n${NOTHING_CHANGED_NOTE}`);
+  assert.equal(result.value.reply, UNSTAGED_CLAIM_REPLY);
   assert.deepEqual(result.value.receipts, []);
   assert.equal(result.value.question, undefined);
 });
 
-test("a claim with no tools at all gets the note", async () => {
+test("a rejected write followed by an honest answer keeps the answer and the nothing-changed note", async () => {
+  const { client } = scripted([[use("1", "complete_task", { taskId: "made-up" })], [say("I couldn't find that task.")]]);
+  const result = await chatAgent(deps(client), input("mark the essay done"));
+  assert.equal(result.ok && result.value.reply, `I couldn't find that task.\n\n${NOTHING_CHANGED_NOTE}`);
+});
+
+test("a claim with no tools at all is replaced by the fixed reply", async () => {
   const { client } = scripted([[say("Done. Both events are now on your calendar.")]]);
   const result = await chatAgent(deps(client), input("add them"));
-  assert.equal(result.ok && result.value.reply, `Done. Both events are now on your calendar.\n\n${NOTHING_CHANGED_NOTE}`);
+  assert.equal(result.ok && result.value.reply, UNSTAGED_CLAIM_REPLY);
+});
+
+test("prose that fakes staging is sent back once, and the tool call that follows stages a real change set", async () => {
+  const { client, requests } = scripted([
+    [say("Staging Golf on your calendar for tomorrow (Sunday, Oct 4):\n\n**Golf**\n9:00 AM - 12:00 PM\n\nConfirm?")],
+    [use("1", "create_event", { title: "Golf", date: "2026-10-04", startTime: "09:00", endTime: "12:00" })],
+    [say("Staged.")],
+  ]);
+  const d = deps(client);
+  const result = await chatAgent(d, input("I am golfing from 9am to noon tomorrow"));
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.value.question?.proposal?.kind, "change-set");
+  assert.deepEqual(openChangeSet(d)?.items.map((i) => i.kind), ["create-event"]);
+  assert.doesNotMatch(result.value.reply, /Confirm\?/);
+  const correction = requests[1]!.messages.at(-1) as { role: string; content: string };
+  assert.equal(correction.role, "user");
+  assert.match(correction.content, /nothing is staged/i);
+});
+
+test("prose that keeps faking staging is corrected only once, then replaced; nothing is staged", async () => {
+  const { client, requests } = scripted([[say("Staging both for deletion.\n\nConfirm and I'll remove them?")]]);
+  const d = deps(client);
+  const result = await chatAgent(d, input("Remove the northwestern supplements and uc supplements from the tasks"));
+  assert.equal(result.ok && result.value.reply, UNSTAGED_CLAIM_REPLY);
+  assert.equal(requests.length, 2);
+  assert.equal(openChangeSet(d), undefined);
 });
 
 test("a plain answer gets no note, and the delta equals the reply", async () => {
@@ -361,13 +396,13 @@ test("a plain answer gets no note, and the delta equals the reply", async () => 
   assert.deepEqual(events, [{ type: "delta", text: "Napoleon was a French general." }]);
 });
 
-test("the delta carries the composed reply when the note is added", async () => {
+test("the delta carries the replacement reply, not the model's claim", async () => {
   const events: { type: string; text?: string }[] = [];
   const { client } = scripted([[say("All set.")]]);
   const result = await chatAgent(deps(client, { emit: (e) => events.push(e as { type: string; text?: string }) }), input("x"));
   assert.ok(result.ok);
   assert.deepEqual(events, [{ type: "delta", text: result.ok ? result.value.reply : "" }]);
-  assert.match(events[0]!.text!, /Nothing has been changed\.$/);
+  assert.equal(events[0]!.text, UNSTAGED_CLAIM_REPLY);
 });
 
 test("moving the same event twice stages one move with the second time", async () => {

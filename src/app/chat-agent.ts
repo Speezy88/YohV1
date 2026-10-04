@@ -19,7 +19,10 @@ import {
   chatDateContext,
   changeSetPrompt,
   claimsAWrite,
+  claimsStaging,
   NOTHING_CHANGED_NOTE,
+  UNSTAGED_CLAIM_CORRECTION,
+  UNSTAGED_CLAIM_REPLY,
   isWriteTool,
   filterTasks,
   resolveEventTimes,
@@ -86,11 +89,15 @@ function agentSystemPrompt(tone: string, now: Date, timeZone: string): string {
     chatDateContext(now, timeZone),
     "You have tools to read Spencer's Tasks, Calendar, Plan and memory. Use them instead of saying you lack access.",
     "A Plan exists only for today. You cannot read, build or reorder a Plan for another day; say so plainly instead of asking for more.",
-    "Write tools only stage a change. Spencer then approves or discards everything staged in one step. Never say a change has been made, added, moved, deleted or saved. Say what you have staged.",
+    "Write tools only stage a change. Spencer then approves or discards everything staged in one step. Never say a change has been made, added, moved, deleted or saved.",
+    "Only a write tool call stages a change; describing one in text does nothing. Never ask Spencer to confirm in text: the Approve card is the only confirmation.",
     "Use ids exactly as a read tool returned them in this turn. Call list_tasks or list_events first when you need an id.",
-    "If a request needs something no tool covers (Canvas, deleting an event Yoh did not create), say plainly that you can't do that.",
+    "If a request needs something no tool covers (Canvas, deleting a Task, deleting an event Yoh did not create), say plainly that you can't do that.",
   ].join("\n");
 }
+
+/** With nothing staged, prose that says a change was made, is staged, or awaits a typed confirm is false. */
+const claimsUnstagedChange = (text: string): boolean => claimsAWrite(text) || claimsStaging(text);
 
 const err = (content: string): ToolOutcome => ({ content, isError: true });
 const str = (v: unknown): string | undefined => (typeof v === "string" && v.trim() !== "" ? v.trim() : undefined);
@@ -281,6 +288,7 @@ export async function chatAgent(deps: ChatAgentDeps, input: ChatAgentInput): Pro
   let wroteAttempted = false;
   let writeRejected = false;
   let ranTool = false;
+  let corrected = false;
 
   try {
     for (let step = 0; step < CHAT_AGENT_MAX_STEPS; step++) {
@@ -292,6 +300,12 @@ export async function chatAgent(deps: ChatAgentDeps, input: ChatAgentInput): Pro
         ...(deps.connection ? { connection: deps.connection } : {}),
       });
       if (turn.toolUses.length === 0) {
+        // A false claim gets one chance to become a real tool call (or a plain "can't") before it is replaced below.
+        if (staged.length === 0 && !corrected && claimsUnstagedChange(turn.text)) {
+          corrected = true;
+          messages.push({ role: "assistant", content: turn.assistantContent }, { role: "user", content: UNSTAGED_CLAIM_CORRECTION });
+          continue;
+        }
         finalText = turn.text;
         break;
       }
@@ -344,7 +358,7 @@ export async function chatAgent(deps: ChatAgentDeps, input: ChatAgentInput): Pro
   if (finalText === undefined) return { ok: true, value: { reply: CHAT_AGENT_STEP_CAP_REPLY, receipts: [] } };
   const text = finalText.length > 0 ? finalText : "I don't have an answer for that.";
   // Nothing was staged, so nothing changed: never let prose say otherwise.
-  const reply = wroteAttempted || claimsAWrite(text) ? `${text}\n\n${NOTHING_CHANGED_NOTE}` : text;
+  const reply = claimsUnstagedChange(text) ? UNSTAGED_CLAIM_REPLY : wroteAttempted ? `${text}\n\n${NOTHING_CHANGED_NOTE}` : text;
   deps.emit?.({ type: "delta", text: reply });
   // Only a turn that ran a tool is substantive (rating eligibility); a plain answer carries no key.
   return { ok: true, value: { reply, receipts: [], ...(ranTool ? { substantive: true as const } : {}) } };
