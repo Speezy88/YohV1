@@ -15,6 +15,8 @@ import type { SqliteConnection } from "../adapters/sqlite.ts";
 import type { MemoryItemStore } from "../adapters/memory-item-store.ts";
 import { memoryFolderLabel } from "../core/memory-folders.ts";
 import { isOlderThanDays, RULE_PROPOSAL_TTL_DAYS } from "../core/proposal-ttl.ts";
+import { changeSetIsStale } from "../core/chat-tools.ts";
+import { CHANGE_SET_PROPOSAL_KIND } from "./apply-change-set.ts";
 import { isProposalExpired } from "../core/reshuffle-preview.ts";
 import { parsePlanningFieldValue } from "../core/planning-field-value.ts";
 import { buildMemoryForgetQuestion } from "../core/open-item-questions.ts";
@@ -44,6 +46,8 @@ export interface SurfaceOpenItemsDeps {
   readonly connection?: SqliteConnection;
   /** Clock seam for hiding expired reshuffle previews; defaults to the real time. */
   readonly now?: () => Date;
+  /** Host time zone: with it, a change set staged on an earlier local day is hidden (it can no longer be approved). */
+  readonly timeZone?: string;
 }
 
 export interface BuildOpenItemQuestionInput {
@@ -145,6 +149,7 @@ export async function surfaceOpenItems(deps: SurfaceOpenItemsDeps, _input: Recor
   for (const record of open) {
     const proposal = (record.data.detail as { readonly proposal?: Proposal<unknown> } | undefined)?.proposal;
     if (record.data.requestKind === "proposal" && proposal?.kind === "reshuffle" && isProposalExpired(proposal.createdAt, now)) continue;
+    if (record.data.requestKind === "proposal" && proposal?.kind === CHANGE_SET_PROPOSAL_KIND && deps.timeZone && changeSetIsStale(proposal.createdAt, now, deps.timeZone)) continue;
     if (record.data.requestKind === "proposal" && proposal?.kind === "rule-change" && isOlderThanDays(proposal.createdAt, now, RULE_PROPOSAL_TTL_DAYS)) {
       // Lazy 7-day TTL (AD-29): withdrawn, never shown; the preference stays as a declined soft item.
       try {

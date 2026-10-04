@@ -36,5 +36,5 @@ export async function refitPlan(deps: RefitPlanDeps, _input: Record<string, neve
   clearRequest(deps.store, requestId);
   if (!approved.ok) return approved;
   if (approved.value.status === "recomputed") clearRequest(deps.store, approved.value.question.requestId);
-  return { ok: false, error: { kind: "conflict", message: "Your Plan or Calendar changed while I was re-fitting, so I left the Plan as it was." } };
+  return { ok: false, error: { kind: "validation", message: "Your Plan or Calendar changed while I was re-fitting, so I left the Plan as it was." } };
 }

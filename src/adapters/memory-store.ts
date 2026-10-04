@@ -390,6 +390,15 @@ export function listOpenInteractionRequests(store: MemoryStore): StoredRecord<In
   return store.listRecordsByKind<InteractionRequest>(INTERACTION_REQUEST_KIND);
 }
 
+/** True when an open interaction request holds a Proposal of the given kind (e.g. an unanswered chat change set). */
+export function hasOpenProposalOfKind(store: MemoryStore, kind: string): boolean {
+  return listOpenInteractionRequests(store).some((record) => {
+    if (record.data.requestKind !== "proposal") return false;
+    const proposal = (record.data.detail as { readonly proposal?: { readonly kind?: string } } | undefined)?.proposal;
+    return proposal?.kind === kind;
+  });
+}
+
 /**
  * Clears (removes) the interaction request at `id` once Spencer has
  * answered it, enforcing the same optimistic-concurrency check every write

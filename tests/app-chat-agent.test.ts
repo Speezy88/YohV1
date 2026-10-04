@@ -5,7 +5,7 @@ import { initNotificationStoreSchema } from "../src/adapters/notification-store.
 import { createMemoryStore, listOpenInteractionRequests, putPlan } from "../src/adapters/memory-store.ts";
 import { errorCopyForThrown } from "../src/core/error-copy.ts";
 import { chatAgent, CHAT_AGENT_STEP_CAP_REPLY, type ChatAgentDeps } from "../src/app/chat-agent.ts";
-import { CHAT_AGENT_MAX_STEPS, NOTHING_CHANGED_NOTE, changeSetPrompt } from "../src/core/chat-tools.ts";
+import { CHAT_AGENT_MAX_STEPS, CHANGE_SET_PARTIAL_NOTE, CHANGE_SET_REPLACES_NOTE, NOTHING_CHANGED_NOTE, changeSetPrompt } from "../src/core/chat-tools.ts";
 import type { AnthropicMessagesClient } from "../src/adapters/llm-adapter.ts";
 import type { CalendarEvent, ChangeSet, Plan, Proposal, Task } from "../src/types/domain.ts";
 
@@ -223,16 +223,53 @@ test("a model transport failure is a Result error with user copy", async () => {
 });
 
 test("a new change set replaces an earlier one that is still open", async () => {
-  const first = scripted([[use("1", "plan_day", {})], [say("Staged.")]]);
+  const first = scripted([[use("1", "create_event", { title: "Workout", date: "2026-10-03", startTime: "13:10", endTime: "14:50" })], [say("Staged.")]]);
   const d = deps(first.client);
   seedPlan(d);
-  await chatAgent(d, input("plan my afternoon"));
+  await chatAgent(d, input("add a workout"));
   const second = scripted([[use("1", "refit_plan", {})], [say("Staged.")]]);
   const result = await chatAgent({ ...d, llmClient: second.client }, input("actually re-fit instead"));
   assert.equal(result.ok, true);
   const open = listOpenInteractionRequests(d.store).filter((r) => r.data.requestKind === "proposal");
   assert.equal(open.length, 1);
   assert.deepEqual(openChangeSet(d)?.items.map((i) => i.kind), ["refit-plan"]);
+  if (result.ok) assert.equal(result.value.reply.split("\n").at(-1), CHANGE_SET_REPLACES_NOTE);
+});
+
+test("a first change set carries no replacement line", async () => {
+  const { client } = scripted([[use("1", "create_task", { title: "Read" })], [say("Staged.")]]);
+  const result = await chatAgent(deps(client), input("add a task"));
+  assert.equal(result.ok && result.value.reply.includes(CHANGE_SET_REPLACES_NOTE), false);
+});
+
+test("plan_day is rejected when today already has a Plan", async () => {
+  const { client, requests } = scripted([[use("1", "plan_day", {})], [say("Use re-fit.")]]);
+  const d = deps(client);
+  seedPlan(d);
+  await chatAgent(d, input("plan my day"));
+  assert.match(toolResult(requests, 1), /already a Plan.*refit_plan/);
+  assert.equal(openChangeSet(d), undefined);
+});
+
+test("resize_event takes the date from the event itself, ignoring the model's date", async () => {
+  const { client } = stageTurn(FIRST_EVENTS, use("1", "resize_event", { eventId: "ev-dinner", date: "2026-12-25", endTime: "19:30" }));
+  const d = deps(client);
+  await chatAgent(d, input("end dinner at 7:30"));
+  const item = openChangeSet(d)?.items[0];
+  assert.equal(item?.kind, "resize-event");
+  assert.equal(item?.kind === "resize-event" && item.newEnd, "2026-10-03T23:30:00.000Z");
+});
+
+test("a rejected write beside a staged item adds the partial-set line", async () => {
+  const { client } = stageTurn(
+    FIRST_EVENTS,
+    use("1", "delete_event", { eventId: "ev-dentist" }),
+    use("2", "create_event", { title: "Workout", date: "2026-10-03", startTime: "13:10", endTime: "14:50" }),
+  );
+  const d = deps(client);
+  const result = await chatAgent(d, input("delete the dentist and add a workout"));
+  assert.equal(result.ok && result.value.reply.split("\n").at(-1), CHANGE_SET_PARTIAL_NOTE);
+  assert.deepEqual(openChangeSet(d)?.items.map((i) => i.kind), ["create-event"]);
 });
 
 test("plan_day and refit_plan are not both staged; the later one wins", async () => {

@@ -9,7 +9,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { runToolTurn, type AnthropicMessagesClient, type ToolTurnMessage } from "../adapters/llm-adapter.ts";
-import { clearInteractionRequest, getPlan, listOpenInteractionRequests, type MemoryStore } from "../adapters/memory-store.ts";
+import { clearInteractionRequest, getPlan, hasOpenProposalOfKind, listOpenInteractionRequests, type MemoryStore } from "../adapters/memory-store.ts";
 import type { LogEntry } from "../adapters/logger.ts";
 import type { SqliteConnection } from "../adapters/sqlite.ts";
 import {
@@ -183,7 +183,10 @@ function runWriteTool(deps: ChatAgentDeps, name: string, args: Record<string, un
     return { content: "Staged. Nothing is written until Spencer approves." };
   };
 
-  if (name === "plan_day") return stagedOk({ kind: "plan-day" });
+  if (name === "plan_day") {
+    if (getPlan(deps.store, localIsoDate(deps.now(), deps.timeZone))) return err("There is already a Plan for today. Use refit_plan to re-fit it.");
+    return stagedOk({ kind: "plan-day" });
+  }
   if (name === "refit_plan") {
     if (!getPlan(deps.store, localIsoDate(deps.now(), deps.timeZone))) return err("There is no Plan for today to re-fit. Use plan_day.");
     return stagedOk({ kind: "refit-plan" });
@@ -212,7 +215,8 @@ function runWriteTool(deps: ChatAgentDeps, name: string, args: Record<string, un
       if (!times.ok) return err(times.message);
       return stagedOk({ kind: "move-event", eventId: event.id, label: event.title, etag: event.etag, newStart: times.start, newEnd: times.end });
     }
-    const times = resolveEventTimes({ date, startTime: localClock(event.start, deps.timeZone), endTime: String(args["endTime"] ?? "") }, deps.timeZone);
+    // A resize keeps the event's own day; the model's `date` is ignored.
+    const times = resolveEventTimes({ date: localIsoDate(new Date(event.start), deps.timeZone), startTime: localClock(event.start, deps.timeZone), endTime: String(args["endTime"] ?? "") }, deps.timeZone);
     if (!times.ok) return err(times.message);
     return stagedOk({ kind: "resize-event", eventId: event.id, label: event.title, etag: event.etag, newEnd: times.end });
   }
@@ -274,6 +278,7 @@ export async function chatAgent(deps: ChatAgentDeps, input: ChatAgentInput): Pro
   const staged: ChangeSetItem[] = [];
   let finalText: string | undefined;
   let wroteAttempted = false;
+  let writeRejected = false;
   let ranTool = false;
 
   try {
@@ -298,6 +303,7 @@ export async function chatAgent(deps: ChatAgentDeps, input: ChatAgentInput): Pro
         if (status) deps.emit?.({ type: "status", text: status });
         if (isWriteTool(toolUse.name)) wroteAttempted = true;
         const outcome = status ? await runReadTool(deps, toolUse.name, args, seen) : guardedWriteTool(deps, toolUse.name, args, seen, staged);
+        if (!status && outcome.isError) writeRejected = true;
         results.push({ type: "tool_result", tool_use_id: toolUse.id, content: outcome.content, ...(outcome.isError ? { is_error: true } : {}) });
       }
       messages.push({ role: "user", content: results });
@@ -308,7 +314,13 @@ export async function chatAgent(deps: ChatAgentDeps, input: ChatAgentInput): Pro
   }
 
   if (staged.length > 0) {
-    const reply = changeSetPrompt(staged, deps.timeZone);
+    let replacesEarlier = false;
+    try {
+      replacesEarlier = hasOpenProposalOfKind(deps.store, CHANGE_SET_PROPOSAL_KIND);
+    } catch {
+      // the clear below reports a store failure
+    }
+    const reply = changeSetPrompt(staged, deps.timeZone, { replacesEarlier, someRejected: writeRejected });
     const proposal: Proposal<ChangeSet> = {
       id: randomUUID(),
       kind: CHANGE_SET_PROPOSAL_KIND,

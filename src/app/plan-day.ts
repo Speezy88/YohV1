@@ -179,3 +179,17 @@ export async function planDay(deps: PlanDayDeps, _input: Record<string, never>):
     }
   }
 }
+
+/**
+ * `planDay` for a confirmed chat change set: the same run, plus whether it
+ * actually built a Plan (only "delivered" does; the other outcomes are `ok`
+ * replies that wrote nothing).
+ */
+export async function planDayForChangeSet(deps: PlanDayDeps, _input: Record<string, never>): Promise<Result<{ reply: string; built: boolean }, YohError>> {
+  const today = localIsoDate(deps.now(), deps.timeZone);
+  const had = getPlan(deps.store, today) !== undefined;
+  const result = await planDay(deps, {});
+  if (!result.ok) return result;
+  const built = !had && getPlan(deps.store, today) !== undefined;
+  return { ok: true, value: { reply: result.value.reply, built } };
+}

@@ -945,7 +945,10 @@ export function proposeNewCalendarEvent(change: CreateBlockChange): Proposal<Cal
  * `proposal.entityVersion` — a mismatch rejects with
  * `YohError.kind: "stale-proposal"` WITHOUT patching anything (AD-3); only
  * on a genuine match does it call `events.patch` with just the changed
- * field(s). For `create`: calls `events.insert` directly, skipping the
+ * field(s). For `delete`: the same etag re-read gate, then a second gate,
+ * the Yoh marker (`hasYohMarker`) — an event Yoh did not create is rejected
+ * with `kind: "validation"` and never deleted; the delete is sent with an
+ * `If-Match` header carrying the etag. For `create`: calls `events.insert` directly, skipping the
  * re-read entirely — there is no live entity to re-check.
  *
  * Unlike this file's other exports, failures come back as a `Result`

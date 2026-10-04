@@ -53,7 +53,10 @@ import { proposeCalendarEdit, type CalendarEditDeps } from "./calendar-edit.ts";
 import { COMMANDS } from "./commands.ts";
 import { tryDraftItem, type CreateItemDeps } from "./create-item.ts";
 import { dayView } from "./day-view.ts";
+import { CHANGE_SET_PROPOSAL_KIND } from "./apply-change-set.ts";
 import { chatAgent, type ChatAgentDeps } from "./chat-agent.ts";
+import { CHANGE_SET_USE_CARD_REPLY } from "../core/chat-tools.ts";
+import { parseProposalAnswer } from "../core/open-item-answers.ts";
 import { recallMemoryContext } from "./memory-recall.ts";
 import { manageRoutine } from "./routines.ts";
 import { requestReshuffle } from "./request-reshuffle.ts";
@@ -75,7 +78,7 @@ import type { ChatStore } from "../adapters/chat-store.ts";
 import type { MemoryItemStore } from "../adapters/memory-item-store.ts";
 import type { LogEntry } from "../adapters/logger.ts";
 import type { AnthropicMessagesClient } from "../adapters/llm-adapter.ts";
-import { getPlan, putOpenInteractionRequest, withdrawRuleProposal, type MemoryStore } from "../adapters/memory-store.ts";
+import { getPlan, hasOpenProposalOfKind, putOpenInteractionRequest, withdrawRuleProposal, type MemoryStore } from "../adapters/memory-store.ts";
 import { buildMemoryForgetQuestion } from "../core/open-item-questions.ts";
 import type { MemoryContext } from "../core/memory-context.ts";
 import { errorCopyForThrown } from "../core/error-copy.ts";
@@ -470,6 +473,11 @@ async function routeChatTurn(
   // line goes straight to searchWeb.
   const searchIntent = parseSearchIntent(input.message);
   if (searchIntent) return substantive(await searchWeb(deps, { query: searchIntent.query }));
+
+  // A bare yes/no while a change set is open has no typed path: the card is the only way to answer it.
+  if (parseProposalAnswer(input.message) !== undefined && hasOpenProposalOfKind(deps.store, CHANGE_SET_PROPOSAL_KIND)) {
+    return { ok: true, value: { reply: CHANGE_SET_USE_CARD_REPLY, receipts: [] } };
+  }
 
   return runAgent(deps, input, reachedLlm);
 }

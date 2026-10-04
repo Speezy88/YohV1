@@ -181,3 +181,14 @@ test("surfaceOpenItems drops an expired reshuffle proposal but keeps a fresh one
   if (result.ok) assert.deepEqual(result.value.items.map((i) => i.requestId), ["proposal:new"]);
   store.close();
 });
+
+test("surfaceOpenItems hides a change set staged on an earlier local day but keeps a same-day one", async () => {
+  const store = tempStore();
+  const set = (id: string, createdAt: string) => ({ id, kind: "change-set", entityId: "chat", entityVersion: "", suggested: { items: [{ kind: "plan-day" }] }, reason: "r", createdAt });
+  putOpenInteractionRequest(store, "proposal:old", { requestKind: "proposal", promptText: "old", detail: { proposal: set("old", "2026-10-02T16:00:00.000Z"), cursor: { questionId: "confirm" } }, createdAt: "2026-10-02T16:00:00.000Z" });
+  putOpenInteractionRequest(store, "proposal:new", { requestKind: "proposal", promptText: "new", detail: { proposal: set("new", "2026-10-03T14:00:00.000Z"), cursor: { questionId: "confirm" } }, createdAt: "2026-10-03T14:00:00.000Z" });
+  const result = await surfaceOpenItems({ store, session: makeSession(), timeZone: "America/New_York", now: () => new Date("2026-10-03T16:00:00.000Z") }, {});
+  assert.equal(result.ok, true);
+  if (result.ok) assert.deepEqual(result.value.items.map((i) => i.requestId), ["proposal:new"]);
+  store.close();
+});

@@ -32,7 +32,7 @@ import {
   type MemoryStore,
 } from "../src/adapters/memory-store.ts";
 import { initNotificationStoreSchema, listUnreadNotifications } from "../src/adapters/notification-store.ts";
-import { planDay, type PlanDayDeps } from "../src/app/plan-day.ts";
+import { planDay, planDayForChangeSet, type PlanDayDeps } from "../src/app/plan-day.ts";
 import { MORNING_RITUAL_ID, runMorningRitual } from "../src/rituals/morning-ritual.ts";
 import type { PlanNotification } from "../src/rituals/ritual-shared.ts";
 import type { ChatSession } from "../src/app/chat-session.ts";
@@ -275,4 +275,15 @@ test("planDay raises no needs-data notification, and never throws, when deps.con
   const { deps } = harness({ tasks: [makeTask("t1", "Draft the memo")] });
   const result = await planDay(deps, {});
   assert.ok(result.ok);
+});
+
+test("planDayForChangeSet reports built only when it created a Plan", async () => {
+  const fresh = harness({ tasks: [makeTask("t1", "Draft the memo")] });
+  const built = await planDayForChangeSet(fresh.deps, {});
+  assert.ok(built.ok && built.value.built);
+  const again = await planDayForChangeSet(fresh.deps, {});
+  assert.ok(again.ok && !again.value.built, "a Plan already exists");
+  const tight = harness({ tasks: [makeTask("t1", "Draft the memo", { estimatedDurationMinutes: 240 })], declareBudgetMinutes: 5 });
+  const none = await planDayForChangeSet(tight.deps, {});
+  assert.ok(none.ok && !none.value.built, "nothing fit");
 });

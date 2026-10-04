@@ -51,6 +51,7 @@ import { ruleChangeConfirmedCopy, ruleChangeDeclinedCopy, ruleValuesEqual } from
 import { parsePlanningFieldValue, PLANNING_FIELD_LABELS } from "../core/planning-field-value.ts";
 import { localIsoDate } from "../rituals/ritual-shared.ts";
 import { approveReshuffle, discardReshuffle, type ApproveReshuffleDeps } from "./approve-reshuffle.ts";
+import { changeSetIsStale } from "../core/chat-tools.ts";
 import { applyChangeSet, CHANGE_SET_PROPOSAL_KIND, type ApplyChangeSetDeps } from "./apply-change-set.ts";
 import type { CalendarEditProposal } from "./calendar-edit.ts";
 import type {
@@ -626,12 +627,26 @@ export async function confirmProposal(
       clearRequestIfGiven(deps.store, requestId);
       return missingDependency(proposal.kind, "changeSet");
     }
-    const applied = await applyChangeSet(deps.changeSet, { changeSet: proposal.suggested as ChangeSet });
+    // Valid only on the local day it was staged (host TZ): a later Approve writes nothing.
+    if (changeSetIsStale(proposal.createdAt, deps.changeSet.now(), deps.changeSet.timeZone)) {
+      clearRequestIfGiven(deps.store, requestId);
+      return { ok: false, error: { kind: "stale-proposal", message: "confirm-proposal: that change set was staged on an earlier day" } };
+    }
+    // Claim the request BEFORE the awaited writes, so a concurrent or retried Approve finds nothing open and gets a conflict.
     clearRequestIfGiven(deps.store, requestId);
+    const applied = await applyChangeSet(deps.changeSet, { changeSet: proposal.suggested as ChangeSet });
     if (!applied.ok) return applied;
     const done = applied.value.results.filter((r) => r.ok).map((r) => r.text);
     const failed = applied.value.results.filter((r) => !r.ok).map((r) => r.text);
-    if (deps.connection) deps.connection.writeTx((db) => appendOutboxInTx(db, { topic: PLAN_TOPIC, entityId: "" }));
+    if (deps.connection) {
+      const connection = deps.connection;
+      try {
+        connection.writeTx((db) => appendOutboxInTx(db, { topic: PLAN_TOPIC, entityId: "" }));
+      } catch (thrown) {
+        // The changes are already written; a lost hint must not lose the receipts.
+        writeStructuredLog({ level: "warn", event: "confirm-proposal.change-set-hint-failed", detail: thrown instanceof Error ? thrown.message : String(thrown) });
+      }
+    }
     return { ok: true, value: { applied: done.length > 0, receipts: done, ...(failed.length > 0 ? { message: failed.join("\n") } : {}) } };
   }
 

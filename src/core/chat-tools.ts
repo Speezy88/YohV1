@@ -5,7 +5,7 @@
  * definitions sent to the model, input checks, task totals, and the copy a
  * staged change set is shown with. No I/O.
  */
-import { localMinutesToIso } from "./local-time.ts";
+import { localIsoDate, localMinutesToIso } from "./local-time.ts";
 import type { ChangeSetItem, IsoDate, IsoDateTime, Task } from "../types/domain.ts";
 
 /** The most model calls one chat turn may make before the loop stops. */
@@ -209,8 +209,27 @@ export function describeChangeSetItem(item: ChangeSetItem, timeZone: string): st
   }
 }
 
-export function changeSetPrompt(items: readonly ChangeSetItem[], timeZone: string): string {
-  return ["Here's what I'd change:", ...items.map((i) => `- ${describeChangeSetItem(i, timeZone)}`), "Approve to apply all of it, or discard to change nothing."].join("\n");
+/** Closing line of a change set that replaces an earlier, unanswered one. */
+export const CHANGE_SET_REPLACES_NOTE = "This replaces the changes I suggested earlier, which are no longer pending.";
+
+/** Closing line when a write tool was refused this turn but other items were staged. */
+export const CHANGE_SET_PARTIAL_NOTE = "Some of what you asked for isn't in this list because I can't do it here.";
+
+/** Reply to a bare yes/no/approve/discard typed while a change set is open: the card is the only way to answer it. */
+export const CHANGE_SET_USE_CARD_REPLY = "Use Approve or Discard on the card above.";
+
+export function changeSetPrompt(
+  items: readonly ChangeSetItem[],
+  timeZone: string,
+  options: { readonly replacesEarlier?: boolean; readonly someRejected?: boolean } = {},
+): string {
+  return [
+    "Here's what I'd change:",
+    ...items.map((i) => `- ${describeChangeSetItem(i, timeZone)}`),
+    "Approve to apply all of it, or discard to change nothing.",
+    ...(options.someRejected ? [CHANGE_SET_PARTIAL_NOTE] : []),
+    ...(options.replacesEarlier ? [CHANGE_SET_REPLACES_NOTE] : []),
+  ].join("\n");
 }
 
 const isPlanStep = (item: ChangeSetItem): boolean => item.kind === "plan-day" || item.kind === "refit-plan";
@@ -225,6 +244,10 @@ export const NOTHING_CHANGED_NOTE = "Nothing has been changed.";
 const WRITE_VERBS = "added|moved|deleted|removed|created|scheduled|rescheduled|booked|saved|updated|marked|built|re-fit|refit|cancelled|canceled";
 const WRITE_CLAIM_PATTERNS: readonly RegExp[] = [
   /^\s*(done|all set)\b/i,
+  /\ball set\b/i,
+  /\bgone ahead and\b/i,
+  new RegExp(`(^|[.!?\\n])\\s*(${WRITE_VERBS})\\b`, "i"),
+  new RegExp(`\\b(was|were)\\s+(${WRITE_VERBS})\\b`, "i"),
   new RegExp(`\\b(i've|i have|i)\\s+(${WRITE_VERBS})\\b`, "i"),
   new RegExp(`\\b(has|have)\\s+been\\s+(${WRITE_VERBS})\\b`, "i"),
   /\b(is|are)\s+now\s+(on|in)\s+your\s+(calendar|tasks|plan)\b/i,
@@ -233,4 +256,10 @@ const WRITE_CLAIM_PATTERNS: readonly RegExp[] = [
 /** True when model prose says a change was made. With nothing staged, no change was. */
 export function claimsAWrite(text: string): boolean {
   return WRITE_CLAIM_PATTERNS.some((p) => p.test(text));
+}
+
+/** A change set is valid only on the local day (host time zone) it was staged. */
+export function changeSetIsStale(createdAt: string, now: Date, timeZone: string): boolean {
+  if (Number.isNaN(new Date(createdAt).getTime())) return true;
+  return localIsoDate(new Date(createdAt), timeZone) !== localIsoDate(now, timeZone);
 }

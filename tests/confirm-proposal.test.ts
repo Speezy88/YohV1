@@ -848,7 +848,7 @@ test("change-set: accept applies the items and returns one receipt per applied i
         editTaskField: async () => ({ ok: true, value: { receipt: "" } }),
         renameTask: async () => ({ ok: true, value: { receipt: "" } }),
         completeTask: async () => ({ ok: true, value: undefined }),
-        planDay: async () => ({ ok: true, value: { reply: "" } }),
+        planDay: async () => ({ ok: true, value: { reply: "", built: true } }),
         refitPlan: async () => ({ ok: true, value: { reply: "" } }),
     } },
     { proposal, accept: true },
@@ -886,7 +886,7 @@ test("change-set: a stale item is reported in plain copy and the rest still appl
         editTaskField: async () => ({ ok: true, value: { receipt: "" } }),
         renameTask: async () => ({ ok: true, value: { receipt: "" } }),
         completeTask: async () => ({ ok: true, value: undefined }),
-        planDay: async () => ({ ok: true, value: { reply: "" } }),
+        planDay: async () => ({ ok: true, value: { reply: "", built: true } }),
         refitPlan: async () => ({ ok: true, value: { reply: "" } }),
     } },
     { proposal, accept: true },
@@ -908,11 +908,29 @@ test("change-set: a malformed set returns the validation error, writes nothing, 
     suggested: { items: [{ kind: "complete-task", taskId: "t1", label: "Lab report" }, { kind: "nope" }] } };
   putOpenInteractionRequest(store, "cs4-request", { requestKind: "proposal", promptText: "x", detail: { proposal }, createdAt: NOW });
   const result = await confirmProposal(
-    { store, changeSet: { timeZone: "America/New_York", now: () => new Date(), applyCalendarEdit: never, createPage: never, editTaskField: never, renameTask: never, completeTask: never, planDay: never, refitPlan: never } },
+    { store, changeSet: { timeZone: "America/New_York", now: () => new Date("2026-10-03T16:00:00.000Z"), applyCalendarEdit: never, createPage: never, editTaskField: never, renameTask: never, completeTask: never, planDay: never, refitPlan: never } },
     { proposal, accept: true, requestId: "cs4-request" },
   );
   assert.equal(result.ok, false);
   if (!result.ok) assert.equal(result.error.kind, "validation");
   assert.equal(called, false);
   assert.equal(getOpenInteractionRequest(store, "cs4-request"), undefined);
+});
+
+test("change-set: a throw writing the Plan hint does not lose the receipts", async () => {
+  const store = tempStore();
+  const proposal = { id: "cs5", kind: "change-set", entityId: "chat", entityVersion: "", reason: "", createdAt: "2026-10-03T16:00:00.000Z",
+    suggested: { items: [{ kind: "complete-task", taskId: "t1", label: "Lab report" }] } };
+  const unused = async () => ({ ok: false as const, error: { kind: "validation" as const, message: "unused" } });
+  const result = await confirmProposal(
+    { store, connection: { writeTx: () => { throw new Error("db locked"); } } as never, changeSet: {
+        timeZone: "America/New_York", now: () => new Date("2026-10-03T16:00:00.000Z"),
+        applyCalendarEdit: unused, createPage: unused, editTaskField: unused, renameTask: unused,
+        completeTask: async () => ({ ok: true, value: undefined }),
+        planDay: unused, refitPlan: unused,
+    } },
+    { proposal, accept: true },
+  );
+  assert.equal(result.ok, true);
+  if (result.ok) assert.deepEqual(result.value.receipts, ['Marked "Lab report" done.']);
 });

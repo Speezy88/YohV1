@@ -4,6 +4,7 @@ import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { createMemoryStore, getPlan, listOpenInteractionRequests, putPlan, putTimeBudget } from "../src/adapters/memory-store.ts";
 import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
 import { localIsoDate } from "../src/rituals/ritual-shared.ts";
+import { errorCopy } from "../src/core/error-copy.ts";
 import { refitPlan } from "../src/app/refit-plan.ts";
 import type { ApproveReshuffleDeps } from "../src/app/approve-reshuffle.ts";
 import type { CalendarEvent, Plan, Task } from "../src/types/domain.ts";
@@ -64,6 +65,10 @@ test("refitPlan whose approve step recomputes (calendar changed) fails, writes n
   const s = setup(async () => (reads++ === 0 ? [] : [{ id: "e1", title: "New meeting", start: iso(90), end: iso(120), isAllDay: false } as unknown as CalendarEvent]));
   const result = await refitPlan(s.deps, {});
   assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.error.kind, "validation");
+    assert.equal(errorCopy(result.error), "Your Plan or Calendar changed while I was re-fitting, so I left the Plan as it was.");
+  }
   assert.equal(getPlan(s.store, s.today)!.data.version, 1);
   assert.equal(listOpenInteractionRequests(s.store).length, 0, "no stray reshuffle card beside the change-set outcome");
   s.store.close();

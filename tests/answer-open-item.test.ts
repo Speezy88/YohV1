@@ -356,3 +356,42 @@ test("answerOpenItem discarding a change-set proposal writes nothing", async () 
   assert.equal(getOpenInteractionRequest(store, "proposal:change-set-1"), undefined);
   store.close();
 });
+
+test("two concurrent approves of one change set apply the items once; the second gets a conflict", async () => {
+  const store = tempStore();
+  openChangeSet(store);
+  const completed: string[] = [];
+  const deps = changeSetDeps(store, completed);
+  const slow = { ...deps, changeSet: { ...deps.changeSet, completeTask: async (taskId: string) => { await new Promise((r) => setTimeout(r, 20)); completed.push(taskId); return { ok: true as const, value: undefined }; } } };
+  const input = { requestId: "proposal:change-set-1", questionId: "confirm", answer: "approve" };
+  const [a, b] = await Promise.all([answerOpenItem(slow, input), answerOpenItem(slow, input)]);
+  assert.deepEqual(completed, ["t1"]);
+  const kinds = [a, b].map((r) => (r.ok ? "ok" : r.error.kind)).sort();
+  assert.deepEqual(kinds, ["conflict", "ok"]);
+  store.close();
+});
+
+test("approving a change set staged on an earlier local day writes nothing and clears the card", async () => {
+  const store = tempStore();
+  openChangeSet(store);
+  const completed: string[] = [];
+  const deps = changeSetDeps(store, completed);
+  const nextDay = { ...deps, changeSet: { ...deps.changeSet, now: () => new Date("2026-08-23T18:00:00.000Z") } };
+  const result = await answerOpenItem(nextDay, { requestId: "proposal:change-set-1", questionId: "confirm", answer: "approve" });
+  assert.deepEqual(completed, []);
+  assert.equal(getOpenInteractionRequest(store, "proposal:change-set-1"), undefined);
+  if (result.ok) assert.match(result.value.message ?? "", /changed since I suggested it/);
+  store.close();
+});
+
+test("a change set staged late the previous evening is stale by local date, not by UTC date", async () => {
+  const store = tempStore();
+  openChangeSet(store); // createdAt 2026-08-22T12:00Z = 8 AM New York
+  const completed: string[] = [];
+  const deps = changeSetDeps(store, completed);
+  // 2026-08-23T03:00Z is still Aug 22 locally in New York: same local day, so it applies.
+  const sameLocalDay = { ...deps, changeSet: { ...deps.changeSet, now: () => new Date("2026-08-23T03:00:00.000Z") } };
+  await answerOpenItem(sameLocalDay, { requestId: "proposal:change-set-1", questionId: "confirm", answer: "approve" });
+  assert.deepEqual(completed, ["t1"]);
+  store.close();
+});

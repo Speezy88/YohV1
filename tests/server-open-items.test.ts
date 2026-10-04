@@ -176,7 +176,7 @@ test("POST /api/open-items/answer binds changeSet: approving a change-set propos
   putOpenInteractionRequest(store, "proposal:change-set-1", {
     requestKind: "proposal",
     promptText: 'Mark "Draft the memo" done?',
-    createdAt: "2026-09-26T12:00:00.000Z",
+    createdAt: new Date().toISOString(),
     detail: {
       proposal: {
         id: "change-set-1",
@@ -185,7 +185,7 @@ test("POST /api/open-items/answer binds changeSet: approving a change-set propos
         entityVersion: "new",
         suggested: { items: [{ kind: "complete-task", taskId: "t1", label: "Draft the memo" }] },
         reason: 'Mark "Draft the memo" done?',
-        createdAt: "2026-09-26T12:00:00.000Z",
+        createdAt: new Date().toISOString(),
       },
       cursor: { questionId: "confirm" },
     },

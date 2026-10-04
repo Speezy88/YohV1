@@ -16,7 +16,7 @@ function fakeDeps(overrides: Partial<ApplyChangeSetDeps> = {}) {
     editTaskField: async (id, field) => { log.push(`field:${id}:${field}`); return ok({ receipt: "Due Date set to Mon, Oct 5." }); },
     renameTask: async (id, title) => { log.push(`rename:${id}:${title}`); return ok({ receipt: `Renamed to "${title}".` }); },
     completeTask: async (id) => { log.push(`complete:${id}`); return ok(undefined); },
-    planDay: async () => { log.push("plan"); return ok({ reply: "2 Tasks scheduled across 5 blocks." }); },
+    planDay: async () => { log.push("plan"); return ok({ reply: "2 Tasks scheduled across 5 blocks.", built: true }); },
     refitPlan: async () => { log.push("refit"); return ok({ reply: "Moved 2 blocks." }); },
     ...overrides,
   };
@@ -36,6 +36,17 @@ test("applies every item, with the Plan step last, and returns one receipt each"
     assert.equal(result.value.results[0]!.text, 'Added "Workout" on Sat, Oct 3, 1:10 PM–2:50 PM.');
     assert.equal(result.value.results[2]!.text, "Built today's Plan. 2 Tasks scheduled across 5 blocks.");
   }
+});
+
+test("a plan-day that built nothing is a failed item carrying its own message", async () => {
+  const reply = "Nothing fit today's Time Budget — every Task got deferred.";
+  const { deps } = fakeDeps({ planDay: async () => ok({ reply, built: false }) });
+  const result = await applyChangeSet(deps, { changeSet: { items: [{ kind: "plan-day" }] } });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.value.results[0]!.ok, false);
+  assert.match(result.value.results[0]!.text, /Nothing fit today's Time Budget/);
+  assert.doesNotMatch(result.value.results[0]!.text, /Built today's Plan/);
 });
 
 test("a failed item does not stop the rest, and reports plain copy", async () => {

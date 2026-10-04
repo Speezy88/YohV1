@@ -16,7 +16,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { initRoutineStoreSchema } from "../src/adapters/routine-store.ts";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
-import { createMemoryStore, getCurrentTimeBudget, getPlan, putOpenInteractionRequest, putPlan, putTimeBudget, type MemoryStore } from "../src/adapters/memory-store.ts";
+import { createMemoryStore, getCurrentTimeBudget, getOpenInteractionRequest, getPlan, putOpenInteractionRequest, putPlan, putTimeBudget, type MemoryStore } from "../src/adapters/memory-store.ts";
 import { createChatStore, initChatStoreSchema, type ChatStore } from "../src/adapters/chat-store.ts";
 import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
 import { createMemoryItemStore, initMemoryItemStoreSchema } from "../src/adapters/memory-item-store.ts";
@@ -1537,4 +1537,26 @@ test("Story 13.13: /morning carries the day's Pattern question as `question`; a 
   assert.ok(second.ok);
   if (second.ok) assert.equal(second.value.question, undefined);
   connection.close();
+});
+
+test("a bare yes or discard while a change set is open points at the card: zero model calls, no write, not substantive", async () => {
+  const llmClient = makeFakeLlmClient();
+  const store = tempStore();
+  putOpenInteractionRequest(store, "proposal:cs", {
+    requestKind: "proposal",
+    promptText: "Here's what I'd change:",
+    detail: { proposal: { id: "cs", kind: "change-set", entityId: "chat", entityVersion: "", suggested: { items: [{ kind: "plan-day" }] }, reason: "r", createdAt: "2026-08-22T12:00:00.000Z" }, cursor: { questionId: "confirm" } },
+    createdAt: "2026-08-22T12:00:00.000Z",
+  });
+  const deps = baseDeps({ llmClient, store });
+  for (const message of ["yes", "Approve", "no", "discard"]) {
+    const result = await chatTurn(deps, { message });
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.equal(result.value.reply, "Use Approve or Discard on the card above.");
+    assert.equal(result.value.substantive, undefined);
+    assert.deepEqual(result.value.receipts, []);
+  }
+  assert.equal((llmClient as any).calls.length, 0);
+  assert.ok(getOpenInteractionRequest(store, "proposal:cs"), "the card stays open");
 });

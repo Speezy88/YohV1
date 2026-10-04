@@ -3,6 +3,9 @@ import assert from "node:assert/strict";
 import {
   CHAT_TOOLS,
   changeSetPrompt,
+  CHANGE_SET_PARTIAL_NOTE,
+  CHANGE_SET_REPLACES_NOTE,
+  CHANGE_SET_USE_CARD_REPLY,
   claimsAWrite,
   NOTHING_CHANGED_NOTE,
   describeChangeSetItem,
@@ -66,6 +69,15 @@ test("changeSetPrompt lists every item and asks once", () => {
   assert.equal(changeSetPrompt(items, TZ), "Here's what I'd change:\n- Build today's Plan\n- Mark \"Lab report\" done\nApprove to apply all of it, or discard to change nothing.");
 });
 
+test("changeSetPrompt closes with the replacement and partial notes when asked, replacement last", () => {
+  const items: ChangeSetItem[] = [{ kind: "plan-day" }];
+  const both = changeSetPrompt(items, TZ, { replacesEarlier: true, someRejected: true }).split("\n");
+  assert.equal(both.at(-1), CHANGE_SET_REPLACES_NOTE);
+  assert.equal(both.at(-2), CHANGE_SET_PARTIAL_NOTE);
+  assert.equal(changeSetPrompt(items, TZ, { someRejected: true }).split("\n").at(-1), CHANGE_SET_PARTIAL_NOTE);
+  assert.equal(CHANGE_SET_USE_CARD_REPLY, "Use Approve or Discard on the card above.");
+});
+
 test("orderForApply moves the Plan step last and keeps the rest in staged order", () => {
   const items: ChangeSetItem[] = [
     { kind: "refit-plan" },
@@ -101,6 +113,12 @@ test("claimsAWrite catches claims that something was changed", () => {
     "The tasks have been updated.",
     "Both are now in your plan.",
     "The event is now on your calendar.",
+    "Added the workout to your calendar.",
+    "Sure. Moved your dentist visit to 3 PM.",
+    "You're all set.",
+    "The event was created.",
+    "Both tasks were updated.",
+    "I've gone ahead and put it on your calendar.",
   ]) {
     assert.equal(claimsAWrite(text), true, text);
   }
@@ -114,6 +132,10 @@ test("claimsAWrite lets honest answers through", () => {
     "I've staged the workout for your approval.",
     "Dinner is on your calendar at 6:00 PM.",
     "Undone items remain.",
+    "Do you want me to add the workout?",
+    "I can't delete that event.",
+    "Napoleon was born in Corsica.",
+    "Was the event created by you?",
   ]) {
     assert.equal(claimsAWrite(text), false, text);
   }

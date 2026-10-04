@@ -35,7 +35,7 @@ export interface ApplyChangeSetDeps {
   /** `app/check-off.ts`'s `checkOff`, pre-bound: keeps the Completion Log entry and the undo window. */
   readonly completeTask: (taskId: string) => Promise<Result<unknown, YohError>>;
   /** `app/plan-day.ts`'s `planDay`, pre-bound. */
-  readonly planDay: () => Promise<Result<{ readonly reply: string }, YohError>>;
+  readonly planDay: () => Promise<Result<{ readonly reply: string; readonly built: boolean }, YohError>>;
   /** `requestReshuffle({kind:"reflow-now"})` then `approveReshuffle`, pre-bound. */
   readonly refitPlan: () => Promise<Result<{ readonly reply: string }, YohError>>;
 }
@@ -114,7 +114,10 @@ async function applyItem(deps: ApplyChangeSetDeps, item: ChangeSetItem): Promise
     }
     case "plan-day": {
       const r = await deps.planDay();
-      return r.ok ? { ok: true, value: r.value.reply } : r;
+      if (!r.ok) return r;
+      // An ok planDay that built nothing (a Plan already exists, nothing fits) is a failed item carrying its own message.
+      if (!r.value.built) return { ok: false, error: { kind: "validation", message: r.value.reply } };
+      return { ok: true, value: r.value.reply };
     }
     case "refit-plan": {
       const r = await deps.refitPlan();

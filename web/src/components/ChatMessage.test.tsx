@@ -259,4 +259,26 @@ describe("ChatMessage rating prompt (Story 13.11)", () => {
     expect(screen.getByRole("button", { name: "Approve" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Discard" })).toBeInTheDocument();
   });
+
+  it("a change-set question with the replacement line keeps it as card text, not a list item", () => {
+    const note = "This replaces the changes I suggested earlier, which are no longer pending.";
+    const text = ["Here's what I'd change:", "- Build today's Plan", "Approve to apply all of it, or discard to change nothing.", note].join("\n");
+    render(
+      <ChatMessage
+        message={msg({
+          text: "",
+          question: {
+            requestId: "proposal:cs2",
+            questionId: "confirm",
+            text,
+            options: [{ label: "Approve", value: "approve" }, { label: "Discard", value: "discard" }],
+            allowsFreeText: false,
+            proposal: { id: "cs2", kind: "change-set", entityId: "chat", entityVersion: "", suggested: { items: [] }, reason: text, createdAt: "2026-10-03T00:00:00.000Z" },
+          },
+        })}
+      />,
+    );
+    expect(screen.getAllByRole("listitem")).toHaveLength(1);
+    expect(screen.getByText(/This replaces the changes I suggested earlier/)).toBeInTheDocument();
+  });
 });
