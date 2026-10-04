@@ -19,6 +19,7 @@ import {
   NIGHT_CLOSE_OUT_REQUEST_ID,
   type NightCloseOutRequestDetail,
 } from "../rituals/night-ritual.ts";
+import { buildNightCloseOutAnythingElseQuestion } from "../core/open-item-questions.ts";
 import { localIsoDate } from "../rituals/ritual-shared.ts";
 import { surfaceOpenItems, type SurfaceOpenItemsDeps } from "./surface-open-items.ts";
 import type { ChatTurnResponse } from "../types/api.ts";
@@ -56,7 +57,14 @@ export async function startNightCloseOut(deps: NightCloseOutDeps, _input: Record
 
     const tasks = collectNightCloseOutTasks(plan.data, completedToday);
     if (tasks.length === 0) {
-      return { ok: true, value: { reply: "Nothing to close out — every Task from today's Plan is already accounted for.", receipts: [] } };
+      return {
+        ok: true,
+        value: {
+          reply: "Nothing to close out — every Task from today's Plan is already accounted for.",
+          receipts: [],
+          question: buildNightCloseOutAnythingElseQuestion(NIGHT_CLOSE_OUT_REQUEST_ID),
+        },
+      };
     }
 
     const request: InteractionRequest<NightCloseOutRequestDetail> = {
@@ -75,7 +83,7 @@ export async function startNightCloseOut(deps: NightCloseOutDeps, _input: Record
     // A genuine, narrow race: the request was answered/cleared between the
     // check above and this read. Report plainly rather than throw — the
     // next `/night` (or the ritual) tries again.
-    return { ok: true, value: { reply: "Tonight's close-out is already handled.", receipts: [] } };
+    return { ok: true, value: { reply: "Tonight's close-out is already handled.", receipts: [], question: buildNightCloseOutAnythingElseQuestion(NIGHT_CLOSE_OUT_REQUEST_ID) } };
   }
   return { ok: true, value: { reply: "", receipts: [], question: item.question } };
 }
