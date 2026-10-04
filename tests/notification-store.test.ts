@@ -287,3 +287,12 @@ test("pruneOutbox does nothing when there are no more rows than it keeps, or the
   assert.equal(tailOutboxSince(connection, 0).length, 3);
   connection.close();
 });
+
+test("pruneOutbox never deletes the newest row, whatever keep it is given", () => {
+  const connection = tempStore();
+  appendHints(connection, 3);
+  assert.equal(pruneOutbox(connection, { keep: 0 }), 2);
+  assert.equal(pruneOutbox(connection, { keep: -5 }), 0);
+  assert.deepEqual(tailOutboxSince(connection, 0).map((h) => h.seq), [3]);
+  connection.close();
+});

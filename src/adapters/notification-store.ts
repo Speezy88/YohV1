@@ -150,7 +150,7 @@ export const OUTBOX_KEEP_ROWS = 10_000;
  */
 export function pruneOutbox(connection: SqliteConnection, options: { readonly keep: number }): number {
   return connection.writeTx(
-    (db) => db.prepare<{ keep: number }>(`DELETE FROM outbox WHERE seq <= (SELECT COALESCE(MAX(seq), 0) FROM outbox) - @keep`).run({ keep: options.keep }).changes,
+    (db) => db.prepare<{ keep: number }>(`DELETE FROM outbox WHERE seq <= (SELECT COALESCE(MAX(seq), 0) FROM outbox) - @keep`).run({ keep: Math.max(1, Math.floor(options.keep)) }).changes,
   );
 }
 

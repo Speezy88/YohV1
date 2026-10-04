@@ -584,8 +584,9 @@ export async function confirmProposal(
       // first).
       return { ok: false, error: { kind: "validation", message: reparsed.message } };
     }
-    const written = await deps.updateTaskField(suggestion.taskId, suggestion.field, reparsed.value as NonNullable<Task[PlanningFieldNames]>);
+    // Claim the request BEFORE the awaited write, so a repeated Yes cannot write twice.
     clearRequestIfGiven(deps.store, requestId);
+    const written = await deps.updateTaskField(suggestion.taskId, suggestion.field, reparsed.value as NonNullable<Task[PlanningFieldNames]>);
     if (!written.ok) return written;
     mergeTaskFieldOverride(deps.store, suggestion.taskId, { [suggestion.field]: reparsed.value } as TaskFieldOverride);
     // Important fix: restores the exact receipt wording `answer-data-

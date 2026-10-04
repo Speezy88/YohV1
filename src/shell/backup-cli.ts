@@ -19,6 +19,7 @@
 import { mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { openSqliteConnection } from "../adapters/sqlite.ts";
 import { loadPushoverConfigFromEnv, sendPushoverNotification } from "../adapters/notification-adapter.ts";
+import { writeStructuredLog } from "../adapters/logger.ts";
 import { createNotification, initNotificationStoreSchema, OUTBOX_KEEP_ROWS, pruneOutbox } from "../adapters/notification-store.ts";
 
 export type BackupResult = { readonly ok: true; readonly path: string } | { readonly ok: false; readonly message: string };
@@ -47,13 +48,13 @@ function pruneAfterBackup(connection: ReturnType<typeof openSqliteConnection>, t
   try {
     pruneBackups(targetDir, BACKUP_KEEP_COUNT, justWritten);
   } catch (err) {
-    process.stderr.write(`backup-cli: could not prune old backups — ${err instanceof Error ? err.message : String(err)}\n`);
+    writeStructuredLog({ level: "error", event: "backup-cli.prune-backups-failed", detail: { message: err instanceof Error ? err.message : String(err) } });
   }
   try {
     const hasOutbox = connection.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'outbox'").get() !== undefined;
     if (hasOutbox) pruneOutbox(connection, { keep: OUTBOX_KEEP_ROWS });
   } catch (err) {
-    process.stderr.write(`backup-cli: could not prune the outbox — ${err instanceof Error ? err.message : String(err)}\n`);
+    writeStructuredLog({ level: "error", event: "backup-cli.prune-outbox-failed", detail: { message: err instanceof Error ? err.message : String(err) } });
   }
 }
 

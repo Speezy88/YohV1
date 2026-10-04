@@ -481,3 +481,26 @@ test("a failed notion-page-draft or calendar-edit write closes the card and tell
   assert.equal(getOpenInteractionRequest(store, "calendar-edit-proposal"), undefined);
   store.close();
 });
+
+test("two concurrent Yes answers to one field-value proposal write the field once; the second gets a conflict", async () => {
+  const store = tempStore();
+  putOpenInteractionRequest(store, "field-value-proposal", {
+    requestKind: "proposal",
+    promptText: "Set Estimated Duration to 30?",
+    detail: {
+      proposal: {
+        id: "field-value-1", kind: "field-value", entityId: "t1", entityVersion: "v1",
+        suggested: { taskId: "t1", taskTitle: "Call dentist", field: "estimatedDurationMinutes", value: 30 },
+        reason: "You said about half an hour.", createdAt: "2026-09-27T12:00:00.000Z",
+      },
+    },
+    createdAt: "2026-09-27T12:00:00.000Z",
+  });
+  let written = 0;
+  const deps = { ...fullDeps(store), updateTaskField: async () => { await laterTick(); written += 1; return { ok: true as const, value: undefined }; } };
+  const input = { requestId: "field-value-proposal", questionId: "confirm", answer: "yes" };
+  const [a, b] = await Promise.all([answerOpenItem(deps, input), answerOpenItem(deps, input)]);
+  assert.equal(written, 1);
+  assert.deepEqual([a, b].map((r) => (r.ok ? "ok" : r.error.kind)).sort(), ["conflict", "ok"]);
+  store.close();
+});

@@ -41,12 +41,14 @@ write tool call → the tool is not staged; truncated text → note appended.
 **Problem.** Three places put `err.message` in user-facing text:
 `getCalendarApplyBinding` in `src/shell/server.ts`; the `catch` in
 `web/src/lib/timeBudget.ts`; the ritual failure alert body in
-`src/shell/ritual-cli.ts` (thrown-error branch). And `onError` in `server.ts`
+`src/shell/ritual-cli.ts` (thrown-error branch — left as it is: the alert is
+Spencer's own operator alert, and relaying the message is a documented,
+tested choice in `buildFailedAlertBody`). And `onError` in `server.ts`
 answers every 400 `HTTPException` with the "isn't valid JSON" copy.
 
-**Change.** `server.ts` and `ritual-cli.ts` use `errorCopyForThrown` and keep
-the raw message in the log line only. `timeBudget.ts` returns fixed copy
-("Couldn't reach Yoh. Try again."; web cannot import `core/`). `onError` uses
+**Change.** `server.ts` uses `errorCopyForThrown`. `timeBudget.ts` returns
+the fixed copy `checkOff.ts` already uses ("Couldn't reach Yoh — try again.";
+web cannot import `core/`). `onError` uses
 the JSON copy only when the exception is a JSON parse failure; other 400s get
 "That request isn't valid."
 
@@ -67,17 +69,11 @@ under `src/rituals/` the write names appear only as `setTaskStatus` in
 `night-ritual.ts` (an explicit allowlist of one, so a second write fails the
 test).
 
-## Task 4 — Routine changes tell the web
+## Task 4 — Routine changes tell the web (dropped)
 
-**Problem.** `upsertRoutine` / `removeRoutine` (`src/adapters/routine-store.ts`)
-write without an outbox row, so an open Home does not refresh.
-
-**Change.** Both append `appendOutboxInTx(db, { topic: PLAN_TOPIC, entityId })`
-in the same `writeTx` (remove: only when a row was deleted).
-
-**Tests first** (`tests/routine-store.test.ts`): outbox row count goes up by
-one per upsert and per successful remove, and not for a remove that finds
-nothing.
+Not built. A routine change shows only in its chat reply: no page reads the
+routines table, and the stored Plan does not change until a re-fit, which
+already appends its own `plan` row. An outbox row here would refresh nothing.
 
 ## Task 5 — A failed extra-calendar read is retried once
 
@@ -100,7 +96,8 @@ succeeds → events included, no warn; both throw → omitted, one warn.
 - `backup-cli.ts`: prune failures go through `logger.ts`.
 - `syncPlanFromCalendar`: log `plan-sync.missing-unconfirmed` (warn) when a
   missing event is not confirmed deleted.
-- `readDeletedYohPlanEventIds`: follow `nextPageToken`.
+- `readDeletedYohPlanEventIds` paging: not built. The read is one day of the
+  Yoh Plan calendar; it cannot approach 250 events.
 
 One test each, next to the existing tests for that function.
 

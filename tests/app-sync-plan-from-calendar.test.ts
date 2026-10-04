@@ -403,8 +403,10 @@ test("one event missing but not confirmed deleted by Google: unchanged, nothing 
 test("one event missing and the deleted-events read fails: unchanged, nothing dropped", async () => {
   const s = setup();
   s.setEvents([laterEv()]);
-  s.deps = { ...s.deps, readDeletedYohPlanEventIds: async () => { throw new Error("google down"); } };
+  const logged: string[] = [];
+  s.deps = { ...s.deps, log: (entry) => logged.push(entry.event), readDeletedYohPlanEventIds: async () => { throw new Error("google down"); } };
   assert.deepEqual(await syncPlanFromCalendar(s.deps, {}), { ok: true, value: { status: "unchanged" } });
+  assert.deepEqual(logged, ["plan-sync.missing-unconfirmed"]);
   assert.deepEqual(listDayDrops(s.connection.db, s.today), []);
   s.store.close();
 });
