@@ -52,6 +52,13 @@ answer on the Bklit finding below. Tasks 6–7 (feeds) wait for his choice of pr
   - Spend: header `Claude API spend this month`, `${x.xx}`, caption `Estimated from recorded calls.`; with unpriced calls add `{n} calls not priced.`
   - Load failure: `Couldn't load Desk.` + `Try again`.
 
+Added during the build (2026-10-04):
+- **E12-R10** "Nothing left to ask" counts whenever the day's Plan has no unfinished Task when night-prompt or `/night` runs, including a Plan with no Task blocks.
+- **E12-R11** A close-out for date D that finishes with a skip removes D's `night-close-out-done` record if one exists (an early `/night` no longer fixes the day as done).
+- **E12-R12 News sources (Spencer: free publisher RSS, "choose the best source").** NPR Business `https://feeds.npr.org/1006/rss.xml` and TechCrunch AI `https://techcrunch.com/category/artificial-intelligence/feed/`. The newest 4 from each, merged newest first, each with its source name and a link out; title, link and time only. Neither publisher's full terms page was read; NPR's feed carries "For Personal Use Only".
+- **Spencer, 2026-10-04:** keep Bklit and patch the copied cell code for keyboard focus, labels and a tooltip on focus; crypto = Kraken public ticker; weather = NWS `api.weather.gov`.
+- **Open with Spencer:** a close-out answered after midnight stamps the completion with the answer time (pre-existing; review I2); any API request counts as an activity day, so a tab left open counts as "opened" (review M1).
+
 ## Task 1: Planning-doc amendments (coordinator, inline)
 
 Amend in place with a dated note, under `_bmad-output/planning-artifacts/`:
@@ -87,13 +94,13 @@ Tests: Vitest for `web/src/lib/desk.ts` and the page (each widget's value, the z
 
 **Commit:** `feat(web): Desk shows completed Tasks, time worked, on-time rate, streak and Claude spend`
 
-## Task 5: Usage Heatmap (Story 12.2) — waits for Spencer's Bklit answer
+## Task 5: Usage Heatmap (Story 12.2) — Spencer keeps Bklit, patched (2026-10-04)
 
-Outline if he keeps Bklit: add the `@/` alias and `components.json`; add `@bklit/heatmap-chart`; map `--chart-*` and the five `levelColors` to `tokens.css` (`accent-solid` at four stepped opacities plus the rimmed empty step); `animate={!reducedMotion}`; make each cell focusable with a label (`{date}: {n} Tasks completed`) and show the tooltip on focus; legend; horizontal scroll region with `data-wheel-nav="off"`. Remove the unused pattern preset color and the `zinc-*` loading label. Vitest + Playwright (keyboard reaches a cell and shows its tooltip; axe; computed style for the five levels). Then the UX amendment from Task 1.
+Outline: add the `@/` alias and `components.json`; add `@bklit/heatmap-chart`; map `--chart-*` and the five `levelColors` to `tokens.css` (`accent-solid` at four stepped opacities plus the rimmed empty step); `animate={!reducedMotion}`; make each cell focusable with a label (`{date}: {n} Tasks completed`) and show the tooltip on focus; legend; horizontal scroll region with `data-wheel-nav="off"`. Remove the unused pattern preset color and the `zinc-*` loading label. Vitest + Playwright (keyboard reaches a cell and shows its tooltip; axe; computed style for the five levels). Then the UX amendment from Task 1.
 
-## Tasks 6–7: Feeds (Stories 12.3, 12.4) — wait for Spencer's choice of providers
+## Tasks 6–7: Feeds (Stories 12.3, 12.4) — providers chosen (2026-10-04)
 
-The provider research is in the ledger folder (`feed-providers.md`). After he picks: Task 6 = `adapters/crypto-feed.ts` + the ticker widget; Task 7 = `adapters/weather-feed.ts`, `adapters/news-feed.ts` + their widgets. Each adapter keeps its own cache and last-good value, never throws, and takes no argument that could carry Task, Calendar or usage data (AD-22). Rulings for these are written when the providers are known.
+Kraken public ticker, NWS (needs a `User-Agent`; cache the grid lookup), and the two RSS feeds of E12-R12. The provider research is in the ledger folder (`feed-providers.md`); the Kraken and NWS terms pages were not read, only their API docs. Task 6 = `adapters/crypto-feed.ts` + the ticker widget; Task 7 = `adapters/weather-feed.ts`, `adapters/news-feed.ts` + their widgets. Each adapter keeps its own cache and last-good value, never throws, and takes no argument that could carry Task, Calendar or usage data (AD-22). Rulings for these are written when the providers are known.
 
 ## Review and gate
 Per-task Sonnet review for Task 2. One Opus whole-branch review after Task 4 (and again after the last of Tasks 5–7 if they land later), a fix round, a Sonnet re-review of the fixes. Gate: `npm run check` and `cd web && npx playwright test`.
