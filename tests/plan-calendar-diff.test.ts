@@ -142,3 +142,25 @@ test("a deleted block whose id left the Plan falls back to the Task title, else 
   assert.deepEqual(diffPlanCalendar({ ...base, taskTitles: new Map([["raw-notion-id", "Write"]]) }).changedTitles, ["Write"]);
   assert.deepEqual(diffPlanCalendar(base).changedTitles, ["a block"]);
 });
+
+// A missing event counts as Spencer's deletion only when its id is in `confirmedDeletedEventIds` (when given).
+const runConfirmed = (snapshot: PlanCalendarSnapshotEntry[], events: YohPlanEvent[], confirmed: string[]) =>
+  diffPlanCalendar({ snapshot, events, planBlocks: [], now: NOW.toISOString(), date: DATE, confirmedDeletedEventIds: new Set(confirmed) });
+
+test("a missing event that is not confirmed deleted is treated as unchanged", () => {
+  const r = runConfirmed([work("e1", "t1", 30, 60), work("e2", "t2", 90, 120)], [ev("e2", 90, 120, "b-e2")], []);
+  assert.equal(r.changed, false);
+  assert.deepEqual(r.drops, []);
+  assert.deepEqual(r.changedTitles, []);
+});
+
+test("a missing event that is confirmed deleted drops the Task", () => {
+  const r = runConfirmed([work("e1", "t1", 30, 60), work("e2", "t2", 90, 120)], [ev("e2", 90, 120, "b-e2")], ["e1"]);
+  assert.deepEqual(r.drops, ["t1"]);
+  assert.equal(r.changed, true);
+});
+
+test("a split Task with one block missing but unconfirmed and the other moved keeps both lengths in the pin", () => {
+  const r = runConfirmed([work("e1", "t1", 30, 60), work("e2", "t1", 90, 120)], [ev("e2", 150, 180, "b-e2")], []);
+  assert.deepEqual(r.taskPins, [{ taskId: "t1", start: iso(30), durationMinutes: 60 }]);
+});

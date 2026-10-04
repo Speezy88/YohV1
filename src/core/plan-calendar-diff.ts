@@ -15,6 +15,12 @@ export interface PlanCalendarDiffInput {
   readonly date: IsoDate;
   /** Task titles, for a deleted block whose id is no longer in `planBlocks`. */
   readonly taskTitles?: ReadonlyMap<ExternalId, string>;
+  /**
+   * Event ids Google reports as deleted. When given, a snapshot entry missing from `events` counts as
+   * Spencer's deletion only if its id is here; any other missing entry is treated as unchanged (a read
+   * that lagged or omitted it). When absent, every missing entry counts as deleted.
+   */
+  readonly confirmedDeletedEventIds?: ReadonlySet<string>;
 }
 
 export interface PlanCalendarDiff {
@@ -32,6 +38,10 @@ const MINUTE_MS = 60_000;
 export function diffPlanCalendar(input: PlanCalendarDiffInput): PlanCalendarDiff {
   const nowMs = Date.parse(input.now);
   const eventById = new Map(input.events.map((e) => [e.eventId, e]));
+  // A missing entry that is not confirmed deleted stands in as an event still at its snapshot time.
+  const confirmed = input.confirmedDeletedEventIds;
+  const eventFor = (s: PlanCalendarSnapshotEntry): YohPlanEvent | undefined =>
+    eventById.get(s.eventId) ?? (confirmed === undefined || confirmed.has(s.eventId) ? undefined : { eventId: s.eventId, blockId: s.blockId, title: "", start: s.start, end: s.end });
   const labelByBlock = new Map(input.planBlocks.map((b) => [b.id, b.label]));
   const future = input.snapshot.filter((s) => Date.parse(s.end) > nowMs);
 
@@ -53,7 +63,7 @@ export function diffPlanCalendar(input: PlanCalendarDiffInput): PlanCalendarDiff
     let changed = false;
     const remaining: YohPlanEvent[] = [];
     for (const s of entries) {
-      const e = eventById.get(s.eventId);
+      const e = eventFor(s);
       if (e === undefined) {
         changed = true;
         noteTitle(labelByBlock.get(s.blockId) ?? input.taskTitles?.get(taskId) ?? "a block");
@@ -80,7 +90,7 @@ export function diffPlanCalendar(input: PlanCalendarDiffInput): PlanCalendarDiff
   const routinePins: { routineId: string; start: IsoDateTime }[] = [];
   for (const s of future) {
     if (s.kind !== "routine" || s.routineId === undefined) continue;
-    const e = eventById.get(s.eventId);
+    const e = eventFor(s);
     if (e === undefined || Date.parse(e.start) === Date.parse(s.start)) continue;
     routinePins.push({ routineId: s.routineId, start: new Date(e.start).toISOString() });
     noteTitle(e.title);

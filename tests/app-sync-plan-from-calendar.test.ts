@@ -162,6 +162,7 @@ test("resized event: the new length is honored", async () => {
 test("deleted event: the Task is dropped for today and nothing is written to Notion", async () => {
   const s = setup();
   s.setEvents([laterEv()]);
+  s.setDeletedIds(["ev-v1-work-1"]); // Google confirms the deletion
   const r = await syncPlanFromCalendar(s.deps, {});
   assert.ok(r.ok && r.value.status === "applied");
   assert.deepEqual(t2Blocks(s), []);
@@ -232,6 +233,7 @@ test("delete then sync twice: the second sync is unchanged even when the snapsho
   const s = setup();
   s.keepStale();
   s.setEvents([laterEv()]);
+  s.setDeletedIds(["ev-v1-work-1"]); // Google confirms the deletion
   assert.equal((await syncPlanFromCalendar(s.deps, {}) as { ok: true; value: { status: string } }).value.status, "applied");
   const second = await syncPlanFromCalendar(s.deps, {});
   assert.deepEqual(second, { ok: true, value: { status: "unchanged" } });
@@ -270,6 +272,7 @@ test("a dropped Task's stored pin is removed too", async () => {
   const s = setup();
   s.connection.writeTx((db) => replaceDayPinsAndDropsInTx(db, s.today, [{ date: s.today, subject: { kind: "task", taskId: "t2" }, start: iso(30) }], []));
   s.setEvents([laterEv()]);
+  s.setDeletedIds(["ev-v1-work-1"]); // Google confirms the deletion
   const r = await syncPlanFromCalendar(s.deps, {});
   assert.ok(r.ok && r.value.status === "applied");
   assert.deepEqual(listDayPins(s.connection.db, s.today), []);
@@ -283,6 +286,7 @@ test("a write in flight (fresh writing_since): unchanged, and the calendar is no
   s.setWriteState({ writingSince: new Date(NOW.getTime() - 60_000).toISOString() });
   assert.deepEqual(await syncPlanFromCalendar(s.deps, {}), { ok: true, value: { status: "unchanged" } });
   assert.equal(s.eventReads(), 0);
+  assert.equal(s.written.length, 0);
   assert.equal(getPlan(s.store, s.today)!.data.version, 1);
   s.store.close();
 });
@@ -365,6 +369,7 @@ test("a deleted block whose id left the Plan shows its Task title, never a raw i
     { eventId: "ev-v1-work-2", blockId: "v1-work-2", kind: "work", taskId: "t4", start: iso(200), end: iso(230) },
   ]));
   s.setEvents([{ eventId: "ev-v1-work-2", blockId: "v1-work-2", title: "Later", start: iso(200), end: iso(230) }]);
+  s.setDeletedIds(["ev-old"]);
   const r = await syncPlanFromCalendar(s.deps, {});
   assert.ok(r.ok && r.value.status === "applied");
   const body = notifications(s.connection)[0]!.body;
@@ -382,5 +387,35 @@ test("a write that lands during the read: unchanged", async () => {
   assert.equal(getPlan(s.store, s.today)!.data.version, 1);
   s.setWriteState({ writingSince: NOW_ISO });
   s.onRead(() => {});
+  s.store.close();
+});
+
+test("one event missing but not confirmed deleted by Google: unchanged, nothing dropped", async () => {
+  const s = setup();
+  s.setEvents([laterEv()]);
+  assert.deepEqual(await syncPlanFromCalendar(s.deps, {}), { ok: true, value: { status: "unchanged" } });
+  assert.deepEqual(listDayDrops(s.connection.db, s.today), []);
+  assert.equal(getPlan(s.store, s.today)!.data.version, 1);
+  assert.equal(s.written.length, 0);
+  s.store.close();
+});
+
+test("one event missing and the deleted-events read fails: unchanged, nothing dropped", async () => {
+  const s = setup();
+  s.setEvents([laterEv()]);
+  s.deps = { ...s.deps, readDeletedYohPlanEventIds: async () => { throw new Error("google down"); } };
+  assert.deepEqual(await syncPlanFromCalendar(s.deps, {}), { ok: true, value: { status: "unchanged" } });
+  assert.deepEqual(listDayDrops(s.connection.db, s.today), []);
+  s.store.close();
+});
+
+test("nothing missing: the deleted-events read is not made", async () => {
+  const s = setup();
+  let reads = 0;
+  s.deps = { ...s.deps, readDeletedYohPlanEventIds: async () => { reads += 1; return []; } };
+  s.setEvents([evOf(s, 120, 150), laterEv()]);
+  const r = await syncPlanFromCalendar(s.deps, {});
+  assert.ok(r.ok && r.value.status === "applied");
+  assert.equal(reads, 0);
   s.store.close();
 });

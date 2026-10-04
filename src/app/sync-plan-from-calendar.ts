@@ -110,20 +110,23 @@ export async function syncPlanFromCalendar(
   // Snapshot has future work but the calendar has no Yoh events at all: a mass deletion only when Google
   // confirms every missing event as deleted; otherwise a read anomaly.
   const future = snapshot.filter((s) => Date.parse(s.end) > nowMs);
-  if (!events.some((e) => e.blockId !== undefined) && future.length > 0) {
-    let deleted: ReadonlySet<string> = new Set();
+  // A snapshot entry missing from the read is Spencer's deletion only when Google lists it as deleted;
+  // a list that lags an insert or omits one event must not drop a Task.
+  const presentIds = new Set(events.map((e) => e.eventId));
+  let deleted: ReadonlySet<string> = new Set();
+  if (future.some((s) => !presentIds.has(s.eventId))) {
     try {
       deleted = new Set((await deps.readDeletedYohPlanEventIds?.()) ?? []);
     } catch {
       // Treated as unconfirmed.
     }
-    if (!future.every((s) => deleted.has(s.eventId))) {
-      deps.log?.({ level: "warn", event: "plan-sync.no-tagged-events", detail: { date: today, snapshotEntries: snapshot.length } });
-      return { ok: true, value: { status: "unchanged" } };
-    }
+  }
+  if (!events.some((e) => e.blockId !== undefined) && future.length > 0 && !future.every((s) => deleted.has(s.eventId))) {
+    deps.log?.({ level: "warn", event: "plan-sync.no-tagged-events", detail: { date: today, snapshotEntries: snapshot.length } });
+    return { ok: true, value: { status: "unchanged" } };
   }
 
-  const diff = diffPlanCalendar({ snapshot, events, planBlocks: plan.blocks, now: nowDate.toISOString(), date: today });
+  const diff = diffPlanCalendar({ snapshot, events, planBlocks: plan.blocks, now: nowDate.toISOString(), date: today, confirmedDeletedEventIds: deleted });
   if (!diff.changed) return { ok: true, value: { status: "unchanged" } };
 
   // Merge the new pins and drops into the day's stored ones.
@@ -156,7 +159,7 @@ export async function syncPlanFromCalendar(
   const blockById = new Map(blocks.map((b) => [b.id, b]));
   const movedTitles = blockDiff.movedBlockIds.map((id) => blockById.get(id)?.label ?? id);
   const deferredTitles = refit.deferredTaskIds.map((id) => titleOf.get(id) ?? id);
-  const changedTitles = diffPlanCalendar({ snapshot, events, planBlocks: plan.blocks, now: nowDate.toISOString(), date: today, taskTitles: titleOf }).changedTitles;
+  const changedTitles = diffPlanCalendar({ snapshot, events, planBlocks: plan.blocks, now: nowDate.toISOString(), date: today, taskTitles: titleOf, confirmedDeletedEventIds: deleted }).changedTitles;
   const summary = [
     ...(changedTitles.length > 0 ? [`You changed ${changedTitles.slice(0, 3).join(", ")}${changedTitles.length > 3 ? `, +${changedTitles.length - 3} more` : ""}.`] : []),
     ...released.map((r) => `Unpinned ${r.title} — ${r.reason}.`),
