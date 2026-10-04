@@ -44,6 +44,8 @@ const TASKS: Task[] = [
   task("nodate", { title: "College essay brainstorm", area: "Math" }),
 ];
 
+const OPEN_COUNT = TASKS.filter((t) => t.status !== "completed").length;
+
 function deps(overrides: Partial<TasksViewDeps> = {}): TasksViewDeps {
   return {
     readTasks: async () => TASKS,
@@ -54,7 +56,7 @@ function deps(overrides: Partial<TasksViewDeps> = {}): TasksViewDeps {
   };
 }
 
-test("default grouping is Due: Overdue, Today, This week, Later, No date, then completed past-due Tasks last", async () => {
+test("default grouping is Due: Overdue, Today, This week, Later, No date, with completed Tasks left out", async () => {
   const result = await listTasks(deps(), {});
   assert.ok(result.ok);
   assert.equal(result.value.today, "2026-09-27");
@@ -63,23 +65,23 @@ test("default grouping is Due: Overdue, Today, This week, Later, No date, then c
     result.value.groups.map((g) => [g.key, g.label, g.tone, g.tasks.map((t) => t.id)]),
     [
       ["overdue", "Overdue", "danger", ["overdue"]],
-      ["today", "Today", "accent", ["today-b", "today-done"]],
+      ["today", "Today", "accent", ["today-b"]],
       ["this-week", "This week", "neutral", ["week"]],
       ["later", "Later", "neutral", ["later"]],
       ["no-date", "No date", "neutral", ["nodate"]],
-      ["done-earlier", "Done earlier", "neutral", ["done-late"]],
     ],
   );
 });
 
-test("every Task is listed, completed ones included (FR-43), and total counts them all", async () => {
-  const result = await listTasks(deps(), {});
-  assert.ok(result.ok);
-  assert.equal(result.value.total, TASKS.length);
-  assert.equal(
-    result.value.groups.reduce((n, g) => n + g.tasks.length, 0),
-    TASKS.length,
-  );
+test("completed Tasks are left out of every grouping, and total counts only the open ones", async () => {
+  for (const groupBy of ["due", "area", "status", "priority"] as const) {
+    const result = await listTasks(deps(), { groupBy });
+    assert.ok(result.ok);
+    const ids = result.value.groups.flatMap((g) => g.tasks.map((t) => t.id));
+    assert.equal(result.value.total, OPEN_COUNT, groupBy);
+    assert.equal(ids.length, OPEN_COUNT, groupBy);
+    assert.equal(ids.includes("done-late") || ids.includes("today-done"), false, groupBy);
+  }
 });
 
 test("empty groups are omitted", async () => {
@@ -91,15 +93,13 @@ test("empty groups are omitted", async () => {
   );
 });
 
-test("rows carry their missing planning fields (none for a completed Task) and an overdue flag", async () => {
+test("rows carry their missing planning fields and an overdue flag", async () => {
   const result = await listTasks(deps(), {});
   assert.ok(result.ok);
   const rows = result.value.groups.flatMap((g) => g.tasks);
   assert.deepEqual(rows.find((t) => t.id === "nodate")?.missing, ["estimatedDurationMinutes", "dueDate", "status", "energy"]);
   assert.deepEqual(rows.find((t) => t.id === "overdue")?.missing, []);
   assert.equal(rows.find((t) => t.id === "overdue")?.overdue, true);
-  assert.equal(rows.find((t) => t.id === "done-late")?.overdue, false);
-  assert.deepEqual(rows.find((t) => t.id === "done-late")?.missing, []);
 });
 
 test("groupBy area: one group per Area, alphabetical, 'No area' last", async () => {
@@ -126,7 +126,6 @@ test("groupBy status: labelled with the live Notion option names, in working ord
     [
       ["Nothing", ["n"]],
       ["In Progress", ["p"]],
-      ["Completed", ["c"]],
       ["No status", ["u"]],
     ],
   );
@@ -192,14 +191,14 @@ test("Priority is never a missing planning field: a Task with no Priority still 
   assert.deepEqual(taskMissingFields(bare), []);
 });
 
-test("query filters by title or Area, case-insensitively; total still counts everything", async () => {
+test("query filters by title or Area, case-insensitively; total still counts every open Task", async () => {
   const byTitle = await listTasks(deps(), { query: "  COLLEGE " });
   assert.ok(byTitle.ok);
   assert.deepEqual(
     byTitle.value.groups.flatMap((g) => g.tasks.map((t) => t.id)),
     ["nodate"],
   );
-  assert.equal(byTitle.value.total, TASKS.length);
+  assert.equal(byTitle.value.total, OPEN_COUNT);
   assert.equal(byTitle.value.query, "COLLEGE");
   const byArea = await listTasks(deps(), { query: "math" });
   assert.ok(byArea.ok);

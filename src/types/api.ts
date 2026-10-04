@@ -701,7 +701,7 @@ export interface TaskListItem {
   /** Task 7: the live Priority select value verbatim (e.g. "🔴 High") — never part of `missing` (Priority is not a Data-Completeness Gate field). */
   readonly priority?: string;
   readonly missing: readonly PlanningFieldNames[];
-  /** Due before today (host TZ) and not completed — server-computed, so the client never reads its own clock. */
+  /** Due before today (host TZ); a completed Task is never listed — server-computed, so the client never reads its own clock. */
   readonly overdue: boolean;
 }
 
@@ -719,7 +719,7 @@ export interface TasksViewResponse {
   readonly today: IsoDate;
   readonly groupBy: TasksGroupBy;
   readonly query: string;
-  /** Every Task in Notion, before `query` filtering. */
+  /** Every open (not completed) Task in Notion, before `query` filtering. */
   readonly total: number;
   readonly groups: readonly TaskGroup[];
   /** Live Notion options for the inline selects. */

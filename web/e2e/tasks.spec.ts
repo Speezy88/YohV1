@@ -70,7 +70,7 @@ test("fresh load → Tasks → quick-add is focused → one line + Enter creates
   await expect(row(page, "Test task")).toContainText("30 min");
 });
 
-test("the list is grouped by Due, shows completed Tasks, and badges what's missing", async ({ page }) => {
+test("the list is grouped by Due, leaves completed Tasks out, and badges what's missing", async ({ page }) => {
   await openTasks(page);
   await expect(page.getByRole("heading", { name: "Overdue · 1" })).toBeVisible();
   await expect(page.getByRole("heading", { name: /^Today · / })).toBeVisible();
@@ -85,7 +85,7 @@ test("the list is grouped by Due, shows completed Tasks, and badges what's missi
   // runs, 1 (just "College essay brainstorm") after — assert the bucket
   // exists with one of those two counts, not the exact number.
   await expect(page.getByRole("heading", { name: /^No date · [12]$/ })).toBeVisible();
-  await expect(row(page, "Return library books").getByRole("checkbox")).toHaveAttribute("aria-checked", "true");
+  await expect(row(page, "Return library books")).toHaveCount(0);
   await expect(row(page, "College essay brainstorm")).toContainText("Add due date");
   await expect(row(page, "College essay brainstorm")).toContainText("Add time");
 });
