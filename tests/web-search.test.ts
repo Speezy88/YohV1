@@ -12,7 +12,7 @@ import type { ChatSession } from "../src/app/chat-session.ts";
 import type { ChatStreamEvent } from "../src/types/api.ts";
 
 function tempSession(): ChatSession {
-  return { recentMessages: [], lastSearchAnswer: undefined };
+  return { recentMessages: [], lastSearchAnswer: undefined, researchOffered: new Set<string>() };
 }
 
 test("a successful search renders the answer with its citations and sets session.lastSearchAnswer", async () => {

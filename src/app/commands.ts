@@ -42,6 +42,11 @@ export const COMMANDS: readonly CommandDescriptor[] = [
     description: "Deletes the matching item and its history, or the last one filed when nothing follows. Several matches ask you to pick.",
     example: "/forget the AP Bio deadline",
   },
+  {
+    name: "/research",
+    description: "Queues a research question. Yoh searches in the background, files the answer to the Research Vault, and notifies you when it's on Research Hub.",
+    example: "/research best budget laptops for college",
+  },
 ];
 
 /** `GET /api/commands` (C5) and `chatTurn`'s slash-dispatch both call this — the registry, verbatim, wrapped in a `Result`. */

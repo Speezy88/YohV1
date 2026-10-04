@@ -48,7 +48,7 @@ function tempStore(): MemoryStore {
 }
 
 function makeSession(): ChatSession {
-  return { recentMessages: [], lastSearchAnswer: undefined };
+  return { recentMessages: [], lastSearchAnswer: undefined, researchOffered: new Set<string>() };
 }
 
 function makeTask(id: string, title: string, overrides: Partial<Task> = {}): Task {

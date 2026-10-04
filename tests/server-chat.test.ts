@@ -91,7 +91,7 @@ test("runChatStream hands chatTurn the request unchanged and the deps plus its o
     seen = { deps, input };
     return { ok: true, value: { reply: "", receipts: [] } };
   };
-  const session: ChatSession = { recentMessages: [], lastSearchAnswer: undefined };
+  const session: ChatSession = { recentMessages: [], lastSearchAnswer: undefined, researchOffered: new Set<string>() };
   await runChatStream(stream, { session } as ChatTurnDeps, REQUEST, fakeChatTurn);
   assert.equal(seen?.input, REQUEST);
   assert.equal(seen?.deps.session, session);
@@ -259,7 +259,7 @@ test("every POST /api/chat request shares the ONE ChatSession the server process
     sessions.push(deps.session);
     return { ok: true, value: { reply: "", receipts: [] } };
   };
-  const chatSession: ChatSession = { recentMessages: [], lastSearchAnswer: undefined };
+  const chatSession: ChatSession = { recentMessages: [], lastSearchAnswer: undefined, researchOffered: new Set<string>() };
   const { app, connection } = chatApp(seamOnly(fakeChatTurn), { chatSession });
   await (await postChat(app, REQUEST)).text();
   await (await postChat(app, { message: "again", history: [] })).text();
@@ -279,7 +279,7 @@ test("without an explicit chatSession, one app still reuses one session across r
   await (await postChat(app, REQUEST)).text();
   await (await postChat(app, REQUEST)).text();
   assert.equal(sessions[0], sessions[1]);
-  assert.deepEqual(sessions[0], { recentMessages: [], lastSearchAnswer: undefined });
+  assert.deepEqual(sessions[0], { recentMessages: [], lastSearchAnswer: undefined, researchOffered: new Set<string>() });
   connection.close();
 });
 

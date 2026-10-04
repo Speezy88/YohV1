@@ -36,7 +36,7 @@ function tempDeps(overrides: Partial<NightCloseOutDeps> = {}): NightCloseOutDeps
     now: () => new Date(`${TODAY}T22:00:00.000Z`),
     timeZone: "UTC",
     getCompletedTaskIdsToday: () => new Set(),
-    session: { recentMessages: [], lastSearchAnswer: undefined },
+    session: { recentMessages: [], lastSearchAnswer: undefined, researchOffered: new Set<string>() },
     ...overrides,
   };
 }

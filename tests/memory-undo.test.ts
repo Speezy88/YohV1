@@ -74,7 +74,7 @@ function forgetRequest(w: ReturnType<typeof world>, ids: string[]) {
 const base = (w: ReturnType<typeof world>) => ({
   store: w.store,
   memoryItems: w.memoryItems,
-  session: { recentMessages: [], lastSearchAnswer: undefined },
+  session: { recentMessages: [], lastSearchAnswer: undefined, researchOffered: new Set<string>() },
   updateTaskField: async () => ({ ok: true as const, value: undefined }),
   setTaskStatus: async () => ({ ok: true as const, value: undefined }),
   recordCompletion: () => {},

@@ -22,6 +22,7 @@ import { appendOutboxInTx } from "../adapters/notification-store.ts";
 import { createPage } from "../adapters/notion-adapter.ts";
 import type { SqliteConnection } from "../adapters/sqlite.ts";
 import { errorCopy } from "../core/error-copy.ts";
+import { researchVaultProperties } from "../core/research-vault-properties.ts";
 import { localIsoDate } from "../rituals/ritual-shared.ts";
 import type { NotionCreatePageBindingFn } from "./create-item.ts";
 import type { ChatSession } from "./chat-session.ts";
@@ -51,13 +52,12 @@ export async function saveSearchResult(deps: SaveSearchResultDeps, _input: Recor
     return { ok: true, value: { reply: errorCopy(binding.error, { service: "Notion" }), receipts: [] } };
   }
 
-  const properties: Record<string, string> = {
-    title: lastSearchAnswer.query,
-    keyFindings: lastSearchAnswer.answer.answer,
+  const properties = researchVaultProperties({
     query: lastSearchAnswer.query,
+    answer: lastSearchAnswer.answer.answer,
+    citations: lastSearchAnswer.answer.citations,
     searchDate: localIsoDate(deps.now(), deps.timeZone),
-    sources: lastSearchAnswer.answer.citations.join("\n"),
-  };
+  });
 
   const created = await createPage(binding.value.client, binding.value.config, "ResearchVault", properties);
   if (!created.ok) {

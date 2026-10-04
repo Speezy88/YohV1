@@ -798,6 +798,23 @@ export interface ResearchListItem {
 /** `GET /api/research`'s value: the most recent Research Vault items, newest first, server-limited (AD-17). */
 export interface ResearchListResponse {
   readonly items: readonly ResearchListItem[];
+  /** True when the vault holds more rows than `items` returned (E11-R1). */
+  readonly hasMore: boolean;
+}
+
+/** One Research Vault document: its "Key Findings" body and one entry per "Sources" line (E11-R2). */
+export interface ResearchDocument {
+  readonly id: string;
+  readonly title: string;
+  readonly date?: IsoDate;
+  readonly body: string;
+  readonly sources: readonly string[];
+  readonly url: string;
+}
+
+/** `GET /api/research/document`'s value; `document` is absent when the vault is empty. */
+export interface ResearchDocumentResponse {
+  readonly document?: ResearchDocument;
 }
 
 // ============================================================================

@@ -19,7 +19,7 @@ function memory(): MemoryItemStore {
 function deps(memoryItems: MemoryItemStore | undefined, extra: Partial<ChatTurnDeps> = {}): ChatTurnDeps {
   return {
     memoryItems,
-    session: { recentMessages: [], lastSearchAnswer: undefined },
+    session: { recentMessages: [], lastSearchAnswer: undefined, researchOffered: new Set<string>() },
     timeZone: "America/New_York",
     now: () => new Date("2026-09-29T16:00:00Z"),
     turn: { conversationId: "conv-1", userTurnId: "turn-1" },
@@ -113,7 +113,7 @@ test("a throwing store is logged and answered, never thrown", async () => {
   const r = await chatTurn(deps(broken, { log: (e: { event: string }) => logged.push(e.event) } as never), { message: "forget dentist" });
   assert.ok(r.ok);
   assert.equal(r.value.reply, "Couldn't reach memory right now.");
-  assert.equal(logged.length, 1);
+  assert.deepEqual(logged.filter((e) => e === "chat-turn.memory-command-failed"), ["chat-turn.memory-command-failed"]);
   const r2 = await chatTurn(deps(undefined), { message: "what do you remember about x" });
   assert.ok(r2.ok);
   assert.equal(r2.value.reply, "Couldn't reach memory right now.");

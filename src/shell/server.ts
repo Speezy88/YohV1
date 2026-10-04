@@ -106,6 +106,7 @@ import {
 } from "../adapters/notion-adapter.ts";
 import { createAnthropicMessagesClient, loadLlmAdapterConfigFromEnv, type AnthropicMessagesClient } from "../adapters/llm-adapter.ts";
 import { initLlmUsageStoreSchema } from "../adapters/llm-usage-store.ts";
+import { initJobStoreSchema } from "../adapters/job-store.ts";
 import { errorCopyForWire, GENERIC_SERVER_ERROR_MESSAGE } from "../core/error-copy.ts";
 import { search as runSearch } from "../adapters/search-adapter.ts";
 import { listNotifications, markNotificationRead } from "../app/notifications.ts";
@@ -113,6 +114,7 @@ import { listCommands } from "../app/commands.ts";
 import { chatTurn, type ChatTurnDeps } from "../app/chat-turn.ts";
 import type { ChatSession } from "../app/chat-session.ts";
 import type { SearchFn } from "../app/web-search.ts";
+import { failInterruptedResearchJobs, runNextResearchJob, RESEARCH_JOB_POLL_INTERVAL_MS, type RunResearchJobDeps } from "../app/run-research-job.ts";
 import { getHomeView, type HomeViewDeps } from "../app/home-view.ts";
 import { getCalendarDay, type CalendarDayDeps } from "../app/calendar-day.ts";
 import { declareTimeBudget } from "../app/time-budget.ts";
@@ -145,7 +147,7 @@ import { renameTask, updateTask, type UpdateTaskDeps } from "../app/update-task.
 import { planDayForChangeSet } from "../app/plan-day.ts";
 import { refitPlan } from "../app/refit-plan.ts";
 import type { ApplyChangeSetDeps } from "../app/apply-change-set.ts";
-import { listResearch, type ResearchListDeps } from "../app/research-list.ts";
+import { getResearchDocument, listResearch, type ResearchListDeps } from "../app/research-list.ts";
 import { sandboxQueue, type SandboxQueueDeps } from "../app/sandbox-queue.ts";
 import { finishSandboxSession, saveSandboxCardAndAdvance, type SandboxSubmitDeps } from "../app/sandbox-submit.ts";
 import { firstCardView } from "../core/sandbox-card-view.ts";
@@ -437,6 +439,72 @@ export function startCheckOffCommitSweep(deps: CheckOffDeps, options: CheckOffCo
   };
 
   const startup = runOnce();
+  const handle = setIntervalFn(() => void runOnce(), intervalMs);
+  return {
+    startup,
+    runOnce,
+    stop(): void {
+      clearIntervalFn(handle);
+    },
+  };
+}
+
+// ============================================================================
+// Research job runner (Story 11.3, E11-R9) — runs queued /research jobs one at a
+// time in the background. All job logic is in `app/run-research-job.ts`.
+// ============================================================================
+
+export interface ResearchJobRunnerOptions {
+  readonly intervalMs?: number;
+  readonly setIntervalFn?: typeof setInterval;
+  readonly clearIntervalFn?: typeof clearInterval;
+  readonly log?: (entry: LogEntry) => void;
+}
+
+export interface ResearchJobRunnerHandle {
+  /** Settles once startup recovery (jobs a previous process left `running`) has run; it precedes the first tick. */
+  readonly startup: Promise<void>;
+  /** Runs one tick now, or joins the one already running, so ticks never overlap. */
+  runOnce(): Promise<void>;
+  stop(): void;
+}
+
+/** Recovers interrupted jobs first, then ticks every `intervalMs`: one job per tick. Idle ticks are silent. */
+export function startResearchJobRunner(deps: RunResearchJobDeps, options: ResearchJobRunnerOptions = {}): ResearchJobRunnerHandle {
+  const intervalMs = options.intervalMs ?? RESEARCH_JOB_POLL_INTERVAL_MS;
+  const setIntervalFn = options.setIntervalFn ?? setInterval;
+  const clearIntervalFn = options.clearIntervalFn ?? clearInterval;
+  const log = options.log ?? ((entry: LogEntry) => writeStructuredLog(entry));
+  const runDeps: RunResearchJobDeps = { ...deps, log };
+
+  const startup = (async () => {
+    try {
+      const result = await failInterruptedResearchJobs(runDeps, {});
+      if (!result.ok) log({ level: "error", event: "server.research-recovery-failed", detail: { message: result.error.message } });
+      else if (result.value.failed > 0) log({ level: "info", event: "server.research-recovery", detail: { ...result.value } });
+    } catch (err) {
+      log({ level: "error", event: "server.research-recovery-failed", detail: { message: err instanceof Error ? err.message : String(err) } });
+    }
+  })();
+
+  let inFlight: Promise<void> | undefined;
+  const runOnce = (): Promise<void> => {
+    if (inFlight) return inFlight;
+    inFlight = (async () => {
+      try {
+        await startup;
+        const result = await runNextResearchJob(runDeps, {});
+        if (!result.ok) log({ level: "error", event: "server.research-job-failed", detail: { message: result.error.message } });
+        else if (result.value.ran) log({ level: "info", event: "server.research-job", detail: { outcome: result.value.outcome } });
+      } catch (err) {
+        log({ level: "error", event: "server.research-job-failed", detail: { message: err instanceof Error ? err.message : String(err) } });
+      } finally {
+        inFlight = undefined;
+      }
+    })();
+    return inFlight;
+  };
+
   const handle = setIntervalFn(() => void runOnce(), intervalMs);
   return {
     startup,
@@ -883,7 +951,7 @@ export function createApp(deps: ServerDeps) {
   const checkOffDeps: CheckOffDeps | undefined = deps.checkOff
     ? { ...deps.checkOff, connection: deps.connection, now: deps.checkOff.now ?? (() => new Date()), log }
     : undefined;
-  const chatSession: ChatSession = deps.chatSession ?? { recentMessages: [], lastSearchAnswer: undefined };
+  const chatSession: ChatSession = deps.chatSession ?? { recentMessages: [], lastSearchAnswer: undefined, researchOffered: new Set<string>() };
   // Task 6B: one merged deps object serves all three Tasks-page app/
   // functions (each reads only its own fields). Spread, never re-keyed, so
   // the write binding's name never appears in this file (AD-16).
@@ -1361,7 +1429,14 @@ export function createApp(deps: ServerDeps) {
       // error rather than a 500.
       .get("/api/research", async (c) => {
         if (!researchDeps) return c.json(RESEARCH_NOT_CONFIGURED, httpStatus(RESEARCH_NOT_CONFIGURED));
-        const result = wire(await listResearch(researchDeps, {}));
+        const result = wire(await listResearch(researchDeps, { pages: c.req.query("pages") }));
+        return c.json(result, httpStatus(result));
+      })
+      // Story 11.2 (E11-R2): one Research Vault document by id (the most
+      // recent when `id` is missing or unknown; `{}` for an empty vault).
+      .get("/api/research/document", async (c) => {
+        if (!researchDeps) return c.json(RESEARCH_NOT_CONFIGURED, httpStatus(RESEARCH_NOT_CONFIGURED));
+        const result = wire(await getResearchDocument(researchDeps, { id: c.req.query("id") }));
         return c.json(result, httpStatus(result));
       })
       // Story 8.5, AD-18/C5: one chat turn, its reply streamed on this
@@ -1679,7 +1754,7 @@ export function startServer(
 ): ServerHandle {
   const port = parsePort(env["YOH_SERVER_PORT"]);
   // Contract C3: one ChatSession per server process, shared by every chat route.
-  const chatSession: ChatSession = { recentMessages: [], lastSearchAnswer: undefined };
+  const chatSession: ChatSession = { recentMessages: [], lastSearchAnswer: undefined, researchOffered: new Set<string>() };
   const app = createApp({
     connection,
     chatSession,
@@ -2193,6 +2268,8 @@ function buildChatDeps(
     ...bindNotionCreatePage(getNotionCreatePageBinding),
     ...bindCalendarApply(getCalendarApplyBinding),
     changeSetWrites: { ...bindNotionCreatePage(getNotionCreatePageBinding), ...bindCalendarApply(getCalendarApplyBinding) },
+    // Story 11.4: a Yes on the research offer queues exactly as `/research` does.
+    research: { connection, webSearchAvailable: Boolean(perplexityApiKey), getNotionCreatePageBinding, now: () => new Date() },
     readFieldOptions,
     recordCompletion,
     lookupTask,
@@ -2211,6 +2288,7 @@ if (import.meta.main) {
   initSettingsStoreSchema(connection.db);
   initMemoryItemStoreSchema(connection.db);
   initCompletionLogSchema(connection.db);
+  initJobStoreSchema(connection.db);
   // Story 13.12 (Ruling E11): one-time, idempotent removal of the retired
   // periodic check-in's stored leftovers. Never fatal.
   try {
@@ -2255,6 +2333,11 @@ if (import.meta.main) {
   // previous process, then the commit timer takes over.
   const checkOffSweep = checkOff ? startCheckOffCommitSweep({ ...checkOff, connection, now: () => new Date() }) : undefined;
   const planSyncSweep = planSync ? startPlanCalendarSyncSweep(planSync) : undefined;
+  // Story 11.3 (E11-R9): recovery first, then one queued research job per tick. Needs search and the Notion vault.
+  const researchRunner =
+    chat?.webSearchAvailable && chat.getNotionCreatePageBinding().ok && chat.timeZone
+      ? startResearchJobRunner({ connection, searchFn: chat.searchFn, getNotionCreatePageBinding: chat.getNotionCreatePageBinding, timeZone: chat.timeZone, now: () => new Date() })
+      : undefined;
   writeStructuredLog({
     level: "info",
     event: "server.listening",
@@ -2271,6 +2354,7 @@ if (import.meta.main) {
     heartbeat.stop();
     checkOffSweep?.stop();
     planSyncSweep?.stop();
+    researchRunner?.stop();
     handle.close();
     setTimeout(() => {
       connection.close();

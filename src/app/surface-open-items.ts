@@ -16,6 +16,7 @@ import type { MemoryItemStore } from "../adapters/memory-item-store.ts";
 import { memoryFolderLabel } from "../core/memory-folders.ts";
 import { isOlderThanDays, RULE_PROPOSAL_TTL_DAYS } from "../core/proposal-ttl.ts";
 import { changeSetIsStale } from "../core/chat-tools.ts";
+import { RESEARCH_OFFER_KIND } from "../core/research-offer.ts";
 import { CHANGE_SET_PROPOSAL_KIND } from "./apply-change-set.ts";
 import { isProposalExpired } from "../core/reshuffle-preview.ts";
 import { parsePlanningFieldValue } from "../core/planning-field-value.ts";
@@ -150,6 +151,15 @@ export async function surfaceOpenItems(deps: SurfaceOpenItemsDeps, _input: Recor
     const proposal = (record.data.detail as { readonly proposal?: Proposal<unknown> } | undefined)?.proposal;
     if (record.data.requestKind === "proposal" && proposal?.kind === "reshuffle" && isProposalExpired(proposal.createdAt, now)) continue;
     if (record.data.requestKind === "proposal" && proposal?.kind === CHANGE_SET_PROPOSAL_KIND && deps.timeZone && changeSetIsStale(proposal.createdAt, now, deps.timeZone)) continue;
+    if (record.data.requestKind === "proposal" && proposal?.kind === RESEARCH_OFFER_KIND && deps.timeZone && changeSetIsStale(proposal.createdAt, now, deps.timeZone)) {
+      // Same-day rule as a change set: an offer from an earlier day is withdrawn, never shown.
+      try {
+        clearInteractionRequest(deps.store, record.id, record.version);
+      } catch {
+        // a concurrent answer already cleared it
+      }
+      continue;
+    }
     if (record.data.requestKind === "proposal" && proposal?.kind === "rule-change" && isOlderThanDays(proposal.createdAt, now, RULE_PROPOSAL_TTL_DAYS)) {
       // Lazy 7-day TTL (AD-29): withdrawn, never shown; the preference stays as a declined soft item.
       try {

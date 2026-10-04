@@ -33,7 +33,7 @@ function tempStore() {
   return createMemoryStore(connection);
 }
 function session() {
-  return { recentMessages: [], lastSearchAnswer: undefined };
+  return { recentMessages: [], lastSearchAnswer: undefined, researchOffered: new Set<string>() };
 }
 function openReq(store: ReturnType<typeof tempStore>, incomplete: TestMissingFieldReport[]) {
   putOpenInteractionRequest(store, "data-completeness", { requestKind: "data-completeness", promptText: "x", detail: { incomplete }, createdAt: "2026-09-25T00:00:00.000Z" });
