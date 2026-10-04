@@ -607,8 +607,9 @@ export async function confirmProposal(
       return missingDependency(proposal.kind, "createPage");
     }
     const draft = proposal.suggested as NotionPageDraft;
-    const created = await deps.createPage(draft.database, draft.properties);
+    // Claim the request BEFORE the awaited write, so a repeated Yes finds nothing open and gets a conflict.
     clearRequestIfGiven(deps.store, requestId);
+    const created = await deps.createPage(draft.database, draft.properties);
     if (!created.ok) return created;
     return {
       ok: true,
@@ -625,8 +626,9 @@ export async function confirmProposal(
       return missingDependency(proposal.kind, "applyCalendarEdit");
     }
     const calendarChange = proposal as Proposal<CalendarEditChange>;
-    const applied = await deps.applyCalendarEdit(calendarChange);
+    // Claim the request BEFORE the awaited write (as above): a repeated Yes must not write twice.
     clearRequestIfGiven(deps.store, requestId);
+    const applied = await deps.applyCalendarEdit(calendarChange);
     if (!applied.ok) return applied;
     // Task 8 (Plan hint after a calendar edit): a topic-only hint (no
     // entityId) when the date can't be derived — `calendarDay.ts` then

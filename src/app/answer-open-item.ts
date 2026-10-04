@@ -97,10 +97,10 @@ async function answerProposalOpenItem(
   const result = await confirmProposal(deps, { proposal, accept: parsed, requestId: record.id });
   if (!result.ok) {
     const service = serviceForProposalKind(proposal.kind);
-    return {
-      ok: true,
-      value: { message: errorCopy(result.error, service !== undefined ? { service } : {}), receipts: [], next: "done" },
-    };
+    const copy = errorCopy(result.error, service !== undefined ? { service } : {});
+    // These two kinds claim the request before their one write, so a failure closes the card: say how to retry.
+    const askAgain = proposal.kind === "notion-page-draft" || proposal.kind === "calendar-edit" ? " Ask again if you still want it." : "";
+    return { ok: true, value: { message: `${copy}${askAgain}`, receipts: [], next: "done" } };
   }
 
   return {

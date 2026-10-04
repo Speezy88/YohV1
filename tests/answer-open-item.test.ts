@@ -404,3 +404,80 @@ test("a change set staged late the previous evening is stale by local date, not 
   assert.deepEqual(completed, ["t1"]);
   store.close();
 });
+
+// ============================================================================
+// Audit fix (2026-10-04): a repeated Yes (double-tap, client retry) on a
+// "notion-page-draft" or "calendar-edit" proposal must write once — the
+// request is claimed before the awaited write, as the change-set branch does.
+// ============================================================================
+
+function openNotionDraftProposal(store: ReturnType<typeof tempStore>): void {
+  putOpenInteractionRequest(store, "create-tasks-proposal", {
+    requestKind: "proposal",
+    promptText: "Create this in Tasks?",
+    detail: {
+      proposal: {
+        id: "create-Tasks-1", kind: "notion-page-draft", entityId: "create-Tasks-1", entityVersion: "new",
+        suggested: { database: "Tasks", properties: { title: "Draft the memo" } },
+        reason: "Here's what I'll create in Tasks:\n  title: Draft the memo", createdAt: "2026-09-27T12:00:00.000Z",
+      },
+    },
+    createdAt: "2026-09-27T12:00:00.000Z",
+  });
+}
+
+function openCalendarEditProposal(store: ReturnType<typeof tempStore>): void {
+  putOpenInteractionRequest(store, "calendar-edit-proposal", {
+    requestKind: "proposal",
+    promptText: 'Create "Dentist" on Fri?',
+    detail: {
+      proposal: {
+        id: "calendar-edit-1", kind: "calendar-edit", entityId: "new-event", entityVersion: "new",
+        suggested: { kind: "create", calendarId: "primary", title: "Dentist", start: "2026-09-18T18:00:00.000Z", end: "2026-09-18T18:30:00.000Z" },
+        reason: 'Create "Dentist" on Fri, Sep 18, 6:00 PM–6:30 PM?', receiptText: 'Created "Dentist" on Fri, Sep 18, 6:00 PM–6:30 PM.',
+        createdAt: "2026-09-18T12:00:00.000Z",
+      },
+    },
+    createdAt: "2026-09-18T12:00:00.000Z",
+  });
+}
+
+const laterTick = () => new Promise((r) => setTimeout(r, 20));
+
+test("two concurrent Yes answers to one notion-page-draft proposal create the page once; the second gets a conflict", async () => {
+  const store = tempStore();
+  openNotionDraftProposal(store);
+  let created = 0;
+  const deps = { ...fullDeps(store), createPage: async () => { await laterTick(); created += 1; return { ok: true as const, value: { pageId: "p1" } }; } };
+  const input = { requestId: "create-tasks-proposal", questionId: "confirm", answer: "yes" };
+  const [a, b] = await Promise.all([answerOpenItem(deps, input), answerOpenItem(deps, input)]);
+  assert.equal(created, 1);
+  assert.deepEqual([a, b].map((r) => (r.ok ? "ok" : r.error.kind)).sort(), ["conflict", "ok"]);
+  store.close();
+});
+
+test("two concurrent Yes answers to one calendar-edit proposal apply the edit once; the second gets a conflict", async () => {
+  const store = tempStore();
+  openCalendarEditProposal(store);
+  let applied = 0;
+  const deps = { ...fullDeps(store), applyCalendarEdit: async () => { await laterTick(); applied += 1; return { ok: true as const, value: { eventId: "e1", calendarId: "primary" } }; } };
+  const input = { requestId: "calendar-edit-proposal", questionId: "confirm", answer: "yes" };
+  const [a, b] = await Promise.all([answerOpenItem(deps, input), answerOpenItem(deps, input)]);
+  assert.equal(applied, 1);
+  assert.deepEqual([a, b].map((r) => (r.ok ? "ok" : r.error.kind)).sort(), ["conflict", "ok"]);
+  store.close();
+});
+
+test("a failed notion-page-draft or calendar-edit write closes the card and tells Spencer to ask again", async () => {
+  const store = tempStore();
+  const unreachable = async () => ({ ok: false as const, error: { kind: "unreachable" as const, message: "raw" } });
+  openNotionDraftProposal(store);
+  const draft = await answerOpenItem({ ...fullDeps(store), createPage: unreachable }, { requestId: "create-tasks-proposal", questionId: "confirm", answer: "yes" });
+  assert.equal(draft.ok && draft.value.message, "I couldn't reach Notion right now; nothing was changed. Ask again if you still want it.");
+  assert.equal(getOpenInteractionRequest(store, "create-tasks-proposal"), undefined);
+  openCalendarEditProposal(store);
+  const edit = await answerOpenItem({ ...fullDeps(store), applyCalendarEdit: unreachable }, { requestId: "calendar-edit-proposal", questionId: "confirm", answer: "yes" });
+  assert.equal(edit.ok && edit.value.message, "I couldn't reach Google Calendar right now; nothing was changed. Ask again if you still want it.");
+  assert.equal(getOpenInteractionRequest(store, "calendar-edit-proposal"), undefined);
+  store.close();
+});
