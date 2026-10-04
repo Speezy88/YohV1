@@ -3,6 +3,7 @@ import type { MemoryItemView } from "../types/api.ts";
 import type { MemoryItem, MemorySortFeedback } from "../types/domain.ts";
 import { localIsoDate } from "./local-time.ts";
 import { needsReviewLabel, type MemoryItemState } from "./memory-context.ts";
+import { isImportTag } from "./memory-import.ts";
 
 export interface MemoryItemViewLookups {
   readonly state?: MemoryItemState | undefined;
@@ -20,7 +21,7 @@ export function toMemoryItemView(item: MemoryItem, lookups: MemoryItemViewLookup
   const { state, sourceTurn, sortFeedback: fb } = lookups;
   const reason = state?.reason ? needsReviewLabel(state.reason) : undefined;
   const source: MemoryItemView["source"] =
-    item.sourceTurnId === undefined ? undefined : sourceTurn ? { conversationId: sourceTurn.conversationId, turnId: sourceTurn.turnId, date: sourceTurn.date } : "deleted";
+    item.sourceTurnId === undefined || isImportTag(item.sourceTurnId) ? undefined : sourceTurn ? { conversationId: sourceTurn.conversationId, turnId: sourceTurn.turnId, date: sourceTurn.date } : "deleted";
   const earlierVersions = lookups.chain
     .filter((v) => v.id !== item.id && v.status !== "deleted")
     .sort((a, b) => (a.confirmedAt < b.confirmedAt ? 1 : a.confirmedAt > b.confirmedAt ? -1 : 0))
