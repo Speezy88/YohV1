@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { localHourMinute, localMinutesSinceMidnight, formatClockTime } from "./hostTime.ts";
+import { hostIsoDate, localHourMinute, localMinutesSinceMidnight, formatClockTime } from "./hostTime.ts";
 
 describe("hostTime", () => {
   it("localHourMinute reads the wall-clock hour/minute in the given zone, not the browser's own zone", () => {
@@ -25,5 +25,13 @@ describe("hostTime", () => {
     expect(formatClockTime(new Date("2026-09-25T17:00:00.000Z"), "UTC")).toBe("5:00");
     expect(formatClockTime(new Date("2026-09-25T00:00:00.000Z"), "UTC")).toBe("12:00");
     expect(formatClockTime(new Date("2026-09-25T13:05:00.000Z"), "UTC")).toBe("1:05");
+  });
+});
+
+describe("hostIsoDate", () => {
+  it("gives the date in the given zone, not the browser's", () => {
+    const date = new Date("2026-10-05T03:00:00.000Z");
+    expect(hostIsoDate(date, "America/Los_Angeles")).toBe("2026-10-04");
+    expect(hostIsoDate(date, "UTC")).toBe("2026-10-05");
   });
 });

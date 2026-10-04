@@ -286,3 +286,30 @@ test("M8: a close-out for the date finished WITH a skip removes that date's done
   assert.deepEqual(listNightCloseOutDone(store).map((r) => r.data.date), ["2026-09-24"]);
   store.close();
 });
+
+async function completedAtFor(answeredAt: string, timeZone: string | undefined, date = "2026-08-22"): Promise<string | undefined> {
+  const store = tempStore();
+  openReq(store, [{ taskId: "t1", taskTitle: "Draft the memo" }], date);
+  const recorded: string[] = [];
+  const result = await answerNightCloseOut(
+    { ...deps(store), recordCompletion: (input) => void recorded.push(input.completedAt), now: () => new Date(answeredAt), ...(timeZone ? { timeZone } : {}) },
+    { requestId: "night-close-out", questionId: "t1", answer: "completed" },
+  );
+  assert.equal(result.ok, true);
+  store.close();
+  return recorded[0];
+}
+
+test("E12-R13: answered the same night keeps the answer time", async () => {
+  assert.equal(await completedAtFor("2026-08-23T03:30:00.000Z", "America/Los_Angeles"), "2026-08-23T03:30:00.000Z"); // 20:30 on the 22nd
+});
+
+test("E12-R13: answered the next morning records completedAt on the close-out's date", async () => {
+  const at = await completedAtFor("2026-08-23T16:00:00.000Z", "America/Los_Angeles"); // 09:00 on the 23rd
+  assert.equal(at, "2026-08-23T06:59:00.000Z"); // 23:59 on the 22nd in LA
+});
+
+test("E12-R13: without a time zone, or with the unknown-date stand-in, the answer instant is kept", async () => {
+  assert.equal(await completedAtFor("2026-08-23T16:00:00.000Z", undefined), "2026-08-23T16:00:00.000Z");
+  assert.equal(await completedAtFor("2026-08-23T16:00:00.000Z", "America/Los_Angeles", "1970-01-01"), "2026-08-23T16:00:00.000Z");
+});

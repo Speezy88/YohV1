@@ -808,6 +808,12 @@ export interface DeskHeatmapDay {
   readonly level: 0 | 1 | 2 | 3 | 4;
 }
 
+/** `POST /api/activity`'s value (Ruling E12-R15): the host's today and its IANA zone, so the web can tell when the host day changes. */
+export interface ActivityResponse {
+  readonly date: IsoDate;
+  readonly timeZone: string;
+}
+
 /** `GET /api/desk`'s value (Epic 12): everything the Desk page shows, from Yoh's own records. */
 export interface DeskResponse {
   readonly today: IsoDate;

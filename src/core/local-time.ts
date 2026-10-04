@@ -48,3 +48,19 @@ export function localMinutesToMs(date: IsoDate, minutes: number, timeZone: strin
 export function localMinutesToIso(date: IsoDate, minutes: number, timeZone: string): IsoDateTime {
   return new Date(localMinutesToMs(date, minutes, timeZone)).toISOString();
 }
+
+/**
+ * Ruling E12-R13: the `completedAt` a night close-out completion is stored with. Answered on the close-out's
+ * night (or earlier): the answer instant. Answered on a later local day: 23:59 local on the close-out's date.
+ */
+export function closeOutCompletedAt(closeOutDate: IsoDate, answeredAt: Date, timeZone: string): IsoDateTime {
+  if (localIsoDate(answeredAt, timeZone) <= closeOutDate) return answeredAt.toISOString();
+  return localMinutesToIso(closeOutDate, 23 * 60 + 59, timeZone);
+}
+
+/** "HH:MM" wall-clock time of `instant` in `timeZone` (24-hour). */
+export function localHm(instant: Date, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone, hourCycle: "h23", hour: "2-digit", minute: "2-digit" }).formatToParts(instant);
+  const get = (type: string): string => parts.find((p) => p.type === type)?.value ?? "";
+  return `${get("hour") === "24" ? "00" : get("hour")}:${get("minute")}`;
+}

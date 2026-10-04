@@ -35,3 +35,8 @@ export function formatClockTime(date: Date, timeZone: string): string {
   const twelveHour = hour % 12 === 0 ? 12 : hour % 12;
   return `${twelveHour}:${String(minute).padStart(2, "0")}`;
 }
+
+/** The calendar date (YYYY-MM-DD) `date` falls on in `timeZone`, regardless of the browser's own zone. */
+export function hostIsoDate(date: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
+}

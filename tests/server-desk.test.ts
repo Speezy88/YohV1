@@ -53,7 +53,7 @@ test("GET /api/desk reports not-configured when desk deps are absent", async () 
   assert.equal(body.error!.kind, "unreachable");
 });
 
-test("I3: startServer forwards features.desk, so /api/desk answers and activity is recorded", async () => {
+test("I3: startServer forwards features.desk, so /api/desk answers and POST /api/activity records", async () => {
   const connection = openSqliteConnection({ databasePath: ":memory:" });
   initNotificationStoreSchema(connection.db);
   const written: string[] = [];
@@ -75,5 +75,8 @@ test("I3: startServer forwards features.desk, so /api/desk answers and activity 
   startServer(connection, {}, serveFn, { desk });
   const res = await fetchFn!(new Request("http://127.0.0.1/api/desk"));
   assert.equal(res.status, 200);
+  assert.deepEqual(written, [], "a GET records nothing");
+  const ping = await fetchFn!(new Request("http://127.0.0.1/api/activity", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }));
+  assert.equal(ping.status, 200);
   assert.deepEqual(written, ["2026-10-07"]);
 });

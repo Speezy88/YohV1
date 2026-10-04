@@ -98,7 +98,7 @@ import { runEventStream, getPlanSyncRunner, CHAT_NOT_CONFIGURED, sseMessage, run
 // ============================================================================
 
 export interface ServerDeps {
-  /** Ruling E12-R3: records the days Yoh was opened. Absent, nothing is recorded. */
+  /** Rulings E12-R3/R14: records the days Spencer clicked or typed (`POST /api/activity`). Absent, nothing is recorded. */
   readonly desk?: DeskDeps;
   /** The process's one SQLite connection (AD-10), opened at startup in `server.ts`. */
   readonly connection: SqliteConnection;
@@ -524,15 +524,6 @@ export function createApp(deps: ServerDeps) {
         if (contentType.startsWith(allowed) || c.req.path === "/api/memory/import") return next();
         return c.json({ ok: false, error: { kind: "validation", message: JSON_CONTENT_TYPE_REQUIRED_MESSAGE } } satisfies ApiResult<never>, 400);
       })
-      // Ruling E12-R3: any API request except the liveness probe marks today as a day Yoh was opened.
-      // Runs before the handler; a failure is logged and never changes the response. No outbox row.
-      .use("/api/*", async (c, next) => {
-        if (deskDeps && !(c.req.method === "GET" && c.req.path === "/api/health")) {
-          const recorded = await recordActivity(deskDeps, {});
-          if (!recorded.ok) log({ level: "warn", event: "server.activity-day-failed", detail: { message: recorded.error.message } });
-        }
-        await next();
-      })
       // Liveness probe — the one route that is not an ApiResult envelope (see HealthResponse).
       .get("/api/health", (c) => c.json({ ok: true } satisfies HealthResponse))
       // AD-18: one hint stream per open client. `Last-Event-ID` is the
@@ -933,6 +924,12 @@ export function createApp(deps: ServerDeps) {
         },
       )
       // Epic 12: the Desk page's one read, computed from Yoh's own records (no Notion).
+      // Ruling E12-R14: the web pings this on a real click or key; no other request marks a day. No outbox row.
+      .post("/api/activity", async (c) => {
+        if (!deskDeps) return c.json(DESK_NOT_CONFIGURED, httpStatus(DESK_NOT_CONFIGURED));
+        const result = wire(await recordActivity(deskDeps, {}));
+        return c.json(result, httpStatus(result));
+      })
       .get("/api/desk", async (c) => {
         if (!deskDeps) return c.json(DESK_NOT_CONFIGURED, httpStatus(DESK_NOT_CONFIGURED));
         const result = wire(await getDesk({ ...deskDeps, log }, {}));

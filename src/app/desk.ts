@@ -2,8 +2,9 @@
  * src/app/desk.ts
  *
  * Ruling E12-R3: the Desk page's records. `recordActivity` stamps today (in
- * the host timezone) as a day Yoh was opened. Idempotent; the caller decides
- * how often to call it.
+ * the host timezone) as a day Yoh was opened, and returns that date and zone.
+ * Ruling E12-R14: only `POST /api/activity`, sent on a real click or key, calls
+ * it; polling and streams never do. Idempotent.
  */
 import type { LogEntry } from "../adapters/logger.ts";
 import {
@@ -19,7 +20,7 @@ import {
 } from "../core/desk-metrics.ts";
 import { errorCopyForThrown } from "../core/error-copy.ts";
 import { localIsoDate } from "../core/local-time.ts";
-import type { DeskResponse } from "../types/api.ts";
+import type { ActivityResponse, DeskResponse } from "../types/api.ts";
 import type { IsoDate, Result, YohError } from "../types/domain.ts";
 
 export interface DeskRecordDeps {
@@ -73,11 +74,11 @@ export async function getDesk(deps: DeskReadDeps, _input: Record<string, never>)
   }
 }
 
-export async function recordActivity(deps: DeskRecordDeps, _input: Record<string, never>): Promise<Result<{ date: IsoDate }, YohError>> {
+export async function recordActivity(deps: DeskRecordDeps, _input: Record<string, never>): Promise<Result<ActivityResponse, YohError>> {
   try {
     const date = localIsoDate(deps.now(), deps.timeZone);
     deps.recordActivityDay(date);
-    return { ok: true, value: { date } };
+    return { ok: true, value: { date, timeZone: deps.timeZone } };
   } catch (err) {
     return { ok: false, error: { kind: "unreachable", message: errorCopyForThrown(err) } };
   }

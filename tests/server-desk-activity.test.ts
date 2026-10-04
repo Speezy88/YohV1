@@ -1,5 +1,5 @@
 /**
- * Tests for the `/api/*` activity-day middleware (Ruling E12-R3) and the real dep's once-per-day closure.
+ * Tests for `POST /api/activity` (Rulings E12-R3, E12-R14: only a real click or key marks a day) and the real dep's once-per-day closure.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -19,39 +19,40 @@ function setup(desk?: ServerDeps["desk"]) {
   return { connection, app: createApp({ connection, log: () => {}, ...(desk ? { desk } : {}) }) };
 }
 
-test("a request to an /api/* route records today", async () => {
+const POST_ACTIVITY = { method: "POST", headers: { "content-type": "application/json" }, body: "{}" };
+
+test("POST /api/activity records today and returns the host date and zone", async () => {
   const written: string[] = [];
   const { app } = setup({ now: () => new Date("2026-10-04T12:00:00.000Z"), timeZone: "UTC", recordActivityDay: (d) => void written.push(d), ...NO_READS });
-  await app.request("/api/research");
+  const res = await app.request("/api/activity", POST_ACTIVITY);
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { ok: true, value: { date: "2026-10-04", timeZone: "UTC" } });
   assert.deepEqual(written, ["2026-10-04"]);
 });
 
-test("GET /api/health does not record", async () => {
+test("E12-R14: GET /api/home, /api/desk, /api/events and /api/research record nothing", async () => {
   const written: string[] = [];
   const { app } = setup({ now: () => new Date("2026-10-04T12:00:00.000Z"), timeZone: "UTC", recordActivityDay: (d) => void written.push(d), ...NO_READS });
-  const res = await app.request("/api/health");
-  assert.equal(res.status, 200);
+  for (const path of ["/api/home", "/api/desk", "/api/events", "/api/research", "/api/health"]) {
+    const res = await app.request(path);
+    await res.body?.cancel();
+  }
   assert.deepEqual(written, []);
 });
 
-test("a throwing dep still returns the route's normal response, and is logged", async () => {
-  const logs: string[] = [];
-  const connection = openSqliteConnection({ databasePath: ":memory:" });
-  initNotificationStoreSchema(connection.db);
-  const app = createApp({
-    connection,
-    log: (e) => void logs.push(e.event),
-    desk: { now: () => new Date(), timeZone: "UTC", recordActivityDay: () => { throw new Error("boom"); }, ...NO_READS },
-  });
-  const res = await app.request("/api/research");
-  assert.equal(res.status, 503, "the route's own not-configured answer");
-  assert.ok(logs.includes("server.activity-day-failed"));
+test("a throwing dep gives a failure envelope and no crash", async () => {
+  const { app } = setup({ now: () => new Date(), timeZone: "UTC", recordActivityDay: () => { throw new Error("boom"); }, ...NO_READS });
+  const res = await app.request("/api/activity", POST_ACTIVITY);
+  assert.equal(res.status, 503);
+  assert.equal((await res.json() as { ok: boolean }).ok, false);
 });
 
-test("no desk deps means no error", async () => {
+test("POST /api/activity without Desk deps answers like GET /api/desk", async () => {
   const { app } = setup();
-  const res = await app.request("/api/research");
-  assert.equal(res.status, 503);
+  const post = await app.request("/api/activity", POST_ACTIVITY);
+  const get = await app.request("/api/desk");
+  assert.equal(post.status, get.status);
+  assert.deepEqual(await post.json(), await get.json());
 });
 
 test("buildDeskDeps writes once per day per process and again on a new day", () => {

@@ -10,10 +10,10 @@ test("recordActivity records today's date in the host timezone, not UTC", async 
   // 03:30 UTC on the 4th is still the 3rd in New York.
   const deps = { now: () => new Date("2026-10-04T03:30:00.000Z"), timeZone: "America/New_York", recordActivityDay: (d: string) => void written.push(d) };
   const result = await recordActivity(deps, {});
-  assert.deepEqual(result, { ok: true, value: { date: "2026-10-03" } });
+  assert.deepEqual(result, { ok: true, value: { date: "2026-10-03", timeZone: "America/New_York" } });
   // Just after local midnight.
   const after = await recordActivity({ ...deps, now: () => new Date("2026-10-04T04:30:00.000Z") }, {});
-  assert.deepEqual(after, { ok: true, value: { date: "2026-10-04" } });
+  assert.deepEqual(after, { ok: true, value: { date: "2026-10-04", timeZone: "America/New_York" } });
   assert.deepEqual(written, ["2026-10-03", "2026-10-04"]);
 });
 

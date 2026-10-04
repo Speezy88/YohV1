@@ -255,7 +255,7 @@ const SPEND_READ_MARGIN_DAYS = 2;
 
 /**
  * Ruling E12-R3: the activity-day recorder. Remembers the last date it wrote,
- * so a process makes one SQLite write per day however many requests arrive,
+ * so a process makes one SQLite write per day however many pings arrive,
  * and after a failed write waits a minute before trying again. Without
  * `YOH_TIMEZONE` Desk is not configured (never a silent UTC).
  */

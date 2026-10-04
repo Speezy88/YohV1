@@ -24,6 +24,7 @@ import {
   NIGHT_CLOSE_OUT_ANYTHING_ELSE_QUESTION_ID,
   type NightCloseOutCursor,
 } from "../core/open-item-questions.ts";
+import { closeOutCompletedAt } from "../core/local-time.ts";
 import { buildOpenItemQuestion, type SurfaceOpenItemsDeps } from "./surface-open-items.ts";
 import type { ExternalId, IsoDate, Result, Task, TaskStatus, YohError } from "../types/domain.ts";
 import type { RecordCompletionInput } from "../adapters/completion-log.ts";
@@ -102,6 +103,13 @@ async function withNext(
   return { ok: true, value: { ...(message !== undefined ? { message } : {}), receipts, next: next.value } };
 }
 
+/** Ruling E12-R13: a completion answered after its night is dated to that night. */
+function completedAtFor(deps: AnswerNightCloseOutDeps, closeOutDate: IsoDate): string {
+  const answeredAt = (deps.now ?? (() => new Date()))();
+  if (!deps.timeZone || closeOutDate === UNKNOWN_CLOSE_OUT_DATE) return answeredAt.toISOString();
+  return closeOutCompletedAt(closeOutDate, answeredAt, deps.timeZone);
+}
+
 export async function answerNightCloseOut(deps: AnswerNightCloseOutDeps, input: AnswerOpenItemRequest): Promise<Result<AnswerOpenItemResponse, YohError>> {
   // The final "anything else?" step is stateless — it is answered after the
   // request was cleared (or beside a newer night's request, from an old card),
@@ -142,7 +150,7 @@ export async function answerNightCloseOut(deps: AnswerNightCloseOutDeps, input: 
     pending.taskTitle,
     parsed,
     closeOutDate,
-    new Date().toISOString(),
+    completedAtFor(deps, closeOutDate),
   );
   if (!applied.ok) {
     return withNext(
