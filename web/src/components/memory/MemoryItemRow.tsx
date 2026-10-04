@@ -6,11 +6,12 @@
  */
 import { useState } from "react";
 import { useReducedMotion } from "../../hooks/useReducedMotion.ts";
-import { editItem, markMemorySaved, moveItem, setExpiry, useMemorySaved } from "../../lib/memory.ts";
+import { editItem, markMemorySaved, moveItem, sendSortFeedback, setExpiry, useMemorySaved } from "../../lib/memory.ts";
 import { formatMemoryDay } from "../../lib/memoryFormat.ts";
 import type { MemoryItemView } from "../../../../src/types/api.ts";
 import { BUTTON_SECONDARY, CONTROL_DISABLED, CONTROL_SM, CONTROL_TRANSITION, FOCUS_RING } from "../../lib/controlStyles.ts";
 import { ItemOverflowMenu, type FolderChoice } from "./ItemOverflowMenu.tsx";
+import { SortFeedbackPanel, type SortFeedbackAnswer } from "./SortFeedbackPanel.tsx";
 
 const CAPTION = "font-body text-small text-ink-secondary";
 const PILL = "rounded-full bg-surface-sunken px-2 py-0.5 font-body text-small text-ink-secondary";
@@ -48,6 +49,7 @@ export function MemoryItemRow({ item, reason, onOpenSource, folders, onDelete, d
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | undefined>(undefined);
   const [duplicate, setDuplicate] = useState<Duplicate | undefined>(undefined);
+  const [sorting, setSorting] = useState(false);
   const saved = useMemorySaved(item.id);
   const editable = folders !== undefined && onDelete !== undefined;
   const readOnlyPending = item.pendingChange;
@@ -91,7 +93,21 @@ export function MemoryItemRow({ item, reason, onOpenSource, folders, onDelete, d
     else markMemorySaved(outcome.value.itemId ?? item.id);
   };
 
+  const saveSortFeedback = async (answer: SortFeedbackAnswer): Promise<void> => {
+    setBusy(true);
+    setFailure(undefined);
+    const outcome = await sendSortFeedback(item.id, answer.verdict, answer.reason, answer.belongsIn);
+    setBusy(false);
+    // A failed save keeps the panel (and the typed reason) so it can be sent again.
+    if (!outcome.ok) return setFailure(outcome.message);
+    setSorting(false);
+    markMemorySaved(item.id);
+  };
+
   if (dissolving && reducedMotion) return null;
+
+  const sorted = item.sortFeedback;
+  const belongsLabel = sorted?.belongsIn ? (folders?.find((f) => f.folder === sorted.belongsIn)?.label ?? sorted.belongsIn) : undefined;
 
   const meta = [
     ...(saved ? ["Saved"] : []),
@@ -161,6 +177,10 @@ export function MemoryItemRow({ item, reason, onOpenSource, folders, onDelete, d
             deleteOnly={readOnlyPending}
             onMove={(folder) => void direct(() => moveItem(item.id, folder))}
             onSetExpiry={(expiresOn) => void direct(() => setExpiry(item.id, expiresOn))}
+            onSortFeedback={() => {
+              setFailure(undefined);
+              setSorting(true);
+            }}
             onDelete={() => onDelete(item)}
           />
         )}
@@ -176,6 +196,17 @@ export function MemoryItemRow({ item, reason, onOpenSource, folders, onDelete, d
           </button>
         </div>
       )}
+      {sorting && folders && (
+        <SortFeedbackPanel
+          currentFolder={item.folder}
+          origin={item.origin}
+          folders={folders}
+          {...(sorted ? { initial: sorted } : {})}
+          busy={busy}
+          onSave={(answer) => void saveSortFeedback(answer)}
+          onCancel={() => setSorting(false)}
+        />
+      )}
       {readOnlyPending && <p className={`m-0 ${CAPTION}`}>Waiting on your answer in Chat</p>}
       {(failure ?? error) && (
         <p role="alert" className="m-0 font-body text-small font-bold text-ink-danger">
@@ -183,6 +214,11 @@ export function MemoryItemRow({ item, reason, onOpenSource, folders, onDelete, d
         </p>
       )}
       <p className={`m-0 ${CAPTION}`}>{meta}</p>
+      {sorted && !sorting && (
+        <p data-testid="memory-sort-feedback" className={`m-0 ${CAPTION}`}>
+          {sorted.verdict === "right" ? "Folder marked right" : belongsLabel ? `Folder marked wrong · Belongs in ${belongsLabel}` : "Folder marked wrong"} · {sorted.reason}
+        </p>
+      )}
       {reason && <p className="m-0 text-small text-ink-primary">{reason}</p>}
       {actions}
       {(item.notLoadedReason || item.status === "history" || item.declined || item.pendingChange) && (

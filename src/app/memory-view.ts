@@ -46,6 +46,8 @@ export async function viewMemory(deps: ViewMemoryDeps, _input: Record<string, ne
     if (recalled.value === undefined) return { ok: false, error: { kind: "unreachable", message: errorCopyForThrown(new Error("memory unavailable")) } };
     const states = new Map(recalled.value.states.map((s) => [s.itemId, s]));
 
+    const sortFeedback = new Map(deps.memoryItems.listSortFeedback().map((f) => [f.itemId, f]));
+
     const views = items.map((i) => {
       const turn = i.sourceTurnId !== undefined ? deps.chatHistory?.getTurn(i.sourceTurnId) : undefined;
       return toMemoryItemView(i, {
@@ -53,6 +55,7 @@ export async function viewMemory(deps: ViewMemoryDeps, _input: Record<string, ne
         ...(turn ? { sourceTurn: { conversationId: turn.conversationId, turnId: turn.id, date: turn.date } } : {}),
         chain: deps.memoryItems.chainOf(i.id),
         timeZone: deps.timeZone,
+        sortFeedback: sortFeedback.get(i.id),
       });
     });
     const folders: MemoryFolderView[] = MEMORY_FOLDERS_IN_ORDER.map((folder) => {

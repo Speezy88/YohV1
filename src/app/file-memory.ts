@@ -19,6 +19,7 @@ import { MEMORY_FILING_TIMEOUT_MS, planFilingActions, validateFiling, type Filin
 import { buildProposalQuestion, PROPOSAL_QUESTION_ID } from "../core/open-item-questions.ts";
 import { currentRuleValue, validateProposedRuleValue } from "../core/planning-settings.ts";
 import { describeRuleChange, ruleChangeEntityId, ruleChangeProposalId, ruleChangeRequestId, ruleValuesEqual } from "../core/rule-change.ts";
+import { MEMORY_SORT_EXAMPLES_MAX, sortingExampleLines } from "../core/memory-sort-feedback.ts";
 import type { OpenItemQuestion, RememberedReceipt } from "../types/api.ts";
 import type { MemoryFolder, MemoryItem, Proposal, Result, RuleChange, Task, YohError } from "../types/domain.ts";
 
@@ -67,7 +68,8 @@ export async function fileMemory(deps: FileMemoryDeps, input: FileMemoryInput): 
     });
     const filing = (async (): Promise<FileMemoryOutput | undefined> => {
       const alwaysLoaded = items.listItems({ folders: ALWAYS_LOADED_FOLDERS, status: ["current"] });
-      const candidates = await extractMemories(deps.memoryLlmClient ?? deps.llmClient, input.text, alwaysLoaded, { forceStated: input.forceStated }, deps.connection);
+      const sortingExamples = sortingExampleLines(items.listSortFeedback(MEMORY_SORT_EXAMPLES_MAX));
+      const candidates = await extractMemories(deps.memoryLlmClient ?? deps.llmClient, input.text, alwaysLoaded, { forceStated: input.forceStated, sortingExamples }, deps.connection);
       // A late extract (after the timeout) or an aborted stream must not write: no receipt means no Undo.
       if (timedOut || deps.isAborted?.() === true) return undefined;
       const { accepted } = validateFiling(candidates, {

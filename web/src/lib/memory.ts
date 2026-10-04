@@ -328,6 +328,11 @@ export function moveItem(itemId: string, folder: MemoryFolder): Promise<Outcome<
   return write(() => apiClient.api.memory.move.$post({ json: { itemId, folder } }));
 }
 
+/** Sorting feedback: whether the item's folder is right, and why; `belongsIn` only with "wrong". */
+export function sendSortFeedback(itemId: string, verdict: "right" | "wrong", reason: string, belongsIn?: MemoryFolder): Promise<Outcome<MemoryWriteResponse>> {
+  return write(() => apiClient.api.memory["sort-feedback"].$post({ json: { itemId, verdict, reason, ...(belongsIn ? { belongsIn } : {}) } }));
+}
+
 export function setExpiry(itemId: string, expiresOn: string | null): Promise<Outcome<MemoryWriteResponse>> {
   return write(() => apiClient.api.memory.expiry.$post({ json: { itemId, expiresOn } }));
 }

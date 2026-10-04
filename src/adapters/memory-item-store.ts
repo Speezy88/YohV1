@@ -6,7 +6,7 @@
  */
 import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
-import type { ExternalId, IsoDate, IsoDateTime, MemoryFolder, MemoryItem } from "../types/domain.ts";
+import type { ExternalId, IsoDate, IsoDateTime, MemoryFolder, MemoryItem, MemorySortFeedback } from "../types/domain.ts";
 import type { SqliteConnection } from "./sqlite.ts";
 import { appendOutboxInTx } from "./notification-store.ts";
 import { MEMORY_TOPIC } from "./chat-store.ts";
@@ -102,7 +102,37 @@ export interface MemoryItemStore {
   getPatternState(kind: string, area: string): PatternState | undefined;
   putPatternState(state: PatternState): void;
   listPatternStates(): PatternState[];
+  /** Saves Spencer's verdict on where an item was filed (one per item; a second replaces the first). */
+  putSortFeedback(input: { itemId: string; verdict: MemorySortFeedback["verdict"]; reason: string; belongsIn?: MemoryFolder; at?: IsoDateTime }): MemorySortFeedback;
+  /** Verdicts on items that are not deleted, newest first. */
+  listSortFeedback(limit?: number): MemorySortFeedback[];
   clearAll(): void;
+}
+
+interface SortFeedbackRow {
+  item_id: string;
+  text: string;
+  folder: MemoryFolder;
+  verdict: MemorySortFeedback["verdict"];
+  reason: string;
+  belongs_in: MemoryFolder | null;
+  created_at: string;
+}
+
+function toSortFeedback(r: SortFeedbackRow): MemorySortFeedback {
+  const f: MemorySortFeedback = { itemId: r.item_id, text: r.text, folder: r.folder, verdict: r.verdict, reason: r.reason, createdAt: r.created_at };
+  if (r.belongs_in !== null) f.belongsIn = r.belongs_in;
+  return f;
+}
+
+/** A verdict follows its item to the version that replaces it. */
+function moveSortFeedback(db: Database.Database, fromId: string, toId: string): void {
+  db.prepare(`UPDATE OR REPLACE memory_sort_feedback SET item_id = ? WHERE item_id = ?`).run(toId, fromId);
+}
+
+/** Drops verdicts whose item row is gone for good. */
+function dropOrphanSortFeedback(db: Database.Database): void {
+  db.prepare(`DELETE FROM memory_sort_feedback WHERE item_id NOT IN (SELECT id FROM memory_items)`).run();
 }
 
 interface ItemRow {
@@ -183,6 +213,15 @@ export function initMemoryItemStoreSchema(db: Database.Database): void {
       declined_at TEXT,
       last_offered_on TEXT,
       PRIMARY KEY (kind, area)
+    );
+    CREATE TABLE IF NOT EXISTS memory_sort_feedback (
+      item_id TEXT PRIMARY KEY,
+      text TEXT NOT NULL,
+      folder TEXT NOT NULL,
+      verdict TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      belongs_in TEXT,
+      created_at TEXT NOT NULL
     );
   `);
   // Databases created before Story 13.13 lack the column.
@@ -329,6 +368,7 @@ export function createMemoryItemStore(connection: SqliteConnection): MemoryItemS
         const old = requireRow(tx, oldId);
         const newId = insertRow(tx, next, text, next.ruleChange ?? old.rule_change, oldId);
         tx.prepare(`UPDATE memory_items SET status = 'superseded', superseded_by = ? WHERE id = ?`).run(newId, oldId);
+        moveSortFeedback(tx, oldId, newId);
         hint(tx, newId);
         return newId;
       });
@@ -341,6 +381,9 @@ export function createMemoryItemStore(connection: SqliteConnection): MemoryItemS
         requireRow(tx, oldIds[1]);
         const newId = insertRow(tx, next, text, next.ruleChange ?? first.rule_change, oldIds[0]);
         tx.prepare(`UPDATE memory_items SET status = 'superseded', superseded_by = ? WHERE id IN (?, ?)`).run(newId, oldIds[0], oldIds[1]);
+        // The merged item keeps one verdict: the edited item's, else the other's.
+        moveSortFeedback(tx, oldIds[1], newId);
+        moveSortFeedback(tx, oldIds[0], newId);
         hint(tx, newId);
         return newId;
       });
@@ -393,6 +436,7 @@ export function createMemoryItemStore(connection: SqliteConnection): MemoryItemS
     purgeDeleted() {
       return connection.writeTx((tx) => {
         const n = tx.prepare(`DELETE FROM memory_items WHERE status = 'deleted'`).run().changes;
+        dropOrphanSortFeedback(tx);
         if (n > 0) hint(tx, "purge");
         return n;
       });
@@ -402,13 +446,18 @@ export function createMemoryItemStore(connection: SqliteConnection): MemoryItemS
       connection.writeTx((tx) => {
         const del = tx.prepare(`DELETE FROM memory_items WHERE id = ?`);
         for (const id of chainIds) del.run(id);
+        dropOrphanSortFeedback(tx);
         hint(tx, "purge");
       });
     },
     undoFiling(newId) {
       connection.writeTx((tx) => {
+        // A verdict goes back to the version being restored (the replaced one, for a merge).
+        const prior = tx.prepare<[string], { replaces_id: string | null }>(`SELECT replaces_id FROM memory_items WHERE id = ?`).get(newId)?.replaces_id;
+        if (prior) moveSortFeedback(tx, newId, prior);
         tx.prepare(`UPDATE memory_items SET status = 'current', superseded_by = NULL WHERE superseded_by = ?`).run(newId);
         tx.prepare(`DELETE FROM memory_items WHERE id = ?`).run(newId);
+        dropOrphanSortFeedback(tx);
         hint(tx, newId);
       });
     },
@@ -464,8 +513,30 @@ export function createMemoryItemStore(connection: SqliteConnection): MemoryItemS
     listPatternStates() {
       return db.prepare<[], PatternRow>(`SELECT * FROM pattern_state ORDER BY kind, area`).all().map(toPattern);
     },
+    putSortFeedback(input) {
+      const at = input.at ?? new Date().toISOString();
+      connection.writeTx((tx) => {
+        const item = requireRow(tx, input.itemId);
+        tx.prepare(
+          `INSERT OR REPLACE INTO memory_sort_feedback (item_id, text, folder, verdict, reason, belongs_in, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        ).run(item.id, item.text, item.folder, input.verdict, input.reason, input.belongsIn ?? null, at);
+        hint(tx, item.id);
+      });
+      return toSortFeedback(db.prepare<[string], SortFeedbackRow>(`SELECT * FROM memory_sort_feedback WHERE item_id = ?`).get(input.itemId) as SortFeedbackRow);
+    },
+    listSortFeedback(limit) {
+      return db
+        .prepare<[number], SortFeedbackRow>(
+          `SELECT f.* FROM memory_sort_feedback f JOIN memory_items m ON m.id = f.item_id
+           WHERE m.status != 'deleted' ORDER BY f.created_at DESC, f.rowid DESC LIMIT ?`,
+        )
+        .all(limit ?? -1)
+        .map(toSortFeedback);
+    },
     clearAll() {
       connection.writeTx((tx) => {
+        tx.prepare(`DELETE FROM memory_sort_feedback`).run();
         tx.prepare(`DELETE FROM memory_items`).run();
         tx.prepare(`DELETE FROM pattern_state`).run();
         tx.prepare(`DELETE FROM memory_receipts`).run();
