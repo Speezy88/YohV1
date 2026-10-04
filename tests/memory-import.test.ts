@@ -49,6 +49,15 @@ test("reports unknown headings, stray lines, lines before a heading and empty li
   ]);
 });
 
+test("markdown noise is a problem, not a filed line", () => {
+  const r = parseMemoryImport("## About you\n---\n**Note**\n- fine");
+  assert.deepEqual(r.candidates.map((c) => c.text), ["fine"]);
+  assert.deepEqual(r.problems, [
+    { line: 2, reason: "not a heading or a list line" },
+    { line: 3, reason: "not a heading or a list line" },
+  ]);
+});
+
 test("an empty file has no candidates and no problems", () => {
   assert.deepEqual(parseMemoryImport(""), { candidates: [], problems: [] });
 });

@@ -669,6 +669,8 @@ export interface ImportMemoryResponse {
   /** Stored as each filed item's `sourceTurnId`. */
   readonly batchTag: string;
   readonly counts: { readonly filed: number; readonly skippedDuplicate: number; readonly rejected: number };
+  /** Current items in the always-loaded folders before the import, after it, and `ALWAYS_LOADED_CAP`. */
+  readonly alwaysLoaded: { readonly before: number; readonly after: number; readonly cap: number };
   readonly filed: readonly ImportMemoryLine[];
   readonly skippedDuplicate: readonly ImportMemoryLine[];
   readonly rejected: readonly (ImportMemoryLine & { readonly reason: string })[];

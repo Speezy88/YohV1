@@ -21,8 +21,8 @@ test("readConversations keeps only Spencer's messages and skips what does not fi
   const r = readConversations(fixture("conversations.json"));
   assert.equal(r.skipped, 3);
   assert.deepEqual(r.conversations, [
-    { title: "Morning routine", date: "2025-11-02", humanMessages: ["I run most mornings before school and I want to keep that.", "Also I am allergic to peanuts."] },
-    { title: "Untitled", date: "2026-01-10", humanMessages: ["I am building a planning assistant on a Raspberry Pi."] },
+    { date: "2025-11-02", humanMessages: ["I run most mornings before school and I want to keep that.", "Also I am allergic to peanuts."] },
+    { date: "2026-01-10", humanMessages: ["I am building a planning assistant on a Raspberry Pi."] },
   ]);
   assert.ok(!JSON.stringify(r.conversations).includes("swimming"));
 });
@@ -58,18 +58,20 @@ test("batchConversations packs conversations under the limit and splits an overs
   const { conversations } = readConversations(fixture("conversations.json"));
   const one = batchConversations(conversations);
   assert.equal(one.length, 1);
-  assert.match(one[0] as string, /^### Conversation \(2025-11-02\): Morning routine\n- I run most mornings/);
-  assert.match(one[0] as string, /### Conversation \(2026-01-10\): Untitled/);
+  assert.match(one[0] as string, /^### Conversation \(2025-11-02\)\n- I run most mornings/);
+  assert.match(one[0] as string, /### Conversation \(2026-01-10\)\n/);
+
+  assert.ok(![...one, ...batchConversations(conversations, 120)].some((b) => b.includes("Morning routine")), "titles are never sent");
 
   const small = batchConversations(conversations, 120);
   assert.ok(small.length >= 2);
   assert.ok(small.every((b) => b.startsWith("### Conversation (")));
   assert.equal(small.join("\n").match(/allergic to peanuts/g)?.length, 1);
 
-  const big = [{ title: "Big", date: "2026-03-01", humanMessages: ["m".repeat(80), "n".repeat(80), "o".repeat(80)] }];
+  const big = [{ date: "2026-03-01", humanMessages: ["m".repeat(80), "n".repeat(80), "o".repeat(80)] }];
   const split = batchConversations(big, 150);
   assert.equal(split.length, 3);
-  assert.ok(split.every((b) => b.startsWith("### Conversation (2026-03-01): Big\n- ")));
+  assert.ok(split.every((b) => b.startsWith("### Conversation (2026-03-01)\n- ")));
   assert.deepEqual(batchConversations([]), []);
 });
 
@@ -83,6 +85,20 @@ test("parseExtractedCandidates keeps valid elements and returns undefined for a 
   assert.equal(parseExtractedCandidates("I could not find anything.", 2), undefined);
   assert.equal(parseExtractedCandidates('[{"folder": "about-you", "text": "cut off', 2), undefined);
   assert.equal(parseExtractedCandidates('{"folder":"about-you"}', 2), undefined);
+});
+
+test("parseExtractedCandidates salvages the complete elements of a cut-off array", () => {
+  const cut = '[{"folder":"about-you","text":"One."},{"folder":"about-you","text":"Two."},{"folder":"about-you","te';
+  assert.deepEqual(parseExtractedCandidates(cut, 1), [
+    { folder: "about-you", text: "One.", stage: 1 },
+    { folder: "about-you", text: "Two.", stage: 1 },
+  ]);
+  assert.equal(parseExtractedCandidates("[ not json at all", 1), undefined);
+});
+
+test("parseExtractedCandidates drops the patterns folder, which Yoh fills itself", () => {
+  const reply = '[{"folder":"patterns","text":"Plans on Sunday."},{"folder":"about-you","text":"Runs most mornings."}]';
+  assert.deepEqual(parseExtractedCandidates(reply, 2), [{ folder: "about-you", text: "Runs most mornings.", stage: 2 }]);
 });
 
 test("mergeCandidates collapses near-duplicates: stage 1 wins, then the newest wording", () => {

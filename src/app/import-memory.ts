@@ -73,6 +73,7 @@ export async function importMemory(deps: ImportMemoryDeps, input: ImportMemoryIn
         dryRun: input.dryRun,
         batchTag,
         counts: { filed: filed.length, skippedDuplicate: skippedDuplicate.length, rejected: rejected.length },
+        alwaysLoaded: { before: alwaysNow, after: alwaysNow + alwaysNew, cap: ALWAYS_LOADED_CAP },
         filed,
         skippedDuplicate,
         rejected,

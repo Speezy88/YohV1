@@ -60,7 +60,37 @@ test("dry run reports and writes nothing; the real run files", async () => {
 test("without a memory store the route answers not-configured", async () => {
   const connection = openSqliteConnection({ databasePath: ":memory:" });
   const app = createApp({ connection, log: () => {} });
-  const res = await app.request("/api/memory/import", { method: "POST", body: FILE });
+  const res = await app.request("/api/memory/import", { method: "POST", headers: { "Content-Type": "text/markdown" }, body: FILE });
   assert.equal(((await res.json()) as { ok: boolean }).ok, false);
   assert.notEqual(res.status, 200);
+});
+
+test("a body that is not text/markdown is a 400 and writes nothing", async () => {
+  const { app, memoryItems } = setup();
+  const plain = await app.request("/api/memory/import", { method: "POST", headers: { "Content-Type": "text/plain" }, body: FILE });
+  assert.equal(plain.status, 400);
+  const body = (await plain.json()) as { error: { kind: string; message: string } };
+  assert.equal(body.error.kind, "validation");
+  assert.match(body.error.message, /Content-Type: text\/markdown/);
+  const none = await app.request("/api/memory/import", { method: "POST", body: FILE });
+  assert.equal(none.status, 400);
+  assert.equal(memoryItems.listItems().length, 0);
+});
+
+test("dryRun accepts 1 and true; any other word is a 400 that writes nothing", async () => {
+  const { post, memoryItems } = setup();
+  const t = await post("/api/memory/import?dryRun=true", FILE);
+  assert.equal(t.status, 200);
+  assert.equal(((await t.json()) as { value: ImportMemoryResponse }).value.dryRun, true);
+  assert.equal(memoryItems.listItems().length, 0);
+  const yes = await post("/api/memory/import?dryRun=yes", FILE);
+  assert.equal(yes.status, 400);
+  const body = (await yes.json()) as { error: { kind: string; message: string } };
+  assert.equal(body.error.kind, "validation");
+  assert.equal(body.error.message, "dryRun must be 1 or true.");
+  assert.equal(memoryItems.listItems().length, 0);
+  for (const v of ["", "0", "false"]) {
+    const r = await post(`/api/memory/import?dryRun=${v}`, "## About you\n- Only once.\n");
+    assert.equal(((await r.json()) as { value: ImportMemoryResponse }).value.dryRun, false);
+  }
 });

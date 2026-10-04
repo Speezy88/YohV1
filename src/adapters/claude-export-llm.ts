@@ -15,11 +15,13 @@ export interface ExportExtraction {
   /** Undefined when the reply held no JSON array. */
   readonly candidates: ExtractedCandidate[] | undefined;
   readonly usage: LlmUsageCostRow;
+  /** The reply stopped at the output limit; its last element may be missing. */
+  readonly truncated: boolean;
 }
 
 const CONVERSATIONS_MAX_TOKENS = 1500;
 /** Saved memory and project instructions are dense; one call may yield dozens of facts. */
-const DISTILLED_MAX_TOKENS = 4000;
+const DISTILLED_MAX_TOKENS = 8000;
 
 function systemPrompt(kind: ExportSourceKind): string {
   return [
@@ -50,6 +52,7 @@ export async function extractExportCandidates(client: AnthropicMessagesClient, k
     .map((block) => block.text)
     .join("\n");
   return {
+    truncated: message.stop_reason === "max_tokens",
     candidates: parseExtractedCandidates(text, kind === "distilled" ? 1 : 2),
     usage: {
       model: CLAUDE_CHAT_MODEL_FAST,

@@ -1453,17 +1453,24 @@ export function createApp(deps: ServerDeps) {
       // Claude export import: the body is the reviewed candidates file; `?dryRun=1` reports without writing.
       .post("/api/memory/import", async (c) => {
         if (!deps.memoryItems) return c.json(MEMORY_NOT_CONFIGURED, httpStatus(MEMORY_NOT_CONFIGURED));
+        const refuse = (message: string) => {
+          const invalid: ApiFailure = { ok: false, error: { kind: "validation", message } };
+          return c.json(invalid, httpStatus(invalid));
+        };
+        // text/plain can be POSTed cross-origin without a preflight; text/markdown cannot, and this server answers no preflight.
+        if (!(c.req.header("content-type") ?? "").toLowerCase().startsWith("text/markdown")) return refuse("Send the candidates file with Content-Type: text/markdown.");
+        const dryRunParam = c.req.query("dryRun");
+        if (dryRunParam !== undefined && !["", "0", "false", "1", "true"].includes(dryRunParam)) return refuse("dryRun must be 1 or true.");
         const parsed = parseMemoryImport(await c.req.text());
         if (parsed.problems.length > 0) {
           const shown = parsed.problems.slice(0, 5).map((p) => `Line ${p.line}: ${p.reason}`).join("; ");
           const more = parsed.problems.length > 5 ? `; and ${parsed.problems.length - 5} more` : "";
-          const invalid: ApiFailure = { ok: false, error: { kind: "validation", message: `The file could not be read. ${shown}${more}.` } };
-          return c.json(invalid, httpStatus(invalid));
+          return refuse(`The file could not be read. ${shown}${more}.`);
         }
         const result = wire(
           await importMemory(
             { memoryItems: deps.memoryItems, now: () => new Date(), timeZone: deps.chat?.timeZone ?? process.env["YOH_TIMEZONE"] ?? "UTC" },
-            { candidates: parsed.candidates, dryRun: c.req.query("dryRun") === "1" },
+            { candidates: parsed.candidates, dryRun: dryRunParam === "1" || dryRunParam === "true" },
           ),
         );
         return c.json(result, httpStatus(result));

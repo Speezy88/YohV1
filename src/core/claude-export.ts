@@ -8,6 +8,8 @@ import type { RenderCandidate } from "./memory-import.ts";
 export const EXPORT_MESSAGE_MAX_CHARS = 4000;
 /** Characters of conversation text per model call (about 15k tokens). */
 export const EXPORT_BATCH_MAX_CHARS = 60_000;
+/** Characters of distilled text per model call. Distilled text is dense; smaller inputs keep each reply inside the output budget. */
+export const EXPORT_DISTILLED_BATCH_MAX_CHARS = 20_000;
 /** Word-set overlap at which two candidates in one folder count as the same fact. */
 export const EXPORT_NEAR_DUPLICATE_JACCARD = 0.8;
 /** An estimate above this needs an explicit yes. */
@@ -19,7 +21,6 @@ const EXPECTED_OUTPUT_TOKENS = 400;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 export interface ExportConversation {
-  readonly title: string;
   /** Day of the conversation's last update. */
   readonly date: string;
   readonly humanMessages: readonly string[];
@@ -73,7 +74,7 @@ export function readConversations(json: unknown): { conversations: ExportConvers
       skipped++;
       continue;
     }
-    conversations.push({ title: str(raw["name"]).trim() || "Untitled", date, humanMessages });
+    conversations.push({ date, humanMessages });
   }
   return { conversations, skipped };
 }
@@ -140,7 +141,7 @@ export function batchConversations(conversations: readonly ExportConversation[],
     current = current === "" ? block : `${current}\n\n${block}`;
   };
   for (const c of conversations) {
-    const heading = `### Conversation (${c.date}): ${c.title}`;
+    const heading = `### Conversation (${c.date})`;
     let block = heading;
     for (const m of c.humanMessages) {
       const line = `- ${m.replace(/\s+/g, " ")}`;
@@ -159,20 +160,27 @@ export function batchConversations(conversations: readonly ExportConversation[],
 /** The model's JSON array → candidates. Undefined when the reply holds no JSON array, so the caller can retry instead of caching an empty result. */
 export function parseExtractedCandidates(modelText: string, stage: 1 | 2): ExtractedCandidate[] | undefined {
   const start = modelText.indexOf("[");
+  if (start < 0) return undefined;
   const end = modelText.lastIndexOf("]");
-  if (start < 0 || end <= start) return undefined;
-  let raw: unknown;
-  try {
-    raw = JSON.parse(modelText.slice(start, end + 1));
-  } catch {
-    return undefined;
+  const tryParse = (json: string): unknown => {
+    try {
+      return JSON.parse(json);
+    } catch {
+      return undefined;
+    }
+  };
+  let raw = end > start ? tryParse(modelText.slice(start, end + 1)) : undefined;
+  if (raw === undefined) {
+    // A reply cut off at the output limit: keep the elements that finished.
+    const lastBrace = modelText.lastIndexOf("}");
+    raw = lastBrace > start ? tryParse(`${modelText.slice(start, lastBrace + 1)}]`) : undefined;
   }
   if (!Array.isArray(raw)) return undefined;
   const out: ExtractedCandidate[] = [];
   for (const e of raw as unknown[]) {
     if (!isRecord(e)) continue;
     const folder = e["folder"];
-    if (!isMemoryFolder(folder)) continue;
+    if (!isMemoryFolder(folder) || folder === "patterns") continue;
     const text = str(e["text"]).replace(/\s+/g, " ").trim();
     if (text === "" || text.length > MEMORY_ITEM_MAX_CHARS) continue;
     const s = e["sensitive"];

@@ -123,3 +123,14 @@ test("a failing store becomes an unreachable error, not a throw", async () => {
   const r = await importMemory(w.deps, { candidates: [line(1)], dryRun: false });
   assert.ok(!r.ok && r.error.kind === "unreachable");
 });
+
+test("reports the always-loaded headroom, on a dry run too", async () => {
+  for (const dryRun of [true, false]) {
+    const w = world();
+    w.memoryItems.insert({ folder: "about-you", text: "Existing one", origin: "stated" });
+    w.memoryItems.insert({ folder: "about-you", text: "Existing two", origin: "stated" });
+    const r = await importMemory(w.deps, { candidates: [line(1), line(2, { folder: "goals-projects" })], dryRun });
+    assert.ok(r.ok);
+    if (r.ok) assert.deepEqual(r.value.alwaysLoaded, { before: 2, after: 3, cap: 60 });
+  }
+});

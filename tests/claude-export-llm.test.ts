@@ -10,12 +10,12 @@ interface SeenCall {
   user: string;
 }
 
-function fakeClient(reply: string, seen: SeenCall[]): AnthropicMessagesClient {
+function fakeClient(reply: string, seen: SeenCall[], stopReason = "end_turn"): AnthropicMessagesClient {
   return {
     messages: {
       create: async (params: { model: string; max_tokens: number; system: string; messages: { content: string }[] }) => {
         seen.push({ model: params.model, max_tokens: params.max_tokens, system: params.system, user: params.messages[0]?.content ?? "" });
-        return { content: [{ type: "text", text: reply }], usage: { input_tokens: 1200, output_tokens: 80, cache_creation_input_tokens: null, cache_read_input_tokens: null } };
+        return { content: [{ type: "text", text: reply }], stop_reason: stopReason, usage: { input_tokens: 1200, output_tokens: 80, cache_creation_input_tokens: null, cache_read_input_tokens: null } };
       },
     },
   } as unknown as AnthropicMessagesClient;
@@ -27,6 +27,7 @@ test("conversations: sends the batch to Haiku and returns stage 2 candidates wit
   const r = await extractExportCandidates(client, "conversations", "### Conversation (2025-11-02): Morning\n- I run most mornings.");
   assert.deepEqual(r.candidates, [{ folder: "about-you", text: "Runs most mornings.", stage: 2, sourceDate: "2025-11-02" }]);
   assert.deepEqual(r.usage, { model: CLAUDE_CHAT_MODEL_FAST, inputTokens: 1200, outputTokens: 80, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 });
+  assert.equal(r.truncated, false);
   assert.equal(seen.length, 1);
   assert.equal(seen[0]?.model, CLAUDE_CHAT_MODEL_FAST);
   assert.match(seen[0]?.user ?? "", /I run most mornings/);
@@ -48,6 +49,14 @@ test("a reply with no JSON array yields undefined candidates but still reports u
   const r = await extractExportCandidates(fakeClient("Sorry, nothing here.", []), "conversations", "x");
   assert.equal(r.candidates, undefined);
   assert.equal(r.usage.inputTokens, 1200);
+  assert.equal(r.truncated, false);
+});
+
+test("a reply that stopped at the output limit is flagged truncated, and its finished facts are kept", async () => {
+  const cut = '[{"folder":"goals-projects","text":"Is building Yoh."},{"folder":"feedback","te';
+  const r = await extractExportCandidates(fakeClient(cut, [], "max_tokens"), "distilled", "x");
+  assert.equal(r.truncated, true);
+  assert.deepEqual(r.candidates, [{ folder: "goals-projects", text: "Is building Yoh.", stage: 1 }]);
 });
 
 test("a transport error throws", async () => {

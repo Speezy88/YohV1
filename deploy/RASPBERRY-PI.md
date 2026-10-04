@@ -152,4 +152,4 @@ Run on the Mac, from the repo. The export and the candidates file stay outside t
    curl -sS -X POST -H 'Content-Type: text/markdown' --data-binary @"$HOME/Documents/Yoh-previews/claude-candidates.md" 'https://yoh.<tailnet>.ts.net/api/memory/import'
    ```
 
-   The reply lists what was filed, skipped as a duplicate, or rejected. If it says the always-loaded folders would pass 60, cut that many lines and send it again. Sending the same file twice is harmless.
+   The reply lists what was filed, skipped as a duplicate, or rejected. `alwaysLoaded` shows how many always-loaded items you had, how many you will have, and the limit of 60. Leave some room: imported items count as your newest, so once you are at 60 the next thing you tell Yoh pushes out your own oldest item, not an imported one. If it says the always-loaded folders would pass 60, cut that many lines and send it again. Sending the same file twice is harmless.

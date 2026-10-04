@@ -42,7 +42,7 @@ export interface RenderCandidate {
 }
 
 const HEADING = /^##\s+(.+?)\s*$/;
-const ITEM = /^[-*]\s*(.*)$/;
+const ITEM = /^[-*](?:\s+(.*))?$/;
 const SENSITIVE_SUFFIX = /\s*\[sensitive:(health|emotion|finance)\]\s*$/i;
 const DATE_SUFFIX = /\s*\(\d{4}-\d{2}-\d{2}\)\s*$/;
 
@@ -81,7 +81,7 @@ export function parseMemoryImport(fileText: string): ParsedImport {
         if (!headingSeen) problems.push({ line, reason: "list line before any folder heading" });
         return;
       }
-      let body = item[1] as string;
+      let body = item[1] ?? "";
       const sensitive = SENSITIVE_SUFFIX.exec(body);
       if (sensitive) body = body.slice(0, sensitive.index);
       const date = DATE_SUFFIX.exec(body);
