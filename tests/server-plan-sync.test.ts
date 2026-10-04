@@ -8,7 +8,7 @@ import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { createMemoryStore, putPlan } from "../src/adapters/memory-store.ts";
 import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
 import { createApp, startPlanCalendarSyncSweep, PLAN_CALENDAR_SYNC_INTERVAL_MS } from "../src/shell/server.ts";
-import type { SyncPlanFromCalendarDeps } from "../src/app/sync-plan-from-calendar.ts";
+import { PLAN_SYNC_MISSING_UNCONFIRMED_EVENT, type SyncPlanFromCalendarDeps } from "../src/app/sync-plan-from-calendar.ts";
 import type { LogEntry } from "../src/adapters/logger.ts";
 import type { Plan, YohPlanEvent } from "../src/types/domain.ts";
 
@@ -98,6 +98,31 @@ test("a failing sync logs server.plan-sync-failed and an unchanged one is silent
   assert.deepEqual(entries.map((e) => e.event), ["server.plan-sync-failed"]);
   s2.stop();
   bad.connection.close();
+});
+
+test("the sweep logs a missing, unconfirmed event once, and again only when the count changes or it clears", async () => {
+  const base = setup({ withPlan: true });
+  const entry = (n: number) => ({ eventId: `e${n}`, blockId: `b${n}`, kind: "work" as const, taskId: `t${n}`, start: "2026-08-22T20:00:00.000Z", end: "2026-08-22T21:00:00.000Z" });
+  const present: YohPlanEvent = { eventId: "e1", blockId: "b1", title: "One", start: "2026-08-22T20:00:00.000Z", end: "2026-08-22T21:00:00.000Z" };
+  let snapshot = [entry(1), entry(2)];
+  const deps: SyncPlanFromCalendarDeps = { ...base.deps, readYohPlanEvents: async () => [present], readPlanCalendarSnapshot: () => snapshot, readDeletedYohPlanEventIds: async () => [] };
+  const timer = fakeInterval();
+  const entries: LogEntry[] = [];
+  const sweep = startPlanCalendarSyncSweep(deps, { setIntervalFn: timer.setIntervalFn, clearIntervalFn: timer.clearIntervalFn, log: (e) => entries.push(e) });
+  const missing = () => entries.filter((e) => e.event === PLAN_SYNC_MISSING_UNCONFIRMED_EVENT).map((e) => (e.detail as { events: number }).events);
+  await sweep.startup;
+  await sweep.runOnce();
+  assert.deepEqual(missing(), [1], "the same warning is not repeated");
+  snapshot = [entry(1), entry(2), entry(3)];
+  await sweep.runOnce();
+  assert.deepEqual(missing(), [1, 2], "a changed count is logged");
+  snapshot = [entry(1)];
+  await sweep.runOnce();
+  snapshot = [entry(1), entry(2), entry(3)];
+  await sweep.runOnce();
+  assert.deepEqual(missing(), [1, 2, 2], "logged again after a run with nothing missing");
+  sweep.stop();
+  base.connection.close();
 });
 
 test("POST /api/plan/sync without sync deps reports unchanged", async () => {

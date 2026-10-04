@@ -66,6 +66,9 @@ const samePins = (a: readonly DayPin[], b: readonly DayPin[], nowMs: number): bo
 };
 const sameIds = (a: readonly string[], b: readonly string[]): boolean => a.length === b.length && [...a].sort().join("\n") === [...b].sort().join("\n");
 
+/** Logged when a Plan event is missing from the calendar and Google has not confirmed a deletion. */
+export const PLAN_SYNC_MISSING_UNCONFIRMED_EVENT = "plan-sync.missing-unconfirmed";
+
 const NOTIFICATION_TITLE = "Your day is re-fit around your calendar change";
 
 export async function syncPlanFromCalendar(
@@ -127,7 +130,7 @@ export async function syncPlanFromCalendar(
   }
   // A missing event Google has not confirmed as deleted stays in the Plan; say so, since nothing else shows it.
   const unconfirmed = future.filter((e) => !presentIds.has(e.eventId) && !deleted.has(e.eventId)).length;
-  if (unconfirmed > 0) deps.log?.({ level: "warn", event: "plan-sync.missing-unconfirmed", detail: { date: today, events: unconfirmed } });
+  if (unconfirmed > 0) deps.log?.({ level: "warn", event: PLAN_SYNC_MISSING_UNCONFIRMED_EVENT, detail: { date: today, events: unconfirmed } });
 
   const diff = diffPlanCalendar({ snapshot, events, planBlocks: plan.blocks, now: nowDate.toISOString(), date: today, confirmedDeletedEventIds: deleted });
   if (!diff.changed) return { ok: true, value: { status: "unchanged" } };

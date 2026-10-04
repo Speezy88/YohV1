@@ -1536,34 +1536,45 @@ test("readCalendarEvents returns etag and yohCreated, and omits yohCreated when 
   assert.equal("yohCreated" in (events[1] ?? {}), false);
 });
 
-test("readCalendarEvents retries a failing extra calendar once before leaving it out", async () => {
-  let flakyCalls = 0;
-  let brokenCalls = 0;
+test("readCalendarEvents retries a failing extra calendar once, but not one Google says is gone or forbidden", async () => {
+  const calls: Record<string, number> = {};
+  const failures: Record<string, () => unknown> = {
+    "broken@school.org": () => new Error("ECONNRESET"),
+    "gone@school.org": () => Object.assign(new Error("Not Found"), { code: 404 }),
+    "unshared@school.org": () => Object.assign(new Error("Forbidden"), { status: 403 }),
+    "limited@school.org": () => Object.assign(new Error("Rate Limit Exceeded"), { code: 403 }),
+  };
   const client: CalendarReadClient = {
     events: {
       list: async (params) => {
-        if (params.calendarId === "flaky@school.org") {
-          flakyCalls++;
-          if (flakyCalls === 1) throw new Error("503 backend error");
+        const id = params.calendarId ?? "primary";
+        calls[id] = (calls[id] ?? 0) + 1;
+        if (id === "flaky@school.org") {
+          if (calls[id] === 1) throw new Error("503 backend error");
           return { data: { items: [makeEvent({ id: "f1", summary: "Class", startDateTime: "2026-08-22T15:00:00-04:00", endDateTime: "2026-08-22T15:30:00-04:00" })] } };
         }
-        if (params.calendarId === "broken@school.org") {
-          brokenCalls++;
-          throw new Error("404 Not Found");
-        }
+        const failure = failures[id];
+        if (failure) throw failure();
         return { data: { items: [] } };
       },
     },
   };
   const logs: LogEntry[] = [];
+  const extraCalendarIds = ["flaky@school.org", ...Object.keys(failures)];
   const events = await readCalendarEvents(client, {
     now: FIXED_NOW,
     timeZone: "UTC",
-    extraCalendarIds: ["flaky@school.org", "broken@school.org"],
+    extraCalendarIds,
     log: (entry) => logs.push(entry),
   });
   assert.deepEqual(events.map((e) => e.id), ["f1"]);
-  assert.equal(flakyCalls, 2);
-  assert.equal(brokenCalls, 2);
-  assert.deepEqual(logs.map((l) => (l.detail as { calendarId?: string }).calendarId), ["broken@school.org"]);
+  assert.deepEqual(calls, {
+    primary: 1,
+    "flaky@school.org": 2,
+    "broken@school.org": 2,
+    "gone@school.org": 1,
+    "unshared@school.org": 1,
+    "limited@school.org": 2,
+  });
+  assert.deepEqual(logs.map((l) => (l.detail as { calendarId?: string }).calendarId), Object.keys(failures));
 });

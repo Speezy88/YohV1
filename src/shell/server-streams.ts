@@ -16,7 +16,7 @@ import { errorCopyForWire, GENERIC_SERVER_ERROR_MESSAGE } from "../core/error-co
 import { chatTurn, type ChatTurnDeps } from "../app/chat-turn.ts";
 import { failInterruptedResearchJobs, runNextResearchJob, RESEARCH_JOB_POLL_INTERVAL_MS, type RunResearchJobDeps } from "../app/run-research-job.ts";
 import { CHECK_OFF_COMMIT_TICK_MS, commitDueCheckOffs, type CheckOffDeps } from "../app/check-off.ts";
-import { syncPlanFromCalendar, type SyncPlanFromCalendarDeps, type SyncPlanFromCalendarOutput } from "../app/sync-plan-from-calendar.ts";
+import { syncPlanFromCalendar, PLAN_SYNC_MISSING_UNCONFIRMED_EVENT, type SyncPlanFromCalendarDeps, type SyncPlanFromCalendarOutput } from "../app/sync-plan-from-calendar.ts";
 import { errorCopyForThrown } from "../core/error-copy.ts";
 import type { ChatStreamEvent, ChatTurnRequest, EventHint } from "../types/api.ts";
 import type { Result, YohError } from "../types/domain.ts";
@@ -178,11 +178,22 @@ export function getPlanSyncRunner(deps: SyncPlanFromCalendarDeps, log: (entry: L
   const existing = planSyncRunners.get(deps);
   if (existing) return existing;
   let inFlight: Promise<PlanSyncResult> | undefined;
+  // The missing-event warning is true on every sync while the event stays missing; log it once per distinct state.
+  let lastMissing: string | undefined;
   const runOnce = (): Promise<PlanSyncResult> => {
     if (inFlight) return inFlight;
     inFlight = (async (): Promise<PlanSyncResult> => {
       try {
-        const result = await syncPlanFromCalendar({ ...deps, log: deps.log ?? log }, {});
+        let missing: string | undefined;
+        const syncLog = (entry: LogEntry): void => {
+          if (entry.event === PLAN_SYNC_MISSING_UNCONFIRMED_EVENT) {
+            missing = JSON.stringify(entry.detail);
+            if (missing === lastMissing) return;
+          }
+          (deps.log ?? log)(entry);
+        };
+        const result = await syncPlanFromCalendar({ ...deps, log: syncLog }, {});
+        if (result.ok) lastMissing = missing;
         if (!result.ok) {
           log({ level: "error", event: "server.plan-sync-failed", detail: { message: result.error.message } });
         } else if (result.value.status === "applied") {

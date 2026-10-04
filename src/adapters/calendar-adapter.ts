@@ -481,7 +481,10 @@ export async function readCalendarEvents(
   for (const extraCalendarId of config.extraCalendarIds ?? []) {
     try {
       // One retry: a transient failure here would otherwise read as free time to the planner.
-      const response = await listWindow(extraCalendarId).catch(() => listWindow(extraCalendarId));
+      const response = await listWindow(extraCalendarId).catch((err: unknown) => {
+        if (isPermanentReadFailure(err)) throw err;
+        return listWindow(extraCalendarId);
+      });
       for (const item of response.data.items ?? []) {
         events.push({ ...toCalendarEvent(item), calendarId: extraCalendarId });
       }
@@ -1378,6 +1381,15 @@ function localDayWindowUtcForDate(date: IsoDate, timeZone: string): { readonly s
 // ============================================================================
 
 /** True for Google's all-day event shape — a date-only `date` field and no `dateTime` on `start`. An all-day event's `end.date` is also date-only, never a `dateTime`. */
+/** A 404/410, or a 403 that is not a rate limit: the calendar is gone or no longer shared, so a retry cannot help. */
+function isPermanentReadFailure(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false;
+  const { code, status, message } = err as { code?: unknown; status?: unknown; message?: unknown };
+  const http = [code, status].map(Number).find((n) => Number.isInteger(n));
+  if (http === 404 || http === 410) return true;
+  return http === 403 && !/rate limit|quota/i.test(typeof message === "string" ? message : "");
+}
+
 function isAllDayEvent(event: calendar_v3.Schema$Event): boolean {
   return Boolean(event.start?.date) && !event.start?.dateTime;
 }
