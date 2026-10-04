@@ -132,7 +132,7 @@ FR-42: ~~Chat page~~ **Chat panel** *(amended 2026-09-27: there is no Chat page 
 
 FR-43: Tasks page — the full Notion Tasks database, grouped by Area with other groupings available, ~~plus one research box: the latest research output up front and the full Research Vault library browsable in the same box. It is the only research surface.~~ *Amended 2026-09-27 (Spencer): the research box moves to the new Research Hub page (see Epic List). Tasks itself is pulled forward from Epic 11 into the 2026-09-27 fixes + UI plan, with a quick-add row and Notion-speed inline editing; a Task Spencer types himself is a direct write (FR-24 tier), amending AD-3/AD-12.* A research-ready notification deep-links straight to the new document on Research Hub.
 
-FR-44: Desk dashboard — widgets built from Yoh's own data (Completion/Activity Log only, never Notion history): Tasks Completed list, minutes worked, on-time rate, usage streak, hours worked with Yoh, a usage heatmap, and *(added 2026-09-27)* a "Claude API spend this month" tile computed locally from Task 9's per-call usage records × one price table. Public-feed widgets: BTC/ETH/SOL tickers, weather for Seattle WA *(confirmed 2026-09-27)*, and news — the biggest business stories with an AI emphasis *(confirmed 2026-09-27)*. Each feed widget fails independently, showing "unavailable" or its last value with a timestamp. No Task or Calendar data is sent to any feed provider. `[ASSUMPTION: on-time = completedAt ≤ dueDate]`
+FR-44: Desk dashboard — widgets built from Yoh's own data (Completion/Activity Log only, never Notion history): Tasks Completed list, minutes worked, on-time rate, usage streak, hours worked with Yoh, a usage heatmap, and *(added 2026-09-27)* a "Claude API spend this month" tile computed locally from Task 9's per-call usage records × one price table. Public-feed widgets: BTC/ETH/SOL tickers, weather for Seattle WA *(confirmed 2026-09-27)*, and news — the biggest business stories with an AI emphasis *(confirmed 2026-09-27)*. Each feed widget fails independently, showing "unavailable" or its last value with a timestamp. No Task or Calendar data is sent to any feed provider. *(confirmed by Spencer 2026-10-04: on-time = completed on or before the due day, all-time; the streak counts days with a Plan and a completed night close-out — see Story 12.1)*
 
 FR-45: Screensaver — animated gradient-dot field with the centered "Yoh Meeseek" wordmark. It shows as a launch splash that auto-fades into Home with no click, and after inactivity. Any input dismisses it and returns to the same page with unsent chat text intact. It is decorative only and shows no data or notifications.
 
@@ -2749,8 +2749,12 @@ So that I can see my day summed up at a glance, with numbers that never depend o
 - Tasks completed today
 - Minutes today: the sum of `estimatedMinutes` for completions today
 - All-time hours with Yoh, on the same Completion Log basis (resolves PRD OQ10 per UX)
-- On-time rate: completions with `completedAt ≤ dueDate` over all completions `[PRD ASSUMPTION adopted]`
-- Current streak: consecutive activity days ending today, or ending yesterday if today has no activity yet `[ASSUMPTION]`
+- On-time rate: completions done on or before their due day, over all completions ever; a completion with no due date is left out *(confirmed by Spencer 2026-10-04)*
+- Current streak *(Spencer, 2026-10-04 — replaces the activity-day assumption)*: consecutive **streak days** ending today, or ending yesterday while today is not yet closed out. A streak day has both:
+  - a Plan for that day, built by the morning ritual or by Spencer from Chat;
+  - a completed night close-out: every close-out question answered with none skipped, or nothing left to ask because every planned Task was already checked off. A close-out left open, or with Tasks skipped, does not count.
+
+  Any earlier day without both ends the streak, weekends and days off included. Activity days (`recordActivityDay`) no longer feed the streak; they feed the heatmap only.
 - Longest streak
 
 **Given** Desk
@@ -2775,11 +2779,16 @@ So that I can see my rhythm over weeks at a glance.
 **Given** activity days in the log
 **When** Desk renders the Usage Heatmap
 **Then** it shows weeks as columns by 7 days, computed server-side by `core/desk-metrics.ts`
-**And** `[ASSUMPTION: resolves UX OQ5]` cells use `accent-solid` at four stepped opacities, plus an empty step with a rim, with a legend
+**And** *(confirmed by Spencer 2026-10-04; resolves UX OQ5)* cells use `accent-solid` at four stepped opacities, plus an empty step with a rim, with a legend. The steps are fixed, by Tasks completed that day: empty = no activity; step 1 = Yoh was opened and nothing completed; step 2 = 1–2; step 3 = 3–4; step 4 = 5 or more
+
+**Given** Spencer's instruction of 2026-10-04
+**When** the heatmap and any other Desk data visualization is built
+**Then** it uses Bklit UI (https://bklit.com, `@bklit/heatmap-chart` for the heatmap; components are copied into `web/` through the shadcn registry `https://ui.bklit.com/r/{name}.json`), with its five level colors mapped to the design tokens above
+**And** a spike before the first Desk UI task records what was not checked on 2026-10-04: `web/` has no shadcn setup (`components.json`) and Bklit requires one; its dependency list and license; whether cells are keyboard-focusable with accessible labels; that it honors `useReducedMotion` (its `animate` prop); that nothing loads from another host (CSP `default-src 'self'`); and that every color, radius and duration can come from `web/src/tokens.css`
 
 **Given** a cell
 **When** Spencer hovers or focuses it
-**Then** a tooltip shows the date and that day's count, and the cell is keyboard-focusable with an accessible label
+**Then** a tooltip shows the date and that day's Tasks completed, and the cell is keyboard-focusable with an accessible label
 
 **Given** the heatmap sits in a horizontally scrollable region
 **When** Spencer scrolls or drags inside it ~~swipes inside it~~ *(swipe navigation retired 2026-09-27; the heatmap's own horizontal scroll is unaffected)*
