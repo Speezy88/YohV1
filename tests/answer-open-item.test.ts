@@ -504,3 +504,23 @@ test("two concurrent Yes answers to one field-value proposal write the field onc
   assert.deepEqual([a, b].map((r) => (r.ok ? "ok" : r.error.kind)).sort(), ["conflict", "ok"]);
   store.close();
 });
+
+test("a failed field-value write closes the card and tells Spencer to ask again", async () => {
+  const store = tempStore();
+  putOpenInteractionRequest(store, "field-value-proposal", {
+    requestKind: "proposal",
+    promptText: "Set Estimated Duration to 30?",
+    detail: {
+      proposal: {
+        id: "field-value-1", kind: "field-value", entityId: "t1", entityVersion: "v1",
+        suggested: { taskId: "t1", taskTitle: "Call dentist", field: "estimatedDurationMinutes", value: 30 },
+        reason: "You said about half an hour.", createdAt: "2026-09-27T12:00:00.000Z",
+      },
+    },
+    createdAt: "2026-09-27T12:00:00.000Z",
+  });
+  const deps = { ...fullDeps(store), updateTaskField: async () => ({ ok: false as const, error: { kind: "unreachable" as const, message: "fetch failed" } }) };
+  const result = await answerOpenItem(deps, { requestId: "field-value-proposal", questionId: "confirm", answer: "yes" });
+  assert.equal(result.ok && result.value.message, "I couldn't reach Notion right now; nothing was changed. Ask again if you still want it.");
+  store.close();
+});

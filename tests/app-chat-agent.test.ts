@@ -708,3 +708,21 @@ test("a text answer cut off at max_tokens says it was cut off", async () => {
   assert.equal(result.ok, true);
   if (result.ok) assert.equal(result.value.reply, `Here is a long answer that\n\n${CHAT_AGENT_TRUNCATED_NOTE}`);
 });
+
+test("a closing text cut off after everything was staged does not mark the change set incomplete", async () => {
+  const { client } = scriptedWithStops([
+    { content: [use("1", "list_tasks", {})], stop_reason: "tool_use" },
+    { content: [use("2", "delete_task", { taskId: "t-stats" })], stop_reason: "tool_use" },
+    { content: [say("I have staged the deletion and")], stop_reason: "max_tokens" },
+  ]);
+  const result = await chatAgent(deps(client), input("delete stats"));
+  assert.equal(result.ok, true);
+  if (result.ok) assert.equal(result.value.reply, changeSetPrompt([{ kind: "delete-task", taskId: "t-stats", label: "Stats problem set" }], TZ));
+});
+
+test("a cut-off answer that claims an unstaged change is replaced without the cut-off note", async () => {
+  const { client } = scriptedWithStops([{ content: [say("Done. I've moved your dentist appointment to 3 PM and")], stop_reason: "max_tokens" }]);
+  const result = await chatAgent(deps(client), input("move the dentist"));
+  assert.equal(result.ok, true);
+  if (result.ok) assert.equal(result.value.reply, UNSTAGED_CLAIM_REPLY);
+});

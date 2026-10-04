@@ -2208,7 +2208,7 @@ function buildChatDeps(
     } catch (err) {
       return {
         ok: false,
-        error: { kind: "missing-field", message: errorCopyForThrown(err, { service: "Google Calendar" }) },
+        error: { kind: "missing-field", message: `server: could not apply that calendar change — ${err instanceof Error ? err.message : String(err)}` },
       };
     }
   };

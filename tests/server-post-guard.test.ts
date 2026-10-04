@@ -76,6 +76,7 @@ test("malformed JSON on a validated route returns the Result envelope, not plain
   const body = (await res.json()) as Envelope;
   assert.equal(body.ok, false);
   assert.equal(body.error?.kind, "validation");
+  assert.equal(body.error?.message, "That request body isn't valid JSON.");
   connection.close();
 });
 

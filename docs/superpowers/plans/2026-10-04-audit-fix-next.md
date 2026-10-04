@@ -116,3 +116,16 @@ Task 2's web change touches a spec'd flow (it does not change markup).
 - The regex-based false-claim guard.
 - Cleanup: the dead pre-tool-loop chat path, unused exports, splitting
   `server.ts`, stale docs.
+
+## After the final review
+
+- `getCalendarApplyBinding` was put back as it was: `errorCopy` already strips
+  raw text from a `missing-field` message downstream and maps a setup failure
+  to "isn't configured", so the audit finding at that site was not a leak.
+- A failed field-value write now ends with "Ask again if you still want it."
+- A closing text cut off after everything was staged no longer marks the
+  change set incomplete; a cut-off answer replaced by the false-claim reply
+  gets no cut-off note.
+- Left: `plan-sync.missing-unconfirmed` repeats on every sync run while an
+  event stays missing; the extra-calendar retry is immediate and also retries
+  a permanent 403/404.

@@ -366,9 +366,13 @@ export async function chatAgent(deps: ChatAgentDeps, input: ChatAgentInput): Pro
       });
       if (turn.truncated) {
         // A cut-off turn's tool calls may be partial: run none of them.
-        if (turn.toolUses.length === 0 && turn.text.length > 0) {
-          finalText = turn.text;
-          truncatedText = true;
+        if (turn.toolUses.length === 0) {
+          // Only the closing text was cut: everything the model meant to stage is staged.
+          incomplete = false;
+          if (turn.text.length > 0) {
+            finalText = turn.text;
+            truncatedText = true;
+          }
         }
         break;
       }
@@ -432,8 +436,10 @@ export async function chatAgent(deps: ChatAgentDeps, input: ChatAgentInput): Pro
   if (finalText === undefined) return { ok: true, value: { reply: CHAT_AGENT_STEP_CAP_REPLY, receipts: [] } };
   const text = finalText.length > 0 ? finalText : "I don't have an answer for that.";
   // Nothing was staged, so nothing changed: never let prose say otherwise.
-  const answered = claimsUnstagedChange(text) ? UNSTAGED_CLAIM_REPLY : wroteAttempted ? `${text}\n\n${NOTHING_CHANGED_NOTE}` : text;
-  const reply = truncatedText ? `${answered}\n\n${CHAT_AGENT_TRUNCATED_NOTE}` : answered;
+  const falseClaim = claimsUnstagedChange(text);
+  const answered = falseClaim ? UNSTAGED_CLAIM_REPLY : wroteAttempted ? `${text}\n\n${NOTHING_CHANGED_NOTE}` : text;
+  // A replaced answer has no "rest" to ask for.
+  const reply = truncatedText && !falseClaim ? `${answered}\n\n${CHAT_AGENT_TRUNCATED_NOTE}` : answered;
   deps.emit?.({ type: "delta", text: reply });
   // Only a turn that ran a tool is substantive (rating eligibility); a plain answer carries no key.
   return { ok: true, value: { reply, receipts: [], ...(ranTool ? { substantive: true as const } : {}) } };
