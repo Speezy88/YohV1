@@ -236,6 +236,17 @@ test("a new change set replaces an earlier one that is still open", async () => 
   if (result.ok) assert.equal(result.value.reply.split("\n").at(-1), CHANGE_SET_REPLACES_NOTE);
 });
 
+test("every model call is told today's date, the time and tomorrow's date, and not to ask for them", async () => {
+  const { client, requests } = scripted([[say("Tomorrow is Sunday.")]]);
+  await chatAgent(deps(client), input("what is tomorrow"));
+  const system = JSON.stringify(requests[0]!.system);
+  assert.match(system, /Today is Saturday, October 3, 2026 \(2026-10-03\)/);
+  assert.match(system, /The local time is 12:00 PM/);
+  assert.match(system, /Tomorrow is Sunday, October 4 \(2026-10-04\)/);
+  assert.match(system, /Never ask Spencer what the date or time is/);
+  assert.match(system, /A Plan exists only for today/);
+});
+
 test("a first change set carries no replacement line", async () => {
   const { client } = scripted([[use("1", "create_task", { title: "Read" })], [say("Staged.")]]);
   const result = await chatAgent(deps(client), input("add a task"));

@@ -263,3 +263,30 @@ export function changeSetIsStale(createdAt: string, now: Date, timeZone: string)
   if (Number.isNaN(new Date(createdAt).getTime())) return true;
   return localIsoDate(new Date(createdAt), timeZone) !== localIsoDate(now, timeZone);
 }
+
+/**
+ * The date and time lines of the chat system prompt: today, the local time, tomorrow, and the
+ * dates of the six days after it, so the model never has to work out (or ask) what "tomorrow" or "Monday" is.
+ * Days are stepped on the calendar date, not by adding 24 hours, so a daylight-saving change cannot skip or repeat one.
+ */
+export function chatDateContext(now: Date, timeZone: string): string {
+  const today = localIsoDate(now, timeZone);
+  const day = (offset: number) => {
+    const d = new Date(`${today}T12:00:00.000Z`);
+    d.setUTCDate(d.getUTCDate() + offset);
+    return {
+      iso: d.toISOString().slice(0, 10),
+      weekday: d.toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" }),
+      monthDay: d.toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: "UTC" }),
+    };
+  };
+  const t = day(0);
+  const tomorrow = day(1);
+  const time = now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone }).replace(/\u202f/g, " ");
+  const ahead = [2, 3, 4, 5, 6, 7].map((n) => day(n)).map((d) => `${d.weekday} ${d.iso}`).join(", ");
+  return [
+    `Today is ${t.weekday}, ${t.monthDay}, ${t.iso.slice(0, 4)} (${t.iso}). The local time is ${time}, time zone ${timeZone}.`,
+    `Tomorrow is ${tomorrow.weekday}, ${tomorrow.monthDay} (${tomorrow.iso}). After that: ${ahead}.`,
+    "Work out dates such as tomorrow, tonight or Monday from these lines. Never ask Spencer what the date or time is.",
+  ].join("\n");
+}

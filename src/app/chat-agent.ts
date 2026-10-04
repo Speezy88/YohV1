@@ -16,6 +16,7 @@ import {
   CHAT_AGENT_MAX_STEPS,
   CHAT_TOOLS,
   changeSetIsStale,
+  chatDateContext,
   changeSetPrompt,
   claimsAWrite,
   NOTHING_CHANGED_NOTE,
@@ -79,13 +80,12 @@ interface Seen {
 }
 
 function agentSystemPrompt(tone: string, now: Date, timeZone: string): string {
-  const longDate = now.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric", timeZone });
-  const time = now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone }).replace(/\u202f/g, " ");
   return [
     tone,
     "",
-    `Today is ${longDate} (${localIsoDate(now, timeZone)}). The local time is ${time}, time zone ${timeZone}. Never ask what the date is.`,
+    chatDateContext(now, timeZone),
     "You have tools to read Spencer's Tasks, Calendar, Plan and memory. Use them instead of saying you lack access.",
+    "A Plan exists only for today. You cannot read, build or reorder a Plan for another day; say so plainly instead of asking for more.",
     "Write tools only stage a change. Spencer then approves or discards everything staged in one step. Never say a change has been made, added, moved, deleted or saved. Say what you have staged.",
     "Use ids exactly as a read tool returned them in this turn. Call list_tasks or list_events first when you need an id.",
     "If a request needs something no tool covers (Canvas, deleting an event Yoh did not create), say plainly that you can't do that.",
