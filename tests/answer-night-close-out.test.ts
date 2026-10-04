@@ -8,6 +8,7 @@ import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { initNotificationStoreSchema, listUnreadNotifications } from "../src/adapters/notification-store.ts";
 import { answerNightCloseOut } from "../src/app/answer-night-close-out.ts";
 import { NIGHT_PROMPT_RITUAL_ID, type NightCloseOutTaskDetail } from "../src/rituals/night-ritual.ts";
+import { NIGHT_CLOSE_OUT_ANYTHING_ELSE_QUESTION_ID } from "../src/core/open-item-questions.ts";
 import type { Result, TaskStatus, YohError } from "../src/types/domain.ts";
 
 function tempStore() {
@@ -66,7 +67,7 @@ test("'skip' leaves the Task unresolved and moves on, with no Notion call and no
   const setTaskStatus = makeSetTaskStatus();
   const result = await answerNightCloseOut(deps(store, setTaskStatus), { requestId: "night-close-out", questionId: "t1", answer: "skip" });
   assert.equal(result.ok, true);
-  if (result.ok) assert.equal(result.value.next, "done");
+  if (result.ok) assert.equal(result.value.next !== "done" && result.value.next.questionId, NIGHT_CLOSE_OUT_ANYTHING_ELSE_QUESTION_ID);
   assert.equal(setTaskStatus.calls.length, 0);
   assert.equal(getSlipHistory(store, "t1"), undefined);
   store.close();
@@ -100,7 +101,7 @@ test("every Task resolved (no skips) clears the request and resolves a matching 
   openReq(store, [{ taskId: "t1", taskTitle: "Draft the memo" }]);
   const result = await answerNightCloseOut(deps(store), { requestId: "night-close-out", questionId: "t1", answer: "completed" });
   assert.equal(result.ok, true);
-  if (result.ok) assert.equal(result.value.next, "done");
+  if (result.ok) assert.equal(result.value.next !== "done" && result.value.next.questionId, NIGHT_CLOSE_OUT_ANYTHING_ELSE_QUESTION_ID);
   assert.equal(getOpenInteractionRequest(store, "night-close-out"), undefined);
   assert.equal(getUncheckedDay(store, "2026-08-22"), undefined);
   store.close();
@@ -113,7 +114,7 @@ test("at least one skip leaves a matching UncheckedDay record intact", async () 
   await answerNightCloseOut(deps(store), { requestId: "night-close-out", questionId: "t1", answer: "completed" });
   const result = await answerNightCloseOut(deps(store), { requestId: "night-close-out", questionId: "t2", answer: "skip" });
   assert.equal(result.ok, true);
-  if (result.ok) assert.equal(result.value.next, "done");
+  if (result.ok) assert.equal(result.value.next !== "done" && result.value.next.questionId, NIGHT_CLOSE_OUT_ANYTHING_ELSE_QUESTION_ID);
   assert.ok(getUncheckedDay(store, "2026-08-22"));
   store.close();
 });
@@ -164,7 +165,7 @@ test("Story 8.7: once every named Task is answered, the SAME RitualRun record ni
   openReq(store, [{ taskId: "t1", taskTitle: "Draft the memo" }], "2026-09-25");
   const result = await answerNightCloseOut(deps(store), { requestId: "night-close-out", questionId: "t1", answer: "completed" });
   assert.equal(result.ok, true);
-  if (result.ok) assert.equal(result.value.next, "done");
+  if (result.ok) assert.equal(result.value.next !== "done" && result.value.next.questionId, NIGHT_CLOSE_OUT_ANYTHING_ELSE_QUESTION_ID);
   const run = getRitualRun(store, NIGHT_PROMPT_RITUAL_ID);
   assert.equal(run?.data.date, "2026-09-25", "written against the NIGHT the close-out was ABOUT, not the day it happened to be answered");
   store.close();
@@ -180,8 +181,54 @@ test("a partially-skipped close-out still writes the marker once the loop conclu
   await answerNightCloseOut(deps(store), { requestId: "night-close-out", questionId: "t1", answer: "completed" });
   const result = await answerNightCloseOut(deps(store), { requestId: "night-close-out", questionId: "t2", answer: "skip" });
   assert.equal(result.ok, true);
-  if (result.ok) assert.equal(result.value.next, "done");
+  if (result.ok) assert.equal(result.value.next !== "done" && result.value.next.questionId, NIGHT_CLOSE_OUT_ANYTHING_ELSE_QUESTION_ID);
   const run = getRitualRun(store, NIGHT_PROMPT_RITUAL_ID);
   assert.ok(run, "the marker is written unconditionally at the loop's conclusion, skip or not — see this story's own Review Focus #3");
+  store.close();
+});
+
+// --- the final "anything else?" step ---
+test("the last Task's answer keeps its closing message and asks 'anything else' as one button-only question", async () => {
+  const store = tempStore();
+  openReq(store, [{ taskId: "t1", taskTitle: "Draft the memo" }]);
+  const result = await answerNightCloseOut(deps(store), { requestId: "night-close-out", questionId: "t1", answer: "completed" });
+  assert.equal(result.ok, true);
+  if (!result.ok || result.value.next === "done") return assert.fail("expected the anything-else question");
+  assert.match(result.value.message ?? "", /Got it — thanks\. I've updated Notion/);
+  assert.equal(result.value.next.requestId, "night-close-out");
+  assert.match(result.value.next.text, /Anything else to add before closing out\?/);
+  assert.deepEqual(result.value.next.options, [{ label: "Nothing else", value: "nothing else" }]);
+  assert.equal(result.value.next.allowsFreeText, false);
+  store.close();
+});
+
+test("a skipped Task is still named in the closing message ahead of the 'anything else' question", async () => {
+  const store = tempStore();
+  openReq(store, [{ taskId: "t1", taskTitle: "Draft the memo" }]);
+  const result = await answerNightCloseOut(deps(store), { requestId: "night-close-out", questionId: "t1", answer: "skip" });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.match(result.value.message ?? "", /Draft the memo/);
+  assert.notEqual(result.value.next, "done");
+  store.close();
+});
+
+test("'Nothing else' closes out with no open request needed, and writes nothing", async () => {
+  const store = tempStore();
+  const setTaskStatus = makeSetTaskStatus();
+  const result = await answerNightCloseOut(deps(store, setTaskStatus), { requestId: "night-close-out", questionId: NIGHT_CLOSE_OUT_ANYTHING_ELSE_QUESTION_ID, answer: "nothing else" });
+  assert.deepEqual(result, { ok: true, value: { message: "Closed out for tonight.", receipts: [], next: "done" } });
+  assert.deepEqual(setTaskStatus.calls, []);
+  assert.equal(getRitualRun(store, NIGHT_PROMPT_RITUAL_ID), undefined);
+  store.close();
+});
+
+test("'Nothing else' on an old card leaves a newer night's open request untouched", async () => {
+  const store = tempStore();
+  openReq(store, [{ taskId: "t1", taskTitle: "Draft the memo" }], "2026-08-23");
+  const before = getOpenInteractionRequest(store, "night-close-out");
+  const result = await answerNightCloseOut(deps(store), { requestId: "night-close-out", questionId: NIGHT_CLOSE_OUT_ANYTHING_ELSE_QUESTION_ID, answer: "nothing else" });
+  assert.equal(result.ok && result.value.next, "done");
+  assert.deepEqual(getOpenInteractionRequest(store, "night-close-out"), before);
   store.close();
 });

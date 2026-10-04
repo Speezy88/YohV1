@@ -57,6 +57,7 @@ import { sandboxQueue, type SandboxQueueDeps } from "../../src/app/sandbox-queue
 import { clearFixturePatterns, FIXTURE_RULE_TEXT, seedFixtureMemory, seedFixturePattern } from "./fixture-memory-seed.ts";
 import { recognizeMemoryCommand } from "../../src/core/memory-commands.ts";
 import { firstCardView } from "../../src/core/sandbox-card-view.ts";
+import { startNightCloseOut } from "../../src/app/night-close-out.ts";
 import { localIsoDate } from "../../src/rituals/ritual-shared.ts";
 import { startCheckOffCommitSweep, startServer, type ChatTurnFn, type ServerDeps } from "../../src/shell/server.ts";
 import type { AnthropicMessagesClient } from "../../src/adapters/llm-adapter.ts";
@@ -393,6 +394,14 @@ const runChatTurn: ChatTurnFn = async (deps, input) => {
     const offer = await offerPattern({ memoryItems, store, now: () => new Date(), timeZone: TIME_ZONE }, {});
     const question = offer.ok ? offer.value.question : undefined;
     return { ok: true, value: { reply: "Fixture morning.", receipts: [], substantive: true, ...(question ? { question } : {}) } };
+  }
+  // `/night` runs the REAL startNightCloseOut with every fixture Task counted as
+  // completed today, so it goes straight to the close-out's "anything else?" step.
+  if (input.message.trim() === "/night") {
+    return startNightCloseOut(
+      { store, session: deps.session, now: () => new Date(), timeZone: TIME_ZONE, getCompletedTaskIdsToday: () => new Set(FIXTURE_TASKS.map((t) => t.id)) },
+      {},
+    );
   }
   const memoryCommand = recognizeMemoryCommand(input.message);
   if (memoryCommand?.kind === "remember") {
