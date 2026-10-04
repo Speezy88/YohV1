@@ -21,10 +21,10 @@
  * with no fake features: Chat may not have web search configured yet
  * (it needs a Perplexity key), and if it isn't, Chat itself says so.
  */
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { openChatPanel } from "../lib/chatPanel.ts";
 import { send } from "../lib/chatStore.ts";
-import { formatResearchDate, openResearchDocument, useResearchDocument, useResearchList } from "../lib/research.ts";
+import { formatResearchDate, openResearchDocument, useResearchDocument, useResearchList, useSelectedResearchId } from "../lib/research.ts";
 import { BUTTON_SECONDARY, CONTROL_MD, FIELD_FOCUS_WITHIN, ROW_HOVER_RAISED } from "../lib/controlStyles.ts";
 import { ExternalLinkGlyph, SearchGlyph } from "../components/icons/Glyphs.tsx";
 import { SafeMarkdown } from "../components/ChatMessage.tsx";
@@ -46,13 +46,13 @@ function ResearchRow({ item, current }: { readonly item: ResearchListItem; reado
       onClick={() => openResearchDocument(item.id)}
       className={`flex w-full items-center justify-between gap-4 rounded-lg border-l-[length:var(--rim-width)] bg-surface-raised px-4 py-4 text-left font-body shadow-extruded-sm ${current ? "border-accent-solid" : "border-transparent"} ${ROW_HOVER_RAISED}`}
     >
-      <div className="flex min-w-0 flex-col gap-1">
+      <span className="flex min-w-0 flex-col gap-1">
         <span className="truncate text-body font-medium text-ink-primary">{item.title}</span>
         <span className="text-small text-ink-secondary">
           {item.date ? `${formatResearchDate(item.date)} · ` : ""}
           {item.sourceCount} {sourceWord}
         </span>
-      </div>
+      </span>
       {current && <span className="shrink-0 text-small font-medium text-ink-accent">Viewing</span>}
     </button>
   );
@@ -71,7 +71,7 @@ function isHttpUrl(line: string): boolean {
 function ResearchBoxContent({ doc }: { readonly doc: ResearchDocument }): React.JSX.Element {
   return (
     <section aria-label="Research document" data-wheel-nav="off" className="flex flex-col gap-4 rounded-2xl bg-surface-raised px-5 py-5 shadow-extruded-lg">
-      <header className="flex flex-col gap-1">
+      <header aria-live="polite" className="flex flex-col gap-1">
         <h2 className="m-0 font-body text-title font-bold text-ink-primary">{doc.title}</h2>
         {doc.date && (
           <span data-testid="research-box-date" className="font-body text-small text-ink-secondary">
@@ -187,6 +187,23 @@ export default function ResearchHubPage(): React.JSX.Element {
   const { state, refetch, showMore, moreFailed, loadingMore } = useResearchList();
   const document = useResearchDocument();
   const reducedMotion = useReducedMotion();
+  const selectedId = useSelectedResearchId();
+  const rootRef = useRef<HTMLDivElement>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
+  // A row click or a deep link picks a document; the page scrolls as a whole, so bring the box into view.
+  // Not on the initial load or a hint refresh (neither changes the selection). This scrolls the page's own
+  // scroller by the `block: "nearest"` distance rather than calling `box.scrollIntoView`, which would also
+  // scroll the page stack's overflow-hidden ancestors while a deep link's page transition is still running.
+  useEffect(() => {
+    const root = rootRef.current;
+    const box = boxRef.current;
+    if (selectedId === undefined || !root || !box) return;
+    const r = root.getBoundingClientRect();
+    const b = box.getBoundingClientRect();
+    const delta = b.top < r.top ? b.top - r.top : b.bottom > r.bottom ? Math.min(b.bottom - r.bottom, b.top - r.top) : 0;
+    if (delta !== 0) root.scrollBy?.({ top: delta, behavior: reducedMotion ? "auto" : "smooth" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId]);
   const items = state.status === "loaded" ? state.value.items : [];
   const hasMore = state.status === "loaded" && state.value.hasMore;
   // The row marker follows the document actually returned, not the id asked for.
@@ -195,14 +212,18 @@ export default function ResearchHubPage(): React.JSX.Element {
   const showBox = state.status !== "error" && !(state.status === "loaded" && items.length === 0);
 
   return (
-    <div className="flex h-full flex-col gap-5 overflow-y-auto p-8 pb-24">
+    <div ref={rootRef} data-testid="research-scroller" className="flex h-full flex-col gap-5 overflow-y-auto p-8 pb-24">
       <header>
         <h1 className="m-0 font-body text-display font-bold tracking-tight text-ink-primary">Research Hub</h1>
       </header>
 
       <AskResearchBox />
 
-      {showBox && <ResearchBox state={document.state} onRetry={() => void document.refetch()} reducedMotion={reducedMotion} />}
+      {showBox && (
+        <div ref={boxRef} data-testid="research-box">
+          <ResearchBox state={document.state} onRetry={() => void document.refetch()} reducedMotion={reducedMotion} />
+        </div>
+      )}
 
       {/* Polish-4 addendum (wheel paging only outside cards): same opt-out
           as the "Ask a research question" card above. */}

@@ -24,8 +24,7 @@ test("/research queues a job, a Research ready notification appears, and opening
   await expect(card).toBeVisible({ timeout: 15_000 });
   await card.getByRole("button").first().click();
 
-  // The Chat panel stays open over the page after the click; close it as a user would.
-  await page.keyboard.press("Escape");
+  // Activating the notification closes the Chat panel so the document is visible.
   await expect(chat).toBeHidden();
   // Pages scroll into view; wait for Research Hub to settle (same wait as research-hub.spec.ts).
   await expect.poll(async () => (await page.getByTestId("page-research").boundingBox())?.y).toBe(0);

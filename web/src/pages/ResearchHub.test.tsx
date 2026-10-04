@@ -144,6 +144,33 @@ describe("ResearchHubPage", () => {
     expect(screen.getAllByTestId("research-row")[0]).not.toHaveAttribute("aria-current");
   });
 
+  it("a row holds no block elements, and the box heading region is a polite live region (M10)", async () => {
+    api.research.$get.mockResolvedValue(envelope({ ok: true, value: VIEW }));
+    render(<ResearchHubPage />);
+    const region = await box();
+    for (const row of screen.getAllByTestId("research-row")) expect(row.querySelector("div")).toBeNull();
+    expect(within(region).getByRole("heading", { name: "AP Bio registration deadline" }).parentElement).toHaveAttribute("aria-live", "polite");
+  });
+
+  it("opening a row or a deep link scrolls the page so the box is in view; the initial load does not", async () => {
+    const scrollBy = vi.fn();
+    Element.prototype.scrollBy = scrollBy;
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      const [top, bottom] = this.dataset.testid === "research-box" ? [900, 1100] : [0, 700];
+      return { top, bottom, left: 0, right: 0, width: 0, height: bottom - top, x: 0, y: top, toJSON: () => ({}) };
+    });
+    api.research.$get.mockResolvedValue(envelope({ ok: true, value: VIEW }));
+    render(<ResearchHubPage />);
+    await box();
+    expect(scrollBy).not.toHaveBeenCalled();
+    fireEvent.click(screen.getAllByTestId("research-row")[1]!);
+    await waitFor(() => expect(scrollBy).toHaveBeenCalledTimes(1));
+    expect(scrollBy).toHaveBeenLastCalledWith({ top: 400, behavior: "smooth" });
+    act(() => openResearchDocument("rv-1"));
+    await waitFor(() => expect(scrollBy).toHaveBeenCalledTimes(2));
+    rect.mockRestore();
+  });
+
   it("openResearchDocument(id) while mounted opens that document; the marker follows the document actually returned", async () => {
     api.research.$get.mockResolvedValue(envelope({ ok: true, value: VIEW }));
     render(<ResearchHubPage />);

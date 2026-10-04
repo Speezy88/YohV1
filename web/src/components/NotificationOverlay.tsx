@@ -43,7 +43,7 @@ import { usePageNavigationContext } from "../lib/navigationContext.tsx";
 import { dismissNotification, useNotifications } from "../lib/notifications.ts";
 import { useReducedMotion } from "../hooks/useReducedMotion.ts";
 import { openResearchDocument } from "../lib/research.ts";
-import { openChatWithCommand, useChatPanel } from "../lib/chatPanel.ts";
+import { closeChatPanel, openChatWithCommand, useChatPanel } from "../lib/chatPanel.ts";
 import { BUTTON_TEXT, CONTROL_TRANSITION, FOCUS_RING } from "../lib/controlStyles.ts";
 import { Icon } from "./icons/Icon.tsx";
 import type { NotificationRecord } from "../../../src/types/api.ts";
@@ -95,6 +95,8 @@ export function NotificationOverlay(): React.JSX.Element {
       // Story 11.2 (E11-R5): `research:<pageId>` opens that document on the Research Hub page.
       const id = n.deepLink.slice("research:".length).trim();
       const index = resolveDeepLinkIndex("research");
+      // Chat is a panel over the page: close it so one click lands on the document.
+      closeChatPanel();
       if (index !== undefined) nav.goTo(index);
       if (id !== "") openResearchDocument(id);
     } else if (n.deepLink) {

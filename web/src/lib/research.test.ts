@@ -68,6 +68,39 @@ describe("useResearchList paging", () => {
     await waitFor(() => expect($get).toHaveBeenLastCalledWith({ query: { pages: "2" } }));
   });
 
+  for (const order of ["showMore first", "refetch first"] as const) {
+    it(`a refresh landing while Show more loads leaves the button enabled and the larger page (${order})`, async () => {
+      $get.mockResolvedValueOnce(ok({ items: [item(1)], hasMore: true }));
+      const { result } = renderHook(() => useResearchList());
+      await waitFor(() => expect(result.current.state.status).toBe("loaded"));
+      let resolveMore!: (v: unknown) => void;
+      let resolveRefresh!: (v: unknown) => void;
+      $get.mockImplementationOnce(() => new Promise((r) => (resolveMore = r)));
+      $get.mockImplementationOnce(() => new Promise((r) => (resolveRefresh = r)));
+      let more!: Promise<void>;
+      act(() => {
+        more = result.current.showMore();
+      });
+      expect(result.current.loadingMore).toBe(true);
+      await act(async () => hintHandler?.({ topic: "research" }));
+      expect($get).toHaveBeenLastCalledWith({ query: { pages: "2" } });
+      const big = ok({ items: [item(1), item(2)], hasMore: false });
+      await act(async () => {
+        if (order === "showMore first") {
+          resolveMore(big);
+          resolveRefresh(big);
+        } else {
+          resolveRefresh(big);
+          resolveMore(big);
+        }
+        await more;
+      });
+      expect(result.current.loadingMore).toBe(false);
+      const s = result.current.state;
+      expect(s.status === "loaded" && s.value.items.length).toBe(2);
+    });
+  }
+
   it("a failed showMore keeps the rows and sets moreFailed; a later success clears it", async () => {
     $get.mockResolvedValueOnce(ok({ items: [item(1)], hasMore: true }));
     const { result } = renderHook(() => useResearchList());

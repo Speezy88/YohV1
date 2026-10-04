@@ -106,17 +106,26 @@ export function useResearchList(): {
 
   const showMore = useCallback(async (): Promise<void> => {
     const seq = ++latest.current;
-    const next = pages.current + 1;
+    const previous = pages.current;
+    const next = previous + 1;
+    // Set before fetching so a refetch that supersedes this one asks for the larger page too.
+    pages.current = next;
     setLoadingMore(true);
-    const outcome = await fetchResearch(next);
-    if (seq !== latest.current) return;
-    setLoadingMore(false);
-    if (outcome.ok) {
-      pages.current = next;
-      setMoreFailed(false);
-      setState({ status: "loaded", value: outcome.value, loadedAt: new Date() });
-    } else {
-      setMoreFailed(true);
+    try {
+      const outcome = await fetchResearch(next);
+      if (outcome.ok) {
+        if (seq !== latest.current) return;
+        setMoreFailed(false);
+        setState({ status: "loaded", value: outcome.value, loadedAt: new Date() });
+      } else {
+        // Roll back only when this request is still the newest; a superseding refetch owns the page count.
+        if (seq === latest.current) {
+          pages.current = previous;
+          setMoreFailed(true);
+        }
+      }
+    } finally {
+      setLoadingMore(false);
     }
   }, []);
 

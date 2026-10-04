@@ -267,11 +267,13 @@ describe("chat deep-links (Story 9.3, E8)", () => {
 describe("research deep-links (Story 11.2, E11-R5)", () => {
   it("'research:<id>' goes to the Research Hub page and opens that document", () => {
     const open = vi.spyOn(researchModule, "openResearchDocument").mockImplementation(() => {});
+    const close = vi.spyOn(chatPanelModule, "closeChatPanel").mockImplementation(() => {});
     const dismiss = vi.spyOn(notificationsModule, "dismissNotification");
     const { goTo } = renderWithNav([{ id: "n1", kind: "research-ready", title: "x", body: "Research ready", createdAt: "2026-01-01T00:00:00.000Z", deepLink: "research:abc-123" }]);
     fireEvent.click(screen.getByText("Research ready"));
     expect(goTo).toHaveBeenCalledWith(3);
     expect(open).toHaveBeenCalledWith("abc-123");
+    expect(close).toHaveBeenCalledTimes(1);
     expect(dismiss).toHaveBeenCalledWith("n1");
   });
 
