@@ -1535,3 +1535,35 @@ test("readCalendarEvents returns etag and yohCreated, and omits yohCreated when 
   assert.equal(events[0]?.yohCreated, true);
   assert.equal("yohCreated" in (events[1] ?? {}), false);
 });
+
+test("readCalendarEvents retries a failing extra calendar once before leaving it out", async () => {
+  let flakyCalls = 0;
+  let brokenCalls = 0;
+  const client: CalendarReadClient = {
+    events: {
+      list: async (params) => {
+        if (params.calendarId === "flaky@school.org") {
+          flakyCalls++;
+          if (flakyCalls === 1) throw new Error("503 backend error");
+          return { data: { items: [makeEvent({ id: "f1", summary: "Class", startDateTime: "2026-08-22T15:00:00-04:00", endDateTime: "2026-08-22T15:30:00-04:00" })] } };
+        }
+        if (params.calendarId === "broken@school.org") {
+          brokenCalls++;
+          throw new Error("404 Not Found");
+        }
+        return { data: { items: [] } };
+      },
+    },
+  };
+  const logs: LogEntry[] = [];
+  const events = await readCalendarEvents(client, {
+    now: FIXED_NOW,
+    timeZone: "UTC",
+    extraCalendarIds: ["flaky@school.org", "broken@school.org"],
+    log: (entry) => logs.push(entry),
+  });
+  assert.deepEqual(events.map((e) => e.id), ["f1"]);
+  assert.equal(flakyCalls, 2);
+  assert.equal(brokenCalls, 2);
+  assert.deepEqual(logs.map((l) => (l.detail as { calendarId?: string }).calendarId), ["broken@school.org"]);
+});

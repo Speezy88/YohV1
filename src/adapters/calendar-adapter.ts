@@ -480,7 +480,8 @@ export async function readCalendarEvents(
 
   for (const extraCalendarId of config.extraCalendarIds ?? []) {
     try {
-      const response = await listWindow(extraCalendarId);
+      // One retry: a transient failure here would otherwise read as free time to the planner.
+      const response = await listWindow(extraCalendarId).catch(() => listWindow(extraCalendarId));
       for (const item of response.data.items ?? []) {
         events.push({ ...toCalendarEvent(item), calendarId: extraCalendarId });
       }
