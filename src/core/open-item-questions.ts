@@ -163,6 +163,24 @@ export function buildNightCloseOutQuestion(requestId: string, task: NightCloseOu
   };
 }
 
+/** The fixed `questionId` of the close-out's final "anything else?" step — never a Task id, so `answerNightCloseOut` can tell it apart from a per-Task answer. */
+export const NIGHT_CLOSE_OUT_ANYTHING_ELSE_QUESTION_ID = "anything-else";
+
+/**
+ * The close-out's last step, asked once every Task is answered. Button-only
+ * on purpose: anything Spencer wants to add is typed into Chat itself and
+ * handled as an ordinary turn, so the card carries just the way to finish.
+ */
+export function buildNightCloseOutAnythingElseQuestion(requestId: string): OpenItemQuestion {
+  return {
+    requestId,
+    questionId: NIGHT_CLOSE_OUT_ANYTHING_ELSE_QUESTION_ID,
+    text: "Anything else to add before closing out? Type it in chat, or choose Nothing else.",
+    options: [{ label: "Nothing else", value: "nothing else" }],
+    allowsFreeText: false,
+  };
+}
+
 /** The fallback question for any `requestKind` this file doesn't otherwise recognize — mirrors `chat-cli.ts`'s pre-Epic-8 generic surface-then-clear-on-any-non-empty-answer behavior. */
 export function buildGenericQuestion(requestId: string): OpenItemQuestion {
   return { requestId, questionId: "generic", text: "", options: [], allowsFreeText: true };

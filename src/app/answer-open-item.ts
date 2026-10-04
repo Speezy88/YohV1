@@ -11,10 +11,11 @@ import { clearInteractionRequest, getOpenInteractionRequest, withdrawRuleProposa
 import type { ChatStore } from "../adapters/chat-store.ts";
 import type { MemoryItemStore } from "../adapters/memory-item-store.ts";
 import type { LogEntry } from "../adapters/logger.ts";
+import { NIGHT_CLOSE_OUT_REQUEST_ID } from "../rituals/night-ritual.ts";
 import { localIsoDate } from "../rituals/ritual-shared.ts";
 import { errorCopy, serviceForProposalKind } from "../core/error-copy.ts";
 import { parseProposalAnswer } from "../core/open-item-answers.ts";
-import { MEMORY_FORGET_NONE, MEMORY_FORGET_QUESTION_ID, PROPOSAL_QUESTION_ID } from "../core/open-item-questions.ts";
+import { MEMORY_FORGET_NONE, MEMORY_FORGET_QUESTION_ID, NIGHT_CLOSE_OUT_ANYTHING_ELSE_QUESTION_ID, PROPOSAL_QUESTION_ID } from "../core/open-item-questions.ts";
 import { answerDataCompleteness, type AnswerDataCompletenessDeps } from "./answer-data-completeness.ts";
 import { answerNightCloseOut, type AnswerNightCloseOutDeps } from "./answer-night-close-out.ts";
 import { confirmProposal, type ConfirmProposalDeps } from "./confirm-proposal.ts";
@@ -149,6 +150,8 @@ async function answerMemoryForget(deps: AnswerOpenItemDeps, input: AnswerOpenIte
 }
 
 async function dispatchAnswer(deps: AnswerOpenItemDeps, input: AnswerOpenItemRequest): Promise<Result<AnswerOpenItemResponse, YohError>> {
+  // The close-out's "anything else?" step is answered after its request was already cleared.
+  if (input.requestId === NIGHT_CLOSE_OUT_REQUEST_ID && input.questionId === NIGHT_CLOSE_OUT_ANYTHING_ELSE_QUESTION_ID) return answerNightCloseOut(deps, input);
   const record = getOpenInteractionRequest(deps.store, input.requestId);
   if (!record) return { ok: false, error: { kind: "conflict", message: `answer-open-item: no open interaction request ${input.requestId}` } };
   switch (record.data.requestKind) {

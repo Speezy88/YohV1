@@ -8,6 +8,7 @@ import { createMemoryStore, getOpenInteractionRequest, putPlan } from "../src/ad
 import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
 import { NIGHT_CLOSE_OUT_REQUEST_ID } from "../src/rituals/night-ritual.ts";
 import { startNightCloseOut, type NightCloseOutDeps } from "../src/app/night-close-out.ts";
+import { NIGHT_CLOSE_OUT_ANYTHING_ELSE_QUESTION_ID } from "../src/core/open-item-questions.ts";
 import type { Plan } from "../src/types/domain.ts";
 
 const TODAY = "2026-09-26";
@@ -56,6 +57,8 @@ test("nothing to close out (every Task already completed today): says so, opens 
   assert.ok(result.ok);
   if (!result.ok) return;
   assert.match(result.value.reply, /Nothing to close out/);
+  assert.equal(result.value.question?.questionId, NIGHT_CLOSE_OUT_ANYTHING_ELSE_QUESTION_ID, "still asks whether there is anything else to add");
+  assert.equal(getOpenInteractionRequest(deps.store, NIGHT_CLOSE_OUT_REQUEST_ID), undefined, "the anything-else step is not a stored request");
 });
 
 test("builds a fresh close-out request and returns its first question, excluding a Task completed today (FR-41)", async () => {

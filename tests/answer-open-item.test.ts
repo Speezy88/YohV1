@@ -75,6 +75,14 @@ test("answerOpenItem returns conflict for a requestId that doesn't exist", async
 // "proposal" requestKind (Story 8.2) — dispatches through confirmProposal
 // ============================================================================
 
+test("answerOpenItem: the night close-out's 'Nothing else' answer is accepted after the request itself was cleared", async () => {
+  const store = tempStore();
+  const result = await answerOpenItem(fullDeps(store), { requestId: "night-close-out", questionId: "anything-else", answer: "nothing else" });
+  assert.equal(result.ok, true);
+  if (result.ok) assert.equal(result.value.next, "done");
+  store.close();
+});
+
 function openTimeBudgetProposal(store: ReturnType<typeof tempStore>): void {
   putTimeBudget(store, { date: "2026-08-24", totalMinutes: 360, workMinutes: 70, breakMinutes: 15 });
   putOpenInteractionRequest(store, "time-budget-proposal", {

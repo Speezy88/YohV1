@@ -4,6 +4,7 @@
  * Story 8.1. Answers exactly ONE close-out Task per call (AD-16). Persists
  * the resolved/skipped cursor BEFORE delegating to `buildOpenItemQuestion`
  * for `next`, so the recompute always reflects this turn's own answer.
+ * The last Task's answer is followed by one "anything else?" question.
  */
 import { getOpenInteractionRequest, updateInteractionRequestDetail, type MemoryStore } from "../adapters/memory-store.ts";
 import {
@@ -15,7 +16,12 @@ import {
 } from "../rituals/night-ritual.ts";
 import { isSkipAnswer, parseNightCloseOutAnswer } from "../core/open-item-answers.ts";
 import { errorCopy } from "../core/error-copy.ts";
-import { nextNightCloseOutTask, type NightCloseOutCursor } from "../core/open-item-questions.ts";
+import {
+  buildNightCloseOutAnythingElseQuestion,
+  nextNightCloseOutTask,
+  NIGHT_CLOSE_OUT_ANYTHING_ELSE_QUESTION_ID,
+  type NightCloseOutCursor,
+} from "../core/open-item-questions.ts";
 import { buildOpenItemQuestion, type SurfaceOpenItemsDeps } from "./surface-open-items.ts";
 import type { ExternalId, IsoDate, Result, Task, TaskStatus, YohError } from "../types/domain.ts";
 import type { RecordCompletionInput } from "../adapters/completion-log.ts";
@@ -70,12 +76,22 @@ async function withNext(
       skippedTitles.length === 0
         ? "Got it — thanks. I've updated Notion and factored this into tomorrow's plan."
         : `Got it — thanks. I've updated Notion for the rest; skipped for now: ${skippedTitles.join(", ")}.`;
-    return { ok: true, value: { message: message ?? closing, receipts, next: "done" } };
+    // The Tasks are settled and the request is cleared above; the one thing
+    // left is the "anything else?" step, which is deliberately NOT a stored
+    // request (leaving it unanswered must never look like an unanswered
+    // close-out to night-escalate).
+    return { ok: true, value: { message: message ?? closing, receipts, next: buildNightCloseOutAnythingElseQuestion(requestId) } };
   }
   return { ok: true, value: { ...(message !== undefined ? { message } : {}), receipts, next: next.value } };
 }
 
 export async function answerNightCloseOut(deps: AnswerNightCloseOutDeps, input: AnswerOpenItemRequest): Promise<Result<AnswerOpenItemResponse, YohError>> {
+  // The final "anything else?" step is stateless — it is answered after the
+  // request was cleared (or beside a newer night's request, from an old card),
+  // so it is handled before, and never touches, the stored request.
+  if (input.questionId === NIGHT_CLOSE_OUT_ANYTHING_ELSE_QUESTION_ID) {
+    return { ok: true, value: { message: "Closed out for tonight.", receipts: [], next: "done" } };
+  }
   const record = getOpenInteractionRequest(deps.store, NIGHT_CLOSE_OUT_REQUEST_ID);
   if (!record) return { ok: false, error: { kind: "conflict", message: "answer-night-close-out: no open close-out request" } };
   const detail = record.data.detail as (NightCloseOutRequestDetail & { readonly cursor?: NightCloseOutCursor }) | undefined;
