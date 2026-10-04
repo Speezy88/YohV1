@@ -4,8 +4,8 @@ import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
 import { createMemoryStore, listOpenInteractionRequests, putOpenInteractionRequest, putPlan } from "../src/adapters/memory-store.ts";
 import { errorCopyForThrown } from "../src/core/error-copy.ts";
-import { chatAgent, CHAT_AGENT_STEP_CAP_REPLY, type ChatAgentDeps } from "../src/app/chat-agent.ts";
-import { CHAT_AGENT_MAX_STEPS, CHANGE_SET_PARTIAL_NOTE, CHANGE_SET_REPLACES_NOTE, NOTHING_CHANGED_NOTE, UNSTAGED_CLAIM_REPLY, changeSetPrompt } from "../src/core/chat-tools.ts";
+import { chatAgent, CHAT_AGENT_STEP_CAP_REPLY, CHAT_AGENT_TRUNCATED_NOTE, type ChatAgentDeps } from "../src/app/chat-agent.ts";
+import { CHAT_AGENT_MAX_STEPS, CHANGE_SET_INCOMPLETE_NOTE, CHANGE_SET_PARTIAL_NOTE, CHANGE_SET_REPLACES_NOTE, NOTHING_CHANGED_NOTE, UNSTAGED_CLAIM_REPLY, changeSetPrompt } from "../src/core/chat-tools.ts";
 import type { AnthropicMessagesClient } from "../src/adapters/llm-adapter.ts";
 import type { CalendarEvent, ChangeSet, Plan, Proposal, Task } from "../src/types/domain.ts";
 
@@ -373,7 +373,7 @@ test("step cap with items staged still returns the change-set question", async (
   const result = await chatAgent(d, input("loop"));
   assert.equal(result.ok, true);
   if (!result.ok) return;
-  assert.equal(result.value.reply, changeSetPrompt([{ kind: "create-task", properties: { title: "A" } }], TZ));
+  assert.equal(result.value.reply, changeSetPrompt([{ kind: "create-task", properties: { title: "A" } }], TZ, { incomplete: true }));
   assert.equal(result.value.question?.proposal?.kind, "change-set");
 });
 
@@ -649,4 +649,62 @@ test("resize_block by endTime is refused for a Task split across blocks; duratio
   await chatAgent(d, input("give the draft two hours"));
   assert.match(resultsOf(requests, 2)[0]!.content, /split across several blocks/);
   assert.deepEqual(openChangeSet(d)?.items, [{ kind: "resize-block", taskId: "t-mgp", label: "Draft", durationMinutes: 120 }]);
+});
+
+function scriptedWithStops(turns: { content: Block[]; stop_reason: string }[]) {
+  let i = 0;
+  const client = {
+    messages: {
+      create: (async () => {
+        const turn = turns[Math.min(i, turns.length - 1)]!;
+        i++;
+        return { ...turn, usage: { input_tokens: 1, output_tokens: 1 } };
+      }) as unknown as AnthropicMessagesClient["messages"]["create"],
+    },
+  };
+  return { client };
+}
+
+test("reaching the step cap with changes staged says the list may be incomplete", async () => {
+  const { client } = scripted([[use("1", "list_tasks", {})], [use("2", "delete_task", { taskId: "t-stats" })], [use("x", "list_tasks", {})]]);
+  const d = deps(client);
+  const result = await chatAgent(d, input("delete stats then loop forever"));
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  const items: ChangeSet["items"] = [{ kind: "delete-task", taskId: "t-stats", label: "Stats problem set" }];
+  assert.equal(result.value.reply, changeSetPrompt(items, TZ, { incomplete: true }));
+  assert.ok(result.value.reply.includes(CHANGE_SET_INCOMPLETE_NOTE));
+});
+
+test("a turn cut off at max_tokens does not run its tool calls", async () => {
+  const { client } = scriptedWithStops([
+    { content: [use("1", "list_tasks", {})], stop_reason: "tool_use" },
+    { content: [use("2", "delete_task", { taskId: "t-stats" }), use("3", "delete_task", { taskId: "t-ps" })], stop_reason: "max_tokens" },
+  ]);
+  const d = deps(client);
+  const result = await chatAgent(d, input("delete everything"));
+  assert.equal(openChangeSet(d), undefined);
+  assert.equal(result.ok, true);
+  if (result.ok) assert.equal(result.value.reply, CHAT_AGENT_STEP_CAP_REPLY);
+});
+
+test("a cut-off turn after staged changes keeps them and says the list may be incomplete", async () => {
+  const { client } = scriptedWithStops([
+    { content: [use("1", "list_tasks", {})], stop_reason: "tool_use" },
+    { content: [use("2", "delete_task", { taskId: "t-stats" })], stop_reason: "tool_use" },
+    { content: [use("3", "delete_task", { taskId: "t-ps" })], stop_reason: "max_tokens" },
+  ]);
+  const d = deps(client);
+  const result = await chatAgent(d, input("delete both"));
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.deepEqual(openChangeSet(d)?.items, [{ kind: "delete-task", taskId: "t-stats", label: "Stats problem set" }]);
+  assert.ok(result.value.reply.includes(CHANGE_SET_INCOMPLETE_NOTE));
+});
+
+test("a text answer cut off at max_tokens says it was cut off", async () => {
+  const { client } = scriptedWithStops([{ content: [say("Here is a long answer that")], stop_reason: "max_tokens" }]);
+  const result = await chatAgent(deps(client), input("tell me everything"));
+  assert.equal(result.ok, true);
+  if (result.ok) assert.equal(result.value.reply, `Here is a long answer that\n\n${CHAT_AGENT_TRUNCATED_NOTE}`);
 });

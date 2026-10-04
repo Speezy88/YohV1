@@ -260,6 +260,7 @@ export function describeChangeSetItem(item: ChangeSetItem, timeZone: string): st
 export const CHANGE_SET_REPLACES_NOTE = "This replaces the changes I suggested earlier, which are no longer pending.";
 
 /** Closing line when a write tool was refused this turn but other items were staged. */
+export const CHANGE_SET_INCOMPLETE_NOTE = "I stopped before finishing, so this may not be everything you asked for.";
 export const CHANGE_SET_PARTIAL_NOTE = "Some of what you asked for isn't in this list because I can't do it here.";
 
 /** Reply to a bare yes/no/approve/discard typed while a change set is open: the card is the only way to answer it. */
@@ -268,12 +269,13 @@ export const CHANGE_SET_USE_CARD_REPLY = "Use Approve or Discard on the card abo
 export function changeSetPrompt(
   items: readonly ChangeSetItem[],
   timeZone: string,
-  options: { readonly replacesEarlier?: boolean; readonly someRejected?: boolean } = {},
+  options: { readonly replacesEarlier?: boolean; readonly someRejected?: boolean; readonly incomplete?: boolean } = {},
 ): string {
   return [
     "Here's what I'd change:",
     ...items.map((i) => `- ${describeChangeSetItem(i, timeZone)}`),
     "Approve to apply all of it, or discard to change nothing.",
+    ...(options.incomplete ? [CHANGE_SET_INCOMPLETE_NOTE] : []),
     ...(options.someRejected ? [CHANGE_SET_PARTIAL_NOTE] : []),
     ...(options.replacesEarlier ? [CHANGE_SET_REPLACES_NOTE] : []),
   ].join("\n");

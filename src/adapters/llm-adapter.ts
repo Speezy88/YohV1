@@ -575,6 +575,8 @@ export interface ToolTurnResult {
   readonly toolUses: readonly { readonly id: string; readonly name: string; readonly input: unknown }[];
   /** The assistant content blocks, to be echoed back as the next request's assistant message. */
   readonly assistantContent: Anthropic.ContentBlock[];
+  /** The reply hit the output limit: its text is cut short and its last tool call may be partial. */
+  readonly truncated: boolean;
 }
 
 /** One model call of the chat tool loop. Throws on a transport failure; `app/chat-agent.ts` converts that to a Result. */
@@ -605,7 +607,7 @@ export async function runToolTurn(
   const toolUses = message.content
     .filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use")
     .map((b) => ({ id: b.id, name: b.name, input: b.input }));
-  return { text, toolUses, assistantContent: message.content };
+  return { text, toolUses, assistantContent: message.content, truncated: message.stop_reason === "max_tokens" };
 }
 
 // ============================================================================

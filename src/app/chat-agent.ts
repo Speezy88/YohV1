@@ -39,6 +39,7 @@ import { openProposal } from "./open-proposal.ts";
 import type { ChatStreamEvent, ChatTurnResponse } from "../types/api.ts";
 import type { CalendarEvent, ChangeSet, ChangeSetItem, ChatTurn, IsoDate, PlanBlock, Proposal, Result, Task, YohError } from "../types/domain.ts";
 
+export const CHAT_AGENT_TRUNCATED_NOTE = "That answer was cut off for length. Ask for the rest if you need it.";
 export const CHAT_AGENT_STEP_CAP_REPLY = "I stopped before finishing that — it took more steps than I allow in one turn. Nothing was changed. Try asking for one part at a time.";
 
 const STATUS_BY_TOOL: Readonly<Record<string, string>> = {
@@ -350,6 +351,9 @@ export async function chatAgent(deps: ChatAgentDeps, input: ChatAgentInput): Pro
   let writeRejected = false;
   let ranTool = false;
   let corrected = false;
+  // The model was stopped (step cap or output limit) before it finished the request.
+  let incomplete = true;
+  let truncatedText = false;
 
   try {
     for (let step = 0; step < CHAT_AGENT_MAX_STEPS; step++) {
@@ -360,6 +364,14 @@ export async function chatAgent(deps: ChatAgentDeps, input: ChatAgentInput): Pro
         ...(input.memory ? { memory: input.memory } : {}),
         ...(deps.connection ? { connection: deps.connection } : {}),
       });
+      if (turn.truncated) {
+        // A cut-off turn's tool calls may be partial: run none of them.
+        if (turn.toolUses.length === 0 && turn.text.length > 0) {
+          finalText = turn.text;
+          truncatedText = true;
+        }
+        break;
+      }
       if (turn.toolUses.length === 0) {
         // A false claim gets one chance to become a real tool call (or a plain "can't") before it is replaced below.
         if (staged.length === 0 && !corrected && claimsUnstagedChange(turn.text)) {
@@ -368,6 +380,7 @@ export async function chatAgent(deps: ChatAgentDeps, input: ChatAgentInput): Pro
           continue;
         }
         finalText = turn.text;
+        incomplete = false;
         break;
       }
       messages.push({ role: "assistant", content: turn.assistantContent });
@@ -396,7 +409,7 @@ export async function chatAgent(deps: ChatAgentDeps, input: ChatAgentInput): Pro
     } catch {
       // the clear below reports a store failure
     }
-    const reply = changeSetPrompt(staged, deps.timeZone, { replacesEarlier, someRejected: writeRejected });
+    const reply = changeSetPrompt(staged, deps.timeZone, { replacesEarlier, someRejected: writeRejected, incomplete });
     const proposal: Proposal<ChangeSet> = {
       id: randomUUID(),
       kind: CHANGE_SET_PROPOSAL_KIND,
@@ -419,7 +432,8 @@ export async function chatAgent(deps: ChatAgentDeps, input: ChatAgentInput): Pro
   if (finalText === undefined) return { ok: true, value: { reply: CHAT_AGENT_STEP_CAP_REPLY, receipts: [] } };
   const text = finalText.length > 0 ? finalText : "I don't have an answer for that.";
   // Nothing was staged, so nothing changed: never let prose say otherwise.
-  const reply = claimsUnstagedChange(text) ? UNSTAGED_CLAIM_REPLY : wroteAttempted ? `${text}\n\n${NOTHING_CHANGED_NOTE}` : text;
+  const answered = claimsUnstagedChange(text) ? UNSTAGED_CLAIM_REPLY : wroteAttempted ? `${text}\n\n${NOTHING_CHANGED_NOTE}` : text;
+  const reply = truncatedText ? `${answered}\n\n${CHAT_AGENT_TRUNCATED_NOTE}` : answered;
   deps.emit?.({ type: "delta", text: reply });
   // Only a turn that ran a tool is substantive (rating eligibility); a plain answer carries no key.
   return { ok: true, value: { reply, receipts: [], ...(ranTool ? { substantive: true as const } : {}) } };

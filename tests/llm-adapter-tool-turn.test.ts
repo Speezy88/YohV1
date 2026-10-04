@@ -34,3 +34,15 @@ test("runToolTurn returns empty text and no tool uses for an empty reply", async
   const result = await runToolTurn(client, { systemPrompt: "sys", messages: [{ role: "user", content: "hi" }], tools: CHAT_TOOLS });
   assert.deepEqual({ text: result.text, toolUses: result.toolUses }, { text: "", toolUses: [] });
 });
+
+test("runToolTurn reports a reply cut off at max_tokens", async () => {
+  const client = {
+    messages: {
+      create: (async () => ({ content: [{ type: "text", text: "Half an ans" }], stop_reason: "max_tokens", usage: { input_tokens: 1, output_tokens: 1 } })) as unknown as AnthropicMessagesClient["messages"]["create"],
+    },
+  };
+  const cut = await runToolTurn(client, { systemPrompt: "sys", messages: [{ role: "user", content: "hi" }], tools: CHAT_TOOLS });
+  assert.equal(cut.truncated, true);
+  const whole = await runToolTurn(fakeClient([]).client, { systemPrompt: "sys", messages: [{ role: "user", content: "hi" }], tools: CHAT_TOOLS });
+  assert.equal(whole.truncated, false);
+});
