@@ -152,6 +152,7 @@ export function startServer(
     ...(features.tasks ? { tasks: features.tasks } : {}),
     ...(features.research ? { research: features.research } : {}),
     ...(features.sandbox ? { sandbox: features.sandbox } : {}),
+    ...(features.desk ? { desk: features.desk } : {}),
   });
   return serveFn({ fetch: app.fetch, hostname: LOOPBACK_HOST, port });
 }
