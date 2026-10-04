@@ -299,3 +299,29 @@ test("E11 review M9: no raw INSERT INTO research_jobs under src/ outside adapter
   assert.deepEqual(offenders, []);
   assert.ok(readFileSync(join(SRC_DIR, "adapters", "job-store.ts"), "utf8").includes("INSERT INTO research_jobs"));
 });
+
+test("AD-1: core/ imports only from core/ and types/", () => {
+  const coreDir = join(SRC_DIR, "core");
+  const offenders: string[] = [];
+  for (const full of listTsFiles(coreDir)) {
+    const name = relative(coreDir, full).split(sep).join("/");
+    // A module specifier has no spaces; this skips prose such as `from "couldn't reach it,"` in a comment.
+    for (const spec of moduleSpecifiers(readFileSync(full, "utf8")).filter((s) => /^\S+$/.test(s))) {
+      if (!spec.startsWith("./") && !spec.startsWith("../types/")) offenders.push(`${name}: ${spec}`);
+    }
+  }
+  assert.deepEqual(offenders, [], "core/ is pure: it may import only core/ and types/");
+});
+
+/** The one Notion write a ritual names: the night close-out's own status write, injected as a dep. */
+const RITUAL_WRITE_ALLOWLIST: readonly string[] = ["night-ritual.ts: setTaskStatus"];
+
+test("AD-16: rituals/ names no Notion/Calendar write beyond the night close-out's setTaskStatus", () => {
+  const ritualsDir = join(SRC_DIR, "rituals");
+  const found: string[] = [];
+  for (const full of listTsFiles(ritualsDir)) {
+    const name = relative(ritualsDir, full).split(sep).join("/");
+    for (const fn of new Set(adapterWriteReferences(readFileSync(full, "utf8")))) found.push(`${name}: ${fn}`);
+  }
+  assert.deepEqual(found.sort(), [...RITUAL_WRITE_ALLOWLIST], "a new write in rituals/ needs a deliberate allowlist entry");
+});

@@ -11,7 +11,7 @@
  * "is this answer's questionId still pending").
  */
 import type { MissingFieldReport } from "./data-completeness-gate.ts";
-import type { NightCloseOutTaskDetail } from "../rituals/night-ritual.ts";
+import type { NightCloseOutTaskDetail } from "../types/domain.ts";
 import { PLANNING_FIELD_LABELS } from "./planning-field-value.ts";
 import { RESEARCH_OFFER_KIND } from "./research-offer.ts";
 import type { FieldValueSuggestion, PlanningFieldNames, Proposal, TaskFieldOverride } from "../types/domain.ts";

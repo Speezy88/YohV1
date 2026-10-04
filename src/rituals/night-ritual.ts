@@ -194,6 +194,7 @@ import type { EmailMessage } from "../adapters/email-adapter.ts";
 import type {
   Area,
   ExternalId,
+  NightCloseOutTaskDetail,
   InteractionRequest,
   IsoDate,
   IsoDateTime,
@@ -227,12 +228,7 @@ export const NIGHT_PROMPT_NOTIFICATION_TITLE = "Close out today?";
 // Prompt text / detail shape
 // ============================================================================
 
-/** One Task named by the close-out prompt — enough for `app/answer-night-close-out.ts` to ask "completed or slipped?" and later call `applyNightCloseOutConfirmation(taskId, ...)`. */
-export interface NightCloseOutTaskDetail {
-  readonly taskId: ExternalId;
-  /** The PlanBlock's own `label` (the Task's title as of Plan-generation time) — display only, never re-parsed. */
-  readonly taskTitle: string;
-}
+export type { NightCloseOutTaskDetail } from "../types/domain.ts";
 
 /** `InteractionRequest<NightCloseOutRequestDetail>`'s `detail` payload — the structured half `app/answer-night-close-out.ts` reads programmatically, alongside `promptText`'s human-readable half. */
 export interface NightCloseOutRequestDetail {

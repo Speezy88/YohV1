@@ -838,3 +838,10 @@ export interface PatternProposal {
 }
 
 export type RuleSettingKey = "schoolDayWorkStart" | "otherDayWorkStart" | "lunchWindow" | "communityWindow" | "areaDurationPadding";
+
+/** One Task named by the close-out prompt — enough for `app/answer-night-close-out.ts` to ask "completed or slipped?" and later call `applyNightCloseOutConfirmation(taskId, ...)`. */
+export interface NightCloseOutTaskDetail {
+  readonly taskId: ExternalId;
+  /** The PlanBlock's own `label` (the Task's title as of Plan-generation time) — display only, never re-parsed. */
+  readonly taskTitle: string;
+}
