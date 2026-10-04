@@ -1,67 +1,13 @@
 /**
  * src/adapters/llm-adapter.ts
  *
- * Owns Yoh's Claude API surface for the free-text chat routing (Story 2.1 /
- * Task 13, UX-DR9) `app/general-question.ts`'s `answerQuestion` calls today
- * (Story 8.3: moved from `shell/chat-cli.ts`, since retired — Story 8.9).
- * Per the Architecture Spine's Stack table this uses the official
- * `@anthropic-ai/sdk`, never raw HTTP.
+ * Yoh's Claude API surface, through the official `@anthropic-ai/sdk` (never
+ * raw HTTP): one model call of the chat tool loop (`runToolTurn`) and the
+ * narrow, structured calls (`suggestFieldValue`, `draftNotionPageFields`,
+ * `draftCalendarEditRequest`, `normalizeQuickAddLine`, `extractMemories`).
  *
- * ============================================================================
- * Scope (post-review simplification)
- * ============================================================================
- *
- * `chat-cli.ts` already owns two cheap, deterministic, zero-API-call
- * recognizers: `parseTimeBudgetCommand` (Task 6) and `isPlanViewCommand`
- * (Task 11). `runChatCli`'s loop checks both first, unchanged, and only
- * reaches this file's catch-all branch once a line has failed both — so, by
- * construction, everything this file ever sees is a genuine general/factual
- * question. `answerGeneralQuestion` (this file's primary export, AD-9) is
- * therefore the whole of this file's job today: call Claude once and return
- * its text response.
- *
- * An earlier version of this file also exported a local `classifyChatIntent`
- * (labeling input as `"time-budget"` / `"plan-view"` / `"general-qa"`) and a
- * `routeChatMessage` wrapper that classified then always answered regardless
- * of the label. Code review (Task 13) flagged that classification as
- * speculative complexity: `chat-cli.ts`'s catch-all only ever read
- * `result.response`, never `result.intent`, and `routeChatMessage` called
- * Claude unconditionally either way — so the two non-`general-qa` labels
- * were computed but never actually changed anything, while duplicating (in
- * shape, not exact grammar) the same regexes `chat-cli.ts` already owns. Both
- * were removed rather than kept as unused scaffolding.
- *
- * Real intent classification/dispatch for Mid-Day Re-Flow (Task 15) and
- * Blocker reports (Task 16) is expected to be designed BY those tasks, not
- * pre-built here — most likely as their own dedicated checks in
- * `runChatCli`, ahead of this file's catch-all, mirroring how
- * `parseTimeBudgetCommand`/`isPlanViewCommand` already work. Whoever builds
- * Task 15/16 should design that dispatch mechanism then, against the real
- * requirements of those stories, rather than have it guessed at here.
- *
- * `answerGeneralQuestion`'s `systemPrompt` parameter is an optional override
- * specifically so Task 14 (`core/tone.ts`) can hand this file a
- * Tone-governed instruction string without changing this function's
- * signature or the caller contract — `tone.ts` stays a pure `core/*.ts`
- * classifier per AD-1/AD-2 (it cannot call Claude itself) and this file
- * remains the only place that actually calls the API. Task 14 update: this
- * seam is now wired up — `app/general-question.ts`'s `answerQuestion`
- * (Story 8.3: originally `shell/chat-cli.ts`'s catch-all) calls `tone.ts`'s
- * `resolveToneSystemPrompt(line)` and passes its result here as
- * `systemPrompt`, so `DEFAULT_GENERAL_QA_SYSTEM_PROMPT` below is only ever
- * used by a caller that doesn't supply an override (e.g. this file's own
- * unit tests).
- *
- * Per AD-8, this file may throw on I/O failure rather than returning
- * `Result` itself — a transport-level SDK rejection propagates unchanged,
- * and an unexpected empty-text response is raised as a thrown `Error` too
- * (silently returning "" would look like a real, if empty, answer).
- * `app/general-question.ts`'s `answerQuestion` catches either around its
- * call site, converting it to a `Result` so one failed Claude turn cannot
- * crash the calling shell (Story 8.3: originally `shell/chat-cli.ts`
- * caught it directly to protect its own persistent REPL session, since
- * retired — Story 8.9) — that is ordinary shell-layer error handling, not
- * the Result-conversion AD-8 reserves for `rituals/*.ts`.
+ * Per AD-8 these functions may throw on I/O failure; the calling `app/`
+ * function converts a throw to a `Result`.
  */
 import Anthropic from "@anthropic-ai/sdk";
 import { isValidIsoDateTime, normalizeIsoDateTime } from "./iso-datetime.ts";
@@ -72,8 +18,6 @@ import { recordLlmUsage, type LlmUsagePurpose } from "./llm-usage-store.ts";
 import type { ChatToolDefinition } from "../core/chat-tools.ts";
 import type { SqliteConnection } from "./sqlite.ts";
 import type {
-  ChatIntent,
-  ChatTurn,
   ExternalId,
   FieldValueSuggestion,
   MemoryCandidate,
@@ -156,13 +100,7 @@ export function loadLlmAdapterConfigFromEnv(
 //     `system` as TWO blocks instead — the stable instructions (cached)
 //     followed by a second, uncached block carrying whatever changes every
 //     call (today's date/timezone, today's candidate events) — so the
-//     cached prefix never silently goes stale once a day. `answerGeneral
-//     Question`/`streamGeneralQuestion` additionally mark the LAST message
-//     of the conversation history (`toCacheableMessages`) so the growing
-//     chat prefix is cached turn to turn: each new call's shared history
-//     (everything except the newest message) matches byte-for-byte what a
-//     PRIOR call already cached, giving a cache read for that part and a
-//     cache write for only the newly-added turn.
+//     cached prefix never silently goes stale once a day.
 //  2. Records `response.usage` (or, for a stream, the usage accumulated
 //     from `message_start`/`message_delta` events) into
 //     `llm-usage-store.ts`, tagged with this function's own fixed
@@ -199,55 +137,12 @@ function memorySystemBlocks(memory: MemoryContext | undefined): { always: Anthro
   };
 }
 
-/**
- * Renders `messages` for the Messages API, marking the LAST turn's content
- * with an ephemeral cache breakpoint — every earlier turn is sent as a
- * plain string, unchanged from before this task. On the NEXT call (one
- * more turn appended), everything up to and including what was previously
- * the last turn is byte-identical to what this call already sent, so it
- * reads from cache; only the newly-appended turn(s) are a fresh cache
- * write. (`cache_control` is request metadata, not model input — wrapping a
- * turn's text in a one-element block array changes nothing about the
- * actual tokens Claude sees, only which segment the API is asked to
- * cache/read.)
- */
-function toCacheableMessages(messages: readonly ChatTurn[]): Anthropic.MessageParam[] {
-  const lastIndex = messages.length - 1;
-  return messages.map((turn, i) => ({
-    role: turn.role,
-    content: i === lastIndex ? [{ type: "text", text: turn.content, cache_control: EPHEMERAL_CACHE_CONTROL }] : turn.content,
-  }));
-}
-
-/** The zero-usage starting point `streamGeneralQuestion` accumulates onto as stream events arrive. */
-const ZERO_STREAM_USAGE: StreamUsage = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
-
 /** The 4 fields `recordUsageSafely` actually needs — both `Anthropic.Usage` (a non-streaming `Message`'s own `usage`) and this file's own streamed-accumulator shape satisfy it structurally. */
 interface StreamUsage {
   readonly input_tokens: number;
   readonly output_tokens: number;
   readonly cache_creation_input_tokens: number | null;
   readonly cache_read_input_tokens: number | null;
-}
-
-/** Folds one `message_start` event's initial `Usage` into a `StreamUsage`. */
-function streamUsageFromMessageStart(usage: Anthropic.Usage): StreamUsage {
-  return {
-    input_tokens: usage.input_tokens,
-    output_tokens: usage.output_tokens,
-    cache_creation_input_tokens: usage.cache_creation_input_tokens,
-    cache_read_input_tokens: usage.cache_read_input_tokens,
-  };
-}
-
-/** Merges one `message_delta` event's CUMULATIVE `MessageDeltaUsage` onto `prev` — a `null` field means "unchanged since `message_start`," so `prev`'s own value is kept rather than clobbered with `null`. */
-function mergeStreamDeltaUsage(prev: StreamUsage, delta: Anthropic.MessageDeltaUsage): StreamUsage {
-  return {
-    input_tokens: delta.input_tokens ?? prev.input_tokens,
-    output_tokens: delta.output_tokens,
-    cache_creation_input_tokens: delta.cache_creation_input_tokens ?? prev.cache_creation_input_tokens,
-    cache_read_input_tokens: delta.cache_read_input_tokens ?? prev.cache_read_input_tokens,
-  };
 }
 
 /**
@@ -377,189 +272,14 @@ export async function extractMemories(
 }
 
 // ============================================================================
-// answerGeneralQuestion — the primary export (AD-9): the real Claude call
-// (AD-8: may throw on I/O failure)
+// Models
 // ============================================================================
 
-/**
- * Model routing (2026-09-22 revision). Every call this file makes used to
- * share one constant (`CLAUDE_CHAT_MODEL`, pinned to Opus). Two tiers now:
- *
- *  - `CLAUDE_CHAT_MODEL_FAST` (Haiku) — the default for EVERY call in this
- *    file, including `answerGeneralQuestion`. `suggestFieldValue`,
- *    `draftNotionPageFields`, `classifyChatIntent`, and
- *    `draftCalendarEditRequest` are narrow, structured-extraction tasks
- *    (parse a line into a fixed shape, classify into one of two labels) —
- *    exactly the kind of task a fast/cheap model handles reliably, and none
- *    of them are exposed for escalation; they always use this constant.
- *  - `CLAUDE_CHAT_MODEL_CAPABLE` (Sonnet) — used ONLY by
- *    `answerGeneralQuestion`, and only situationally: `app/general-question.ts`
- *    (Story 8.3: originally `shell/chat-cli.ts`) picks between the two based
- *    on `core/tone.ts`'s existing `classifyTone(line)` register (already
- *    computed there to choose the system prompt) — a `"concise-educational"`
- *    factual/analytical question routes to Sonnet, ordinary `"casual-peer"`
- *    chat stays on Haiku. That routing decision lives in
- *    `app/general-question.ts`, not here: AD-1 restricts
- *    `adapters/*.ts` to importing only from `types/`, so this file cannot
- *    import `core/tone.ts`'s `ToneRegister`/`classifyTone` itself.
- */
+/** Haiku: the model for every narrow, structured call in this file. */
 export const CLAUDE_CHAT_MODEL_FAST: Anthropic.Model = "claude-haiku-4-5-20251001";
-export const CLAUDE_CHAT_MODEL_CAPABLE: Anthropic.Model = "claude-sonnet-5";
 
-/**
- * A short chat-turn cap, not a "full response" budget — Spencer's questions
- * here are conversational REPL turns (UX-DR9), not long-form document
- * generation, so this stays well below the SDK's usual non-streaming
- * default rather than reserving room for output this path never produces.
- */
+/** The output cap for one model call of the chat tool loop. */
 const CLAUDE_CHAT_MAX_TOKENS = 1024;
-
-/**
- * Default system prompt for the general Q&A path. Deliberately minimal —
- * Task 14 (`core/tone.ts`) is expected to hand `answerGeneralQuestion` a
- * richer, Tone-governed instruction via its `systemPrompt` parameter rather
- * than this file growing its own tone logic (AD-1/AD-2: tone classification
- * stays a pure `core/*.ts` concern).
- */
-export const DEFAULT_GENERAL_QA_SYSTEM_PROMPT =
-  "You are Yoh, Spencer's personal daily-planning assistant. Answer naturally and concisely.";
-
-/**
- * Calls Claude with `messages` — the session's real running conversation
- * history (`types/domain.ts`'s `ChatTurn`), ending in the current unanswered
- * user turn — and returns its text response.
- *
- * **Real history, not a single isolated turn (2026-09-22 revision).**
- * Originally this call sent ONLY `input` as a lone `user` message, with zero
- * memory of anything said or done earlier in the session — including by
- * Yoh's OWN prior actions. That caused a real, observed failure: right after
- * a Data-Completeness answer flow genuinely wrote several Task fields to
- * Notion, asking "have you written the data to Notion" got a confident "No
- * ... I don't see any task data" — correct only in the narrow sense that
- * THAT single isolated API call had no data in it, and useless/misleading to
- * Spencer, who experienced it as one continuous session. `messages` is the
- * `ChatTurnRequest.history` the caller supplies (Story 8.9: originally built
- * by `shell/chat-cli.ts`'s recording wrapper around its `ChatCliIo`, which
- * captured every line written/read across EVERY flow — deterministic
- * commands included, not just prior general-chat turns — as alternating
- * `user`/`assistant` turns; now held client-side, per turn, by `web/src/lib/
- * chatStore.ts` and sent as-is), trimmed to `MAX_CHAT_HISTORY_TURNS` by
- * `app/chat-turn.ts`'s `chatTurn`, which also guarantees the strict
- * alternation (and "starts with `user`") the Messages API requires. This
- * function trusts that invariant rather than re-validating it structurally
- * on every call; a malformed `messages` array is a caller bug, not a runtime
- * condition worth guarding against on the hot path, though an empty array is
- * rejected outright below (there is always at least the current turn by the
- * time this call site is reached — an empty array signals the caller's own
- * wiring is broken).
- *
- * Per AD-8, this throws rather than returning `Result` on any failure: a
- * transport/API-level rejection from the SDK propagates unchanged, and a
- * response that comes back with no text content at all is raised as a
- * thrown `Error` too (never silently returned as `""`, which would read as a
- * real if empty answer rather than something worth investigating).
- * `app/general-question.ts`'s `answerQuestion` (Story 8.3; formerly
- * `shell/chat-cli.ts`, retired Story 8.9) is the layer that catches either
- * around its call site, converting it to a `Result` so one failed turn never
- * crashes the calling shell (`server.ts`).
- *
- * `model` defaults to `CLAUDE_CHAT_MODEL_FAST` (Haiku) — `app/general-
- * question.ts`'s `answerQuestion` (Story 8.3: originally `shell/chat-cli.ts`)
- * overrides it with `CLAUDE_CHAT_MODEL_CAPABLE` (Sonnet) for a message
- * `core/tone.ts`'s `classifyTone` reads as genuinely factual/analytical; see
- * this file's "Model routing" doc comment above `CLAUDE_CHAT_MODEL_FAST`.
- */
-export async function answerGeneralQuestion(
-  client: AnthropicMessagesClient,
-  messages: readonly ChatTurn[],
-  systemPrompt: string = DEFAULT_GENERAL_QA_SYSTEM_PROMPT,
-  model: Anthropic.Model = CLAUDE_CHAT_MODEL_FAST,
-  connection?: SqliteConnection,
-  memory?: MemoryContext,
-): Promise<string> {
-  if (messages.length === 0) {
-    throw new Error("llm-adapter: answerGeneralQuestion called with no conversation history at all");
-  }
-
-  const message = await client.messages.create({
-    model,
-    max_tokens: CLAUDE_CHAT_MAX_TOKENS,
-    system: generalSystemBlocks(systemPrompt, memory),
-    messages: toCacheableMessages(messages),
-  });
-  recordUsageSafely(connection, "answer", model, message.usage);
-
-  const text = message.content
-    .filter((block): block is Anthropic.TextBlock => block.type === "text")
-    .map((block) => block.text)
-    .join("\n")
-    .trim();
-
-  if (text.length === 0) {
-    throw new Error("llm-adapter: Claude returned no text content for a general Q&A response");
-  }
-  return text;
-}
-
-function generalSystemBlocks(systemPrompt: string, memory: MemoryContext | undefined): Anthropic.TextBlockParam[] {
-  const blocks = memorySystemBlocks(memory);
-  return [cacheableSystemBlock(systemPrompt), ...blocks.always, ...blocks.relevant];
-}
-
-/**
- * Streaming twin of `answerGeneralQuestion` (Story 8.3): same inputs, same
- * "never a silent empty reply" contract (AD-8) — throws if the stream ends
- * having yielded no text at all, or if `messages` is empty. Yields raw text
- * chunks (`content_block_delta` events whose `delta.type === "text_delta"`)
- * as they arrive; a caller with no live stream sink should keep using
- * `answerGeneralQuestion` instead (this file exposes both — see
- * `app/general-question.ts`'s `answerQuestion`, which uses this one only
- * when its own caller supplied a stream sink; `shell/chat-cli.ts`, since
- * retired, never had one, so it only ever called the non-streaming twin).
- */
-export async function* streamGeneralQuestion(
-  client: AnthropicMessagesClient,
-  messages: readonly ChatTurn[],
-  systemPrompt: string = DEFAULT_GENERAL_QA_SYSTEM_PROMPT,
-  model: Anthropic.Model = CLAUDE_CHAT_MODEL_FAST,
-  connection?: SqliteConnection,
-  memory?: MemoryContext,
-): AsyncGenerator<string, void, void> {
-  if (messages.length === 0) {
-    throw new Error("llm-adapter: streamGeneralQuestion called with no conversation history at all");
-  }
-
-  const stream = await client.messages.create({
-    model,
-    max_tokens: CLAUDE_CHAT_MAX_TOKENS,
-    system: generalSystemBlocks(systemPrompt, memory),
-    messages: toCacheableMessages(messages),
-    stream: true,
-  });
-
-  let sawText = false;
-  // Usage arrives piecemeal across raw stream events (this file's injected
-  // client shape has no `.finalMessage()` helper — see this file's own
-  // `AnthropicMessagesClient` doc comment): `message_start` carries the
-  // initial `Usage`, and each `message_delta` carries the running
-  // CUMULATIVE totals, so the last one seen before `message_stop` is the
-  // real final tally.
-  let usage: StreamUsage = ZERO_STREAM_USAGE;
-  for await (const event of stream) {
-    if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
-      sawText = true;
-      yield event.delta.text;
-    } else if (event.type === "message_start") {
-      usage = streamUsageFromMessageStart(event.message.usage);
-    } else if (event.type === "message_delta") {
-      usage = mergeStreamDeltaUsage(usage, event.usage);
-    }
-  }
-  recordUsageSafely(connection, "answer", model, usage);
-  if (!sawText) {
-    throw new Error("llm-adapter: Claude returned no text content for a streamed general Q&A response");
-  }
-}
 
 // ============================================================================
 // runToolTurn (Epic 14 Task 3: chat tool loop) — one model call with tools
@@ -849,143 +569,6 @@ export async function draftNotionPageFields(
   }
 
   return fields["title"] ? fields : undefined;
-}
-
-// ============================================================================
-// classifyChatIntent (Story 6.4 / FR-28, AD-14) — the ONE real producer of
-// ChatIntent today. Called only by `app/chat-turn.ts`'s `chatTurn` (Story
-// 8.4: originally `shell/chat-cli.ts`), only on a line that
-// already failed every existing deterministic trigger check (time budget,
-// plan view, mid-day reflow, blocker, why-prioritized, create-item) — never
-// on every message unconditionally, to avoid firing a paid search call on
-// an ordinary planning/status message (AD-14's own named risk).
-// ============================================================================
-
-const CLASSIFY_CHAT_INTENT_MAX_TOKENS = 128;
-
-const CLASSIFY_CHAT_INTENT_SYSTEM_PROMPT = [
-  "You are Yoh's chat-intent classifier. Decide whether Spencer's message is:",
-  '(a) an explicit request to search the web (e.g. "search for X", "look up X", "google X"), or a real-world factual/informational question — about people, companies, events, prices, scores, weather, current events, definitions of current things, or anything else outside Yoh\'s own planning data that a search engine (rather than Yoh\'s own memory) would answer — respond:',
-  "SEARCH: <a clean, focused search query capturing what to look up>",
-  "Lean toward SEARCH whenever the message reads as a genuine question about the world rather than about Spencer's own Tasks/Projects/Calendar/Plan — when in doubt between SEARCH and GENERAL for a real-world factual question, prefer SEARCH.",
-  "(b) anything else (Spencer's own planning/status, something personal to Spencer, or ordinary conversational chat) — respond with exactly:",
-  "GENERAL",
-  "",
-  "Examples:",
-  'Message: "who is the CEO of OpenAI" -> SEARCH: current CEO of OpenAI',
-  'Message: "what\'s the capital of France" -> SEARCH: capital of France',
-  'Message: "price of bitcoin" -> SEARCH: current price of bitcoin',
-  'Message: "who won the game last night" -> SEARCH: who won the game last night',
-  'Message: "what\'s my plan for today" -> GENERAL',
-  'Message: "why is my chemistry homework prioritized" -> GENERAL',
-  'Message: "how\'s it going" -> GENERAL',
-  'Message: "should I take a break" -> GENERAL',
-].join("\n");
-
-/**
- * Classifies `line` into `{kind: 'search-trigger', query}` or
- * `{kind: 'general-question'}` — the only two `ChatIntent` variants this
- * function ever actually produces (see `ChatIntent`'s own doc comment).
- * Defaults to `{kind: 'general-question'}` for ANY response that isn't a
- * recognized `SEARCH: ...` line — never throws for "not a search," so a
- * malformed classifier response degrades to the ordinary chat path rather
- * than blocking it. A genuine API/transport failure still propagates as a
- * thrown error (AD-8); `app/chat-turn.ts` (Story 8.9: originally
- * `shell/chat-cli.ts`) treats that the same way.
- */
-export async function classifyChatIntent(client: AnthropicMessagesClient, line: string, connection?: SqliteConnection): Promise<ChatIntent> {
-  const message = await client.messages.create({
-    model: CLAUDE_CHAT_MODEL_FAST,
-    max_tokens: CLASSIFY_CHAT_INTENT_MAX_TOKENS,
-    system: [cacheableSystemBlock(CLASSIFY_CHAT_INTENT_SYSTEM_PROMPT)],
-    messages: [{ role: "user", content: line }],
-  });
-  recordUsageSafely(connection, "classify", CLAUDE_CHAT_MODEL_FAST, message.usage);
-
-  const text = message.content
-    .filter((block): block is Anthropic.TextBlock => block.type === "text")
-    .map((block) => block.text)
-    .join("\n")
-    .trim();
-
-  const match = /^SEARCH:\s*(.+)$/is.exec(text);
-  if (match && match[1]!.trim().length > 0) {
-    return { kind: "search-trigger", query: match[1]!.trim() };
-  }
-  return { kind: "general-question" };
-}
-
-// ============================================================================
-// classifyCapture (real-use fixes plan, Task 2 — replaces the old
-// two-way detectTaskCapture, Story 8.8 / FR-26 extended, AD-14's cost
-// discipline) — chat-turn.ts calls this ONLY after every deterministic
-// recognizer (time-budget, plan-view, mid-day-reflow, blocker,
-// why-prioritized, save-search-result, create-item's explicit Notion
-// mention, calendar-edit) has already failed to match — never on every
-// message unconditionally.
-//
-// The incident this fixes: "make a event at 10:45 am tommorow to meet with
-// alex..." fell through `isCalendarEditCommand`'s old, narrower trigger and
-// was captured as a Notion Task by the old `detectTaskCapture` (which only
-// ever answered CAPTURE/NONE) — its Due Date ended up as the literal text
-// "tomorrow at 10:45 AM", which Notion rejected. `isCalendarEditCommand` is
-// broadened (`core/chat-commands.ts`) so this exact line is now caught
-// deterministically BEFORE this function ever runs; this function is the
-// backstop for whatever free-text phrasing still slips past that broadened
-// regex — a genuinely time-bound thing to attend (a meeting, appointment,
-// call, class, or event at a time) must still route to the calendar-create
-// path, never to a Task.
-//
-// Answers one question: is `line` (a) a time-bound thing to ATTEND (an
-// "event"), (b) something to DO or produce later (a "task"), or (c)
-// neither ("none")? It does NOT draft either one's fields itself — an
-// "event" hit is hedged to `app/calendar-edit.ts`'s `proposeCalendarEdit`
-// (the same draft-then-confirm pipeline `isCalendarEditCommand` uses), and a
-// "task" hit is handed to the existing draftNotionPageFields/createPage
-// pipeline via `app/create-item.ts`'s `draftItem`, unchanged — so either hit
-// goes through the exact same confirm-then-write trust boundary an explicit
-// "create a task ..."/"create an event ..." command uses. Controller ruling:
-// `ChatIntent` (domain.ts) is not widened for this — this is its own
-// function/shape.
-// ============================================================================
-
-const CLASSIFY_CAPTURE_MAX_TOKENS = 16;
-
-const CLASSIFY_CAPTURE_SYSTEM_PROMPT = [
-  "You are Yoh's task/event-capture classifier. Decide which of these Spencer's message describes:",
-  '(a) a TIME-BOUND thing to ATTEND at a particular time or date — a meeting, appointment, call, class, or other event (e.g. "meet with Alex tomorrow at 3", "dentist appointment Friday 2pm") — respond with exactly: EVENT',
-  "(b) something he needs to DO or PRODUCE later — a new Task to track (an assignment, an errand, a chore, a deliverable, with or without a stated due date, and NOT itself an appointment to attend) — respond with exactly: TASK",
-  "(c) anything else (a question, a greeting, a status update, small talk, or anything ambiguous) — respond with exactly: NONE",
-].join("\n");
-
-/**
- * Classifies `line` into `"event"`, `"task"`, or `"none"`. Never throws for
- * an unrecognized/ambiguous response — those default to `"none"` — only a
- * genuine API/transport failure propagates (AD-8), exactly like
- * `classifyChatIntent`/`draftCalendarEditRequest` above.
- */
-export async function classifyCapture(
-  client: AnthropicMessagesClient,
-  line: string,
-  connection?: SqliteConnection,
-): Promise<"task" | "event" | "none"> {
-  const message = await client.messages.create({
-    model: CLAUDE_CHAT_MODEL_FAST,
-    max_tokens: CLASSIFY_CAPTURE_MAX_TOKENS,
-    system: [cacheableSystemBlock(CLASSIFY_CAPTURE_SYSTEM_PROMPT)],
-    messages: [{ role: "user", content: line }],
-  });
-  recordUsageSafely(connection, "capture", CLAUDE_CHAT_MODEL_FAST, message.usage);
-
-  const text = message.content
-    .filter((block): block is Anthropic.TextBlock => block.type === "text")
-    .map((block) => block.text)
-    .join("\n")
-    .trim();
-
-  if (/^EVENT\b/i.test(text)) return "event";
-  if (/^TASK\b/i.test(text)) return "task";
-  return "none";
 }
 
 // ============================================================================

@@ -2221,7 +2221,7 @@ function buildChatDeps(
     now: () => new Date(),
     llmClient,
     // Real-use fixes plan, Task 9: every `llm-adapter.ts` call site this
-    // process makes (`app/chat-turn.ts`, `app/general-question.ts`,
+    // process makes (`app/chat-turn.ts`, `app/chat-agent.ts`,
     // `app/create-item.ts`, `app/calendar-edit.ts`,
     // `app/surface-open-items.ts`) threads its own trailing `connection`
     // argument from this one field, so real usage gets recorded — the
@@ -2238,7 +2238,7 @@ function buildChatDeps(
     // source of truth for whether web search is actually configured right
     // now — threaded through `ChatTurnDeps` (via `WebSearchDeps`) into both
     // `app/web-search.ts`'s `searchWeb` (never attempts a search when
-    // false) and, via `app/chat-turn.ts`'s final `answerQuestion` call,
+    // false) and, via `app/chat-turn.ts`'s system prompt,
     // `core/tone.ts`'s capability text (never claims search when false).
     webSearchAvailable: Boolean(perplexityApiKey),
     readCalendarEventsFn,

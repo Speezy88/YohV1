@@ -404,30 +404,8 @@ export interface SearchAnswer {
 }
 
 /**
- * ChatIntent — the discriminated union AD-14 names for `app/chat-turn.ts`'s
- * `chatTurn` intent routing (Story 8.9: originally `chat-cli.ts`'s). Only
- * `search-trigger` (Story 6.4/FR-28) has a real classifier producing it
- * today (`llm-adapter.ts`'s `classifyChatIntent`, called only after every
- * existing deterministic trigger check has already failed to match). The
- * other four kinds name the territory
- * `parseTimeBudgetCommand`/`isPlanViewCommand`/`isMidDayReflowCommand`/
- * `isBlockerReportCommand`/`parseWhyPrioritizedCommand`/
- * `parseCreateItemCommand` (`core/chat-commands.ts`) already cover via
- * their own deterministic checks, by that original `chat-cli.ts` design
- * choice `chatTurn` still follows — named here so
- * this type's inventory is complete per AD-9, not because a second
- * classifier produces them.
- */
-export type ChatIntent =
-  | { readonly kind: "mid-day-reflow" }
-  | { readonly kind: "blocker" }
-  | { readonly kind: "open-prompt-answer" }
-  | { readonly kind: "general-question" }
-  | { readonly kind: "search-trigger"; readonly query: string };
-
-/**
  * ChatTurn — one turn of the running Chat session transcript, threaded into
- * `llm-adapter.ts`'s `answerGeneralQuestion` as real conversation history
+ * the chat tool loop (`app/chat-agent.ts`) as real conversation history
  * (2026-09-22 revision) so a general-chat answer can accurately reference
  * what was just said or done earlier in the SAME session — including by a
  * deterministic flow (a Data-Completeness answer, a Night Ritual close-out,

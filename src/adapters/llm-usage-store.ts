@@ -31,9 +31,8 @@ import type { SqliteConnection } from "./sqlite.ts";
  * The one closed set of `purpose` labels `llm-adapter.ts`'s six real
  * Claude-calling functions tag their own usage rows with — one label per
  * function (never reused across two different functions), matching Task
- * 9's own list: `classify` (`classifyChatIntent`), `capture`
- * (`classifyCapture`), `answer` (`answerGeneralQuestion` /
- * `streamGeneralQuestion` — both are the same "general Q&A" capability),
+ * 9's own list: `classify`, `capture` and `answer` (the pre-tool-loop chat
+ * routing calls, since removed — kept here because stored rows carry them),
  * `draft-notion` (`draftNotionPageFields`), `draft-calendar`
  * (`draftCalendarEditRequest`), `suggest-field` (`suggestFieldValue`),
  * `quick-add-normalize` (Polish 4 Task 1: `normalizeQuickAddLine`),
