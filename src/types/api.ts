@@ -654,6 +654,26 @@ export interface MemorySearchResponse {
   }[];
 }
 
+// ---- Memory import (Claude export) -----------------------------------------
+
+/** One line of the reviewed candidates file. */
+export interface ImportMemoryLine {
+  readonly line: number;
+  readonly folder: MemoryFolder;
+  readonly text: string;
+}
+
+/** `POST /api/memory/import`'s value. A dry run returns the same report and writes nothing. */
+export interface ImportMemoryResponse {
+  readonly dryRun: boolean;
+  /** Stored as each filed item's `sourceTurnId`. */
+  readonly batchTag: string;
+  readonly counts: { readonly filed: number; readonly skippedDuplicate: number; readonly rejected: number };
+  readonly filed: readonly ImportMemoryLine[];
+  readonly skippedDuplicate: readonly ImportMemoryLine[];
+  readonly rejected: readonly (ImportMemoryLine & { readonly reason: string })[];
+}
+
 // ============================================================================
 // Tasks page (Task 6B, FR-43) — new shapes only.
 // ============================================================================
