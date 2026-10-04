@@ -213,6 +213,15 @@ describe("chatStore", () => {
     await stream.finish();
   });
 
+  it("a done event whose reply is the question's own words keeps them only on the card", async () => {
+    const stream = controllableStream();
+    const { result } = renderHook(() => useChatStore());
+    act(() => void send("Hi"));
+    stream.emit({ type: "done", response: { reply: QUESTION.text, receipts: [], question: QUESTION } });
+    await stream.finish();
+    expect(messagesOf(result.current)[1]).toMatchObject({ status: "done", text: "", question: QUESTION });
+  });
+
   it("a done event sets the final reply, receipts, and question, and clears sending", async () => {
     const stream = controllableStream();
     const { result } = renderHook(() => useChatStore());

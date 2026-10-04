@@ -113,6 +113,14 @@ export function SafeMarkdown({ text }: { readonly text: string }): React.JSX.Ele
   );
 }
 
+/** A change-set question's `- ` lines become the card's list; the lead-in and closing line stay as its text. */
+function changeSetParts(question: OpenItemQuestion): { readonly text: string; readonly items?: readonly string[] } {
+  if (question.proposal?.kind !== "change-set") return { text: question.text };
+  const lines = question.text.split("\n");
+  const items = lines.filter((l) => l.startsWith("- ")).map((l) => l.slice(2));
+  return { text: lines.filter((l) => !l.startsWith("- ")).join("\n"), items };
+}
+
 export function ChatMessage({ message }: ChatMessageProps): React.JSX.Element | null {
   const isUser = message.role === "user";
   const thinking = !isUser && message.status === "streaming" && message.text === "";
@@ -214,7 +222,7 @@ export function ChatMessage({ message }: ChatMessageProps): React.JSX.Element | 
         {showQuestion && (
           <>
             <StructuredQuestion
-              text={message.question!.text}
+              {...changeSetParts(message.question!)}
               options={message.question!.options}
               allowsFreeText={message.question!.allowsFreeText}
               busy={busy}

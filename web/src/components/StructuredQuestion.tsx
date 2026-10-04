@@ -36,6 +36,8 @@ export interface StructuredQuestionOption {
 
 export interface StructuredQuestionProps {
   readonly text: string;
+  /** A change-set proposal's staged changes, one line each. `text`'s first line leads in, the rest closes; the list sits between them. */
+  readonly items?: readonly string[];
   readonly options: readonly StructuredQuestionOption[];
   readonly allowsFreeText: boolean;
   /** True while a pick is in flight — disables every chip and the Other field so a second pick can't race the first (AD-5's conflict rule). */
@@ -45,7 +47,7 @@ export interface StructuredQuestionProps {
   onAnswer(answer: string): void;
 }
 
-export function StructuredQuestion({ text, options, allowsFreeText, busy = false, autoFocus = true, onAnswer }: StructuredQuestionProps): React.JSX.Element {
+export function StructuredQuestion({ text, items, options, allowsFreeText, busy = false, autoFocus = true, onAnswer }: StructuredQuestionProps): React.JSX.Element {
   const [picked, setPicked] = useState<string | undefined>(undefined);
   const [freeText, setFreeText] = useState("");
   const lines = text.split("\n");
@@ -72,7 +74,17 @@ export function StructuredQuestion({ text, options, allowsFreeText, busy = false
 
   return (
     <div data-testid="structured-question" className="flex flex-col gap-3 rounded-lg bg-surface-sunken p-4 font-body text-body text-ink-primary shadow-inset">
-      {lines.length >= 3 ? (
+      {items !== undefined && items.length > 0 ? (
+        <>
+          <p className="m-0 font-body text-body font-medium">{lines[0]}</p>
+          <ul aria-label="Proposed changes" className="m-0 flex list-disc flex-col gap-1 pl-5 font-body text-small text-ink-secondary">
+            {items.map((item, i) => (
+              <li key={i}>{item}</li>
+            ))}
+          </ul>
+          {lines.length > 1 && <p className="m-0 font-body text-body font-bold">{lines.slice(1).join(" ")}</p>}
+        </>
+      ) : lines.length >= 3 ? (
         <>
           <p className="m-0 font-body text-body font-medium">{lines[0]}</p>
           {lines.slice(1, -1).map((line, i) => (

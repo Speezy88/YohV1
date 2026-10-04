@@ -22,6 +22,7 @@
  * Run from the repo root (the app serves `./web/dist`, built beforehand):
  *   YOH_SERVER_PORT=8788 node tests/e2e/fixture-server.ts
  */
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -34,10 +35,10 @@ import { initSettingsStoreSchema } from "../../src/adapters/settings-store.ts";
 import { createMemoryItemStore, initMemoryItemStoreSchema } from "../../src/adapters/memory-item-store.ts";
 import { initRoutineStoreSchema } from "../../src/adapters/routine-store.ts";
 import { appendOutboxInTx, initNotificationStoreSchema } from "../../src/adapters/notification-store.ts";
-import { initPlanStateStoreSchema, replaceDayPinsAndDropsInTx } from "../../src/adapters/plan-state-store.ts";
+import { findUncommittedCheckOffForTask, initPlanStateStoreSchema, replaceDayPinsAndDropsInTx } from "../../src/adapters/plan-state-store.ts";
 import { listOpenReshuffleProposals } from "../../src/adapters/reshuffle-proposal-store.ts";
 import { initCompletionLogSchema, listCompletedTaskIdsOnDate } from "../../src/adapters/completion-log.ts";
-import { clearInteractionRequest, createMemoryStore, putPlan, putTimeBudget } from "../../src/adapters/memory-store.ts";
+import { clearInteractionRequest, createMemoryStore, listOpenInteractionRequests, putPlan, putTimeBudget } from "../../src/adapters/memory-store.ts";
 import {
   bindNotionTaskWrites,
   createPage as notionCreatePage,
@@ -46,7 +47,11 @@ import {
   readTaskFieldOptions,
   type NotionCreatePageConfig,
 } from "../../src/adapters/notion-adapter.ts";
+import { CHANGE_SET_PROPOSAL_KIND } from "../../src/app/apply-change-set.ts";
+import { undoCheckOff } from "../../src/app/check-off.ts";
 import { draftItem, type CreateItemDeps } from "../../src/app/create-item.ts";
+import { openProposal } from "../../src/app/open-proposal.ts";
+import { changeSetPrompt } from "../../src/core/chat-tools.ts";
 import { offerPattern } from "../../src/app/pattern-offer.ts";
 import { sandboxQueue, type SandboxQueueDeps } from "../../src/app/sandbox-queue.ts";
 import { clearFixturePatterns, FIXTURE_RULE_TEXT, seedFixtureMemory, seedFixturePattern } from "./fixture-memory-seed.ts";
@@ -55,7 +60,7 @@ import { firstCardView } from "../../src/core/sandbox-card-view.ts";
 import { localIsoDate } from "../../src/rituals/ritual-shared.ts";
 import { startCheckOffCommitSweep, startServer, type ChatTurnFn, type ServerDeps } from "../../src/shell/server.ts";
 import type { AnthropicMessagesClient } from "../../src/adapters/llm-adapter.ts";
-import type { Plan, PlanBlock, PlanCalendarSnapshotEntry, Task, YohPlanEvent } from "../../src/types/domain.ts";
+import type { ChangeSetItem, Plan, PlanBlock, Proposal, PlanCalendarSnapshotEntry, Task, YohPlanEvent } from "../../src/types/domain.ts";
 import { createFakeNotionStatusClient } from "../fakes/fake-notion-status-client.ts";
 import { createFakeNotionCreateClient } from "../fakes/fake-notion-create-client.ts";
 import { createFakeNotionTasksDb } from "../fakes/fake-notion-tasks-db.ts";
@@ -332,6 +337,26 @@ const captureDeps: CreateItemDeps = {
   getNotionCreatePageBinding: () => ({ ok: true, value: { client: notionCreate.client, config: NOTION_CREATE_CONFIG } }),
 };
 /** A free-text Task description the capture smoke sends — matches none of `chatTurn`'s deterministic recognizers, mirroring what a real `detectTaskCapture` call would confidently call CAPTURE for. */
+/** Epic 14: the message that stages a two-item change set (a calendar event and a check-off); `web/e2e/change-set.spec.ts` hardcodes it. */
+export const FIXTURE_CHANGE_SET_MESSAGE = "add a workout at 1 and mark the first task done";
+/** Calendar creates the change set's `applyCalendarEdit` fake recorded. */
+export const fixtureCalendarCreates: string[] = [];
+
+/** Local copy of `chat-agent.ts`'s `clearOpenChangeSets` (the fixture is not `app/`): a second open change set with the same entity would be refused. */
+function clearOpenChangeSets(): void {
+  for (const record of listOpenInteractionRequests(store)) {
+    if (record.data.requestKind !== "proposal") continue;
+    const proposal = (record.data.detail as { readonly proposal?: Proposal<unknown> } | undefined)?.proposal;
+    if (proposal?.kind === CHANGE_SET_PROPOSAL_KIND) clearInteractionRequest(store, record.id, record.version);
+  }
+}
+
+/** A reset undoes the change set's still-pending check-off, so `check-off.spec.ts` (which follows alphabetically) finds both fixture Tasks open. */
+async function undoChangeSetCheckOffs(): Promise<void> {
+  const pending = findUncommittedCheckOffForTask(connection, FIXTURE_TASKS[0].id);
+  if (pending) await undoCheckOff({ ...checkOff, connection, now: () => new Date() }, { id: pending.id });
+}
+
 const CAPTURE_TRIGGER = /report|assignment|errand|due (thursday|friday|monday)/i;
 
 // Story 8.5 (controller ruling (c)): a scripted chat turn through the
@@ -376,6 +401,26 @@ const runChatTurn: ChatTurnFn = async (deps, input) => {
   if (CAPTURE_TRIGGER.test(input.message)) {
     return draftItem(captureDeps, { database: "Tasks", request: input.message });
   }
+  if (input.message === FIXTURE_CHANGE_SET_MESSAGE) {
+    const items: ChangeSetItem[] = [
+      { kind: "create-event", title: "Workout", start: new Date(startedAt.getTime() + 3_600_000).toISOString(), end: new Date(startedAt.getTime() + 7_200_000).toISOString() },
+      { kind: "complete-task", taskId: FIXTURE_TASKS[0].id, label: FIXTURE_TASKS[0].title },
+    ];
+    const reply = changeSetPrompt(items, TIME_ZONE);
+    const proposal: Proposal<{ readonly items: readonly ChangeSetItem[] }> = {
+      id: randomUUID(),
+      kind: CHANGE_SET_PROPOSAL_KIND,
+      entityId: "chat",
+      entityVersion: "",
+      suggested: { items },
+      reason: reply,
+      createdAt: new Date().toISOString(),
+    };
+    clearOpenChangeSets();
+    const opened = await openProposal({ store }, { proposal });
+    if (!opened.ok) return opened;
+    return { ok: true, value: { reply, receipts: [], question: opened.value } };
+  }
   await sleep(600);
   for (const chunk of FIXTURE_CHAT_CHUNKS) {
     deps.emit?.({ type: "delta", text: chunk });
@@ -403,6 +448,16 @@ const chat = {
   ratingDraw: () => 0,
   createPage: (database: string, properties: Record<string, string>) =>
     notionCreatePage(notionCreate.client, NOTION_CREATE_CONFIG, database as never, properties),
+  // Epic 14: the change set's own write seams (`server.ts` threads them into `changeSet`). The calendar write is a fake that records;
+  // `completeTask` is the real check-off path over the fake Notion (see `withChatToolLoopDeps`).
+  changeSetWrites: {
+    createPage: (database: string, properties: Record<string, string>) =>
+      notionCreatePage(notionCreate.client, NOTION_CREATE_CONFIG, database as never, properties),
+    applyCalendarEdit: async (proposal: Proposal<{ readonly kind: string; readonly title?: string }>) => {
+      fixtureCalendarCreates.push(proposal.suggested.title ?? proposal.suggested.kind);
+      return { ok: true as const, value: { eventId: `fixture-event-${fixtureCalendarCreates.length}`, calendarId: "primary" } };
+    },
+  },
 } as unknown as NonNullable<ServerDeps["chat"]>;
 
 // Task 6B: the Tasks page runs against a whole fake Tasks data source
@@ -496,6 +551,8 @@ function fixtureState(url: URL): Response {
     createdPages: notionCreate.createdPages.map((p) => ({ title: p.title })),
     // Task 6B: the fake Tasks data source's rows, as Notion would hold them.
     tasksRows: tasksDb.rows(),
+    // Epic 14: how many calendar creates a confirmed change set made.
+    calendarCreates: fixtureCalendarCreates.length,
   };
   return new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } });
 }
@@ -510,7 +567,9 @@ const handle = startServer(
         const url = new URL(request.url);
         if (request.method === "POST" && (url.pathname === "/__fixture/reshuffle-scenario" || url.pathname === "/__fixture/reset")) {
           resetFixturePlan(url.pathname === "/__fixture/reshuffle-scenario");
-          return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
+          clearOpenChangeSets();
+          fixtureCalendarCreates.splice(0);
+          return undoChangeSetCheckOffs().then(() => new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } }));
         }
         // Story 13.9: memory items + two Conversations for the Memory page specs; deliberately NOT part of reset.
         if (request.method === "POST" && url.pathname === "/__fixture/seed-memory") {

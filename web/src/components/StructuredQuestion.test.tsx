@@ -7,7 +7,7 @@
  * Enter/Space activation come for free (WCAG 2.1.1).
  */
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, within } from "@testing-library/react";
 import { StructuredQuestion } from "./StructuredQuestion.tsx";
 
 describe("StructuredQuestion", () => {
@@ -181,5 +181,33 @@ describe("StructuredQuestion", () => {
     cleanup();
     render(<StructuredQuestion text="Q" options={[{ label: "Yes", value: "yes" }]} allowsFreeText={false} onAnswer={vi.fn()} />);
     expect(screen.getByRole("button", { name: "Yes" })).toHaveFocus();
+  });
+});
+
+describe("StructuredQuestion change-set items", () => {
+  it("renders change-set items as a list between the lead-in and the options", () => {
+    render(
+      <StructuredQuestion
+        text={"Here's what I'd change:\nApprove to apply all of it, or discard to change nothing."}
+        items={['Add "Workout" on Sat, Oct 3, 1:10 PM–2:50 PM', "Build today's Plan"]}
+        options={[{ label: "Approve", value: "approve" }, { label: "Discard", value: "discard" }]}
+        allowsFreeText={false}
+        onAnswer={() => {}}
+      />,
+    );
+    const list = screen.getByRole("list", { name: "Proposed changes" });
+    expect(within(list).getAllByRole("listitem")).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "Approve" })).toBeInTheDocument();
+    expect(screen.getAllByText("Here's what I'd change:")).toHaveLength(1);
+    expect(screen.getAllByText("Approve to apply all of it, or discard to change nothing.")).toHaveLength(1);
+    const lead = screen.getByText("Here's what I'd change:");
+    const closing = screen.getByText("Approve to apply all of it, or discard to change nothing.");
+    expect(lead.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(list.compareDocumentPosition(closing) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("renders no list when items is absent", () => {
+    render(<StructuredQuestion text="Create it?" options={[{ label: "Yes", value: "yes" }]} allowsFreeText={false} onAnswer={() => {}} />);
+    expect(screen.queryByRole("list", { name: "Proposed changes" })).not.toBeInTheDocument();
   });
 });

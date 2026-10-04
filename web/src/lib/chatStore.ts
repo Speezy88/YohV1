@@ -365,7 +365,8 @@ export async function send(message: string): Promise<void> {
       case "done":
         if (event.response.question) markQuestionShown(event.response.question);
         patchMessage(assistantId, () => ({
-          text: event.response.reply,
+          // A proposal's prompt is the question text itself: the card says it, so the words are not shown twice.
+          text: event.response.question?.text === event.response.reply ? "" : event.response.reply,
           receipts: event.response.receipts,
           status: "done",
           ...(event.response.question ? { question: event.response.question } : {}),

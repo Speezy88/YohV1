@@ -234,4 +234,29 @@ describe("ChatMessage rating prompt (Story 13.11)", () => {
     expect(screen.getByText(/npm test/)).toBeInTheDocument();
     expect(screen.queryByRole("heading")).toBeNull();
   });
+
+  it("a change-set question renders each staged item once, as a list, with Approve and Discard", () => {
+    const text = ["Here's what I'd change:", '- Add "Workout" on Sat, Oct 3, 1:10 PM–2:50 PM', '- Mark "E2E Undo Task" done', "Approve to apply all of it, or discard to change nothing."].join("\n");
+    render(
+      <ChatMessage
+        message={msg({
+          text: "",
+          question: {
+            requestId: "proposal:cs1",
+            questionId: "confirm",
+            text,
+            options: [{ label: "Approve", value: "approve" }, { label: "Discard", value: "discard" }],
+            allowsFreeText: false,
+            proposal: { id: "cs1", kind: "change-set", entityId: "chat", entityVersion: "", suggested: { items: [] }, reason: text, createdAt: "2026-10-03T00:00:00.000Z" },
+          },
+        })}
+      />,
+    );
+    expect(screen.getAllByRole("listitem")).toHaveLength(2);
+    expect(screen.getAllByText(/Add "Workout"/)).toHaveLength(1);
+    expect(screen.getAllByText('Mark "E2E Undo Task" done')).toHaveLength(1);
+    expect(screen.getAllByText("Here's what I'd change:")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Approve" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Discard" })).toBeInTheDocument();
+  });
 });
