@@ -11,7 +11,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
@@ -204,9 +204,17 @@ test("POST /api/open-items/answer binds changeSet: approving a change-set propos
 });
 
 test("server.ts is transport only for open items (AD-16): interaction-request writes go through app/, never memory-store.ts directly", () => {
-  const source = readFileSync(join(import.meta.dirname, "..", "src", "shell", "server.ts"), "utf8");
-  const storeImport = source.match(/import\s*\{([^}]*)\}\s*from\s*["']\.\.\/adapters\/memory-store\.ts["']/);
-  const imported = (storeImport?.[1] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  const shellDir = join(import.meta.dirname, "..", "src", "shell");
+  // server.ts and the files split out of it (server-streams.ts, server-routes.ts, server-wiring.ts).
+  const source = readdirSync(shellDir)
+    .filter((name) => /^server(-[a-z-]+)?\.ts$/.test(name))
+    .map((name) => readFileSync(join(shellDir, name), "utf8"))
+    .join("\n");
+  const imported = [...source.matchAll(/import\s*(?:type\s*)?\{([^}]*)\}\s*from\s*["']\.\.\/adapters\/memory-store\.ts["']/g)]
+    .flatMap((m) => (m[1] ?? "").split(","))
+    .map((s) => s.trim().replace(/^type\s+/, ""))
+    .filter(Boolean);
+  assert.ok(imported.length > 0);
   assert.deepEqual(
     imported.filter((name) => /^(putOpenInteractionRequest|clearInteractionRequest|updateInteractionRequestDetail|getOpenInteractionRequest|listOpenInteractionRequests)$/.test(name)),
     [],

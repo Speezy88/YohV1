@@ -107,7 +107,7 @@ test("POST /api/sandbox/:taskId/skip writes nothing and returns the recomputed n
 // test in the Story 8.2 plan): skip's own route body never names
 // submitSandboxCard or updateTaskField.
 test("the /api/sandbox/:taskId/skip route body never calls submitSandboxCard or names updateTaskField (Review Focus #3)", () => {
-  const source = readFileSync(new URL("../src/shell/server.ts", import.meta.url), "utf8");
+  const source = readFileSync(new URL("../src/shell/server-routes.ts", import.meta.url), "utf8");
   const start = source.indexOf('"/api/sandbox/:taskId/skip"');
   assert.ok(start >= 0, "the skip route must exist");
   const nextRouteStart = source.indexOf('.post(\n        "/api/sandbox', start + 1);

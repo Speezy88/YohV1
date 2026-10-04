@@ -8,7 +8,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { hc } from "hono/client";
 import type { LogEntry } from "../src/adapters/logger.ts";
@@ -454,8 +454,16 @@ test("startServer refuses an invalid YOH_SERVER_PORT instead of binding somewher
   connection.close();
 });
 
-test("server.ts schedules no ritual: it never imports rituals/ or shell/ritual-cli.ts (AD-5, AD-15)", () => {
-  const source = readFileSync(join(import.meta.dirname, "..", "src", "shell", "server.ts"), "utf8");
+/** `shell/server.ts` and the files split out of it (`server-streams.ts`, `server-routes.ts`, `server-wiring.ts`), as one source text. */
+function serverSources(): string {
+  const shellDir = join(import.meta.dirname, "..", "src", "shell");
+  const files = readdirSync(shellDir).filter((name) => /^server(-[a-z-]+)?\.ts$/.test(name));
+  assert.ok(files.length >= 4, "expected server.ts and its split-out files");
+  return files.map((name) => readFileSync(join(shellDir, name), "utf8")).join("\n");
+}
+
+test("server.ts schedules no ritual: it and its split-out files never import rituals/ or shell/ritual-cli.ts (AD-5, AD-15)", () => {
+  const source = serverSources();
   // Static `from`, bare side-effect `import "…"`, and dynamic `import("…")`.
   const specifiers = [...source.matchAll(/\bfrom\s*["']([^"']+)["']|\bimport\s*\(?\s*["']([^"']+)["']/g)].map((m) => m[1] ?? m[2]);
   assert.ok(specifiers.length > 0);
@@ -467,9 +475,11 @@ test("server.ts schedules no ritual: it never imports rituals/ or shell/ritual-c
 });
 
 test("server.ts is transport only for notifications: it reaches the store's writes only through app/notifications.ts (AD-16)", () => {
-  const source = readFileSync(join(import.meta.dirname, "..", "src", "shell", "server.ts"), "utf8");
-  const storeImport = source.match(/import\s*\{([^}]*)\}\s*from\s*["']\.\.\/adapters\/notification-store\.ts["']/);
-  const imported = (storeImport?.[1] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  const source = serverSources();
+  const imported = [...source.matchAll(/import\s*(?:type\s*)?\{([^}]*)\}\s*from\s*["']\.\.\/adapters\/notification-store\.ts["']/g)]
+    .flatMap((m) => (m[1] ?? "").split(","))
+    .map((s) => s.trim().replace(/^type\s+/, ""))
+    .filter(Boolean);
   assert.ok(imported.includes("tailOutboxSince"), "the SSE route tails the outbox through the store");
   // No create / mark-read / outbox-append from the shell: those go through app/.
   assert.deepEqual(

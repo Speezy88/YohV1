@@ -22,7 +22,7 @@ src/core/      pure logic — no I/O, no module state (chat-commands, quick-add,
 src/adapters/  I/O — notion-adapter, calendar-adapter, llm-adapter, search-adapter, sqlite (only DB opener), *-store, logger
 src/app/       one file per interaction use-case (chat-turn, home-view, check-off, confirm-proposal, ...)
 src/rituals/   scheduled workflows (morning-ritual, night-ritual, data-completeness, ...)
-src/shell/     entry points: server.ts (all HTTP routes + real deps wiring), ritual-cli.ts, backup-cli.ts
+src/shell/     entry points: server.ts (startup; re-exports server-routes.ts = all HTTP routes, server-streams.ts = SSE + sweeps, server-wiring.ts = real deps), ritual-cli.ts, backup-cli.ts
 tests/         node:test files (flat, e.g. tests/app-chat-turn.test.ts); tests/e2e/fixture-server.ts = fake-backed server for Playwright
 web/src/       pages/, components/, lib/ (API clients, stores, eventBus), hooks/, tokens.css (design tokens)
 web/e2e/       Playwright specs (run against the fixture server on port 8788)
@@ -58,7 +58,7 @@ and read only failures and the summary.
 
 ## Entry points and recurring idioms (names, not lines — grep for them)
 - **Chat routing:** `chatTurn` in `src/app/chat-turn.ts` — deterministic recognizers (`src/core/chat-commands.ts`, `src/core/search-intent.ts`) → the `chatAgent` tool loop (`src/app/chat-agent.ts`, tools in `src/core/chat-tools.ts`). Read tools answer; write tools only stage items into one `"change-set"` Proposal, applied by `applyChangeSet` (`src/app/apply-change-set.ts`) after Approve. New deterministic routes go before the loop.
-- **Adding an HTTP route:** in `createApp` (`src/shell/server.ts`), copy an existing `.get`/`.post` (e.g. `/api/calendar/day`): validate input in the shell, call ONE app function, return `c.json(wire(result), httpStatus(result))`. Its dependencies go on `ServerDeps` and are built by a `build*Deps` function (`buildHomeViewDeps`, `buildCalendarDayDeps`, `buildChatDeps`, …).
+- **Adding an HTTP route:** in `createApp` (`src/shell/server-routes.ts`), copy an existing `.get`/`.post` (e.g. `/api/calendar/day`): validate input in the shell, call ONE app function, return `c.json(wire(result), httpStatus(result))`. Its dependencies go on `ServerDeps` and are built by a `build*Deps` function in `src/shell/server-wiring.ts` (`buildHomeViewDeps`, `buildCalendarDayDeps`, `buildChatDeps`, …).
 - **Errors:** adapters throw; app functions catch and return `{ ok: false, error }`, with user copy from `errorCopyForThrown` (`src/core/error-copy.ts`). Never leak raw error text to the UI.
 - **Live updates:** a store write calls `appendOutboxInTx(db, { topic, entityId })` in the same transaction. Topics: `plan`, `tasks`, `research`, `open-items`, `notification`, `memory` (the `*_TOPIC` constants). Web listens with `onHint` (`web/src/lib/eventBus.ts`) and refetches on `hint.topic`.
 - **Web → server calls:** `apiClient` (`web/src/lib/apiClient.ts`, typed Hono client), e.g. `apiClient.api["open-items"].$get()`. Types come from `src/types/api.ts` via `import type`.
