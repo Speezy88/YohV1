@@ -11,9 +11,11 @@ import {
   applyNightCloseOutConfirmation,
   clearNightCloseOutRequestIfOpen,
   NIGHT_CLOSE_OUT_REQUEST_ID,
+  recordNightCloseOutDone,
   recordNightCloseOutHandledWithoutPrompt,
   type NightCloseOutRequestDetail,
 } from "../rituals/night-ritual.ts";
+import { writeStructuredLog } from "../adapters/logger.ts";
 import { isSkipAnswer, parseNightCloseOutAnswer } from "../core/open-item-answers.ts";
 import { errorCopy } from "../core/error-copy.ts";
 import {
@@ -71,6 +73,10 @@ async function withNext(
     // skip already unblocks the chat session today, and this doesn't change
     // that), so night-prompt will not re-ask tonight even for a skipped Task.
     recordNightCloseOutHandledWithoutPrompt(deps.store, closeOutDate, new Date().toISOString());
+    // Ruling E12-R1: a close-out finished with nothing skipped is a "done" night. A failed write never fails the close-out.
+    if (skippedTaskIds.size === 0) {
+      recordNightCloseOutDone(deps.store, closeOutDate, new Date().toISOString(), "answered", writeStructuredLog);
+    }
     const skippedTitles = tasks.filter((t) => skippedTaskIds.has(t.taskId)).map((t) => t.taskTitle);
     const closing =
       skippedTitles.length === 0

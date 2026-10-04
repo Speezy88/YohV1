@@ -180,6 +180,7 @@ import {
   getPlan,
   getRitualRun,
   getSlipHistory,
+  putNightCloseOutDone,
   putOpenInteractionRequest,
   putRitualRun,
   putUncheckedDay,
@@ -305,6 +306,25 @@ export function recordNightCloseOutHandledWithoutPrompt(store: MemoryStore, date
   putRitualRun(store, NIGHT_PROMPT_RITUAL_ID, { date, ranAt });
 }
 
+/**
+ * Ruling E12-R1: records that `date`'s close-out finished with nothing
+ * skipped. A failed write is logged and swallowed — it must never fail the
+ * close-out itself.
+ */
+export function recordNightCloseOutDone(
+  store: MemoryStore,
+  date: IsoDate,
+  completedAt: IsoDateTime,
+  via: "answered" | "nothing-to-ask",
+  log: (entry: LogEntry) => void,
+): void {
+  try {
+    putNightCloseOutDone(store, { date, completedAt, via });
+  } catch (err) {
+    log({ level: "warn", event: "night-ritual.done-record-failed", detail: { date, message: describeError(err) } });
+  }
+}
+
 // ============================================================================
 // runNightPromptRitual — the persist-and-exit half (AD-5)
 // ============================================================================
@@ -428,6 +448,7 @@ export async function runNightPromptRitual(
       log({ level: "error", event: "night-ritual.mark-run-failed", detail: describeError(err) });
       return failure("conflict", `night-ritual: could not mark night-prompt done — ${describeError(err)}`, err);
     }
+    recordNightCloseOutDone(deps.store, today, nowIso, "nothing-to-ask", log);
     log({ level: "info", event: "night-ritual.nothing-to-confirm", detail: { date: today } });
     return { ok: true, value: { status: "nothing-to-confirm", date: today } };
   }

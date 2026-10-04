@@ -62,6 +62,7 @@ import { firstCardView } from "../../src/core/sandbox-card-view.ts";
 import { startNightCloseOut } from "../../src/app/night-close-out.ts";
 import { localIsoDate } from "../../src/rituals/ritual-shared.ts";
 import { startCheckOffCommitSweep, startResearchJobRunner, startServer, type ChatTurnFn, type ServerDeps } from "../../src/shell/server.ts";
+import { buildDeskDeps } from "../../src/shell/server-wiring.ts";
 import { queueResearch } from "../../src/app/queue-research.ts";
 import type { NotionCreatePageBindingFn } from "../../src/app/create-item.ts";
 import type { SearchFn } from "../../src/app/web-search.ts";
@@ -688,7 +689,7 @@ const handle = startServer(
         return url.pathname === "/__fixture/state" ? fixtureState(url) : options.fetch(request);
       },
     }),
-  { homeView, calendarDay, checkOff, plan: reshufflePlanDeps, planSync: planSyncDeps, chat, chatHistory, memoryItems, ratings, tasks: tasksPage, research, sandbox },
+  { homeView, calendarDay, checkOff, plan: reshufflePlanDeps, planSync: planSyncDeps, chat, chatHistory, memoryItems, ratings, tasks: tasksPage, research, sandbox, desk: buildDeskDeps(connection, { YOH_TIMEZONE: TIME_ZONE }) },
 );
 const sweep = startCheckOffCommitSweep({ connection, ...checkOff, now: () => new Date() }, { log: quiet });
 // Story 11.3: the real research runner over the fake search and the fake vault (short interval so specs stay fast).

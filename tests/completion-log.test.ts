@@ -16,6 +16,8 @@ import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import {
   initCompletionLogSchema,
   listCompletedTaskIdsOnDate,
+  recordActivityDay,
+  listActivityDays,
   recordCompletion,
   recordCompletionInTx,
   recordSlipEventInTx,
@@ -238,5 +240,22 @@ test("listPlannedCheckOffs returns only check-offs with a planned window, since 
   assert.deepEqual(listPlannedCheckOffs(connection, "2026-09-01T00:00:00.000Z"), [
     { taskId: "a", area: "History", plannedEnd: "2026-09-20T14:00:00.000Z", completedAt: "2026-09-20T15:00:00.000Z" },
   ]);
+  connection.close();
+});
+
+test("recordActivityDay is idempotent and keeps the first-seen time", () => {
+  const connection = tempStore();
+  recordActivityDay(connection, "2026-10-02");
+  recordActivityDay(connection, "2026-10-02");
+  assert.deepEqual(listActivityDays(connection), ["2026-10-02"]);
+  connection.close();
+});
+
+test("listActivityDays returns dates oldest first", () => {
+  const connection = tempStore();
+  recordActivityDay(connection, "2026-10-03");
+  recordActivityDay(connection, "2026-09-30");
+  recordActivityDay(connection, "2026-10-01");
+  assert.deepEqual(listActivityDays(connection), ["2026-09-30", "2026-10-01", "2026-10-03"]);
   connection.close();
 });

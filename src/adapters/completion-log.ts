@@ -76,6 +76,18 @@ export function initCompletionLogSchema(db: Database.Database): void {
   if (!columns.some((c) => c.name === "planned_start")) db.exec("ALTER TABLE completions ADD COLUMN planned_start TEXT");
   if (!columns.some((c) => c.name === "planned_end")) db.exec("ALTER TABLE completions ADD COLUMN planned_end TEXT");
   db.exec(SLIP_EVENTS_DDL);
+  // Ruling E12-R3: the days Yoh was opened. One row per local date.
+  db.exec("CREATE TABLE IF NOT EXISTS activity_days (date TEXT PRIMARY KEY, first_seen_at TEXT NOT NULL)");
+}
+
+/** Records that Yoh was opened on `date`. Idempotent: a repeat keeps the first-seen time. */
+export function recordActivityDay(connection: SqliteConnection, date: IsoDate): void {
+  connection.db.prepare("INSERT OR IGNORE INTO activity_days (date, first_seen_at) VALUES (?, ?)").run(date, new Date().toISOString());
+}
+
+/** Every day Yoh was opened, oldest first. */
+export function listActivityDays(connection: SqliteConnection): IsoDate[] {
+  return (connection.db.prepare("SELECT date FROM activity_days ORDER BY date").all() as { date: IsoDate }[]).map((r) => r.date);
 }
 
 const SLIP_EVENTS_DDL = `

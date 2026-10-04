@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
-import { createMemoryStore, getOpenInteractionRequest, putPlan } from "../src/adapters/memory-store.ts";
+import { createMemoryStore, listNightCloseOutDone, getOpenInteractionRequest, putPlan } from "../src/adapters/memory-store.ts";
 import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
 import { NIGHT_CLOSE_OUT_REQUEST_ID } from "../src/rituals/night-ritual.ts";
 import { startNightCloseOut, type NightCloseOutDeps } from "../src/app/night-close-out.ts";
@@ -97,4 +97,24 @@ test("a thrown getCompletedTaskIdsToday is caught — /night proceeds as if noth
   assert.ok(result.ok, `expected success despite the thrown read, got ${JSON.stringify(result)}`);
   if (!result.ok) return;
   assert.ok(result.value.question, "both Tasks are named — neither was excluded, since the completed-today read failed closed (empty set)");
+});
+
+test("E12-R1: nothing to close out (Plan exists, every Task accounted for) writes night-close-out-done via nothing-to-ask", async () => {
+  const deps = tempDeps({ getCompletedTaskIdsToday: () => new Set(["t1", "t2"]) });
+  putPlan(deps.store, planWithTasks());
+  await startNightCloseOut(deps, {});
+  const done = listNightCloseOutDone(deps.store);
+  assert.equal(done.length, 1);
+  assert.equal(done[0]!.data.date, TODAY);
+  assert.equal(done[0]!.data.via, "nothing-to-ask");
+});
+
+test("E12-R1: no night-close-out-done record with no Plan, or when questions are asked", async () => {
+  const noPlan = tempDeps();
+  await startNightCloseOut(noPlan, {});
+  assert.equal(listNightCloseOutDone(noPlan.store).length, 0);
+  const asks = tempDeps();
+  putPlan(asks.store, planWithTasks());
+  await startNightCloseOut(asks, {});
+  assert.equal(listNightCloseOutDone(asks.store).length, 0);
 });

@@ -16,9 +16,11 @@ import {
   buildNightCloseOutPromptText,
   collectNightCloseOutTasks,
   isNightCloseOutRequestOpenFor,
+  recordNightCloseOutDone,
   NIGHT_CLOSE_OUT_REQUEST_ID,
   type NightCloseOutRequestDetail,
 } from "../rituals/night-ritual.ts";
+import { writeStructuredLog } from "../adapters/logger.ts";
 import { buildNightCloseOutAnythingElseQuestion } from "../core/open-item-questions.ts";
 import { localIsoDate } from "../rituals/ritual-shared.ts";
 import { surfaceOpenItems, type SurfaceOpenItemsDeps } from "./surface-open-items.ts";
@@ -57,6 +59,7 @@ export async function startNightCloseOut(deps: NightCloseOutDeps, _input: Record
 
     const tasks = collectNightCloseOutTasks(plan.data, completedToday);
     if (tasks.length === 0) {
+      recordNightCloseOutDone(deps.store, today, deps.now().toISOString(), "nothing-to-ask", writeStructuredLog);
       return {
         ok: true,
         value: {

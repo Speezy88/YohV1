@@ -18,6 +18,8 @@ import { join } from "node:path";
 import Database from "better-sqlite3";
 import {
   createMemoryStore,
+  putNightCloseOutDone,
+  listNightCloseOutDone,
   ConflictError,
   putOpenInteractionRequest,
   getOpenInteractionRequest,
@@ -1316,4 +1318,23 @@ test("STRUCTURAL (AC3): morning-ritual.ts, night-ritual.ts, and mid-day-reflow.t
       `${file} must not call queryColdMemoryPatterns as part of its routine ritual flow`,
     );
   }
+});
+
+test("night-close-out-done: put then list, oldest date first", () => {
+  const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
+  putNightCloseOutDone(store, { date: "2026-10-02", completedAt: "2026-10-02T23:00:00.000Z", via: "answered" });
+  putNightCloseOutDone(store, { date: "2026-10-01", completedAt: "2026-10-01T23:00:00.000Z", via: "nothing-to-ask" });
+  assert.deepEqual(listNightCloseOutDone(store).map((r) => [r.data.date, r.data.via]), [["2026-10-01", "nothing-to-ask"], ["2026-10-02", "answered"]]);
+  store.close();
+});
+
+test("night-close-out-done: a second put for the same date keeps the first", () => {
+  const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
+  putNightCloseOutDone(store, { date: "2026-10-02", completedAt: "2026-10-02T23:00:00.000Z", via: "answered" });
+  putNightCloseOutDone(store, { date: "2026-10-02", completedAt: "2026-10-03T08:00:00.000Z", via: "nothing-to-ask" });
+  const all = listNightCloseOutDone(store);
+  assert.equal(all.length, 1);
+  assert.equal(all[0]!.data.completedAt, "2026-10-02T23:00:00.000Z");
+  assert.equal(all[0]!.data.via, "answered");
+  store.close();
 });

@@ -10,7 +10,7 @@ import { Client } from "@notionhq/client";
 import { writeStructuredLog } from "../adapters/logger.ts";
 import type { SqliteConnection } from "../adapters/sqlite.ts";
 import { createMemoryStore, type MemoryStore } from "../adapters/memory-store.ts";
-import { listCompletedTaskIdsOnDate, recordCompletion as completionLogRecordCompletion, type RecordCompletionInput } from "../adapters/completion-log.ts";
+import { listCompletedTaskIdsOnDate, recordActivityDay, recordCompletion as completionLogRecordCompletion, type RecordCompletionInput } from "../adapters/completion-log.ts";
 import { createTokenStore, loadGoogleOAuthConfigFromEnv, type TokenStore } from "../adapters/token-store.ts";
 import {
   bindCalendarApply,
@@ -244,6 +244,23 @@ export function buildResearchDeps(notion: NotionFeatureConfig | undefined, env: 
   const researchVaultDataSourceId = env["NOTION_RESEARCH_VAULT_DATA_SOURCE_ID"];
   if (!notion || !researchVaultDataSourceId) return undefined;
   return { readResearchVault: () => readResearchVault(notion.notionClient, { researchVaultDataSourceId }) };
+}
+
+/**
+ * Ruling E12-R3: the activity-day recorder. Remembers the last date it wrote,
+ * so a process makes one SQLite write per day however many requests arrive.
+ */
+export function buildDeskDeps(connection: SqliteConnection, env: Readonly<Record<string, string | undefined>>): NonNullable<ServerDeps["desk"]> {
+  let lastWritten: IsoDate | undefined;
+  return {
+    now: () => new Date(),
+    timeZone: env["YOH_TIMEZONE"] ?? "UTC",
+    recordActivityDay: (date) => {
+      if (date === lastWritten) return;
+      recordActivityDay(connection, date);
+      lastWritten = date;
+    },
+  };
 }
 
 export function buildCheckOffDeps(notion: NotionFeatureConfig): ServerDeps["checkOff"] {

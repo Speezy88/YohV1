@@ -54,6 +54,7 @@ import { deleteTask, renameTask, updateTask, type UpdateTaskDeps } from "../app/
 import { planDayForChangeSet } from "../app/plan-day.ts";
 import { refitPlan } from "../app/refit-plan.ts";
 import type { ApplyChangeSetDeps } from "../app/apply-change-set.ts";
+import { recordActivity, type DeskDeps } from "../app/desk.ts";
 import { getResearchDocument, listResearch, type ResearchListDeps } from "../app/research-list.ts";
 import { sandboxQueue, type SandboxQueueDeps } from "../app/sandbox-queue.ts";
 import { finishSandboxSession, saveSandboxCardAndAdvance, type SandboxSubmitDeps } from "../app/sandbox-submit.ts";
@@ -97,6 +98,8 @@ import { runEventStream, getPlanSyncRunner, CHAT_NOT_CONFIGURED, sseMessage, run
 // ============================================================================
 
 export interface ServerDeps {
+  /** Ruling E12-R3: records the days Yoh was opened. Absent, nothing is recorded. */
+  readonly desk?: DeskDeps;
   /** The process's one SQLite connection (AD-10), opened at startup in `server.ts`. */
   readonly connection: SqliteConnection;
   /** One structured log line (Consistency Conventions: single-line JSON to stderr). */
@@ -435,6 +438,7 @@ export function createApp(deps: ServerDeps) {
   // Task 6C: the Research Hub page's one deps object — just `deps.research`
   // plus the shared logger, the same "spread, default `log` in" convention
   // `tasksDeps` above uses.
+  const deskDeps: DeskDeps | undefined = deps.desk;
   const researchDeps: ResearchListDeps | undefined = deps.research ? { ...deps.research, log } : undefined;
   // Story 9.2: one merged deps object serves sandboxQueue AND
   // submitSandboxCard — each reads only its own fields, mirroring
@@ -513,6 +517,15 @@ export function createApp(deps: ServerDeps) {
         // The import route answers a wrong type with its own message.
         if (contentType.startsWith(allowed) || c.req.path === "/api/memory/import") return next();
         return c.json({ ok: false, error: { kind: "validation", message: JSON_CONTENT_TYPE_REQUIRED_MESSAGE } } satisfies ApiResult<never>, 400);
+      })
+      // Ruling E12-R3: any API request except the liveness probe marks today as a day Yoh was opened.
+      // Runs before the handler; a failure is logged and never changes the response. No outbox row.
+      .use("/api/*", async (c, next) => {
+        if (deskDeps && !(c.req.method === "GET" && c.req.path === "/api/health")) {
+          const recorded = await recordActivity(deskDeps, {});
+          if (!recorded.ok) log({ level: "warn", event: "server.activity-day-failed", detail: { message: recorded.error.message } });
+        }
+        await next();
       })
       // Liveness probe — the one route that is not an ApiResult envelope (see HealthResponse).
       .get("/api/health", (c) => c.json({ ok: true } satisfies HealthResponse))

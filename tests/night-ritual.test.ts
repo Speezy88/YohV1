@@ -25,6 +25,7 @@ import {
   getSlipHistory,
   getUncheckedDay,
   listUncheckedDays,
+  listNightCloseOutDone,
   putOpenInteractionRequest,
   putPlan,
   putRitualRun,
@@ -1238,4 +1239,26 @@ test("the stale-request guard does not repeat-record on EVERY further planless n
   const all = listUncheckedDays(store);
   assert.equal(all.length, 1, "three further planless nights must not add three more spurious rows");
   assert.equal(all[0]?.data.date, NIGHT_N);
+});
+
+test("E12-R1: nothing-to-confirm with a Plan writes night-close-out-done (nothing-to-ask); asking questions or no Plan does not", async () => {
+  const done = tempStore();
+  putPlan(done, samplePlan([block({ id: "work-0", kind: "work", start: "2026-08-22T13:00:00.000Z", end: "2026-08-22T14:00:00.000Z", label: "Draft the memo", taskId: "t1" })]));
+  await runNightPromptRitual(deps(done, { getCompletedTaskIdsToday: () => new Set(["t1"]) }));
+  const records = listNightCloseOutDone(done);
+  assert.equal(records.length, 1);
+  assert.equal(records[0]!.data.date, TODAY);
+  assert.equal(records[0]!.data.via, "nothing-to-ask");
+  done.close();
+
+  const asks = tempStore();
+  putPlan(asks, samplePlan([block({ id: "work-0", kind: "work", start: "2026-08-22T13:00:00.000Z", end: "2026-08-22T14:00:00.000Z", label: "Draft the memo", taskId: "t1" })]));
+  await runNightPromptRitual(deps(asks));
+  assert.equal(listNightCloseOutDone(asks).length, 0);
+  asks.close();
+
+  const noPlan = tempStore();
+  await runNightPromptRitual(deps(noPlan));
+  assert.equal(listNightCloseOutDone(noPlan).length, 0);
+  noPlan.close();
 });

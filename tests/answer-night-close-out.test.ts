@@ -3,7 +3,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createMemoryStore, getOpenInteractionRequest, getRitualRun, getSlipHistory, getUncheckedDay, putOpenInteractionRequest, putUncheckedDay } from "../src/adapters/memory-store.ts";
+import { createMemoryStore, listNightCloseOutDone, getOpenInteractionRequest, getRitualRun, getSlipHistory, getUncheckedDay, putOpenInteractionRequest, putUncheckedDay } from "../src/adapters/memory-store.ts";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { initNotificationStoreSchema, listUnreadNotifications } from "../src/adapters/notification-store.ts";
 import { answerNightCloseOut } from "../src/app/answer-night-close-out.ts";
@@ -230,5 +230,39 @@ test("'Nothing else' on an old card leaves a newer night's open request untouche
   const result = await answerNightCloseOut(deps(store), { requestId: "night-close-out", questionId: NIGHT_CLOSE_OUT_ANYTHING_ELSE_QUESTION_ID, answer: "nothing else" });
   assert.equal(result.ok && result.value.next, "done");
   assert.deepEqual(getOpenInteractionRequest(store, "night-close-out"), before);
+  store.close();
+});
+
+test("E12-R1: a fully answered close-out (no skips) writes the night-close-out-done record, via answered", async () => {
+  const store = tempStore();
+  openReq(store, [{ taskId: "t1", taskTitle: "Draft the memo" }], "2026-09-25");
+  await answerNightCloseOut(deps(store), { requestId: "night-close-out", questionId: "t1", answer: "completed" });
+  const done = listNightCloseOutDone(store);
+  assert.equal(done.length, 1);
+  assert.equal(done[0]!.data.date, "2026-09-25");
+  assert.equal(done[0]!.data.via, "answered");
+  store.close();
+});
+
+test("E12-R1: no night-close-out-done record while the request is open, nor when a Task was skipped", async () => {
+  const store = tempStore();
+  openReq(store, [{ taskId: "t1", taskTitle: "Draft the memo" }, { taskId: "t2", taskTitle: "Book the flights" }]);
+  await answerNightCloseOut(deps(store), { requestId: "night-close-out", questionId: "t1", answer: "completed" });
+  assert.equal(listNightCloseOutDone(store).length, 0, "still open");
+  await answerNightCloseOut(deps(store), { requestId: "night-close-out", questionId: "t2", answer: "skip" });
+  assert.equal(listNightCloseOutDone(store).length, 0, "a skip means not finished cleanly");
+  store.close();
+});
+
+test("E12-R1: a failure to write the record never fails the close-out", async () => {
+  const store = tempStore();
+  openReq(store, [{ taskId: "t1", taskTitle: "Draft the memo" }], "2026-09-25");
+  const real = store.readModifyWrite.bind(store);
+  store.readModifyWrite = ((kind: string, ...rest: unknown[]) => {
+    if (kind === "night-close-out-done") throw new Error("disk full");
+    return (real as (...a: unknown[]) => unknown)(kind, ...rest);
+  }) as typeof store.readModifyWrite;
+  const result = await answerNightCloseOut(deps(store), { requestId: "night-close-out", questionId: "t1", answer: "completed" });
+  assert.equal(result.ok, true);
   store.close();
 });

@@ -66,7 +66,7 @@ import { initJobStoreSchema } from "../adapters/job-store.ts";
 import type { ChatSession } from "../app/chat-session.ts";
 import { startHeartbeatWriter, startPlanCalendarSyncSweep, startCheckOffCommitSweep, startResearchJobRunner } from "./server-streams.ts";
 import { createApp, type ServerDeps } from "./server-routes.ts";
-import { loadNotionFeatureConfig, buildHomeViewDeps, buildCalendarDayDeps, buildTasksDeps, buildSandboxDeps, buildResearchDeps, buildCheckOffDeps, buildPlanDeps, buildPlanSyncDeps, buildChatDeps } from "./server-wiring.ts";
+import { loadNotionFeatureConfig, buildHomeViewDeps, buildCalendarDayDeps, buildTasksDeps, buildSandboxDeps, buildResearchDeps, buildDeskDeps, buildCheckOffDeps, buildPlanDeps, buildPlanSyncDeps, buildChatDeps } from "./server-wiring.ts";
 
 // Public names of the split-out files: importers (tests, the fixture server, `types/api.ts`) keep using `shell/server.ts`.
 export {
@@ -132,7 +132,7 @@ export function startServer(
   env: Readonly<Record<string, string | undefined>> = process.env,
   serveFn: ServeFn = (options) => serve({ ...options }),
   /** Story 7.8's `homeView`, Story 7.10's `checkOff`, Story 8.5's `chat`, Task 6C's `research`, Task 4's `calendarDay`, and Story 9.2's `sandbox`, threaded through the same way `connection` already is. */
-  features: Pick<ServerDeps, "homeView" | "calendarDay" | "checkOff" | "plan" | "planSync" | "chat" | "chatHistory" | "memoryItems" | "ratings" | "tasks" | "research" | "sandbox"> = {},
+  features: Pick<ServerDeps, "homeView" | "calendarDay" | "checkOff" | "plan" | "planSync" | "chat" | "chatHistory" | "memoryItems" | "ratings" | "tasks" | "research" | "sandbox" | "desk"> = {},
 ): ServerHandle {
   const port = parsePort(env["YOH_SERVER_PORT"]);
   // Contract C3: one ChatSession per server process, shared by every chat route.
@@ -192,6 +192,7 @@ if (import.meta.main) {
   const chat = buildChatDeps(connection, notion, process.env);
   const tasks = notion ? buildTasksDeps(notion, process.env, chat?.llmClient) : undefined;
   const research = buildResearchDeps(notion, process.env);
+  const desk = buildDeskDeps(connection, process.env);
   const sandbox = notion ? buildSandboxDeps(notion) : undefined;
   const plan = buildPlanDeps(chat);
   const planSync = buildPlanSyncDeps(chat);
@@ -207,6 +208,7 @@ if (import.meta.main) {
     ratings: createRatingStore(connection),
     ...(tasks ? { tasks } : {}),
     ...(research ? { research } : {}),
+    desk,
     ...(sandbox ? { sandbox } : {}),
   });
   // Story 7.10, AD-20: the startup sweep commits anything left overdue by a

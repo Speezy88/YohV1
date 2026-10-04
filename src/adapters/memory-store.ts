@@ -1173,6 +1173,32 @@ export function listUncheckedDays(store: MemoryStore): StoredRecord<UncheckedDay
 }
 
 // ============================================================================
+// Finished night close-outs (Ruling E12-R1)
+// ============================================================================
+
+const NIGHT_CLOSE_OUT_DONE_KIND = "night-close-out-done";
+
+/** A night whose close-out was finished with nothing skipped (the Desk page's close-out streak reads these). */
+export interface NightCloseOutDone {
+  /** The night the close-out was about. */
+  readonly date: IsoDate;
+  readonly completedAt: IsoDateTime;
+  readonly via: "answered" | "nothing-to-ask";
+}
+
+/** Records a finished close-out. Idempotent: a second put for the same date keeps the first. */
+export function putNightCloseOutDone(store: MemoryStore, record: NightCloseOutDone): void {
+  const current = store.getRecord<NightCloseOutDone>(NIGHT_CLOSE_OUT_DONE_KIND, record.date);
+  if (current) return;
+  store.readModifyWrite<NightCloseOutDone>(NIGHT_CLOSE_OUT_DONE_KIND, record.date, undefined, () => record);
+}
+
+/** Every finished close-out, oldest date first. */
+export function listNightCloseOutDone(store: MemoryStore): StoredRecord<NightCloseOutDone>[] {
+  return store.listRecordsByKind<NightCloseOutDone>(NIGHT_CLOSE_OUT_DONE_KIND);
+}
+
+// ============================================================================
 // Retired-feature cleanup (Story 13.12, Ruling E11)
 // ============================================================================
 
