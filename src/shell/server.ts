@@ -837,6 +837,7 @@ const ERROR_STATUS: Readonly<Record<YohErrorKind, ContentfulStatusCode>> = {
 /** The reply to a non-GET `/api/*` request that is not sent as JSON (see the guard in `createApp`). */
 export const JSON_CONTENT_TYPE_REQUIRED_MESSAGE = "Send this request with Content-Type: application/json.";
 const MALFORMED_BODY_MESSAGE = "That request body isn't valid JSON.";
+const INVALID_REQUEST_MESSAGE = "That request isn't valid.";
 
 function httpStatus(result: ApiResult<unknown>): ContentfulStatusCode {
   return result.ok ? 200 : ERROR_STATUS[result.error.kind];
@@ -1001,7 +1002,8 @@ export function createApp(deps: ServerDeps) {
       // A thrown error or malformed JSON still answers with the Result envelope, never Hono's plain-text default.
       .onError((err, c) => {
         if (err instanceof HTTPException && err.status === 400) {
-          return c.json({ ok: false, error: { kind: "validation", message: MALFORMED_BODY_MESSAGE } } satisfies ApiResult<never>, 400);
+          const message = /json/i.test(err.message) ? MALFORMED_BODY_MESSAGE : INVALID_REQUEST_MESSAGE;
+          return c.json({ ok: false, error: { kind: "validation", message } } satisfies ApiResult<never>, 400);
         }
         log({ level: "error", event: "server.unhandled-error", detail: { method: c.req.method, path: c.req.path, message: err.message } });
         return c.json({ ok: false, error: { kind: "unreachable", message: GENERIC_SERVER_ERROR_MESSAGE } } satisfies ApiResult<never>, 500);
@@ -2206,7 +2208,7 @@ function buildChatDeps(
     } catch (err) {
       return {
         ok: false,
-        error: { kind: "missing-field", message: `server: could not apply that calendar change — ${err instanceof Error ? err.message : String(err)}` },
+        error: { kind: "missing-field", message: errorCopyForThrown(err, { service: "Google Calendar" }) },
       };
     }
   };

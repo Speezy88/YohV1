@@ -1,3 +1,4 @@
+import { HTTPException } from "hono/http-exception";
 /**
  * The cross-origin POST guard and the app-wide error handler in `createApp`
  * (`src/shell/server.ts`). A browser can send a `text/plain` (or body-less)
@@ -89,5 +90,16 @@ test("a handler that throws returns an 'unreachable' envelope without the raw er
   assert.equal(body.error?.kind, "unreachable");
   assert.doesNotMatch(body.error?.message ?? "", /database|sqlite|connection/i);
   assert.ok(logged.some((entry) => entry.event === "server.unhandled-error"));
+  connection.close();
+});
+
+test("a 400 that is not a JSON parse failure does not claim the body is invalid JSON", async () => {
+  const { app, connection } = tempApp();
+  app.get("/api/bad", () => { throw new HTTPException(400, { message: "Invalid HTTP header: secret-xyz" }); });
+  const res = await app.request("/api/bad");
+  assert.equal(res.status, 400);
+  const body = (await res.json()) as Envelope;
+  assert.equal(body.error?.kind, "validation");
+  assert.equal(body.error?.message, "That request isn't valid.");
   connection.close();
 });

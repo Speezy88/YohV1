@@ -15,7 +15,7 @@ export async function requestSetTimeBudget(totalMinutes: number): Promise<TimeBu
     const res = await apiClient.api["time-budget"].$post({ json: { totalMinutes } });
     const result = (await res.json()) as { ok: true; value: { receipt: string } } | { ok: false; error: { message: string } };
     return result.ok ? { ok: true, receipt: result.value.receipt } : { ok: false, message: result.error.message };
-  } catch (err) {
-    return { ok: false, message: err instanceof Error ? err.message : String(err) };
+  } catch {
+    return { ok: false, message: "Couldn't reach Yoh — try again." };
   }
 }
