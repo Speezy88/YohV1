@@ -130,6 +130,8 @@ import { revertPlanningSetting } from "../app/settings-revert.ts";
 import { undoMemoryReceipt } from "../app/memory-undo.ts";
 import { viewMemory } from "../app/memory-view.ts";
 import { searchMemory } from "../app/memory-search.ts";
+import { importMemory } from "../app/import-memory.ts";
+import { parseMemoryImport } from "../core/memory-import.ts";
 import { surfaceOpenItems } from "../app/surface-open-items.ts";
 import { answerOpenItem, type AnswerOpenItemDeps } from "../app/answer-open-item.ts";
 import { approveReshuffleById, discardReshuffleById, requestReshuffleView } from "../app/decide-reshuffle.ts";
@@ -1446,6 +1448,24 @@ export function createApp(deps: ServerDeps) {
       .get("/api/memory/search", async (c) => {
         if (!deps.memoryItems) return c.json(MEMORY_NOT_CONFIGURED, httpStatus(MEMORY_NOT_CONFIGURED));
         const result = wire(await searchMemory(memoryPageDeps(deps, deps.memoryItems), { query: c.req.query("q") ?? "" }));
+        return c.json(result, httpStatus(result));
+      })
+      // Claude export import: the body is the reviewed candidates file; `?dryRun=1` reports without writing.
+      .post("/api/memory/import", async (c) => {
+        if (!deps.memoryItems) return c.json(MEMORY_NOT_CONFIGURED, httpStatus(MEMORY_NOT_CONFIGURED));
+        const parsed = parseMemoryImport(await c.req.text());
+        if (parsed.problems.length > 0) {
+          const shown = parsed.problems.slice(0, 5).map((p) => `Line ${p.line}: ${p.reason}`).join("; ");
+          const more = parsed.problems.length > 5 ? `; and ${parsed.problems.length - 5} more` : "";
+          const invalid: ApiFailure = { ok: false, error: { kind: "validation", message: `The file could not be read. ${shown}${more}.` } };
+          return c.json(invalid, httpStatus(invalid));
+        }
+        const result = wire(
+          await importMemory(
+            { memoryItems: deps.memoryItems, now: () => new Date(), timeZone: deps.chat?.timeZone ?? process.env["YOH_TIMEZONE"] ?? "UTC" },
+            { candidates: parsed.candidates, dryRun: c.req.query("dryRun") === "1" },
+          ),
+        );
         return c.json(result, httpStatus(result));
       })
       // Story 13.13: the day's one pending Pattern question (records `lastOfferedOn`); needs no `chat` deps.
