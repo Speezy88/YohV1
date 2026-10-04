@@ -7,12 +7,12 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
-import { listUnreadNotifications } from "../src/adapters/notification-store.ts";
-import { main, runBackup, runEntry } from "../src/shell/backup-cli.ts";
+import { appendOutboxInTx, initNotificationStoreSchema, listUnreadNotifications, OUTBOX_KEEP_ROWS, tailOutboxSince } from "../src/adapters/notification-store.ts";
+import { BACKUP_KEEP_COUNT, main, pruneBackups, runBackup, runEntry } from "../src/shell/backup-cli.ts";
 
 test("runBackup copies the SQLite file to YOH_BACKUP_PATH, named by today's date", async () => {
   const dir = mkdtempSync(join(tmpdir(), "yoh-backup-src-"));
@@ -142,4 +142,79 @@ test("runBackup reports failure (never throws) when the backup target directory 
 
   assert.equal(result.ok, false);
   if (!result.ok) assert.match(result.message, /backup-cli/);
+});
+
+// ---- retention (audit fix-first, Task 5) -----------------------------------
+
+function backupDirWith(names: readonly string[]): string {
+  const dir = mkdtempSync(join(tmpdir(), "yoh-backup-prune-"));
+  for (const name of names) writeFileSync(join(dir, name), "x");
+  return dir;
+}
+
+test("pruneBackups keeps the newest N of Yoh's own backup files and never touches other files", () => {
+  const dir = backupDirWith([
+    "yoh-memory-2026-09-20.db", "yoh-memory-2026-09-21.db", "yoh-memory-2026-09-22.db", "yoh-memory-2026-09-23.db",
+    "notes.txt", "yoh-memory-old.db", "yoh-memory-2026-09-19.db.bak", "other-2026-09-01.db",
+  ]);
+  assert.deepEqual(pruneBackups(dir, 2), ["yoh-memory-2026-09-20.db", "yoh-memory-2026-09-21.db"]);
+  assert.deepEqual(readdirSync(dir).sort(), [
+    "notes.txt", "other-2026-09-01.db", "yoh-memory-2026-09-19.db.bak", "yoh-memory-2026-09-22.db", "yoh-memory-2026-09-23.db", "yoh-memory-old.db",
+  ]);
+});
+
+test("the retention defaults are 14 backups and 10,000 outbox rows", () => {
+  assert.equal(BACKUP_KEEP_COUNT, 14);
+  assert.equal(OUTBOX_KEEP_ROWS, 10_000);
+});
+
+function sourceWithHints(count: number): string {
+  const sourcePath = join(mkdtempSync(join(tmpdir(), "yoh-backup-src-")), "source.db");
+  const conn = openSqliteConnection({ databasePath: sourcePath });
+  initNotificationStoreSchema(conn.db);
+  conn.writeTx((db) => {
+    for (let i = 0; i < count; i += 1) appendOutboxInTx(db, { topic: "plan", entityId: "" });
+  });
+  conn.close();
+  return sourcePath;
+}
+
+test("a successful backup prunes older backups beyond the newest 14 and old outbox rows", async () => {
+  const names = Array.from({ length: 16 }, (_, i) => `yoh-memory-2026-09-${String(i + 1).padStart(2, "0")}.db`);
+  const backupDir = backupDirWith(names);
+  const sourcePath = sourceWithHints(OUTBOX_KEEP_ROWS + 5);
+  const result = await runBackup({ MEMORY_DB_PATH: sourcePath, YOH_BACKUP_PATH: backupDir }, () => new Date("2026-09-25T03:00:00.000Z"));
+  assert.equal(result.ok, true);
+  const left = readdirSync(backupDir).sort();
+  assert.equal(left.length, 14);
+  assert.equal(left[0], "yoh-memory-2026-09-04.db");
+  assert.equal(left[13], "yoh-memory-2026-09-25.db");
+  const conn = openSqliteConnection({ databasePath: sourcePath });
+  assert.equal(tailOutboxSince(conn, 0).length, OUTBOX_KEEP_ROWS);
+  conn.close();
+});
+
+test("a failed backup prunes nothing", async () => {
+  const names = Array.from({ length: 16 }, (_, i) => `yoh-memory-2026-09-${String(i + 1).padStart(2, "0")}.db`);
+  const backupDir = backupDirWith(names);
+  const sourcePath = sourceWithHints(OUTBOX_KEEP_ROWS + 5);
+  // Today's target path is a directory, so the online backup itself fails.
+  const { mkdirSync } = await import("node:fs");
+  mkdirSync(join(backupDir, "yoh-memory-2026-09-25.db"));
+  const result = await runBackup({ MEMORY_DB_PATH: sourcePath, YOH_BACKUP_PATH: backupDir }, () => new Date("2026-09-25T03:00:00.000Z"));
+  assert.equal(result.ok, false);
+  assert.equal(readdirSync(backupDir).length, 17);
+  const conn = openSqliteConnection({ databasePath: sourcePath });
+  assert.equal(tailOutboxSince(conn, 0).length, OUTBOX_KEEP_ROWS + 5);
+  conn.close();
+});
+
+test("a source database with no outbox table still backs up", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "yoh-backup-src-"));
+  const sourcePath = join(dir, "source.db");
+  const conn = openSqliteConnection({ databasePath: sourcePath });
+  conn.db.exec("CREATE TABLE t (id INTEGER)");
+  conn.close();
+  const result = await runBackup({ MEMORY_DB_PATH: sourcePath, YOH_BACKUP_PATH: mkdtempSync(join(tmpdir(), "yoh-backup-dst-")) }, () => new Date("2026-09-25T03:00:00.000Z"));
+  assert.equal(result.ok, true);
 });

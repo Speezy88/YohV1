@@ -140,6 +140,20 @@ export function tailOutboxSince(connection: SqliteConnection, sinceSeq: number):
   return rows.map((r) => ({ seq: r.seq, topic: r.topic, entityId: r.entity_id }));
 }
 
+/** How many of the newest outbox rows the nightly prune keeps (proposed default; Spencer has not confirmed the number). */
+export const OUTBOX_KEEP_ROWS = 10_000;
+
+/**
+ * Deletes every outbox row older than the newest `keep`, and returns how many went. The highest `seq`
+ * always stays, so `seq` keeps counting up. An event stream resuming from a pruned `seq` simply gets the
+ * rows that remain: hints only trigger refetches, so the lost ones cost nothing.
+ */
+export function pruneOutbox(connection: SqliteConnection, options: { readonly keep: number }): number {
+  return connection.writeTx(
+    (db) => db.prepare<{ keep: number }>(`DELETE FROM outbox WHERE seq <= (SELECT COALESCE(MAX(seq), 0) FROM outbox) - @keep`).run({ keep: options.keep }).changes,
+  );
+}
+
 /** The highest outbox `seq`, or 0 when empty — where a fresh (no `Last-Event-ID`) stream starts. */
 export function getMaxOutboxSeq(connection: SqliteConnection): number {
   const row = connection.db.prepare<[], { maxSeq: number }>(`SELECT COALESCE(MAX(seq), 0) AS maxSeq FROM outbox`).get();

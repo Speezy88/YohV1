@@ -8,18 +8,49 @@
  * API (via `adapters/sqlite.ts` — AD-10's sole opener of the SQLite file;
  * this file never constructs a `better-sqlite3` database itself) to a
  * second, Spencer-configured location.
+ * After a successful backup it keeps the newest `BACKUP_KEEP_COUNT` backup
+ * files and the newest `OUTBOX_KEEP_ROWS` outbox rows.
  *
  * Controller ruling (SDD plan Task 4 notes): the backup target is read
  * from `YOH_BACKUP_PATH` and defaults to nothing. An unset target is a
  * loud failure through the same AD-7 alert path, never a silently-skipped
  * backup — Spencer names the real location during manual verification.
  */
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { openSqliteConnection } from "../adapters/sqlite.ts";
 import { loadPushoverConfigFromEnv, sendPushoverNotification } from "../adapters/notification-adapter.ts";
-import { createNotification, initNotificationStoreSchema } from "../adapters/notification-store.ts";
+import { createNotification, initNotificationStoreSchema, OUTBOX_KEEP_ROWS, pruneOutbox } from "../adapters/notification-store.ts";
 
 export type BackupResult = { readonly ok: true; readonly path: string } | { readonly ok: false; readonly message: string };
+
+/** How many of the newest nightly backups are kept (proposed default; Spencer has not confirmed the number). */
+export const BACKUP_KEEP_COUNT = 14;
+
+/** Only the names `runBackup` itself writes: `yoh-memory-YYYY-MM-DD.db`. */
+const BACKUP_FILE_PATTERN = /^yoh-memory-\d{4}-\d{2}-\d{2}\.db$/;
+
+/** Deletes Yoh's own backup files in `targetDir` beyond the newest `keep` (by the date in the name); returns the names removed. */
+export function pruneBackups(targetDir: string, keep: number): string[] {
+  const backups = readdirSync(targetDir).filter((name) => BACKUP_FILE_PATTERN.test(name)).sort();
+  const stale = backups.slice(0, Math.max(0, backups.length - keep));
+  for (const name of stale) unlinkSync(`${targetDir}/${name}`);
+  return stale;
+}
+
+/** Retention after a successful backup. A failure here is logged, never turned into a failed backup. */
+function pruneAfterBackup(connection: ReturnType<typeof openSqliteConnection>, targetDir: string): void {
+  try {
+    pruneBackups(targetDir, BACKUP_KEEP_COUNT);
+  } catch (err) {
+    process.stderr.write(`backup-cli: could not prune old backups — ${err instanceof Error ? err.message : String(err)}\n`);
+  }
+  try {
+    const hasOutbox = connection.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'outbox'").get() !== undefined;
+    if (hasOutbox) pruneOutbox(connection, { keep: OUTBOX_KEEP_ROWS });
+  } catch (err) {
+    process.stderr.write(`backup-cli: could not prune the outbox — ${err instanceof Error ? err.message : String(err)}\n`);
+  }
+}
 
 /**
  * Runs one online backup. `env`/`now` are injectable (tests use real temp
@@ -47,6 +78,7 @@ export async function runBackup(
     const dateStamp = now().toISOString().slice(0, 10);
     const targetPath = `${targetDir}/yoh-memory-${dateStamp}.db`;
     await connection.db.backup(targetPath);
+    pruneAfterBackup(connection, targetDir);
     return { ok: true, path: targetPath };
   } catch (err) {
     return { ok: false, message: `backup-cli: online backup failed — ${err instanceof Error ? err.message : String(err)}` };

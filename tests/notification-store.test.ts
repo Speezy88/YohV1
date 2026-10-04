@@ -18,6 +18,7 @@ import {
   markNotificationRead,
   NOTIFICATION_TOPIC,
   OUTBOX_POLL_INTERVAL_MS,
+  pruneOutbox,
   tailOutboxSince,
   type CreateNotificationInput,
 } from "../src/adapters/notification-store.ts";
@@ -248,4 +249,41 @@ test("only notification-store.ts touches the notifications and outbox tables (AD
   };
   walk(srcDir);
   assert.deepEqual(offenders, ["adapters/notification-store.ts"]);
+});
+
+// ---- pruneOutbox (audit fix-first, Task 5) ---------------------------------
+
+function appendHints(connection: ReturnType<typeof openSqliteConnection>, count: number): void {
+  connection.writeTx((db) => {
+    for (let i = 0; i < count; i += 1) appendOutboxInTx(db, { topic: "plan", entityId: String(i) });
+  });
+}
+
+test("pruneOutbox keeps the newest rows and reports how many it deleted", () => {
+  const connection = tempStore();
+  appendHints(connection, 10);
+  assert.equal(pruneOutbox(connection, { keep: 4 }), 6);
+  assert.deepEqual(tailOutboxSince(connection, 0).map((h) => h.seq), [7, 8, 9, 10]);
+  assert.equal(getMaxOutboxSeq(connection), 10);
+  connection.close();
+});
+
+test("pruneOutbox leaves a reader at a still-present seq unaffected, and new rows keep counting up", () => {
+  const connection = tempStore();
+  appendHints(connection, 10);
+  const before = tailOutboxSince(connection, 8);
+  pruneOutbox(connection, { keep: 4 });
+  assert.deepEqual(tailOutboxSince(connection, 8), before);
+  appendHints(connection, 1);
+  assert.equal(getMaxOutboxSeq(connection), 11);
+  connection.close();
+});
+
+test("pruneOutbox does nothing when there are no more rows than it keeps, or the table is empty", () => {
+  const connection = tempStore();
+  assert.equal(pruneOutbox(connection, { keep: 4 }), 0);
+  appendHints(connection, 3);
+  assert.equal(pruneOutbox(connection, { keep: 4 }), 0);
+  assert.equal(tailOutboxSince(connection, 0).length, 3);
+  connection.close();
 });
