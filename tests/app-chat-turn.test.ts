@@ -2,9 +2,9 @@
  * Tests for `src/app/chat-turn.ts` (Story 8.3).
  *
  * Covers what no single moved test, by itself, pins (Review Focus #1, #5,
- * #6 of this story's plan): `chatTurn` never calls `classifyChatIntent`
- * itself (a recognized command costs zero LLM calls; an unmatched line
- * costs exactly one — `answerQuestion`'s own call), it never itself emits a
+ * #6 of this story's plan): a recognized command costs zero LLM calls; an
+ * unmatched line goes to the `chatAgent` tool loop (one call when the model
+ * answers directly); `chatTurn` never itself emits a
  * `"done"`/`"error"` stream event, its own history trim enforces
  * `MAX_CHAT_HISTORY_TURNS` even for an untrimmed caller, and it records into
  * `session.recentMessages`.
@@ -191,18 +191,48 @@ test("'add the workout and dinner to my google calendar for today' reaches the t
   }
 });
 
-test("a create-item line whose draft finds nothing reaches the tool loop; a draft that asks a question does not", async () => {
+test("a create-item line whose draft finds nothing reaches the tool loop", async () => {
   const { client, loopCalls } = toolLoopClient([[{ type: "text", text: "Here is what I would add." }]]);
   const result = await chatTurn(baseDeps({ llmClient: client }), { message: "create a task to email Alex" });
   assert.equal(loopCalls().length, 1);
   if (result.ok) assert.equal(result.value.reply, "Here is what I would add.");
 });
 
-test("a calendar delete request reaches the tool loop instead of a fixed refusal", async () => {
-  const { client, calls } = toolLoopClient([[{ type: "text", text: "I can only delete events Yoh created." }]]);
-  const result = await chatTurn(baseDeps({ llmClient: client }), { message: "cancel my dentist appointment tomorrow" });
-  assert.equal(calls.length, 1);
-  if (result.ok) assert.equal(result.value.reply, "I can only delete events Yoh created.");
+test("a create-item draft with an unresolvable date returns the clarifying reply as-is, with zero tool-loop calls", async () => {
+  const llmClient = fakeCaptureRoutingClient({ draftFields: "title=Lab report draft\ndueDate=sometime soon" });
+  const result = await chatTurn(baseDeps({ llmClient }), { message: "create a task for the lab report" });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.match(result.value.reply, /When is "Lab report draft" due\?/);
+  assert.equal((llmClient as any).calls.filter((c: any) => Array.isArray(c.tools)).length, 0);
+});
+
+test("a create-item draft that asks a question is returned as-is, with zero tool-loop calls", async () => {
+  const llmClient = fakeCaptureRoutingClient({});
+  const deps = baseDeps({
+    llmClient,
+    getNotionCreatePageBinding: () => ({
+      ok: true,
+      value: {
+        client: fakeTasksNotionCreateClient(),
+        config: { tasksDataSourceId: "tasks-ds", projectsDataSourceId: "projects-ds", researchVaultDataSourceId: "vault-ds" },
+      },
+    }),
+  });
+  const result = await chatTurn(deps, { message: "create a task for the lab report" });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.match(result.value.question?.text ?? "", /Here's what I'll create in Tasks/);
+  assert.equal((llmClient as any).calls.filter((c: any) => Array.isArray(c.tools)).length, 0);
+});
+
+test("cancel / delete / remove calendar phrasings each reach the tool loop instead of a fixed refusal", async () => {
+  for (const message of ["delete my meeting with Alex tomorrow at 3", "cancel the meeting with Alex tomorrow", "remove my meeting with Alex at 3pm"]) {
+    const { client, calls } = toolLoopClient([[{ type: "text", text: "I can only delete events Yoh created." }]]);
+    const result = await chatTurn(baseDeps({ llmClient: client }), { message });
+    assert.equal(calls.length, 1, `expected "${message}" to cost one loop call`);
+    assert.equal(result.ok && result.value.reply, "I can only delete events Yoh created.");
+  }
 });
 
 test("a deterministic command still costs zero model calls", async () => {
@@ -221,8 +251,8 @@ test("a turn answered by the tool loop is not marked handledDeterministically", 
 // ============================================================================
 // Dispatch order (Story 8.3, restored to its original priority by Story 8.4):
 // a recognized deterministic command never calls the LLM client at all; an
-// unmatched line costs exactly two LLM calls — chatTurn's OWN
-// classifyChatIntent call (Story 8.4), then answerQuestion's own call.
+// unmatched line goes to the chatAgent tool loop (one LLM call when the
+// model answers directly).
 // ============================================================================
 
 test("chatTurn recognizes a Time Budget command and never calls the LLM client", async () => {
@@ -259,7 +289,7 @@ test("chatTurn falls through to the tool loop for an unmatched line, costing exa
   // classifier ever runs — see the "current-information-cue line" tests
   // above. This test needs a genuinely unmatched line (no search verb, no
   // current-info cue, no planning-recognizer shape) to keep pinning the
-  // three-call fall-through it's actually about.
+  // tool-loop fall-through it's actually about.
   const result = await chatTurn(deps, {
     message: "what should I do about the dishes",
   });
@@ -621,7 +651,7 @@ test("general chat's capability text says web search isn't set up (never claims 
   await chatTurn(deps, { message: "what can you do" });
 
   const lastCall = (llmClient as any).calls.at(-1);
-  assert.ok(lastCall, "expected answerQuestion's own Claude call");
+  assert.ok(lastCall, "expected the tool loop's own Claude call");
   const system: string = typeof lastCall.system === "string" ? lastCall.system : (lastCall.system ?? []).map((b: { text: string }) => b.text).join("\n");
   assert.match(system, /web search isn't set up yet \(it needs a perplexity key\)/i);
   assert.doesNotMatch(system, /search the web for a factual/i);
@@ -868,8 +898,9 @@ test("command matching is case-insensitive, and a trailing word after the comman
 });
 
 // ============================================================================
-// Story 8.8 (FR-26 extended): capture detection — inserted after every
-// deterministic recognizer, before classifyChatIntent. A hit routes through
+// Story 8.8 (FR-26 extended): task capture. The classifier step is gone; a
+// free-text task line now reaches the tool loop, which stages a create_task
+// change set. An explicit "create a task ..." line still goes through
 // draftItem's SAME confirm-then-write pipeline an explicit "create a task
 // ..." command uses; a genuine question or an ordinary statement must never
 // be captured.
@@ -1011,7 +1042,7 @@ test("chatTurn's capture check runs AFTER every deterministic recognizer — an 
 // broadened deterministic recognizer catches the incident line and its
 // siblings BEFORE any LLM call, each with a correct ISO start/end for a
 // fixed `now`/timeZone; "Lab report draft, due Thursday" (no calendar shape
-// at all) still routes to a Task via classifyCapture.
+// at all) now reaches the tool loop (classifyCapture no longer runs).
 // ============================================================================
 
 /** A fake LLM client that only ever answers draftCalendarEditRequest's own CREATE line — every other call (there should be none, for a line the deterministic recognizer catches) throws, so an accidental capture-classifier call surfaces loudly instead of silently. */
@@ -1468,7 +1499,7 @@ test("chatTurn answers without memory when the memory store throws", async () =>
 });
 
 // ---- Story 13.11: which turns are substantive ----
-test("substantive: /morning, /plan, a researched answer and a tool-loop answer are marked", async () => {
+test("substantive: /morning, /plan, a researched answer and a tool turn are marked; a plain loop answer is not", async () => {
   const store = tempStore();
   putPlan(store, samplePlanFixture());
   const morning = await chatTurn(baseDeps({ llmClient: makeFakeLlmClient(), store }), { message: "/morning" });
@@ -1481,7 +1512,10 @@ test("substantive: /morning, /plan, a researched answer and a tool-loop answer a
   );
   assert.ok(searched.ok && searched.value.substantive === true);
   const chat = await chatTurn(baseDeps({ llmClient: makeFakeLlmClient("GENERAL") }), { message: "how are you" });
-  assert.ok(chat.ok && chat.value.substantive === true, "chatAgent marks every loop answer substantive (plan Task 5)");
+  assert.ok(chat.ok && !("substantive" in chat.value), "a plain loop answer with no tool call is not substantive (P12)");
+  const { client } = toolLoopClient([[{ type: "tool_use", id: "1", name: "list_tasks", input: {} }], [{ type: "text", text: "Nothing open." }]]);
+  const withTool = await chatTurn(baseDeps({ llmClient: client, readTasks: async () => [] }), { message: "how many tasks do I have" });
+  assert.ok(withTool.ok && withTool.value.substantive === true, "a turn that ran a tool is substantive");
 });
 
 test("Story 13.13: /morning carries the day's Pattern question as `question`; a second /morning the same day does not", async () => {

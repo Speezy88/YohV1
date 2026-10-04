@@ -28,7 +28,10 @@ export async function refitPlan(deps: RefitPlanDeps, _input: Record<string, neve
   const requestId = requested.value.question.requestId;
   const approved = await approveReshuffle(deps, { proposal: requested.value.proposal, requestId });
   if (approved.ok && approved.value.status === "applied") {
-    return { ok: true, value: { reply: requested.value.proposal.suggested.summary } };
+    const summary = requested.value.proposal.suggested.summary;
+    // Same sentence the reshuffle approve path gives when some calendar blocks failed to sync.
+    const reply = approved.value.calendarFailedBlockIds.length > 0 ? `${summary} Your Plan is updated, but I couldn't update your calendar for some blocks.` : summary;
+    return { ok: true, value: { reply } };
   }
   clearRequest(deps.store, requestId);
   if (!approved.ok) return approved;

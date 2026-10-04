@@ -51,7 +51,7 @@ import { reportBlocker } from "./blocker-report.ts";
 import { RECENT_MESSAGES_WINDOW, type ChatSession } from "./chat-session.ts";
 import { proposeCalendarEdit, type CalendarEditDeps } from "./calendar-edit.ts";
 import { COMMANDS } from "./commands.ts";
-import { CREATE_ITEM_NO_DRAFT_REPLY, draftItem, type CreateItemDeps } from "./create-item.ts";
+import { tryDraftItem, type CreateItemDeps } from "./create-item.ts";
 import { dayView } from "./day-view.ts";
 import { chatAgent, type ChatAgentDeps } from "./chat-agent.ts";
 import { recallMemoryContext } from "./memory-recall.ts";
@@ -355,8 +355,8 @@ async function routeChatTurn(
   // ever matches a line that OPENS with a Calendar-query verb ("what's
   // happening"/"what do I have"/"what's on"), so it never collides with
   // `isCalendarEditCommand`'s own move/reschedule/create verbs (checked
-  // later, below) or `isCalendarDeleteRequestCommand`'s cancel/delete/
-  // remove/clear verbs — "move my 3pm tomorrow to 4" and "cancel my meeting
+  // later, below) or the cancel/delete/remove/clear verbs (which now reach
+  // the tool loop) — "move my 3pm tomorrow to 4" and "cancel my meeting
   // with Alex tomorrow" both start with a verb this recognizer never
   // matches at all. `isPlanViewCommand`'s bare "plan"/"what's my plan" is
   // ALSO never reached here even in principle, since it's checked earlier
@@ -387,9 +387,10 @@ async function routeChatTurn(
 
   const createItemCommand = parseCreateItemCommand(input.message);
   if (createItemCommand) {
-    const drafted = await draftItem(deps, { ...createItemCommand, ...(await recallFor(deps, createItemCommand.request)) });
-    // No draft could be built from the line: let the tool loop handle it.
-    if (!(drafted.ok && drafted.value.question === undefined && CREATE_ITEM_NO_DRAFT_REPLY.test(drafted.value.reply))) return drafted;
+    const drafted = await tryDraftItem(deps, { ...createItemCommand, ...(await recallFor(deps, createItemCommand.request)) });
+    if (!drafted.ok) return drafted;
+    // `undefined`: no draft could be built from the line, so the tool loop handles it.
+    if (drafted.value !== undefined) return { ok: true, value: drafted.value };
   }
 
   // Epic 10 (10.3, R8): routine declarations — before the plan-edit reply.

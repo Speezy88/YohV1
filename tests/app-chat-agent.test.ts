@@ -371,3 +371,25 @@ test("a throw inside a write tool becomes an error result and earlier staged ite
   assert.equal(logs.length, 1);
   assert.deepEqual(openChangeSet(d)?.items.map((i) => i.kind), ["create-task"]);
 });
+
+test("P12: a plain answer with no tool call carries no substantive key", async () => {
+  const { client } = scripted([[say("I'm well, thanks.")]]);
+  const result = await chatAgent(deps(client), input("how are you"));
+  assert.equal(result.ok, true);
+  if (result.ok) assert.equal("substantive" in result.value, false);
+});
+
+test("P12: an answer after a read tool call, or after a rejected write, is substantive", async () => {
+  const read = scripted([[use("1", "list_tasks", {})], [say("You have four open Tasks.")]]);
+  const a = await chatAgent(deps(read.client), input("how many tasks"));
+  assert.equal(a.ok && a.value.substantive, true);
+  const rejected = scripted([[use("1", "complete_task", { taskId: "made-up" })], [say("Couldn't find it.")]]);
+  const b = await chatAgent(deps(rejected.client), input("mark it done"));
+  assert.equal(b.ok && b.value.substantive, true);
+});
+
+test("P12: a change-set question is substantive", async () => {
+  const { client } = stageTurn(use("1", "create_task", { title: "A" }));
+  const result = await chatAgent(deps(client), input("add a task A"));
+  assert.equal(result.ok && result.value.substantive, true);
+});

@@ -16,7 +16,7 @@
  * **Return convention (this file's own, not part of the wire contract):**
  * `{ reply: "", receipts: [], question: undefined }` — every field empty —
  * means "the line wasn't actually a Calendar edit" (the LLM draft came back
- * NONE). `chat-turn.ts` falls through to `answerQuestion` for exactly this
+ * NONE). `chat-turn.ts` falls through to the tool loop for exactly this
  * shape; every other return communicates something real (an error line, a
  * disambiguation message, or a genuine confirm question).
  */

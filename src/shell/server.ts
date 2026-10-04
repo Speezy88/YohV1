@@ -837,8 +837,11 @@ function withChatToolLoopDeps<T extends Omit<ChatTurnDeps, "emit"> & AnswerOpenI
     ...(chatDeps.log ? { log: chatDeps.log } : {}),
   };
   const { reshuffle } = chatDeps;
-  // The page-create and calendar writes arrive pre-bound from `buildChatDeps` (spread from their adapter binders); absent, the same binders report "not set up".
-  const writes = chatDeps.changeSetWrites ?? { ...bindNotionCreatePage(() => PAGE_NOT_SET_UP), ...bindCalendarApply(() => CALENDAR_NOT_SET_UP) };
+  // The page-create and calendar writes: taken from the chat deps when present (directly, or via `changeSetWrites` from `buildChatDeps`), else the same binders report "not set up". Keys come from the binders, so this file never names a write.
+  const unconfigured: ChatChangeSetWrites = { ...bindNotionCreatePage(() => PAGE_NOT_SET_UP), ...bindCalendarApply(() => CALENDAR_NOT_SET_UP) };
+  const direct = chatDeps as unknown as Record<string, unknown>;
+  const viaBuilder = (chatDeps.changeSetWrites ?? {}) as Record<string, unknown>;
+  const writes = Object.fromEntries(Object.entries(unconfigured).map(([key, fallback]) => [key, direct[key] ?? viaBuilder[key] ?? fallback])) as ChatChangeSetWrites;
   const changeSet: ApplyChangeSetDeps = {
     timeZone: chatDeps.timeZone,
     now: chatDeps.now,

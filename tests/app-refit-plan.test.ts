@@ -68,3 +68,13 @@ test("refitPlan whose approve step recomputes (calendar changed) fails, writes n
   assert.equal(listOpenInteractionRequests(s.store).length, 0, "no stray reshuffle card beside the change-set outcome");
   s.store.close();
 });
+
+test("refitPlan applied with calendar blocks that failed to sync says so", async () => {
+  const s = setup(async () => []);
+  const failing = { ...s.deps, writeCalendarPlan: async (blocks: readonly { id: string }[]) => ({ written: [], failed: blocks.map((b) => b.id) }) };
+  const result = await refitPlan(failing as typeof s.deps, {});
+  assert.equal(result.ok, true);
+  if (result.ok) assert.match(result.value.reply, /couldn't update your calendar for some blocks/);
+  assert.equal(getPlan(s.store, s.today)!.data.version, 2);
+  s.store.close();
+});

@@ -377,12 +377,10 @@ const TIME_OR_DATE_HINT_RE =
  * — which means, unbroadened, it ALSO matched "delete my meeting with Alex
  * tomorrow at 3", "cancel the meeting with Alex tomorrow", and "remove my
  * meeting with Alex at 3pm", routing a cancel/delete request into the
- * calendar-edit drafter. AD-13 says there is no delete variant AT ALL —
- * `isCalendarEditCommand` below excludes any line this recognizes, and
- * `app/chat-turn.ts` checks this FIRST (before `isCalendarEditCommand`, and
- * before any LLM call) to give Spencer a plain, honest answer instead of
- * silently falling through or — worse — letting `draftCalendarEditRequest`
- * (or `classifyCapture`'s own "event" backstop) attempt to act on it.
+ * calendar-edit drafter. `isCalendarEditCommand` below excludes any line this
+ * recognizes, so a delete request never reaches the edit/create drafter;
+ * `app/chat-turn.ts` has no branch for it and the line falls through to the
+ * tool loop, which can delete only events Yoh created.
  *
  * Recognizes a cancel/delete/remove/clear verb ANYWHERE in the line,
  * together with either an event-ish noun (reusing `CALENDAR_CREATE_NOUN_RE`

@@ -274,6 +274,7 @@ export async function chatAgent(deps: ChatAgentDeps, input: ChatAgentInput): Pro
   const staged: ChangeSetItem[] = [];
   let finalText: string | undefined;
   let wroteAttempted = false;
+  let ranTool = false;
 
   try {
     for (let step = 0; step < CHAT_AGENT_MAX_STEPS; step++) {
@@ -292,6 +293,7 @@ export async function chatAgent(deps: ChatAgentDeps, input: ChatAgentInput): Pro
       const results: { type: "tool_result"; tool_use_id: string; content: string; is_error?: boolean }[] = [];
       for (const toolUse of turn.toolUses) {
         const args = (typeof toolUse.input === "object" && toolUse.input !== null ? toolUse.input : {}) as Record<string, unknown>;
+        ranTool = true;
         const status = STATUS_BY_TOOL[toolUse.name];
         if (status) deps.emit?.({ type: "status", text: status });
         if (isWriteTool(toolUse.name)) wroteAttempted = true;
@@ -331,5 +333,6 @@ export async function chatAgent(deps: ChatAgentDeps, input: ChatAgentInput): Pro
   // Nothing was staged, so nothing changed: never let prose say otherwise.
   const reply = wroteAttempted || claimsAWrite(text) ? `${text}\n\n${NOTHING_CHANGED_NOTE}` : text;
   deps.emit?.({ type: "delta", text: reply });
-  return { ok: true, value: { reply, receipts: [], substantive: true } };
+  // Only a turn that ran a tool is substantive (rating eligibility); a plain answer carries no key.
+  return { ok: true, value: { reply, receipts: [], ...(ranTool ? { substantive: true as const } : {}) } };
 }
