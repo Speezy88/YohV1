@@ -8,6 +8,7 @@ import type { MemoryItemStore } from "../adapters/memory-item-store.ts";
 import { withdrawRuleProposal, type MemoryStore } from "../adapters/memory-store.ts";
 import { errorCopyForThrown } from "../core/error-copy.ts";
 import { MEMORY_ITEM_MAX_CHARS, STATED_ONLY_FOLDERS, isMemoryFolder, memoryFolderLabel } from "../core/memory-folders.ts";
+import { normalizeMemoryText } from "../core/memory-filing.ts";
 import { localIsoDate } from "../rituals/ritual-shared.ts";
 import { recallMemoryContext } from "./memory-recall.ts";
 import type {
@@ -60,10 +61,6 @@ function checkFutureDate(deps: MemoryEditDeps, value: unknown): Result<string, Y
   return { ok: true, value };
 }
 
-function normalize(text: string): string {
-  return text.toLowerCase().replace(/\s+/g, " ").trim().replace(/[\s.,;:!?]+$/, "");
-}
-
 /** The current item an edit/move/expiry/renew may act on, or the refusal to return. */
 function editable(deps: MemoryEditDeps, itemId: unknown, allowPending = false): Result<MemoryItem, YohError> {
   const item = typeof itemId === "string" ? deps.memoryItems.getItem(itemId) : undefined;
@@ -82,8 +79,8 @@ export async function editMemoryItem(deps: MemoryEditDeps, input: EditMemoryRequ
     const text = typeof input.text === "string" ? input.text.trim() : "";
     if (text.length < 1 || text.length > MEMORY_ITEM_MAX_CHARS) return fail("validation", "Memory text must be 1 to 280 characters.");
     const next = { ...carry(item), text, origin: "stated" as const };
-    const wanted = normalize(text);
-    const dup = deps.memoryItems.listItems({ status: ["current"] }).find((o) => o.id !== item.id && normalize(o.text) === wanted);
+    const wanted = normalizeMemoryText(text);
+    const dup = deps.memoryItems.listItems({ status: ["current"] }).find((o) => o.id !== item.id && normalizeMemoryText(o.text) === wanted);
     if (input.mergeWithId !== undefined) {
       if (!dup || dup.id !== input.mergeWithId) return fail("conflict", CHANGED);
       if (dup.ruleChange === "pending") return fail("conflict", PENDING);
