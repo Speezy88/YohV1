@@ -53,7 +53,8 @@ function setup() {
 async function post(app: ReturnType<typeof createApp>, path: string, body?: unknown) {
   const res = await app.request(path, {
     method: "POST",
-    ...(body !== undefined ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}),
+    headers: { "Content-Type": "application/json" },
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   });
   return { status: res.status, body: (await res.json()) as { ok: boolean; value?: Record<string, unknown>; error?: { kind: string; message: string } } };
 }
@@ -122,7 +123,7 @@ test("the check-off routes report a clear 503 when check-off dependencies aren't
 
 test("the typed RPC client reaches the check-off routes at /api/check-off (no double /api prefix)", async () => {
   const { app, connection } = setup();
-  const client = hc<AppType>("http://localhost", { fetch: (input: string | URL | Request, init?: RequestInit) => app.request(input, init) });
+  const client = hc<AppType>("http://localhost", { headers: { "Content-Type": "application/json" }, fetch: (input: string | URL | Request, init?: RequestInit) => app.request(input, init) });
   const res = await client.api["check-off"].$post({ json: { taskId: "t1" } });
   const body = await res.json();
   assert.equal(body.ok, true);

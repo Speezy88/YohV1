@@ -20,4 +20,6 @@
 import { hc } from "hono/client";
 import type { AppType } from "../../../src/types/api.ts";
 
-export const apiClient = hc<AppType>("");
+// The server refuses any non-GET `/api/*` request that isn't sent as JSON (its cross-origin POST guard),
+// so body-less POSTs such as `plan.sync.$post()` carry the header too.
+export const apiClient = hc<AppType>("", { headers: { "Content-Type": "application/json" } });

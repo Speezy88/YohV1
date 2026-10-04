@@ -85,8 +85,9 @@ test("a handler that throws an Error is still logged, with status 500", async ()
   });
   const res = await logged.request("/api/boom");
   assert.equal(res.status, 500);
-  assert.equal(entries.length, 1);
-  assert.equal((entries[0]!.detail as { status: number }).status, 500);
+  // onError logs the throw itself; the request line still reports the 500.
+  assert.deepEqual(entries.map((e) => e.event).sort(), ["server.api-request", "server.unhandled-error"]);
+  assert.equal((entries.find((e) => e.event === "server.api-request")!.detail as { status: number }).status, 500);
   connection.close();
 });
 
@@ -115,7 +116,7 @@ test("the default app's request log is single-line JSON (writeStructuredLog)", a
 test("the typed Hono RPC client, bound to types/api.ts's AppType, reaches /api/health and /api/notifications (AD-17, Ruling R2)", async () => {
   const { app, connection } = tempApp();
   const id = raise(connection);
-  const client = hc<AppType>("http://yoh.test", { fetch: (input: string | URL | Request, init?: RequestInit) => app.request(input, init) });
+  const client = hc<AppType>("http://yoh.test", { headers: { "Content-Type": "application/json" }, fetch: (input: string | URL | Request, init?: RequestInit) => app.request(input, init) });
   const health: HealthResponse = await (await client.api.health.$get()).json();
   assert.deepEqual(health, { ok: true });
 
@@ -162,7 +163,7 @@ test("GET /api/notifications returns the serialized Result of the unread list", 
 test("POST /api/notifications/:id/read sets readAt via the server clock and the notification leaves the unread list", async () => {
   const { app, connection } = tempApp();
   const id = raise(connection);
-  const res = await app.request(`/api/notifications/${id}/read`, { method: "POST" });
+  const res = await app.request(`/api/notifications/${id}/read`, { method: "POST", headers: { "Content-Type": "application/json" } });
   assert.equal(res.status, 200);
   assert.deepEqual(await res.json(), { ok: true, value: { id, readAt: READ_AT } });
   assert.deepEqual(await (await app.request("/api/notifications")).json(), { ok: true, value: { notifications: [] } });
@@ -188,7 +189,7 @@ test("GET /api/commands returns the registry", async () => {
 
 test("POST /api/notifications/:id/read on an unknown id returns 400 with a validation error envelope", async () => {
   const { app, connection } = tempApp();
-  const res = await app.request("/api/notifications/nope/read", { method: "POST" });
+  const res = await app.request("/api/notifications/nope/read", { method: "POST", headers: { "Content-Type": "application/json" } });
   assert.equal(res.status, 400);
   const body = (await res.json()) as { ok: boolean; error: { kind: string } };
   assert.equal(body.ok, false);

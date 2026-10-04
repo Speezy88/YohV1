@@ -46,6 +46,7 @@ import { offerPattern } from "../app/pattern-offer.ts";
 import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import { validator } from "hono/validator";
+import { HTTPException } from "hono/http-exception";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
@@ -833,6 +834,10 @@ const ERROR_STATUS: Readonly<Record<YohErrorKind, ContentfulStatusCode>> = {
   unreachable: 503,
 };
 
+/** The reply to a non-GET `/api/*` request that is not sent as JSON (see the guard in `createApp`). */
+export const JSON_CONTENT_TYPE_REQUIRED_MESSAGE = "Send this request with Content-Type: application/json.";
+const MALFORMED_BODY_MESSAGE = "That request body isn't valid JSON.";
+
 function httpStatus(result: ApiResult<unknown>): ContentfulStatusCode {
   return result.ok ? 200 : ERROR_STATUS[result.error.kind];
 }
@@ -993,6 +998,14 @@ export function createApp(deps: ServerDeps) {
 
   return (
     new Hono()
+      // A thrown error or malformed JSON still answers with the Result envelope, never Hono's plain-text default.
+      .onError((err, c) => {
+        if (err instanceof HTTPException && err.status === 400) {
+          return c.json({ ok: false, error: { kind: "validation", message: MALFORMED_BODY_MESSAGE } } satisfies ApiResult<never>, 400);
+        }
+        log({ level: "error", event: "server.unhandled-error", detail: { method: c.req.method, path: c.req.path, message: err.message } });
+        return c.json({ ok: false, error: { kind: "unreachable", message: GENERIC_SERVER_ERROR_MESSAGE } } satisfies ApiResult<never>, 500);
+      })
       // Story 7.5, AD-17: on every response, not just /api/* — so the built
       // web/ bundle, its static assets, and every API response alike can
       // never call a third party or load a third-party script/font. First
@@ -1021,6 +1034,16 @@ export function createApp(deps: ServerDeps) {
             detail: { method: c.req.method, path: c.req.path, status: threw ? 500 : c.res.status, durationMs: now() - startedAt },
           });
         }
+      })
+      // Cross-origin POST guard: a browser can send a text/plain or body-less POST to another origin without a
+      // preflight, but not application/json (or text/markdown), and this server answers no preflight.
+      .use("/api/*", async (c, next) => {
+        if (c.req.method === "GET" || c.req.method === "HEAD") return next();
+        const contentType = (c.req.header("content-type") ?? "").toLowerCase();
+        const allowed = c.req.path === "/api/memory/import" ? "text/markdown" : "application/json";
+        // The import route answers a wrong type with its own message.
+        if (contentType.startsWith(allowed) || c.req.path === "/api/memory/import") return next();
+        return c.json({ ok: false, error: { kind: "validation", message: JSON_CONTENT_TYPE_REQUIRED_MESSAGE } } satisfies ApiResult<never>, 400);
       })
       // Liveness probe — the one route that is not an ApiResult envelope (see HealthResponse).
       .get("/api/health", (c) => c.json({ ok: true } satisfies HealthResponse))

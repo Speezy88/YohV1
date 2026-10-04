@@ -103,7 +103,7 @@ test("a failing sync logs server.plan-sync-failed and an unchanged one is silent
 test("POST /api/plan/sync without sync deps reports unchanged", async () => {
   const connection = openSqliteConnection({ databasePath: ":memory:" });
   const app = createApp({ connection, log: () => {} });
-  const res = await app.request("/api/plan/sync", { method: "POST" });
+  const res = await app.request("/api/plan/sync", { method: "POST", headers: { "Content-Type": "application/json" } });
   assert.equal(res.status, 200);
   assert.deepEqual(await res.json(), { ok: true, value: { status: "unchanged" } });
   connection.close();
@@ -116,7 +116,7 @@ test("POST /api/plan/sync runs the sync and returns its Result, sharing the swee
   const timer = fakeInterval();
   const app = createApp({ connection, log: () => {}, planSync: deps });
   const sweep = startPlanCalendarSyncSweep(deps, { setIntervalFn: timer.setIntervalFn, clearIntervalFn: timer.clearIntervalFn, log: () => {} });
-  const pending = app.request("/api/plan/sync", { method: "POST" });
+  const pending = app.request("/api/plan/sync", { method: "POST", headers: { "Content-Type": "application/json" } });
   release();
   const res = await pending;
   await sweep.startup;
@@ -130,7 +130,7 @@ test("POST /api/plan/sync runs the sync and returns its Result, sharing the swee
 test("POST /api/plan/sync with no Plan today reports no-plan", async () => {
   const { connection, deps } = setup();
   const app = createApp({ connection, log: () => {}, planSync: deps });
-  const res = await app.request("/api/plan/sync", { method: "POST" });
+  const res = await app.request("/api/plan/sync", { method: "POST", headers: { "Content-Type": "application/json" } });
   assert.deepEqual(await res.json(), { ok: true, value: { status: "no-plan" } });
   connection.close();
 });

@@ -16,7 +16,7 @@ test.afterEach(async ({ page }) => {
   // The sync raises a "re-fit" notification; mark it read so later specs (one shared fixture) start clean.
   const listed = (await (await page.request.get("/api/notifications")).json()) as { ok: boolean; value?: Array<{ id: string }> | { notifications: Array<{ id: string }> } };
   const items = Array.isArray(listed.value) ? listed.value : (listed.value?.notifications ?? []);
-  for (const n of items) await page.request.post(`/api/notifications/${n.id}/read`);
+  for (const n of items) await page.request.post(`/api/notifications/${n.id}/read`, { data: {} });
   await post(page, "/__fixture/reset");
 });
 
@@ -31,7 +31,7 @@ test("moving a block's event on the Yoh Plan calendar moves it on Home after a s
   const moved = events.map((e) => (e.title === "Reshuffle Alpha" ? { ...e, start: later(e.start), end: later(e.end) } : e));
   await post(page, "/__fixture/yoh-plan-events", moved);
 
-  const sync = await page.request.post("/api/plan/sync");
+  const sync = await page.request.post("/api/plan/sync", { data: {} });
   expect(sync.ok()).toBe(true);
   expect(await sync.json()).toMatchObject({ ok: true, value: { status: "applied" } });
 
