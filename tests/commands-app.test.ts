@@ -5,10 +5,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { COMMANDS, listCommands } from "../src/app/commands.ts";
 
-test("COMMANDS lists exactly /morning, /night, /plan, /sandbox, /remember, and /forget", () => {
+test("COMMANDS lists exactly /morning, /night, /plan, /sandbox, /remember, /forget, and /research", () => {
   assert.deepEqual(
     COMMANDS.map((c) => c.name),
-    ["/morning", "/night", "/plan", "/sandbox", "/remember", "/forget"],
+    ["/morning", "/night", "/plan", "/sandbox", "/remember", "/forget", "/research"],
   );
 });
 

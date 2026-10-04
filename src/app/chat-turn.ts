@@ -68,6 +68,7 @@ import { morningView } from "./morning-view.ts";
 import { startNightCloseOut } from "./night-close-out.ts";
 import { planDay, type PlanDayDeps } from "./plan-day.ts";
 import { showPlan } from "./plan-view.ts";
+import { queueResearch } from "./queue-research.ts";
 import { saveSearchResult, type SaveSearchResultDeps } from "./save-search-result.ts";
 import { sandboxQueue } from "./sandbox-queue.ts";
 import { declareTimeBudget } from "./time-budget.ts";
@@ -590,6 +591,8 @@ async function dispatchSlashCommand(deps: ChatTurnDeps, line: string): Promise<R
       if (!command) return { ok: true, value: { reply: `Say what to remember, like ${match.example}.`, receipts: [] } };
       return runMemoryCommand(deps, command);
     }
+    case "/research":
+      return queueResearch(deps, { question: args });
     default:
       // Unreachable while COMMANDS lists only /morning and /night — a
       // future epic's registry entry gets its own `case` when that story

@@ -37,7 +37,8 @@ import { initRoutineStoreSchema } from "../../src/adapters/routine-store.ts";
 import { appendOutboxInTx, initNotificationStoreSchema } from "../../src/adapters/notification-store.ts";
 import { findUncommittedCheckOffForTask, initPlanStateStoreSchema, replaceDayPinsAndDropsInTx } from "../../src/adapters/plan-state-store.ts";
 import { listOpenReshuffleProposals } from "../../src/adapters/reshuffle-proposal-store.ts";
-import { initCompletionLogSchema, listCompletedTaskIdsOnDate } from "../../src/adapters/completion-log.ts";
+import { initJobStoreSchema } from "../../src/adapters/job-store.ts";
+import { initCompletionLogSchema,listCompletedTaskIdsOnDate } from "../../src/adapters/completion-log.ts";
 import { clearInteractionRequest, createMemoryStore, listOpenInteractionRequests, putPlan, putTimeBudget } from "../../src/adapters/memory-store.ts";
 import {
   bindNotionTaskWrites,
@@ -85,6 +86,7 @@ initSettingsStoreSchema(connection.db);
 initMemoryItemStoreSchema(connection.db);
 initRatingStoreSchema(connection.db);
 initCompletionLogSchema(connection.db);
+initJobStoreSchema(connection.db);
 
 const store = createMemoryStore(connection);
 // Story 13.1: the REAL chat store — `chatExchange` stores both turns even though `runChatTurn` is scripted.

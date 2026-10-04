@@ -1,0 +1,66 @@
+- generic [ref=e3]:
+  - link "Skip to content" [ref=e4] [cursor=pointer]:
+    - /url: "#main-content"
+  - generic [ref=e5]:
+    - navigation "Pages" [ref=e6]:
+      - generic [ref=e7]: Yoh
+      - button "Home" [ref=e12] [cursor=pointer]
+      - button "Tasks" [ref=e15] [cursor=pointer]
+      - button "Desk" [ref=e18] [cursor=pointer]
+      - button "Research Hub" [ref=e21] [cursor=pointer]
+      - button "Memory" [ref=e24] [cursor=pointer]
+      - generic [ref=e27]:
+        - button "Previous page" [ref=e28] [cursor=pointer]
+        - button "Next page" [ref=e31] [cursor=pointer]
+      - button "Dark mode" [ref=e35] [cursor=pointer]:
+        - img "Dark mode" [ref=e36]
+        - text: Dark mode
+      - status [ref=e38]: Research Hub, page 4 of 5
+    - generic [ref=e39]:
+      - main [ref=e40]:
+        - generic [ref=e41]:
+          - generic [aria-hidden]:
+            - generic:
+              - heading [level=1]: Tasks
+              - region
+              - generic:
+                - region:
+                  - generic:
+                    - textbox:
+                      - /placeholder: "Add a task — e.g. Lab report due fri 90m high #bio"
+                    - generic: Enter to add
+                - generic:
+                  - generic:
+                    - generic:
+                      - searchbox
+                    - button: Missing data
+                  - group:
+                    - button [pressed]: Due
+                    - button: Area
+                    - button: Status
+                    - button: Priority
+              - status
+          - generic [aria-hidden]:
+            - generic:
+              - heading [level=1]: Desk
+              - generic:
+                - generic:
+                  - paragraph: Desk isn't built yet.
+          - generic [ref=e43]:
+            - heading "Research Hub" [level=1] [ref=e45]
+            - region "Ask a research question" [ref=e46]:
+              - generic [ref=e47]:
+                - textbox "Ask a research question" [ref=e51]:
+                  - /placeholder: Ask a research question — e.g. AP Bio registration deadline
+                - generic [ref=e52]: Enter to ask
+              - paragraph [ref=e53]: Opens in Chat, where Yoh searches — say "save that" to file the answer here.
+            - region "Recent research" [ref=e55]
+          - generic [aria-hidden]:
+            - generic:
+              - generic:
+                - heading [level=1]: Memory
+      - button "Ask Yoh (Command K)" [ref=e60] [cursor=pointer]:
+        - text: Ask Yoh
+        - generic [ref=e64]: ⌘K
+    - generic [ref=e65]: Yoh Meeseek
+  - status

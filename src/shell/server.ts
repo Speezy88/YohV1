@@ -106,6 +106,7 @@ import {
 } from "../adapters/notion-adapter.ts";
 import { createAnthropicMessagesClient, loadLlmAdapterConfigFromEnv, type AnthropicMessagesClient } from "../adapters/llm-adapter.ts";
 import { initLlmUsageStoreSchema } from "../adapters/llm-usage-store.ts";
+import { initJobStoreSchema } from "../adapters/job-store.ts";
 import { errorCopyForWire, GENERIC_SERVER_ERROR_MESSAGE } from "../core/error-copy.ts";
 import { search as runSearch } from "../adapters/search-adapter.ts";
 import { listNotifications, markNotificationRead } from "../app/notifications.ts";
@@ -2191,6 +2192,7 @@ if (import.meta.main) {
   initSettingsStoreSchema(connection.db);
   initMemoryItemStoreSchema(connection.db);
   initCompletionLogSchema(connection.db);
+  initJobStoreSchema(connection.db);
   // Story 13.12 (Ruling E11): one-time, idempotent removal of the retired
   // periodic check-in's stored leftovers. Never fatal.
   try {

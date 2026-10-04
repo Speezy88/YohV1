@@ -19,6 +19,7 @@ import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { createMemoryStore, getCurrentTimeBudget, getOpenInteractionRequest, getPlan, putOpenInteractionRequest, putPlan, putTimeBudget, type MemoryStore } from "../src/adapters/memory-store.ts";
 import { createChatStore, initChatStoreSchema, type ChatStore } from "../src/adapters/chat-store.ts";
 import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
+import { initJobStoreSchema } from "../src/adapters/job-store.ts";
 import { createMemoryItemStore, initMemoryItemStoreSchema } from "../src/adapters/memory-item-store.ts";
 import { PLAN_EDIT_HOW_TO_REPLY } from "../src/core/plan-edit-commands.ts";
 import { chatTurn, MAX_CHAT_HISTORY_TURNS, STATUS_THINKING, type ChatTurnDeps } from "../src/app/chat-turn.ts";
@@ -1572,4 +1573,49 @@ test("a bare yes with only an earlier day's change set open does not point at a 
   });
   const result = await chatTurn(baseDeps({ llmClient: makeFakeLlmClient(), store }), { message: "yes" });
   assert.notEqual(result.ok && result.value.reply, "Use Approve or Discard on the card above.");
+});
+
+// ---- Story 11.3: /research queues a background job ----
+function researchDeps(over: Partial<ChatTurnDeps> = {}) {
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initJobStoreSchema(connection.db);
+  const llm = makeFakeLlmClient();
+  let searchCalls = 0;
+  const deps = baseDeps({
+    connection,
+    llmClient: llm as unknown as AnthropicMessagesClient,
+    searchFn: async () => {
+      searchCalls++;
+      return { ok: true, value: { answer: "x", citations: [] } };
+    },
+    ...over,
+  });
+  const jobs = () => (connection.db.prepare("SELECT question, status FROM research_jobs").all() as Array<{ question: string; status: string }>).map((r) => ({ ...r }));
+  return { deps, llm, jobs, searchCalls: () => searchCalls };
+}
+const vaultReady = { getNotionCreatePageBinding: () => ({ ok: true as const, value: { client: {} as never, config: { researchVaultDataSourceId: "ds" } as never } }) };
+
+test("/research queues a job, acknowledges, and never searches or calls a model", async () => {
+  const t = researchDeps(vaultReady);
+  const r = await chatTurn(t.deps, { message: "/research best budget laptops for college" });
+  assert.ok(r.ok);
+  if (!r.ok) return;
+  assert.equal(r.value.reply, "Queued. You'll get a notification when it's on Research Hub.");
+  assert.deepEqual(t.jobs(), [{ question: "best budget laptops for college", status: "queued" }]);
+  assert.equal(t.llm.calls.length, 0);
+  assert.equal(t.searchCalls(), 0);
+});
+
+test("/research with no question, no vault, or no search replies plainly and queues nothing", async () => {
+  const empty = researchDeps(vaultReady);
+  const a = await chatTurn(empty.deps, { message: "/research" });
+  assert.ok(a.ok && a.value.reply === "Say what to research, like /research best budget laptops for college.");
+  const noVault = researchDeps();
+  const b = await chatTurn(noVault.deps, { message: "/research laptops" });
+  assert.ok(b.ok && b.value.reply === "The Research Vault isn't set up yet, so there's nowhere to file research.");
+  const noSearch = researchDeps({ ...vaultReady, webSearchAvailable: false });
+  const c = await chatTurn(noSearch.deps, { message: "/research laptops" });
+  assert.ok(c.ok && c.value.reply === "Web search isn't set up yet (it needs a Perplexity key).");
+  assert.deepEqual([empty.jobs(), noVault.jobs(), noSearch.jobs()], [[], [], []]);
+  assert.equal(empty.llm.calls.length + noVault.llm.calls.length + noSearch.llm.calls.length, 0);
 });
