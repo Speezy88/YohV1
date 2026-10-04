@@ -644,7 +644,7 @@ Desk visualizes everything Yoh knows about Spencer's work for the after-school d
 
 **Consequences (testable):**
 - Every Yoh-data widget reads from the Completion Log / Activity Log (FR-47), never from Notion history — the numbers stay correct regardless of what happens to the Task in Notion afterward.
-- On-time completion rate counts a completed Task as on-time when its completion time is on or before its Due Date. `[ASSUMPTION: definition not specified in the brainstorm]`
+- On-time completion rate counts a completed Task as on-time when it was completed on or before its due day. The rate is all-time, and a completion with no Due Date is left out. ~~`[ASSUMPTION: definition not specified in the brainstorm]`~~ *(confirmed by Spencer 2026-10-04)*
 - Each public-feed widget fails independently: an unreachable or rate-limited feed shows "unavailable" or its last value with a timestamp, and never breaks or blanks the rest of Desk.
 - No Task or Calendar data is sent to any public-feed provider (§7).
 
@@ -689,7 +689,7 @@ Yoh keeps its own durable record of every completed Task and every day Spencer u
 
 **Consequences (testable):**
 - Every completion (FR-41 check-off or Night Ritual close-out, FR-12) records at least: Task identity and name, Area, Due Date, Estimated Duration, and completion time.
-- Every day Spencer interacts with the Web App is recorded, enough to compute the streak, the usage heatmap, and hours worked with Yoh (FR-44). `[ASSUMPTION: "hours worked with Yoh" definition — see §11]`
+- Every day Spencer interacts with the Web App is recorded, enough to compute ~~the streak,~~ the usage heatmap (FR-44). *(amended 2026-10-04, Spencer: the streak no longer comes from these activity days. A day counts toward the streak when it has a Plan and a completed night close-out — every question answered with none skipped, or nothing left to ask. Hours worked with Yoh come from the Completion Log.)* `[ASSUMPTION: "hours worked with Yoh" definition — see §11]`
 - Log entries survive any later change to or deletion of the Task in Notion.
 - The log keeps both Estimated Duration and completion time per Task, so a future self-calibration phase (Phase 6) can compare estimates with reality without a data migration.
 
@@ -1028,7 +1028,7 @@ No Phase 1 or Phase 1.5 assumptions remain in the FR text; Phase 2's inline tags
 - FR-30 — drag is today-only.
 - FR-30 — a multi-block Task moves as a whole when any segment is dragged.
 - ~~FR-39 — page order and non-swipe navigation fallback (→ bmad-ux).~~ *Resolved 2026-09-27 (Spencer): page order is Home, Tasks, Desk, Research Hub; navigation is a vertical stack (arrow buttons, ↑/↓ keys, edge-aware wheel, sidebar); swipe is retired, not a fallback-needing case.*
-- FR-44 — on-time completion rate definition.
+- ~~FR-44 — on-time completion rate definition.~~ *Resolved 2026-10-04 (Spencer): completed on or before the due day, all-time; a completion with no Due Date is left out.*
 - §6 Accessibility — WCAG 2.2 AA as the contrast standard.
 - FR-31 — unpin interaction shape (→ bmad-ux).
 - FR-33 — Routine Blocks can shift but are never deleted by a reshuffle.

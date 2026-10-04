@@ -1,0 +1,99 @@
+# SDD plan — Epic 12: Desk (Stories 12.1–12.5)
+
+Written 2026-10-04 from `epics.md` (Epic 12) against `main` at `8f93afb`.
+Branch `epic-12-decisions`, worktree `.claude/worktrees/epic-12-decisions`.
+Ledger: `~/Documents/Yoh-previews/ledgers/epic-12/progress.md`.
+The stories' acceptance criteria in `epics.md` are the requirement; this plan splits
+them into tasks and records what the stories leave open. Spencer's decisions of
+2026-10-04 (on-time rate, streak rule, heatmap steps, Bklit UI) are already in
+Stories 12.1 and 12.2.
+
+Order: Tasks 1–4 need nothing more from Spencer. Task 5 (heatmap) waits for his
+answer on the Bklit finding below. Tasks 6–7 (feeds) wait for his choice of providers.
+
+## What the code already has (checked at `8f93afb`)
+
+- `completions` table (`src/adapters/completion-log.ts`): `task_name`, `due_date`, `estimated_minutes`, `completed_at`, `source`. It has no read that returns every row and no activity-day table.
+- A Plan per date: `getPlan(store, date)` (`src/adapters/memory-store.ts`); Plan records are kept (the Pi has 13, from 2026-08-24).
+- **No per-day record of a finished night close-out.** The `night-prompt` `RitualRun` marker is one row, overwritten each night, and it is also written when Tasks were skipped. `UncheckedDay` rows exist only for nights that were escalated (the Pi has none). So past close-outs cannot be reconstructed: **the streak starts on the first night closed out after this epic is deployed.**
+- `llm_usage` rows and `costForRows` + the one price table (`src/core/llm-cost.ts`). The Pi has rows from 2026-09-27, for `claude-haiku-4-5-20251001` and `claude-sonnet-5`; both are in the price table. `costForRow` throws for a model with no price.
+- `web/src/pages/Desk.tsx` is a placeholder ("Desk isn't built yet."). No `/api/desk` route.
+
+## Bklit spike (2026-10-04, read from the registry JSON at `https://ui.bklit.com/r/`)
+
+- License: MIT (the `packages/ui` chart components).
+- Size: `@bklit/heatmap-chart` plus its seven registry dependencies is 58 files, about 8,700 lines, copied into `web/`.
+- npm dependencies: `motion`, six `@visx/*` packages pinned to `4.0.1-alpha.0`, `@number-flow/react`, `d3-array`, `clsx`, `tailwind-merge`.
+- shadcn: the files import `@/lib/utils`; `web/` has no `@/` alias and no `components.json`. Both can be added without running `shadcn init` (a hand-written `components.json`, the alias in `vite.config.ts` and `tsconfig`, then `npx shadcn@latest add`), or the files can be copied by hand.
+- CSP: nothing loads from another host; no `<style>` injection.
+- Tokens: colors come from `--chart-*` CSS variables (set them from `tokens.css`) and the `levelColors` prop. Left over: one hard-coded color (`#e879f9`, a pattern preset the heatmap does not need), `zinc-*` classes on the loading label, a `duration-200` class, and enter durations in `heatmap-animation.ts` (overridable by props).
+- Reduced motion: the heatmap does not read the setting itself. Pass `animate={!reducedMotion}` from `web/src/hooks/useReducedMotion.ts`.
+- **Keyboard and screen reader: not met as shipped.** The chart `<svg>` is `aria-hidden`, cells react only to pointer events, there is no `tabIndex`, no label, no key handling. Story 12.2 requires a focusable cell with an accessible label and a tooltip on focus. Meeting it means changing the copied cell code (or laying a focusable grid over it). This is the open question for Spencer; Task 5 does not start before he answers.
+
+## Rulings (made without Spencer; they bind until he overrules)
+
+- **E12-R1 Close-out record.** New record kind `night-close-out-done`, keyed by the close-out's date, `{ date, completedAt, via: "answered" | "nothing-to-ask" }`, with `putNightCloseOutDone` / `listNightCloseOutDone` in `src/adapters/memory-store.ts`. Written where a close-out for a day with a Plan finishes with no Task skipped: the "done" branch of `answer-night-close-out.ts` when `skippedTaskIds` is empty; `runNightPromptRitual` and `startNightCloseOut` when the Plan has no Task left to ask about. Not written when a Task was skipped, when the day has no Plan, or when the request is still open. A close-out answered the next morning counts for the night it was about. No backfill.
+- **E12-R2 Streak.** A streak day = a Plan record for D and a `night-close-out-done` record for D. Current streak = the run of consecutive streak days ending today, or ending yesterday when today is not a streak day yet. Longest = the longest run over all records. Pure function in `src/core/desk-metrics.ts` over two date lists.
+- **E12-R3 Activity days.** Table `activity_days (date TEXT PRIMARY KEY, first_seen_at TEXT)` in `completion-log.ts`; `recordActivityDay(connection, date)` is `INSERT OR IGNORE`. A middleware on `/api/*` in `createApp` calls one app function, `recordActivity` (`src/app/desk.ts`), for every request except `GET /api/health`; the date is today in the host timezone. The real dependency remembers the last date it wrote, so there is one write per day per process. A failure is logged and never fails the request. No outbox row.
+- **E12-R4 Metrics** (all pure, in `src/core/desk-metrics.ts`, dates in the host timezone):
+  - Completed today: every completion whose local date is today, newest first (`taskName`, `completedAt`).
+  - Minutes today: the sum of `estimatedMinutes` for those rows; a null estimate adds 0.
+  - Hours with Yoh: the sum of `estimatedMinutes` over all completions ÷ 60, rounded to the nearest whole hour.
+  - On-time rate: over completions with a due date; on time when the completion's local date ≤ the due date. Returns `{ onTime, counted, percent }`; `percent` is a rounded whole number, or `null` when `counted` is 0.
+- **E12-R5 Heatmap data.** 26 week columns ending with the current week; weeks start on Sunday; days after today are left out. Each day is `{ date, completed, level }`: level 0 = no activity day and no completion; 1 = an activity day with nothing completed; 2 = 1–2 completed; 3 = 3–4; 4 = 5 or more. A day with completions counts even without an activity-day row (days before this epic have none).
+- **E12-R6 Spend.** This month = rows whose `at` falls in the current calendar month in the host timezone, summed with `costForRows`. A row whose model has no price is left out of the sum and counted in `unpricedCalls` (logged once per request); it never makes Desk fail. The tile covers Claude calls only (not Perplexity).
+- **E12-R7 API.** One route, `GET /api/desk`, one app function `getDesk(deps, {})` in `src/app/desk.ts`, returning `DeskResponse` (`src/types/api.ts`): `{ today, completedToday, minutesToday, hoursWithYoh, onTime, streak: { current, longest }, heatmap: { weeks }, spend: { monthUsd, unpricedCalls } }`. Feed fields are added by Tasks 6–7. `completion-log.ts` gains `listCompletions(connection)` and `listActivityDays(connection)`.
+- **E12-R8 Desk page.** A responsive grid of `DeskWidget` cards (the card classes `Desk.tsx` uses today: `rounded-2xl bg-surface-raised shadow-extruded-lg`, `data-wheel-nav="off"`), each with a caption header and a tabular-numeral value. Loading = skeleton cards in the grid's shape; a failed load = `StateMessage` error with `Try again`. Data comes from a module-level store trio in `web/src/lib/desk.ts` (copy `web/src/lib/homeView.ts`), refetched on a `tasks` hint and when the page becomes visible again.
+- **E12-R9 Copy** (invented; for Spencer's glance):
+  - Tasks Completed: header `Tasks completed today`, the count, then the rows; none: `0` and `Nothing completed yet today.`
+  - Worked: `{n} min today` and `{h} h with Yoh`.
+  - On-Time Rate: `{p}%` and `{onTime} of {counted} Tasks with a due date`; nothing counted: `—` and `No Tasks with a due date completed yet.`
+  - Streak: `Streak: {n} day(s) · Longest: {m} day(s)`, and under it `A day counts when it has a Plan and a finished night close-out.`
+  - Spend: header `Claude API spend this month`, `${x.xx}`, caption `Estimated from recorded calls.`; with unpriced calls add `{n} calls not priced.`
+  - Load failure: `Couldn't load Desk.` + `Try again`.
+
+## Task 1: Planning-doc amendments (coordinator, inline)
+
+Amend in place with a dated note, under `_bmad-output/planning-artifacts/`:
+- PRD: on-time rate is decided (line ~647), the streak comes from Plan + finished close-out and activity days feed the heatmap only (line ~692), the open question on the on-time definition is resolved (line ~1031).
+- Architecture spine AD-23: the streak reads Plan records and `night-close-out-done` records (E12-R1/R2), not activity days; on-time is no longer an assumption.
+- UX (`DESIGN.md` Desk Widget row, `EXPERIENCE.md` Desk Widget row and open question 5): done after Spencer answers the Bklit question, so the amendment says what is built.
+
+**Commit:** `docs(planning): the PRD and AD-23 carry the Epic 12 decisions; the Epic 12 plan`
+
+## Task 2: The records Desk needs (Story 12.1, server)
+
+Behaviour: E12-R1 and E12-R3. `initCompletionLogSchema` creates `activity_days`. The fixture server (`tests/e2e/fixture-server.ts`) wires the same middleware with its own connection.
+
+Tests (node): `recordActivityDay` is idempotent and `listActivityDays` returns dates in order; the middleware records on `/api/home`, not on `/api/health`, writes once per day, and a throwing dependency still returns the route's response; the close-out record is written on a fully answered close-out, on a night with nothing left to ask (ritual and `/night`), and not on a skip, an open request or a day with no Plan; a close-out for last night answered today is keyed to last night.
+
+Per-task Sonnet review (it changes the night close-out paths).
+
+**Commit:** `feat(desk): the server records activity days and finished night close-outs`
+
+## Task 3: Desk metrics and `GET /api/desk` (Stories 12.1, 12.2 data, 12.5 data)
+
+Behaviour: E12-R2, R4, R5, R6, R7. `src/core/desk-metrics.ts` holds every computation as pure functions over plain rows (its own row shapes; no adapter import). `getDesk` reads completions, activity days, Plan dates, close-out records and usage rows, and converts a thrown store error to a `Result` failure with `errorCopyForThrown`. Dependencies go on `ServerDeps` via a `buildDeskDeps` in `src/shell/server-wiring.ts`. The fixture server serves fixed Desk data: completions today and on earlier days (enough for every heatmap level), a three-day streak, usage rows this month — exported for specs.
+
+Tests (node): a table per metric including zero rows, null estimates, a completion on its due day / the day after / with no due date, a completion just before and just after local midnight, streak cases (today closed out; today pending; a gap; a weekend gap; a Plan with no close-out; longest longer than current), heatmap levels and the 26-week shape across a year boundary, spend across a month boundary and with an unpriced model; the route's success and failure envelopes.
+
+**Commit:** `feat(desk): the server computes Desk metrics, heatmap days and this month's Claude spend`
+
+## Task 4: Desk page — metric widgets and the spend tile (Stories 12.1, 12.5)
+
+Behaviour: E12-R8 and R9, and the 12.1 / 12.5 acceptance criteria that are visible on the page: Tasks Completed (a scrollable list of checked, struck-through rows), Worked, On-Time Rate, Streak, Claude API spend. Tabular numerals on every figure. Controls and states use `web/src/lib/controlStyles.ts` and `StateMessage.tsx`; tokens only. The heatmap's place in the grid stays empty until Task 5.
+
+Tests: Vitest for `web/src/lib/desk.ts` and the page (each widget's value, the zero states, skeleton, error + retry, refetch on a `tasks` hint); replace the placeholder test in `Desk.test.tsx`. Playwright `web/e2e/desk.spec.ts`: the widgets show the fixture's values; axe passes in light and dark. Computed-style proof for the struck-through rows and tabular numerals.
+
+**Commit:** `feat(web): Desk shows completed Tasks, time worked, on-time rate, streak and Claude spend`
+
+## Task 5: Usage Heatmap (Story 12.2) — waits for Spencer's Bklit answer
+
+Outline if he keeps Bklit: add the `@/` alias and `components.json`; add `@bklit/heatmap-chart`; map `--chart-*` and the five `levelColors` to `tokens.css` (`accent-solid` at four stepped opacities plus the rimmed empty step); `animate={!reducedMotion}`; make each cell focusable with a label (`{date}: {n} Tasks completed`) and show the tooltip on focus; legend; horizontal scroll region with `data-wheel-nav="off"`. Remove the unused pattern preset color and the `zinc-*` loading label. Vitest + Playwright (keyboard reaches a cell and shows its tooltip; axe; computed style for the five levels). Then the UX amendment from Task 1.
+
+## Tasks 6–7: Feeds (Stories 12.3, 12.4) — wait for Spencer's choice of providers
+
+The provider research is in the ledger folder (`feed-providers.md`). After he picks: Task 6 = `adapters/crypto-feed.ts` + the ticker widget; Task 7 = `adapters/weather-feed.ts`, `adapters/news-feed.ts` + their widgets. Each adapter keeps its own cache and last-good value, never throws, and takes no argument that could carry Task, Calendar or usage data (AD-22). Rulings for these are written when the providers are known.
+
+## Review and gate
+Per-task Sonnet review for Task 2. One Opus whole-branch review after Task 4 (and again after the last of Tasks 5–7 if they land later), a fix round, a Sonnet re-review of the fixes. Gate: `npm run check` and `cd web && npx playwright test`.
