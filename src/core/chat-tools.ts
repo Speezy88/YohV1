@@ -218,3 +218,19 @@ const isPlanStep = (item: ChangeSetItem): boolean => item.kind === "plan-day" ||
 export function orderForApply(items: readonly ChangeSetItem[]): readonly ChangeSetItem[] {
   return [...items.filter((i) => !isPlanStep(i)), ...items.filter(isPlanStep)];
 }
+
+/** Appended to a reply that claimed (or followed a rejected attempt at) a write that was never staged. */
+export const NOTHING_CHANGED_NOTE = "Nothing has been changed.";
+
+const WRITE_VERBS = "added|moved|deleted|removed|created|scheduled|rescheduled|booked|saved|updated|marked|built|re-fit|refit|cancelled|canceled";
+const WRITE_CLAIM_PATTERNS: readonly RegExp[] = [
+  /^\s*(done|all set)\b/i,
+  new RegExp(`\\b(i've|i have|i)\\s+(${WRITE_VERBS})\\b`, "i"),
+  new RegExp(`\\b(has|have)\\s+been\\s+(${WRITE_VERBS})\\b`, "i"),
+  /\b(is|are)\s+now\s+(on|in)\s+your\s+(calendar|tasks|plan)\b/i,
+];
+
+/** True when model prose says a change was made. With nothing staged, no change was. */
+export function claimsAWrite(text: string): boolean {
+  return WRITE_CLAIM_PATTERNS.some((p) => p.test(text));
+}

@@ -3,8 +3,9 @@ import assert from "node:assert/strict";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
 import { createMemoryStore, listOpenInteractionRequests, putPlan } from "../src/adapters/memory-store.ts";
+import { errorCopyForThrown } from "../src/core/error-copy.ts";
 import { chatAgent, CHAT_AGENT_STEP_CAP_REPLY, type ChatAgentDeps } from "../src/app/chat-agent.ts";
-import { CHAT_AGENT_MAX_STEPS } from "../src/core/chat-tools.ts";
+import { CHAT_AGENT_MAX_STEPS, NOTHING_CHANGED_NOTE, changeSetPrompt } from "../src/core/chat-tools.ts";
 import type { AnthropicMessagesClient } from "../src/adapters/llm-adapter.ts";
 import type { CalendarEvent, ChangeSet, Plan, Proposal, Task } from "../src/types/domain.ts";
 
@@ -196,6 +197,9 @@ test("a read tool that throws returns plain copy to the model, never the raw err
   const { client, requests } = scripted([[use("1", "list_tasks", {})], [say("I couldn't reach your Tasks just now.")]]);
   const result = await chatAgent(deps(client, { readTasks: async () => { throw new Error("ECONNRESET 10.0.0.4"); } }), input("what's due"));
   assert.doesNotMatch(toolResult(requests, 1), /ECONNRESET/);
+  const tr = (requests[1]!.messages.at(-1) as { content: { content: string; is_error?: boolean }[] }).content[0]!;
+  assert.equal(tr.is_error, true);
+  assert.equal(tr.content, errorCopyForThrown(new Error("ECONNRESET 10.0.0.4")));
   assert.equal(result.ok, true);
 });
 
@@ -211,7 +215,11 @@ test("a model transport failure is a Result error with user copy", async () => {
   const client = { messages: { create: (async () => { throw new Error("401 invalid x-api-key sk-ant-123"); }) as unknown as AnthropicMessagesClient["messages"]["create"] } };
   const result = await chatAgent(deps(client), input("hello"));
   assert.equal(result.ok, false);
-  if (!result.ok) assert.doesNotMatch(result.error.message, /sk-ant/);
+  if (!result.ok) {
+    assert.doesNotMatch(result.error.message, /sk-ant/);
+    assert.equal(result.error.kind, "unreachable");
+    assert.equal(result.error.message, errorCopyForThrown(new Error("401 invalid x-api-key sk-ant-123")));
+  }
 });
 
 test("a new change set replaces an earlier one that is still open", async () => {
@@ -248,4 +256,118 @@ test("refit_plan with no stored Plan returns an error tool result and stages not
   await chatAgent(d, input("refit my plan"));
   assert.match(toolResult(requests, 1), /no Plan for today/);
   assert.equal(openChangeSet(d), undefined);
+});
+
+const stageTurn = (...calls: Block[]) => scripted([calls, [say("Staged.")]]);
+const FIRST_EVENTS = use("0", "list_events", { date: "2026-10-03" });
+
+test("step cap with items staged still returns the change-set question", async () => {
+  const { client } = scripted([
+    [use("1", "create_task", { title: "A" })],
+    [use("x", "list_tasks", {})],
+  ]);
+  const d = deps(client);
+  const result = await chatAgent(d, input("loop"));
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.value.reply, changeSetPrompt([{ kind: "create-task", properties: { title: "A" } }], TZ));
+  assert.equal(result.value.question?.proposal?.kind, "change-set");
+});
+
+test("a rejected write followed by a claim gets the nothing-changed note", async () => {
+  const { client } = scripted([[use("1", "complete_task", { taskId: "made-up" })], [say("Done, I marked it complete.")]]);
+  const result = await chatAgent(deps(client), input("mark the essay done"));
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.value.reply, `Done, I marked it complete.\n\n${NOTHING_CHANGED_NOTE}`);
+  assert.deepEqual(result.value.receipts, []);
+  assert.equal(result.value.question, undefined);
+});
+
+test("a claim with no tools at all gets the note", async () => {
+  const { client } = scripted([[say("Done. Both events are now on your calendar.")]]);
+  const result = await chatAgent(deps(client), input("add them"));
+  assert.equal(result.ok && result.value.reply, `Done. Both events are now on your calendar.\n\n${NOTHING_CHANGED_NOTE}`);
+});
+
+test("a plain answer gets no note, and the delta equals the reply", async () => {
+  const events: { type: string; text?: string }[] = [];
+  const { client } = scripted([[say("Napoleon was a French general.")]]);
+  const result = await chatAgent(deps(client, { emit: (e) => events.push(e as { type: string; text?: string }) }), input("who was napoleon"));
+  assert.equal(result.ok && result.value.reply, "Napoleon was a French general.");
+  assert.deepEqual(events, [{ type: "delta", text: "Napoleon was a French general." }]);
+});
+
+test("the delta carries the composed reply when the note is added", async () => {
+  const events: { type: string; text?: string }[] = [];
+  const { client } = scripted([[say("All set.")]]);
+  const result = await chatAgent(deps(client, { emit: (e) => events.push(e as { type: string; text?: string }) }), input("x"));
+  assert.ok(result.ok);
+  assert.deepEqual(events, [{ type: "delta", text: result.ok ? result.value.reply : "" }]);
+  assert.match(events[0]!.text!, /Nothing has been changed\.$/);
+});
+
+test("moving the same event twice stages one move with the second time", async () => {
+  const { client } = stageTurn(
+    FIRST_EVENTS,
+    use("1", "move_event", { eventId: "ev-dinner", date: "2026-10-03", startTime: "19:00", endTime: "20:00" }),
+    use("2", "move_event", { eventId: "ev-dinner", date: "2026-10-03", startTime: "20:00", endTime: "21:00" }),
+  );
+  const d = deps(client);
+  await chatAgent(d, input("move dinner twice"));
+  const items = openChangeSet(d)?.items ?? [];
+  assert.equal(items.length, 1);
+  assert.equal(items[0]?.kind, "move-event");
+  assert.equal(items[0]?.kind === "move-event" && items[0].newStart, "2026-10-04T00:00:00.000Z");
+});
+
+test("move then delete of one event stages only the delete", async () => {
+  const { client } = stageTurn(
+    FIRST_EVENTS,
+    use("1", "move_event", { eventId: "ev-dinner", date: "2026-10-03", startTime: "19:00", endTime: "20:00" }),
+    use("2", "delete_event", { eventId: "ev-dinner" }),
+  );
+  const d = deps(client);
+  await chatAgent(d, input("x"));
+  assert.deepEqual(openChangeSet(d)?.items.map((i) => i.kind), ["delete-event"]);
+});
+
+test("the same task field updated twice stages one item with the second value; complete twice stages one", async () => {
+  const { client } = stageTurn(
+    use("0", "list_tasks", {}),
+    use("1", "update_task", { taskId: "t-mgp", field: "dueDate", value: "2026-10-06" }),
+    use("2", "update_task", { taskId: "t-mgp", field: "dueDate", value: "2026-10-07" }),
+    use("3", "update_task", { taskId: "t-mgp", field: "title", value: "One" }),
+    use("4", "update_task", { taskId: "t-mgp", field: "title", value: "Two" }),
+    use("5", "complete_task", { taskId: "t-stats" }),
+    use("6", "complete_task", { taskId: "t-stats" }),
+  );
+  const d = deps(client);
+  await chatAgent(d, input("x"));
+  const items = openChangeSet(d)?.items ?? [];
+  assert.equal(items.length, 3);
+  assert.ok(items.some((i) => i.kind === "update-task" && i.value === "2026-10-07"));
+  assert.ok(items.some((i) => i.kind === "rename-task" && i.newTitle === "Two"));
+  assert.equal(items.filter((i) => i.kind === "complete-task").length, 1);
+});
+
+test("a throw inside a write tool becomes an error result and earlier staged items survive", async () => {
+  const { client, requests } = scripted([
+    [use("1", "create_task", { title: "A" }), use("2", "refit_plan", {})],
+    [say("Staged what I could.")],
+  ]);
+  const d = deps(client);
+  const real = d.store.getRecord.bind(d.store);
+  d.store.getRecord = ((kind: string, id: string) => {
+    if (kind === "plan") throw new Error("SQLITE_BUSY /var/db/secret");
+    return real(kind, id);
+  }) as typeof d.store.getRecord;
+  const logs: unknown[] = [];
+  const result = await chatAgent({ ...d, log: (e) => logs.push(e) }, input("x"));
+  assert.equal(result.ok, true);
+  const results = (requests[1]!.messages.at(-1) as { content: { content: string; is_error?: boolean }[] }).content;
+  assert.equal(results[1]!.is_error, true);
+  assert.doesNotMatch(results[1]!.content, /SQLITE_BUSY/);
+  assert.equal(logs.length, 1);
+  assert.deepEqual(openChangeSet(d)?.items.map((i) => i.kind), ["create-task"]);
 });

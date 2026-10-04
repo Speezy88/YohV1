@@ -16,6 +16,9 @@ import {
   CHAT_AGENT_MAX_STEPS,
   CHAT_TOOLS,
   changeSetPrompt,
+  claimsAWrite,
+  NOTHING_CHANGED_NOTE,
+  isWriteTool,
   filterTasks,
   resolveEventTimes,
   summarizeTasks,
@@ -146,10 +149,30 @@ async function runReadTool(deps: ChatAgentDeps, name: string, args: Record<strin
   }
 }
 
+function sameTarget(a: ChangeSetItem, b: ChangeSetItem): boolean {
+  switch (b.kind) {
+    case "plan-day":
+    case "refit-plan":
+      return a.kind === "plan-day" || a.kind === "refit-plan";
+    case "move-event":
+    case "resize-event":
+    case "delete-event":
+      return (a.kind === "move-event" || a.kind === "resize-event" || a.kind === "delete-event") && a.eventId === b.eventId;
+    case "update-task":
+      return a.kind === "update-task" && a.taskId === b.taskId && a.field === b.field;
+    case "rename-task":
+      return a.kind === "rename-task" && a.taskId === b.taskId;
+    case "complete-task":
+      return a.kind === "complete-task" && a.taskId === b.taskId;
+    default:
+      return false;
+  }
+}
+
+/** One staged item per target: a later item for the same event, task field or plan step replaces the earlier one. */
 function stage(staged: ChangeSetItem[], item: ChangeSetItem): void {
-  if (item.kind === "plan-day" || item.kind === "refit-plan") {
-    const existing = staged.findIndex((i) => i.kind === "plan-day" || i.kind === "refit-plan");
-    if (existing !== -1) staged.splice(existing, 1);
+  for (let i = staged.length - 1; i >= 0; i--) {
+    if (sameTarget(staged[i]!, item)) staged.splice(i, 1);
   }
   staged.push(item);
 }
@@ -226,6 +249,15 @@ function runWriteTool(deps: ChatAgentDeps, name: string, args: Record<string, un
   return err(`Unknown tool "${name}".`);
 }
 
+function guardedWriteTool(deps: ChatAgentDeps, name: string, args: Record<string, unknown>, seen: Seen, staged: ChangeSetItem[]): ToolOutcome {
+  try {
+    return runWriteTool(deps, name, args, seen, staged);
+  } catch (thrown) {
+    deps.log?.({ level: "error", event: "chat-agent.write-tool-failed", detail: { tool: name, message: thrown instanceof Error ? thrown.message : String(thrown) } });
+    return err(errorCopyForThrown(thrown));
+  }
+}
+
 /** A newer change set replaces an older one that was never answered. */
 function clearOpenChangeSets(store: MemoryStore): void {
   for (const record of listOpenInteractionRequests(store)) {
@@ -241,6 +273,7 @@ export async function chatAgent(deps: ChatAgentDeps, input: ChatAgentInput): Pro
   const seen: Seen = { tasks: new Map(), events: new Map() };
   const staged: ChangeSetItem[] = [];
   let finalText: string | undefined;
+  let wroteAttempted = false;
 
   try {
     for (let step = 0; step < CHAT_AGENT_MAX_STEPS; step++) {
@@ -261,7 +294,8 @@ export async function chatAgent(deps: ChatAgentDeps, input: ChatAgentInput): Pro
         const args = (typeof toolUse.input === "object" && toolUse.input !== null ? toolUse.input : {}) as Record<string, unknown>;
         const status = STATUS_BY_TOOL[toolUse.name];
         if (status) deps.emit?.({ type: "status", text: status });
-        const outcome = status ? await runReadTool(deps, toolUse.name, args, seen) : runWriteTool(deps, toolUse.name, args, seen, staged);
+        if (isWriteTool(toolUse.name)) wroteAttempted = true;
+        const outcome = status ? await runReadTool(deps, toolUse.name, args, seen) : guardedWriteTool(deps, toolUse.name, args, seen, staged);
         results.push({ type: "tool_result", tool_use_id: toolUse.id, content: outcome.content, ...(outcome.isError ? { is_error: true } : {}) });
       }
       messages.push({ role: "user", content: results });
@@ -293,7 +327,9 @@ export async function chatAgent(deps: ChatAgentDeps, input: ChatAgentInput): Pro
   }
 
   if (finalText === undefined) return { ok: true, value: { reply: CHAT_AGENT_STEP_CAP_REPLY, receipts: [] } };
-  const reply = finalText.length > 0 ? finalText : "I don't have an answer for that.";
+  const text = finalText.length > 0 ? finalText : "I don't have an answer for that.";
+  // Nothing was staged, so nothing changed: never let prose say otherwise.
+  const reply = wroteAttempted || claimsAWrite(text) ? `${text}\n\n${NOTHING_CHANGED_NOTE}` : text;
   deps.emit?.({ type: "delta", text: reply });
   return { ok: true, value: { reply, receipts: [], substantive: true } };
 }

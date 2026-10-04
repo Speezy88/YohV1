@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import {
   CHAT_TOOLS,
   changeSetPrompt,
+  claimsAWrite,
+  NOTHING_CHANGED_NOTE,
   describeChangeSetItem,
   filterTasks,
   isWriteTool,
@@ -84,4 +86,36 @@ test("every tool has a name, description and object schema; write tools are clas
     CHAT_TOOLS.map((t) => t.name),
     ["list_tasks", "list_events", "get_plan", "search_memory", "web_search", "create_event", "move_event", "resize_event", "delete_event", "create_task", "update_task", "complete_task", "plan_day", "refit_plan"],
   );
+});
+
+test("claimsAWrite catches claims that something was changed", () => {
+  for (const text of [
+    "Done. Both events are now on your calendar.",
+    "Done! Both events are on your calendar.",
+    "All set",
+    "All set - you're good.",
+    "I've added the workout to your calendar.",
+    "I moved your dentist visit to 3 PM.",
+    "I have deleted the dinner event.",
+    "Your task has been marked complete.",
+    "The tasks have been updated.",
+    "Both are now in your plan.",
+    "The event is now on your calendar.",
+  ]) {
+    assert.equal(claimsAWrite(text), true, text);
+  }
+});
+
+test("claimsAWrite lets honest answers through", () => {
+  for (const text of [
+    "You have 105 minutes due Monday across 3 tasks.",
+    "I couldn't find that task.",
+    "Napoleon was a French general.",
+    "I've staged the workout for your approval.",
+    "Dinner is on your calendar at 6:00 PM.",
+    "Undone items remain.",
+  ]) {
+    assert.equal(claimsAWrite(text), false, text);
+  }
+  assert.equal(NOTHING_CHANGED_NOTE, "Nothing has been changed.");
 });
