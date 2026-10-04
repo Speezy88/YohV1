@@ -35,13 +35,13 @@ approve is filed; nothing he told Yoh directly is replaced.
 ## Flow
 
 1. Spencer unzips the export outside the repo. The export is never committed.
-2. On the Mac: `node scripts/claude-export-extract.ts <export-dir> --out candidates.md`.
+2. On the Mac: `node --env-file=.env src/shell/claude-export-cli.ts <export-dir> --out candidates.md`.
 3. Spencer edits `candidates.md`: deletes lines, rewords, moves lines between folder headings.
 4. Spencer sends the file to `POST /api/memory/import?dryRun=1` on the Pi over the tailnet, reads the report, then sends it again without `dryRun`.
 
-## Extractor (`scripts/claude-export-extract.ts`)
+## Extractor (`src/shell/claude-export-cli.ts`)
 
-A standalone script. It opens no Yoh database and calls no Yoh route.
+A one-shot CLI beside `backup-cli.ts` (it lives under `src/` because only `src/` and `tests/` are typechecked). Its pure logic is in `src/core/claude-export.ts` and its one model call in `src/adapters/claude-export-llm.ts`. It opens no Yoh database and calls no Yoh route.
 
 **Step 0 — confirm the layout.** The export's file names and JSON shapes are
 confirmed against the real export before any parsing code is written. The
@@ -104,7 +104,9 @@ Chat behaviour does not change.
 
 ### App function (`src/app/import-memory.ts`)
 
-`importMemory(deps, { candidates, batchTag, dryRun }) => Promise<Result<ImportMemoryOutput, YohError>>`
+`importMemory(deps, { candidates, dryRun }) => Promise<Result<ImportMemoryResponse, YohError>>`
+
+It computes the batch tag from today in `YOH_TIMEZONE` and returns it in the report.
 
 - **Origin.** `inferred` by default. A candidate under a stated-only folder
   (`feedback`, `planning-preferences`) or flagged sensitive is filed as
@@ -119,7 +121,10 @@ Chat behaviour does not change.
   naming how many to cut. Nothing is written.
 - **Write.** One `writeTx`. Each item's `source_turn_id` is the batch tag
   (`import:claude-<YYYY-MM-DD>`), so a batch can be found later with no
-  schema change. One outbox row on `MEMORY_TOPIC` in the same transaction.
+  schema change. One outbox row on `MEMORY_TOPIC` in the same transaction,
+  through a new `insertMany` on the memory item store.
+- **Memory page.** An item whose source is an import tag shows no source
+  link (without this it would read as "source deleted").
 - **Report.** `filed`, `skippedDuplicate` and `rejected` (with reason), each
   as a count and the lines. `dryRun` returns the same report and writes
   nothing.
@@ -130,8 +135,7 @@ In `createApp`. The shell reads the body as text, runs the parser, and
 returns a validation envelope naming the line if any line is unparseable.
 Otherwise it calls `importMemory` once and returns
 `c.json(wire(result), httpStatus(result))`. `dryRun` comes from the query
-string. The batch tag's date is "today" in `YOH_TIMEZONE`. Request and
-response types go in `src/types/api.ts`.
+string. The response type goes in `src/types/api.ts`.
 
 ## Errors and undo
 
@@ -154,8 +158,8 @@ response types go in `src/types/api.ts`.
 ## Cost
 
 Stage 1 is one call. Stage 2 depends on the export's size, which is unknown
-until it arrives; the script reports the estimate before the first batch and
-asks for a yes when it is over $5.
+until it arrives; the script reports the estimate before the first batch and,
+when it is over $5, stops until it is run again with `--yes`.
 
 ## Out of scope
 
