@@ -57,7 +57,9 @@ Added during the build (2026-10-04):
 - **E12-R11** A close-out for date D that finishes with a skip removes D's `night-close-out-done` record if one exists (an early `/night` no longer fixes the day as done).
 - **E12-R12 News sources (Spencer: free publisher RSS, "choose the best source").** NPR Business `https://feeds.npr.org/1006/rss.xml` and TechCrunch AI `https://techcrunch.com/category/artificial-intelligence/feed/`. The newest 4 from each, merged newest first, each with its source name and a link out; title, link and time only. Neither publisher's full terms page was read; NPR's feed carries "For Personal Use Only".
 - **Spencer, 2026-10-04:** keep Bklit and patch the copied cell code for keyboard focus, labels and a tooltip on focus; crypto = Kraken public ticker; weather = NWS `api.weather.gov`.
-- **Open with Spencer:** a close-out answered after midnight stamps the completion with the answer time (pre-existing; review I2); any API request counts as an activity day, so a tab left open counts as "opened" (review M1).
+- **Spencer, 2026-10-04 (answers to review I2 and M1):**
+  - **E12-R13** A completion recorded by a night close-out is dated to the night the close-out was about, not to when it was answered.
+  - **E12-R14** Only real interaction counts as an activity day; a tab left open, polling and stream reconnects do not.
 
 ## Task 1: Planning-doc amendments (coordinator, inline)
 
@@ -93,6 +95,11 @@ Behaviour: E12-R8 and R9, and the 12.1 / 12.5 acceptance criteria that are visib
 Tests: Vitest for `web/src/lib/desk.ts` and the page (each widget's value, the zero states, skeleton, error + retry, refetch on a `tasks` hint); replace the placeholder test in `Desk.test.tsx`. Playwright `web/e2e/desk.spec.ts`: the widgets show the fixture's values; axe passes in light and dark. Computed-style proof for the struck-through rows and tabular numerals.
 
 **Commit:** `feat(web): Desk shows completed Tasks, time worked, on-time rate, streak and Claude spend`
+
+## Task 4b: Close-out dates and real-interaction activity days (Spencer's answers; not built yet)
+
+- **E12-R13.** In `src/app/answer-night-close-out.ts`, when the answer's local date is later than the close-out's date, the completion's `completedAt` is the last minute of the close-out's date in the host timezone (23:59 local); answered on the same day, it stays the answer time. The helper that turns a local date into that instant is pure, in `src/core/local-time.ts`. Existing rows are not rewritten. Tests: answered the same night; answered the next morning (on-time for a Task due that day, listed under that day, not under the next); across a DST change.
+- **E12-R14.** Remove the record-on-every-request middleware. Add `POST /api/activity` (JSON, empty body) → `recordActivity`. The web sends it on the first pointer or key input after load and again on the first input of each later host day (`web/src/lib/hostTime.ts` for the day), from one module-level listener; never on a timer, visibility change or stream event. A failed ping is retried on the next input, silently. A day with completions still counts on the heatmap without a ping. The fixture's seeded activity-only day stays seeded directly. Tests: node (route records; `GET` routes no longer record) and Vitest (one ping per day, none without input, retry after failure).
 
 ## Task 5: Usage Heatmap (Story 12.2) — Spencer keeps Bklit, patched (2026-10-04)
 
