@@ -12,6 +12,7 @@ import { PageNavigationContext } from "../lib/navigationContext.tsx";
 import * as reducedMotionModule from "../hooks/useReducedMotion.ts";
 import * as notificationsModule from "../lib/notifications.ts";
 import * as chatPanelModule from "../lib/chatPanel.ts";
+import * as researchModule from "../lib/research.ts";
 import { FOCUS_RING } from "../lib/controlStyles.ts";
 import type { NotificationRecord } from "../../../src/types/api.ts";
 
@@ -260,5 +261,25 @@ describe("chat deep-links (Story 9.3, E8)", () => {
     renderWithNav([{ id: "n1", kind: "operational", title: "x", body: "Empty command", createdAt: "2026-01-01T00:00:00.000Z", deepLink: "chat:" }]);
     fireEvent.click(screen.getByText("Empty command"));
     expect(openChatWithCommand).toHaveBeenCalledWith(undefined);
+  });
+});
+
+describe("research deep-links (Story 11.2, E11-R5)", () => {
+  it("'research:<id>' goes to the Research Hub page and opens that document", () => {
+    const open = vi.spyOn(researchModule, "openResearchDocument").mockImplementation(() => {});
+    const dismiss = vi.spyOn(notificationsModule, "dismissNotification");
+    const { goTo } = renderWithNav([{ id: "n1", kind: "research-ready", title: "x", body: "Research ready", createdAt: "2026-01-01T00:00:00.000Z", deepLink: "research:abc-123" }]);
+    fireEvent.click(screen.getByText("Research ready"));
+    expect(goTo).toHaveBeenCalledWith(3);
+    expect(open).toHaveBeenCalledWith("abc-123");
+    expect(dismiss).toHaveBeenCalledWith("n1");
+  });
+
+  it("a bare 'research' still just goes to the page", () => {
+    const open = vi.spyOn(researchModule, "openResearchDocument").mockImplementation(() => {});
+    const { goTo } = renderWithNav([{ id: "n1", kind: "research-ready", title: "x", body: "Research ready", createdAt: "2026-01-01T00:00:00.000Z", deepLink: "research" }]);
+    fireEvent.click(screen.getByText("Research ready"));
+    expect(goTo).toHaveBeenCalledWith(3);
+    expect(open).not.toHaveBeenCalled();
   });
 });
