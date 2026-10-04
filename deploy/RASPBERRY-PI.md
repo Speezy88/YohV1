@@ -131,3 +131,25 @@ Without GitHub, re-run the rsync from step 4 (never overwrite `.env` or `data/`)
 - **Ritual logs:** `~/yoh/logs/*.log`
 - **Wrong "today":** check the Pi's time zone with `timedatectl`, and set it with `sudo timedatectl set-timezone America/Los_Angeles`.
 - **Won't load from another device:** check `tailscale serve status`, and that the device is signed in to the same tailnet.
+
+## Importing a Claude data export into memory
+
+Run on the Mac, from the repo. The export and the candidates file stay outside the repo.
+
+1. Download the `projects`, `memories` and `conversations` zips named in the export manifest and unzip each into its own folder under `~/Documents/claude-export` (`projects/`, `memories/`, `conversations/`).
+2. Extract candidates (prints an estimate first; over $5 it stops until you add `--yes`):
+
+   ```bash
+   node --env-file=.env src/shell/claude-export-cli.ts ~/Documents/claude-export --out ~/Documents/Yoh-previews/claude-candidates.md
+   ```
+
+   If it reports failed calls, run the same command again; finished calls are cached.
+3. Edit `claude-candidates.md`: delete lines, reword, move lines between headings.
+4. Dry run against the Pi, then the real import:
+
+   ```bash
+   curl -sS -X POST -H 'Content-Type: text/markdown' --data-binary @"$HOME/Documents/Yoh-previews/claude-candidates.md" 'https://yoh.<tailnet>.ts.net/api/memory/import?dryRun=1'
+   curl -sS -X POST -H 'Content-Type: text/markdown' --data-binary @"$HOME/Documents/Yoh-previews/claude-candidates.md" 'https://yoh.<tailnet>.ts.net/api/memory/import'
+   ```
+
+   The reply lists what was filed, skipped as a duplicate, or rejected. `alwaysLoaded` shows how many always-loaded items you had, how many you will have, and the limit of 60. Leave some room: imported items count as your newest, so once you are at 60 the next thing you tell Yoh pushes out your own oldest item, not an imported one. If it says the always-loaded folders would pass 60, cut that many lines and send it again. Sending the same file twice is harmless.

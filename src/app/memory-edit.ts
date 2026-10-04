@@ -8,6 +8,7 @@ import type { MemoryItemStore } from "../adapters/memory-item-store.ts";
 import { withdrawRuleProposal, type MemoryStore } from "../adapters/memory-store.ts";
 import { errorCopyForThrown } from "../core/error-copy.ts";
 import { MEMORY_ITEM_MAX_CHARS, STATED_ONLY_FOLDERS, isMemoryFolder, memoryFolderLabel } from "../core/memory-folders.ts";
+import { normalizeMemoryText } from "../core/memory-filing.ts";
 import { localIsoDate } from "../rituals/ritual-shared.ts";
 import { recallMemoryContext } from "./memory-recall.ts";
 import type {
@@ -18,7 +19,9 @@ import type {
   MoveMemoryRequest,
   ReviewMemoryRequest,
   SetMemoryExpiryRequest,
+  SortFeedbackRequest,
 } from "../types/api.ts";
+import { MEMORY_SORT_REASON_MAX_CHARS } from "../core/memory-sort-feedback.ts";
 import type { MemoryItem, Result, Task, YohError } from "../types/domain.ts";
 
 export interface MemoryEditDeps {
@@ -58,10 +61,6 @@ function checkFutureDate(deps: MemoryEditDeps, value: unknown): Result<string, Y
   return { ok: true, value };
 }
 
-function normalize(text: string): string {
-  return text.toLowerCase().replace(/\s+/g, " ").trim().replace(/[\s.,;:!?]+$/, "");
-}
-
 /** The current item an edit/move/expiry/renew may act on, or the refusal to return. */
 function editable(deps: MemoryEditDeps, itemId: unknown, allowPending = false): Result<MemoryItem, YohError> {
   const item = typeof itemId === "string" ? deps.memoryItems.getItem(itemId) : undefined;
@@ -80,8 +79,8 @@ export async function editMemoryItem(deps: MemoryEditDeps, input: EditMemoryRequ
     const text = typeof input.text === "string" ? input.text.trim() : "";
     if (text.length < 1 || text.length > MEMORY_ITEM_MAX_CHARS) return fail("validation", "Memory text must be 1 to 280 characters.");
     const next = { ...carry(item), text, origin: "stated" as const };
-    const wanted = normalize(text);
-    const dup = deps.memoryItems.listItems({ status: ["current"] }).find((o) => o.id !== item.id && normalize(o.text) === wanted);
+    const wanted = normalizeMemoryText(text);
+    const dup = deps.memoryItems.listItems({ status: ["current"] }).find((o) => o.id !== item.id && normalizeMemoryText(o.text) === wanted);
     if (input.mergeWithId !== undefined) {
       if (!dup || dup.id !== input.mergeWithId) return fail("conflict", CHANGED);
       if (dup.ruleChange === "pending") return fail("conflict", PENDING);
@@ -110,6 +109,29 @@ export async function moveMemoryItem(deps: MemoryEditDeps, input: MoveMemoryRequ
     }
     const saved = deps.memoryItems.supersede(item.id, { ...carry(item), folder: input.folder });
     return { ok: true, value: { itemId: saved.id } };
+  } catch (error) {
+    return unreachable(error);
+  }
+}
+
+/** Sorting feedback: Spencer's verdict on the item's folder. A direct write; the item itself is not touched. */
+export async function recordSortFeedback(deps: MemoryEditDeps, input: SortFeedbackRequest): Promise<Result<MemoryWriteResponse, YohError>> {
+  try {
+    const item = typeof input.itemId === "string" ? deps.memoryItems.getItem(input.itemId) : undefined;
+    if (!item || (item.status !== "current" && item.status !== "history")) return fail("conflict", CHANGED);
+    if (input.verdict !== "right" && input.verdict !== "wrong") return fail("validation", "Say whether the folder is right or wrong.");
+    const reason = typeof input.reason === "string" ? input.reason.trim() : "";
+    if (reason.length < 1 || reason.length > MEMORY_SORT_REASON_MAX_CHARS) return fail("validation", `Give a reason of 1 to ${MEMORY_SORT_REASON_MAX_CHARS} characters.`);
+    const belongsIn = input.verdict === "wrong" ? input.belongsIn : undefined;
+    if (belongsIn !== undefined) {
+      if (!isMemoryFolder(belongsIn)) return fail("validation", "Pick the folder this belongs in.");
+      if (belongsIn === item.folder) return fail("validation", "That's the folder it's already in.");
+      if (item.origin === "inferred" && STATED_ONLY_FOLDERS.includes(belongsIn)) {
+        return fail("validation", `Only things you said can go in ${memoryFolderLabel(belongsIn)}.`);
+      }
+    }
+    deps.memoryItems.putSortFeedback({ itemId: item.id, verdict: input.verdict, reason, ...(belongsIn !== undefined ? { belongsIn } : {}), at: deps.now().toISOString() });
+    return { ok: true, value: { itemId: item.id } };
   } catch (error) {
     return unreachable(error);
   }

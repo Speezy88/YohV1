@@ -1,0 +1,10 @@
+[
+  {
+    "conversations_memory": "Spencer is a student who dives.",
+    "project_memories": { "p1": "Yoh runs on a Raspberry Pi.", "p2": "" },
+    "memory_files": [
+      { "path": "preferences.md", "content": "Prefers morning study blocks.", "updated_at": "2026-05-01T00:00:00Z" },
+      { "path": "empty.md", "content": "", "updated_at": "2026-05-01T00:00:00Z" }
+    ]
+  }
+]

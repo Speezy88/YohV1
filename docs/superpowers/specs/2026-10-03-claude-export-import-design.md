@@ -43,6 +43,14 @@ approve is filed; nothing he told Yoh directly is replaced.
 
 A one-shot CLI beside `backup-cli.ts` (it lives under `src/` because only `src/` and `tests/` are typechecked). Its pure logic is in `src/core/claude-export.ts` and its one model call in `src/adapters/claude-export-llm.ts`. It opens no Yoh database and calls no Yoh route.
 
+**Layout (confirmed against the real export, 2026-10-04).** The export
+arrives as one zip per category: `conversations/conversations.json`,
+`projects/projects/<uuid>.json` (one object per project) and
+`memories/memories/<uuid>.json` (saved memory, per-project memories and
+memory files). The reader also accepts a single folder holding
+`conversations.json`, `projects.json` and `memories.json`. Conversation
+titles are assistant-written and are not sent to the model.
+
 **Step 0 — confirm the layout.** The export's file names and JSON shapes are
 confirmed against the real export before any parsing code is written. The
 expected contents are conversations (with full message history), projects
@@ -51,9 +59,9 @@ The readers for each are isolated in one module so a layout difference is a
 one-place change. A missing source (e.g. no saved memory) is reported and
 skipped, not an error.
 
-**Stage 1 — already-distilled sources.** Claude's saved memory and project
-instructions go through one Haiku call that rewrites them as Yoh-shaped
-candidates.
+**Stage 1 — already-distilled sources.** Claude's saved memory, its memory
+files and project instructions go through Haiku in batches of about 20,000
+characters, which rewrites them as Yoh-shaped candidates.
 
 **Stage 2 — conversations.** Conversations are batched by size. Only
 Spencer's own messages are sent as evidence; Claude's replies are dropped, so
@@ -131,7 +139,9 @@ It computes the batch tag from today in `YOH_TIMEZONE` and returns it in the rep
 
 ### Route (`POST /api/memory/import`)
 
-In `createApp`. The shell reads the body as text, runs the parser, and
+In `createApp`. The request must carry `Content-Type: text/markdown`; anything
+else is refused, so a page on another origin cannot post to the route. The
+report includes `alwaysLoaded: { before, after, cap }`. The shell reads the body as text, runs the parser, and
 returns a validation envelope naming the line if any line is unparseable.
 Otherwise it calls `importMemory` once and returns
 `c.json(wire(result), httpStatus(result))`. `dryRun` comes from the query

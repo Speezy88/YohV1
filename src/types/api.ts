@@ -466,7 +466,15 @@ export interface ReviewMemoryRequest {
   readonly expiresOn?: IsoDate;
 }
 
-/** `POST /api/memory/{move,expiry,delete,review}` value (`itemId` is the new version's id where one exists). */
+/** `POST /api/memory/sort-feedback` request: is the item in the right folder, and why. `belongsIn` only with "wrong". */
+export interface SortFeedbackRequest {
+  readonly itemId: string;
+  readonly verdict: "right" | "wrong";
+  readonly reason: string;
+  readonly belongsIn?: MemoryFolder;
+}
+
+/** `POST /api/memory/{move,expiry,delete,review,sort-feedback}` value (`itemId` is the new version's id where one exists). */
 export interface MemoryWriteResponse {
   readonly itemId?: string;
 }
@@ -594,6 +602,8 @@ export interface MemoryItemView {
   /** Absent when the item has no source turn; "deleted" when the turn is gone. */
   readonly source?: { readonly conversationId: string; readonly turnId: string; readonly date: IsoDate } | "deleted";
   readonly earlierVersions: readonly { readonly id: string; readonly text: string; readonly confirmedAt: IsoDateTime; readonly confirmedOn: IsoDate }[];
+  /** Spencer's verdict on this item's current folder; absent once the item has moved since. */
+  readonly sortFeedback?: { readonly verdict: "right" | "wrong"; readonly reason: string; readonly belongsIn?: MemoryFolder };
 }
 
 /** `count` is the number of current items; all eight folders, PRD order. */
@@ -644,6 +654,28 @@ export interface MemorySearchResponse {
   }[];
 }
 
+// ---- Memory import (Claude export) -----------------------------------------
+
+/** One line of the reviewed candidates file. */
+export interface ImportMemoryLine {
+  readonly line: number;
+  readonly folder: MemoryFolder;
+  readonly text: string;
+}
+
+/** `POST /api/memory/import`'s value. A dry run returns the same report and writes nothing. */
+export interface ImportMemoryResponse {
+  readonly dryRun: boolean;
+  /** Stored as each filed item's `sourceTurnId`. */
+  readonly batchTag: string;
+  readonly counts: { readonly filed: number; readonly skippedDuplicate: number; readonly rejected: number };
+  /** Current items in the always-loaded folders before the import, after it, and `ALWAYS_LOADED_CAP`. */
+  readonly alwaysLoaded: { readonly before: number; readonly after: number; readonly cap: number };
+  readonly filed: readonly ImportMemoryLine[];
+  readonly skippedDuplicate: readonly ImportMemoryLine[];
+  readonly rejected: readonly (ImportMemoryLine & { readonly reason: string })[];
+}
+
 // ============================================================================
 // Tasks page (Task 6B, FR-43) — new shapes only.
 // ============================================================================
@@ -669,7 +701,7 @@ export interface TaskListItem {
   /** Task 7: the live Priority select value verbatim (e.g. "🔴 High") — never part of `missing` (Priority is not a Data-Completeness Gate field). */
   readonly priority?: string;
   readonly missing: readonly PlanningFieldNames[];
-  /** Due before today (host TZ) and not completed — server-computed, so the client never reads its own clock. */
+  /** Due before today (host TZ); a completed Task is never listed — server-computed, so the client never reads its own clock. */
   readonly overdue: boolean;
 }
 
@@ -687,7 +719,7 @@ export interface TasksViewResponse {
   readonly today: IsoDate;
   readonly groupBy: TasksGroupBy;
   readonly query: string;
-  /** Every Task in Notion, before `query` filtering. */
+  /** Every open (not completed) Task in Notion, before `query` filtering. */
   readonly total: number;
   readonly groups: readonly TaskGroup[];
   /** Live Notion options for the inline selects. */
@@ -766,6 +798,23 @@ export interface ResearchListItem {
 /** `GET /api/research`'s value: the most recent Research Vault items, newest first, server-limited (AD-17). */
 export interface ResearchListResponse {
   readonly items: readonly ResearchListItem[];
+  /** True when the vault holds more rows than `items` returned (E11-R1). */
+  readonly hasMore: boolean;
+}
+
+/** One Research Vault document: its "Key Findings" body and one entry per "Sources" line (E11-R2). */
+export interface ResearchDocument {
+  readonly id: string;
+  readonly title: string;
+  readonly date?: IsoDate;
+  readonly body: string;
+  readonly sources: readonly string[];
+  readonly url: string;
+}
+
+/** `GET /api/research/document`'s value; `document` is absent when the vault is empty. */
+export interface ResearchDocumentResponse {
+  readonly document?: ResearchDocument;
 }
 
 // ============================================================================

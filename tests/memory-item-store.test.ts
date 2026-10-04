@@ -184,3 +184,31 @@ test("pattern state keeps confirmedAt and migrates an older table that lacks the
   again.putPatternState({ kind: "area-slips", area: "Work", confirmedAt: T2 });
   assert.equal(again.getPatternState("area-slips", "Work")?.confirmedAt, T2);
 });
+
+test("insertMany writes every row in one transaction with one outbox row", () => {
+  const { store, connection } = fresh();
+  const before = outboxCount(connection);
+  const tag = "import:claude-2026-10-03";
+  const items = store.insertMany([
+    { folder: "about-you", text: "Runs at 6", origin: "inferred", sourceTurnId: tag },
+    { folder: "feedback", text: "Keep replies short", origin: "stated", scope: "this kind of request", sourceTurnId: tag },
+  ]);
+  assert.equal(items.length, 2);
+  assert.equal(outboxCount(connection) - before, 1);
+  assert.deepEqual(store.listItems().map((i) => i.text).sort(), ["Keep replies short", "Runs at 6"]);
+  assert.equal(items[0]?.sourceTurnId, tag);
+  assert.equal(items[1]?.scope, "this kind of request");
+  assert.deepEqual(store.searchRelevant("replies", ["feedback"], 5).map((i) => i.text), ["Keep replies short"]);
+});
+
+test("insertMany writes nothing when one row is invalid, and nothing for an empty list", () => {
+  const { store, connection } = fresh();
+  const before = outboxCount(connection);
+  assert.throws(
+    () => store.insertMany([{ folder: "about-you", text: "fine", origin: "inferred" }, { folder: "about-you", text: "x".repeat(281), origin: "inferred" }]),
+    MemoryItemValidationError,
+  );
+  assert.deepEqual(store.insertMany([]), []);
+  assert.equal(store.listItems().length, 0);
+  assert.equal(outboxCount(connection), before);
+});

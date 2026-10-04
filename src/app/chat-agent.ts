@@ -25,7 +25,9 @@ import {
   UNSTAGED_CLAIM_REPLY,
   isWriteTool,
   filterTasks,
+  planBlockEdits,
   resolveEventTimes,
+  resolveLocalTime,
   summarizeTasks,
   type TaskFilter,
 } from "../core/chat-tools.ts";
@@ -35,7 +37,7 @@ import type { MemoryContext } from "../core/memory-context.ts";
 import { CHANGE_SET_PROPOSAL_KIND } from "./apply-change-set.ts";
 import { openProposal } from "./open-proposal.ts";
 import type { ChatStreamEvent, ChatTurnResponse } from "../types/api.ts";
-import type { CalendarEvent, ChangeSet, ChangeSetItem, ChatTurn, IsoDate, Proposal, Result, Task, YohError } from "../types/domain.ts";
+import type { CalendarEvent, ChangeSet, ChangeSetItem, ChatTurn, IsoDate, PlanBlock, Proposal, Result, Task, YohError } from "../types/domain.ts";
 
 export const CHAT_AGENT_STEP_CAP_REPLY = "I stopped before finishing that — it took more steps than I allow in one turn. Nothing was changed. Try asking for one part at a time.";
 
@@ -80,6 +82,7 @@ interface ToolOutcome {
 interface Seen {
   readonly tasks: Map<string, Task>;
   readonly events: Map<string, CalendarEvent>;
+  readonly blocks: Map<string, PlanBlock>;
 }
 
 function agentSystemPrompt(tone: string, now: Date, timeZone: string): string {
@@ -91,8 +94,9 @@ function agentSystemPrompt(tone: string, now: Date, timeZone: string): string {
     "A Plan exists only for today. You cannot read, build or reorder a Plan for another day; say so plainly instead of asking for more.",
     "Write tools only stage a change. Spencer then approves or discards everything staged in one step. Never say a change has been made, added, moved, deleted or saved.",
     "Only a write tool call stages a change; describing one in text does nothing. Never ask Spencer to confirm in text: the Approve card is the only confirmation.",
-    "Use ids exactly as a read tool returned them in this turn. Call list_tasks or list_events first when you need an id.",
-    "If a request needs something no tool covers (Canvas, deleting an event Yoh did not create), say plainly that you can't do that.",
+    "Use ids exactly as a read tool returned them in this turn. Call list_tasks, list_events or get_plan first when you need an id.",
+    "To change one block of today's Plan, call get_plan, then move_block, resize_block or remove_block. Use refit_plan only when Spencer asks to re-fit the whole day.",
+    "If a request needs something no tool covers (Canvas, deleting an event Yoh did not create, resizing or removing a Routine or break), say plainly that you can't do that.",
   ].join("\n");
 }
 
@@ -141,9 +145,19 @@ async function runReadTool(deps: ChatAgentDeps, name: string, args: Record<strin
     if (name === "get_plan") {
       const plan = getPlan(deps.store, localIsoDate(deps.now(), deps.timeZone));
       if (!plan) return { content: JSON.stringify({ plan: null, note: "There is no Plan for today yet." }) };
+      const nowMs = deps.now().getTime();
+      seen.blocks.clear();
+      for (const b of plan.data.blocks) seen.blocks.set(b.id, b);
       return {
         content: JSON.stringify({
-          blocks: plan.data.blocks.map((b) => ({ kind: b.kind, label: b.label, localStart: localClock(b.start, deps.timeZone), localEnd: localClock(b.end, deps.timeZone) })),
+          blocks: plan.data.blocks.map((b) => ({
+            id: b.id,
+            kind: b.kind,
+            label: b.label,
+            localStart: localClock(b.start, deps.timeZone),
+            localEnd: localClock(b.end, deps.timeZone),
+            ...planBlockEdits(b, nowMs),
+          })),
         }),
       };
     }
@@ -157,6 +171,13 @@ async function runReadTool(deps: ChatAgentDeps, name: string, args: Record<strin
   }
 }
 
+/** The Task or Routine a staged block edit acts on; `undefined` for any other item. */
+function blockKey(item: ChangeSetItem): string | undefined {
+  if (item.kind === "move-block") return item.subject.kind === "task" ? `t:${item.subject.taskId}` : `r:${item.subject.routineId}`;
+  if (item.kind === "resize-block" || item.kind === "remove-block") return `t:${item.taskId}`;
+  return undefined;
+}
+
 function sameTarget(a: ChangeSetItem, b: ChangeSetItem): boolean {
   switch (b.kind) {
     case "plan-day":
@@ -166,6 +187,12 @@ function sameTarget(a: ChangeSetItem, b: ChangeSetItem): boolean {
     case "resize-event":
     case "delete-event":
       return (a.kind === "move-event" || a.kind === "resize-event" || a.kind === "delete-event") && a.eventId === b.eventId;
+    case "move-block":
+      return (a.kind === "move-block" && blockKey(a) === blockKey(b)) || (a.kind === "remove-block" && blockKey(a) === blockKey(b));
+    case "resize-block":
+      return (a.kind === "resize-block" || a.kind === "remove-block") && a.taskId === b.taskId;
+    case "remove-block":
+      return blockKey(a) !== undefined && blockKey(a) === blockKey(b);
     case "update-task":
       return a.kind === "update-task" && a.taskId === b.taskId && a.field === b.field;
     case "rename-task":
@@ -200,6 +227,37 @@ function runWriteTool(deps: ChatAgentDeps, name: string, args: Record<string, un
   if (name === "refit_plan") {
     if (!getPlan(deps.store, localIsoDate(deps.now(), deps.timeZone))) return err("There is no Plan for today to re-fit. Use plan_day.");
     return stagedOk({ kind: "refit-plan" });
+  }
+
+  if (name === "move_block" || name === "resize_block" || name === "remove_block") {
+    const block = seen.blocks.get(String(args["blockId"] ?? ""));
+    if (!block) return err("No block with that id was returned by get_plan in this turn. Call get_plan first and use its id.");
+    const nowMs = deps.now().getTime();
+    const can = planBlockEdits(block, nowMs);
+    if (name === "move_block") {
+      if (!can.canMove) return err("That block can't be moved: only a Task or Routine block that hasn't started can.");
+      const newStart = resolveLocalTime(localIsoDate(deps.now(), deps.timeZone), String(args["startTime"] ?? ""), deps.timeZone);
+      if (!newStart) return err("startTime must be HH:MM in 24-hour time.");
+      if (Date.parse(newStart) < nowMs) return err("startTime must be later today.");
+      const subject = block.kind === "routine" ? ({ kind: "routine", routineId: block.routineId! } as const) : ({ kind: "task", taskId: block.taskId! } as const);
+      return stagedOk({ kind: "move-block", subject, label: block.label, newStart });
+    }
+    if (name === "remove_block") {
+      if (!can.canRemove) return err("That block can't be removed: only a Task's block that hasn't started can. Routines, breaks and calendar events stay.");
+      return stagedOk({ kind: "remove-block", taskId: block.taskId!, label: block.label });
+    }
+    if (!can.canResize) return err("That block can't be resized: only a Task's block that hasn't started can. Routines, breaks and calendar events keep their length.");
+    let durationMinutes = args["durationMinutes"];
+    if (durationMinutes === undefined) {
+      const upcoming = [...seen.blocks.values()].filter((b) => b.kind === "work" && b.taskId === block.taskId && Date.parse(b.start) >= nowMs);
+      if (upcoming.length > 1) return err("That Task is split across several blocks today. Give durationMinutes, its total work time for the rest of today, instead of endTime.");
+      const newEnd = resolveLocalTime(localIsoDate(new Date(block.start), deps.timeZone), String(args["endTime"] ?? ""), deps.timeZone);
+      if (!newEnd) return err("Give endTime as HH:MM in 24-hour time, or durationMinutes.");
+      durationMinutes = Math.round((Date.parse(newEnd) - Date.parse(block.start)) / 60_000);
+      if ((durationMinutes as number) <= 0) return err("endTime must be after the block's start.");
+    }
+    if (typeof durationMinutes !== "number" || !Number.isInteger(durationMinutes) || durationMinutes < 1) return err("durationMinutes must be a whole number of minutes.");
+    return stagedOk({ kind: "resize-block", taskId: block.taskId!, label: block.label, durationMinutes });
   }
 
   if (name === "create_event") {
@@ -285,7 +343,7 @@ function clearOpenChangeSets(store: MemoryStore): void {
 export async function chatAgent(deps: ChatAgentDeps, input: ChatAgentInput): Promise<Result<ChatTurnResponse, YohError>> {
   const systemPrompt = agentSystemPrompt(input.systemPrompt, deps.now(), deps.timeZone);
   const messages: ToolTurnMessage[] = input.history.map((t) => ({ role: t.role, content: t.content }));
-  const seen: Seen = { tasks: new Map(), events: new Map() };
+  const seen: Seen = { tasks: new Map(), events: new Map(), blocks: new Map() };
   const staged: ChangeSetItem[] = [];
   let finalText: string | undefined;
   let wroteAttempted = false;

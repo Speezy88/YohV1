@@ -30,6 +30,22 @@ function validDate(s: string): boolean {
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
 }
 
+/** Why a candidate may not be filed, or undefined when it may. `today` is the host-local date. Pure. */
+export function candidateRejection(c: MemoryCandidate, today: string): string | undefined {
+  const text = c.text.trim();
+  if (text.length === 0) return "empty";
+  if (text.length > MEMORY_ITEM_MAX_CHARS) return "too-long";
+  if (c.origin === "inferred" && STATED_ONLY_FOLDERS.includes(c.folder)) return "inferred-in-stated-only-folder";
+  if (c.origin === "inferred" && c.sensitive) return "sensitive-inferred";
+  if (c.expiresOn !== undefined && (!validDate(c.expiresOn) || c.expiresOn < today)) return "bad-expiry";
+  return undefined;
+}
+
+/** The form two memory texts are compared in: case, spacing and trailing punctuation do not matter. Pure. */
+export function normalizeMemoryText(text: string): string {
+  return text.toLowerCase().replace(/\s+/g, " ").trim().replace(/[\s.,;:!?]+$/, "");
+}
+
 export function validateFiling(candidates: readonly MemoryCandidate[], ctx: FilingContext): FilingResult {
   const accepted: MemoryCandidate[] = [];
   const dropped: FilingResult["dropped"] = [];
@@ -42,12 +58,7 @@ export function validateFiling(candidates: readonly MemoryCandidate[], ctx: Fili
     const c: MemoryCandidate = { ...raw, text: raw.text.trim() };
     if (ctx.forceStated) c.origin = "stated";
     if (ctx.forceFolder) c.folder = ctx.forceFolder;
-    let reason: string | undefined;
-    if (c.text.length === 0) reason = "empty";
-    else if (c.text.length > MEMORY_ITEM_MAX_CHARS) reason = "too-long";
-    else if (c.origin === "inferred" && STATED_ONLY_FOLDERS.includes(c.folder)) reason = "inferred-in-stated-only-folder";
-    else if (c.origin === "inferred" && c.sensitive) reason = "sensitive-inferred";
-    else if (c.expiresOn !== undefined && (!validDate(c.expiresOn) || c.expiresOn < today)) reason = "bad-expiry";
+    const reason = candidateRejection(c, today);
     if (reason) {
       dropped.push({ candidate: raw, reason });
       continue;

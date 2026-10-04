@@ -26,6 +26,8 @@ test("memory write routes reject malformed bodies with 400", async () => {
     ["/api/memory/expiry", { itemId: "x" }],
     ["/api/memory/expiry", { itemId: "x", expiresOn: 5 }],
     ["/api/memory/delete", {}],
+    ["/api/memory/sort-feedback", { itemId: "x", verdict: "maybe", reason: "r" }],
+    ["/api/memory/sort-feedback", { itemId: "x", verdict: "right" }],
     ["/api/memory/review", { itemId: "x", action: "drop" }],
     ["/api/settings/revert", {}],
   ] as const) {
@@ -33,6 +35,16 @@ test("memory write routes reject malformed bodies with 400", async () => {
     assert.equal(res.status, 400, path);
     assert.equal(((await res.json()) as { error: { kind: string } }).error.kind, "validation");
   }
+});
+
+test("sort feedback is saved over HTTP and comes back on the item in GET /api/memory", async () => {
+  const { memoryItems, post, app } = setup();
+  const a = memoryItems.insert({ folder: "about-you", text: "Runs at 6", origin: "stated" });
+  const res = await post("/api/memory/sort-feedback", { itemId: a.id, verdict: "wrong", reason: "It's a habit.", belongsIn: "patterns" });
+  assert.equal(res.status, 200);
+  const view = (await (await app.request("/api/memory")).json()) as { value: { folders: { items: { id: string; sortFeedback?: unknown }[] }[] } };
+  const item = view.value.folders.flatMap((f) => f.items).find((i) => i.id === a.id);
+  assert.deepEqual(item?.sortFeedback, { verdict: "wrong", reason: "It's a habit.", belongsIn: "patterns" });
 });
 
 test("edit, move, expiry, review, delete and revert work over HTTP", async () => {

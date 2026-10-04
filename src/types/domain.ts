@@ -46,6 +46,19 @@ export interface MemoryItem {
   lastMatchedAt?: IsoDateTime;
 }
 
+/** Spencer's verdict on where a memory item was filed; the filer reads these as examples. */
+export interface MemorySortFeedback {
+  itemId: string;
+  /** The item's text and folder when the verdict was given. */
+  text: string;
+  folder: MemoryFolder;
+  verdict: "right" | "wrong";
+  reason: string;
+  /** A "wrong" verdict may name the folder it should have gone to. */
+  belongsIn?: MemoryFolder;
+  createdAt: IsoDateTime;
+}
+
 /** A memory item proposed for filing (Story 13.4); validated by `core/memory-filing.ts`. */
 export interface MemoryCandidate {
   folder: MemoryFolder;
@@ -275,21 +288,24 @@ export interface Project {
 }
 
 /**
- * ResearchVaultRecord — Task 6C (FR-43, UX-DR43): one row read from
- * Spencer's live Research Vault database, as `notion-adapter.ts`'s
- * `readResearchVault` maps it. Deliberately minimal — just what the
- * Research Hub page's list shows (title, date, how many sources it cites,
- * and its own Notion page url) — the vault's other fields (Key Findings,
- * Query, Status, Area, Confidence, Open Questions, Linked Project) are
- * Story 11.2's job, once the page renders a document's full body rather
- * than only linking out to it.
+ * ResearchVaultRecord — Task 6C (FR-43, UX-DR43) + Story 11.2: one row read
+ * from Spencer's live Research Vault database, as `notion-adapter.ts`'s
+ * `readResearchVault` maps it: what the Research Hub page's list shows
+ * (title, date, source count, its own Notion page url) plus the document
+ * itself (the "Key Findings" body and the "Sources" lines). The vault's
+ * other fields (Query, Status, Area, Confidence, Open Questions, Linked
+ * Project) are not read.
  */
 export interface ResearchVaultRecord {
   readonly id: ExternalId;
   readonly title: string;
   /** Absent when the Notion "Date" property is unset on this row. */
   readonly date?: IsoDate;
-  /** How many non-empty lines the "Sources" rich_text property holds (Story 8.4 writes one citation per line). */
+  /** The "Key Findings" rich_text property, verbatim; "" when unset. */
+  readonly keyFindings: string;
+  /** One entry per non-empty, trimmed line of the "Sources" rich_text property (Story 8.4 writes one citation per line). */
+  readonly sources: readonly string[];
+  /** Always `sources.length`. */
   readonly sourceCount: number;
   readonly url: string;
 }
@@ -456,6 +472,10 @@ export type ChangeSetItem =
   | { readonly kind: "rename-task"; readonly taskId: ExternalId; readonly label: string; readonly newTitle: string }
   | { readonly kind: "complete-task"; readonly taskId: ExternalId; readonly label: string }
   | { readonly kind: "delete-task"; readonly taskId: ExternalId; readonly label: string }
+  | { readonly kind: "move-block"; readonly subject: DayPin["subject"]; readonly label: string; readonly newStart: IsoDateTime }
+  /** `durationMinutes` is the Task's work time for the rest of today, not counting breaks. */
+  | { readonly kind: "resize-block"; readonly taskId: ExternalId; readonly label: string; readonly durationMinutes: number }
+  | { readonly kind: "remove-block"; readonly taskId: ExternalId; readonly label: string }
   | { readonly kind: "plan-day" }
   | { readonly kind: "refit-plan" };
 
@@ -543,6 +563,9 @@ export type ReshuffleRequest =
   | { readonly kind: "reflow-now" }
   | { readonly kind: "move-block"; readonly planBlockId: string; readonly newStart: IsoDateTime }
   | { readonly kind: "pin-task"; readonly taskId: ExternalId; readonly newStart: IsoDateTime }
+  | { readonly kind: "pin-routine"; readonly routineId: string; readonly newStart: IsoDateTime }
+  /** Gives the Task `durationMinutes` of work for the rest of today, pinned where it already sits. */
+  | { readonly kind: "resize-task"; readonly taskId: ExternalId; readonly durationMinutes: number }
   | { readonly kind: "unpin-task"; readonly taskId: ExternalId }
   | { readonly kind: "drop-task"; readonly taskId: ExternalId }
   | { readonly kind: "swap"; readonly addTaskId: ExternalId; readonly removeTaskId: ExternalId };

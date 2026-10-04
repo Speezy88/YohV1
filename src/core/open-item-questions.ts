@@ -13,6 +13,7 @@
 import type { MissingFieldReport } from "./data-completeness-gate.ts";
 import type { NightCloseOutTaskDetail } from "../rituals/night-ritual.ts";
 import { PLANNING_FIELD_LABELS } from "./planning-field-value.ts";
+import { RESEARCH_OFFER_KIND } from "./research-offer.ts";
 import type { FieldValueSuggestion, PlanningFieldNames, Proposal, TaskFieldOverride } from "../types/domain.ts";
 import type { OpenItemQuestion } from "../types/api.ts";
 
@@ -255,7 +256,7 @@ export function buildProposalQuestion(requestId: string, promptText: string, pro
         : proposal.kind === "reshuffle" || proposal.kind === "change-set"
           ? APPROVE_DISCARD_OPTIONS
           : YES_NO_OPTIONS,
-    allowsFreeText: proposal.kind !== "rule-change" && proposal.kind !== "pattern" && proposal.kind !== "change-set",
+    allowsFreeText: proposal.kind !== "rule-change" && proposal.kind !== "pattern" && proposal.kind !== "change-set" && proposal.kind !== RESEARCH_OFFER_KIND,
     proposal,
   };
 }

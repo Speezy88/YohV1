@@ -1930,3 +1930,18 @@ Expected: source counts that look right to Spencer, an estimate, then the candid
 - [ ] **Step 4: Hand over**
 
 After the branch is merged and Spencer has deployed, he runs the dry run and the real import from `deploy/RASPBERRY-PI.md`. The import route is a write on the Pi's database: Spencer runs both `curl` commands, not the agent.
+
+---
+
+## Amendments made during execution (2026-10-04)
+
+The task text above is as dispatched. These changes were made on the branch and are the current behavior:
+
+- **Real export layout (Tasks 6, 8).** The export arrives as one zip per category: `conversations/conversations.json`, `projects/projects/<uuid>.json` (one object per project), `memories/memories/<uuid>.json` (one object with `conversations_memory`, `project_memories` and `memory_files[]`). `readProjects` accepts one object, `readSavedMemory` also reads `memory_files`, and the CLI's `readCategory` finds both this layout and the single-folder one.
+- **Distilled sources are batched** with `batchDistilled` at `EXPORT_DISTILLED_BATCH_MAX_CHARS` (20,000), and the stage 1 output budget is 8,000 tokens. A reply cut off at the budget keeps its complete facts, is cached, and is reported as cut off.
+- **`POST /api/memory/import` requires `Content-Type: text/markdown`**, so a page on another origin cannot post to it. `dryRun` accepts `1` or `true`; any other non-empty value except `0`/`false` is a validation error.
+- **The import report includes `alwaysLoaded: { before, after, cap }`.**
+- **Conversation titles are not sent to the model** (they are assistant-written); batch headings carry only the date.
+- **`patterns` is dropped by `parseExtractedCandidates`**, not only left out of the prompt.
+- **The candidates file refuses markdown noise** (`---`, `**bold**`) as an unparseable line, and its header lists the count per folder.
+- **Error output never includes file content:** an export file or cache entry that is not valid JSON is skipped or treated as uncached, with a fixed message.

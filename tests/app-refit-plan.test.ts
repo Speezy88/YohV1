@@ -83,3 +83,26 @@ test("refitPlan applied with calendar blocks that failed to sync says so", async
   assert.equal(getPlan(s.store, s.today)!.data.version, 2);
   s.store.close();
 });
+
+test("refitPlan given a single-block request applies that request and rewrites the calendar", async () => {
+  const s = setup(async () => []);
+  const written: string[][] = [];
+  const deps = { ...s.deps, writeCalendarPlan: async (blocks: readonly { id: string }[]) => { written.push(blocks.map((b) => b.id)); return { written: blocks.map((b) => b.id), failed: [] }; } };
+  const result = await refitPlan(deps as typeof s.deps, { request: { kind: "drop-task", taskId: "t2" } });
+  assert.equal(result.ok, true);
+  const plan = getPlan(s.store, s.today)!.data;
+  assert.equal(plan.version, 2);
+  assert.ok(!plan.blocks.some((b) => b.taskId === "t2" && Date.parse(b.end) > NOW.getTime()), "the dropped Task has no block left to come");
+  assert.equal(written.length, 1);
+  assert.equal(listOpenInteractionRequests(s.store).length, 0);
+  s.store.close();
+});
+
+test("refitPlan whose request can't be honored fails with its reason and changes nothing", async () => {
+  const s = setup(async () => []);
+  const result = await refitPlan(s.deps, { request: { kind: "resize-task", taskId: "t1", durationMinutes: 45 } });
+  assert.equal(result.ok, false);
+  assert.equal(getPlan(s.store, s.today)!.data.version, 1);
+  assert.equal(listOpenInteractionRequests(s.store).length, 0);
+  s.store.close();
+});

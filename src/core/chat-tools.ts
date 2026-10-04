@@ -6,7 +6,7 @@
  * staged change set is shown with. No I/O.
  */
 import { localIsoDate, localMinutesToIso } from "./local-time.ts";
-import type { ChangeSetItem, IsoDate, IsoDateTime, Task } from "../types/domain.ts";
+import type { ChangeSetItem, IsoDate, IsoDateTime, PlanBlock, Task } from "../types/domain.ts";
 
 /** The most model calls one chat turn may make before the loop stops. */
 export const CHAT_AGENT_MAX_STEPS = 8;
@@ -39,7 +39,7 @@ export const CHAT_TOOLS: readonly ChatToolDefinition[] = [
     description: "Read Google Calendar events for one local date. Each event has an id you must use for move, resize or delete.",
     input_schema: { type: "object", properties: { date: DATE }, required: ["date"] },
   },
-  { name: "get_plan", description: "Read today's stored Plan blocks.", input_schema: { type: "object", properties: {} } },
+  { name: "get_plan", description: "Read today's stored Plan blocks. Each block has an id you must use for move_block, resize_block or remove_block.", input_schema: { type: "object", properties: {} } },
   {
     name: "search_memory",
     description: "Search what Yoh remembers about Spencer.",
@@ -110,6 +110,26 @@ export const CHAT_TOOLS: readonly ChatToolDefinition[] = [
     description: "Stage deleting a Task (id from list_tasks). Use only when Spencer asks to delete or remove a Task, not when it is done.",
     input_schema: { type: "object", properties: { taskId: { type: "string" } }, required: ["taskId"] },
   },
+  {
+    name: "move_block",
+    description: "Stage moving one block of today's Plan (id from get_plan, canMove true) to a new start time today. The rest of today re-fits around it.",
+    input_schema: { type: "object", properties: { blockId: { type: "string" }, startTime: TIME }, required: ["blockId", "startTime"] },
+  },
+  {
+    name: "resize_block",
+    description:
+      "Stage changing how long a Task's block in today's Plan runs (id from get_plan, canResize true). Give endTime, or durationMinutes for the Task's total work time for the rest of today. The rest of today re-fits around it.",
+    input_schema: {
+      type: "object",
+      properties: { blockId: { type: "string" }, endTime: TIME, durationMinutes: { type: "integer", minimum: 1 } },
+      required: ["blockId"],
+    },
+  },
+  {
+    name: "remove_block",
+    description: "Stage dropping a Task from today's Plan (id from get_plan, canRemove true). The Task itself stays open. The rest of today re-fits.",
+    input_schema: { type: "object", properties: { blockId: { type: "string" } }, required: ["blockId"] },
+  },
   { name: "plan_day", description: "Stage building today's Plan from Tasks and Calendar. Use when there is no Plan yet.", input_schema: { type: "object", properties: {} } },
   { name: "refit_plan", description: "Stage re-fitting the rest of today's existing Plan around the calendar.", input_schema: { type: "object", properties: {} } },
 ];
@@ -178,6 +198,20 @@ export function resolveEventTimes(
   return { ok: true, start: localMinutesToIso(input.date as IsoDate, start, timeZone), end: localMinutesToIso(input.date as IsoDate, end, timeZone) };
 }
 
+/** A local HH:MM on `date` as an instant; `undefined` when either is malformed. */
+export function resolveLocalTime(date: string, time: string, timeZone: string): IsoDateTime | undefined {
+  const minutes = clockMinutes(time);
+  return DATE_RE.test(date) && minutes !== undefined ? localMinutesToIso(date as IsoDate, minutes, timeZone) : undefined;
+}
+
+/** What chat may do to one Plan block: only a block that hasn't started, a routine only moves, breaks and calendar events not at all. */
+export function planBlockEdits(block: PlanBlock, nowMs: number): { readonly canMove: boolean; readonly canResize: boolean; readonly canRemove: boolean } {
+  const upcoming = Date.parse(block.start) >= nowMs;
+  const work = upcoming && block.kind === "work" && block.taskId !== undefined;
+  const routine = upcoming && block.kind === "routine" && block.routineId !== undefined;
+  return { canMove: work || routine, canResize: work, canRemove: work };
+}
+
 function clock(iso: IsoDateTime, timeZone: string): string {
   // Newer ICU puts a narrow no-break space before AM/PM; normalize so copy is plain ASCII spaces.
   return new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone }).replace(/\u202f/g, " ");
@@ -209,6 +243,12 @@ export function describeChangeSetItem(item: ChangeSetItem, timeZone: string): st
       return `Mark "${item.label}" done`;
     case "delete-task":
       return `Delete the Task "${item.label}"`;
+    case "move-block":
+      return `Move "${item.label}" to ${clock(item.newStart, timeZone)} in today's Plan`;
+    case "resize-block":
+      return `Give "${item.label}" ${item.durationMinutes} min in today's Plan`;
+    case "remove-block":
+      return `Drop "${item.label}" from today's Plan`;
     case "plan-day":
       return "Build today's Plan";
     case "refit-plan":
@@ -241,8 +281,11 @@ export function changeSetPrompt(
 
 const isPlanStep = (item: ChangeSetItem): boolean => item.kind === "plan-day" || item.kind === "refit-plan";
 
+const isBlockEdit = (item: ChangeSetItem): boolean => item.kind === "move-block" || item.kind === "resize-block" || item.kind === "remove-block";
+
+/** Task and calendar writes first, then single-block edits (each re-fits around what was just written), then a whole-Plan step. */
 export function orderForApply(items: readonly ChangeSetItem[]): readonly ChangeSetItem[] {
-  return [...items.filter((i) => !isPlanStep(i)), ...items.filter(isPlanStep)];
+  return [...items.filter((i) => !isPlanStep(i) && !isBlockEdit(i)), ...items.filter(isBlockEdit), ...items.filter(isPlanStep)];
 }
 
 /** Appended to a reply that claimed (or followed a rejected attempt at) a write that was never staged. */

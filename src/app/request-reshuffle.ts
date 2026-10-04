@@ -68,9 +68,19 @@ function resolveRequest(
     if (startMs < ctx.nowMs || localIsoDate(new Date(startMs), ctx.timeZone) !== ctx.today) {
       return fail("validation", "Pick a time later today.");
     }
-    const pin: DayPin = { date: ctx.today, subject: { kind: "task", taskId }, start: new Date(startMs).toISOString() };
+    // A length Spencer set for a pin that hasn't started moves with the Task.
+    const earlier = current.pins.find((p) => taskSubject(p) === taskId);
+    const keptMinutes = earlier && Date.parse(earlier.start) >= ctx.nowMs ? earlier.durationMinutes : undefined;
+    const pin: DayPin = { date: ctx.today, subject: { kind: "task", taskId }, start: new Date(startMs).toISOString(), ...(keptMinutes !== undefined ? { durationMinutes: keptMinutes } : {}) };
     return { ok: true, value: { pins: [...without(taskId), pin], drops: current.drops.filter((d) => d !== taskId), requested: [taskId] } };
   };
+  const pinRoutineAt = (routineId: string, start: string): Result<DayChange, YohError> => {
+    const startMs = Date.parse(start);
+    if (startMs < ctx.nowMs || localIsoDate(new Date(startMs), ctx.timeZone) !== ctx.today) return fail("validation", "Pick a time later today.");
+    const pin: DayPin = { date: ctx.today, subject: { kind: "routine", routineId }, start: new Date(startMs).toISOString() };
+    return { ok: true, value: { pins: [...current.pins.filter((p) => !isRoutinePin(p, routineId)), pin], drops: current.drops } };
+  };
+  const upcoming = (b: PlanBlock): boolean => Date.parse(b.start) >= ctx.nowMs;
   switch (request.kind) {
     case "reflow-now":
       return { ok: true, value: current };
@@ -79,16 +89,25 @@ function resolveRequest(
     case "move-block": {
       const block = ctx.plan.blocks.find((b) => b.id === request.planBlockId);
       if (!block) return fail("stale-proposal", "That block has changed. Try dragging it again.");
-      if (block.kind === "routine" && block.routineId !== undefined && Date.parse(block.start) >= ctx.nowMs) {
-        const startMs = Date.parse(request.newStart);
-        if (startMs < ctx.nowMs || localIsoDate(new Date(startMs), ctx.timeZone) !== ctx.today) return fail("validation", "Pick a time later today.");
-        const pin: DayPin = { date: ctx.today, subject: { kind: "routine", routineId: block.routineId }, start: new Date(startMs).toISOString() };
-        return { ok: true, value: { pins: [...current.pins.filter((p) => !isRoutinePin(p, block.routineId!)), pin], drops: current.drops } };
-      }
-      if (block.kind !== "work" || block.taskId === undefined || Date.parse(block.start) < ctx.nowMs) {
+      if (block.kind === "routine" && block.routineId !== undefined && upcoming(block)) return pinRoutineAt(block.routineId, request.newStart);
+      if (block.kind !== "work" || block.taskId === undefined || !upcoming(block)) {
         return fail("validation", "That block can't be moved.");
       }
       return pinAt(block.taskId, request.newStart);
+    }
+    case "pin-routine": {
+      if (!ctx.plan.blocks.some((b) => b.kind === "routine" && b.routineId === request.routineId && upcoming(b))) return fail("validation", "That block can't be moved.");
+      return pinRoutineAt(request.routineId, request.newStart);
+    }
+    case "resize-task": {
+      // The Task stays where it sits: its pin if it has one that hasn't started, else its first block still to come.
+      const earlier = current.pins.find((p) => taskSubject(p) === request.taskId);
+      const block = ctx.plan.blocks.filter((b) => b.kind === "work" && b.taskId === request.taskId && upcoming(b)).sort((a, b) => Date.parse(a.start) - Date.parse(b.start))[0];
+      const start = earlier && Date.parse(earlier.start) >= ctx.nowMs ? earlier.start : block?.start;
+      if (start === undefined || !Number.isInteger(request.durationMinutes) || request.durationMinutes < 1) return fail("validation", "That block can't be resized.");
+      const placed = pinAt(request.taskId, start);
+      if (!placed.ok) return placed;
+      return { ok: true, value: { ...placed.value, pins: placed.value.pins.map((p) => (taskSubject(p) === request.taskId ? { ...p, durationMinutes: request.durationMinutes } : p)) } };
     }
     case "unpin-task":
       return { ok: true, value: { pins: without(request.taskId), drops: current.drops.filter((d) => d !== request.taskId) } };

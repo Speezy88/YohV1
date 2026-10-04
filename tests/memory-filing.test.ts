@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { validateFiling, MEMORY_FILING_TIMEOUT_MS, isTrivialTurn, planFilingActions } from "../src/core/memory-filing.ts";
+import { validateFiling, MEMORY_FILING_TIMEOUT_MS, isTrivialTurn, planFilingActions, candidateRejection, normalizeMemoryText } from "../src/core/memory-filing.ts";
 import type { MemoryCandidate } from "../src/types/domain.ts";
 
 const TZ = "America/New_York";
@@ -79,4 +79,21 @@ test("planFilingActions: restate/contradict a current item supersedes; unknown o
     cur,
   );
   assert.deepEqual(plan.map((p) => [p.kind, p.targetId]), [["supersede", "a"], ["insert", undefined], ["insert", undefined], ["insert", undefined], ["insert", undefined]]);
+});
+
+test("candidateRejection names the reason and has no per-turn limit", () => {
+  const today = "2026-09-29";
+  assert.equal(candidateRejection(c({}), today), undefined);
+  assert.equal(candidateRejection(c({ text: "   " }), today), "empty");
+  assert.equal(candidateRejection(c({ text: "x".repeat(281) }), today), "too-long");
+  assert.equal(candidateRejection(c({ origin: "inferred", folder: "feedback" }), today), "inferred-in-stated-only-folder");
+  assert.equal(candidateRejection(c({ origin: "inferred", sensitive: "health" }), today), "sensitive-inferred");
+  assert.equal(candidateRejection(c({ expiresOn: "2026-09-01" }), today), "bad-expiry");
+  const many = Array.from({ length: 10 }, (_, i) => c({ text: `fact ${i}` }));
+  assert.equal(many.filter((x) => candidateRejection(x, today) === undefined).length, 10);
+});
+
+test("normalizeMemoryText ignores case, spacing and trailing punctuation", () => {
+  assert.equal(normalizeMemoryText("  Likes  COFFEE. "), "likes coffee");
+  assert.equal(normalizeMemoryText("Likes coffee"), normalizeMemoryText("likes coffee!?"));
 });

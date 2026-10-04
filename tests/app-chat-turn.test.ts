@@ -16,11 +16,14 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { initRoutineStoreSchema } from "../src/adapters/routine-store.ts";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
-import { createMemoryStore, getCurrentTimeBudget, getOpenInteractionRequest, getPlan, putOpenInteractionRequest, putPlan, putTimeBudget, type MemoryStore } from "../src/adapters/memory-store.ts";
+import { surfaceOpenItems } from "../src/app/surface-open-items.ts";
+import { createMemoryStore, getCurrentTimeBudget, getOpenInteractionRequest, getPlan, listOpenInteractionRequests, putOpenInteractionRequest, putPlan, putTimeBudget, type MemoryStore } from "../src/adapters/memory-store.ts";
 import { createChatStore, initChatStoreSchema, type ChatStore } from "../src/adapters/chat-store.ts";
 import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
+import { initJobStoreSchema } from "../src/adapters/job-store.ts";
 import { createMemoryItemStore, initMemoryItemStoreSchema } from "../src/adapters/memory-item-store.ts";
 import { PLAN_EDIT_HOW_TO_REPLY } from "../src/core/plan-edit-commands.ts";
+import { confirmProposal } from "../src/app/confirm-proposal.ts";
 import { chatTurn, MAX_CHAT_HISTORY_TURNS, STATUS_THINKING, type ChatTurnDeps } from "../src/app/chat-turn.ts";
 import { COMMANDS } from "../src/app/commands.ts";
 import type { AnthropicMessagesClient } from "../src/adapters/llm-adapter.ts";
@@ -77,7 +80,7 @@ function makeFakeLlmClient(responseText = "I don't have a specific answer for th
 }
 
 function makeSession(): ChatSession {
-  return { recentMessages: [], lastSearchAnswer: undefined };
+  return { recentMessages: [], lastSearchAnswer: undefined, researchOffered: new Set<string>() };
 }
 
 /** A real chat store on in-memory SQLite, pre-seeded with today's (2026-08-22, New York) turns. */
@@ -1572,4 +1575,207 @@ test("a bare yes with only an earlier day's change set open does not point at a 
   });
   const result = await chatTurn(baseDeps({ llmClient: makeFakeLlmClient(), store }), { message: "yes" });
   assert.notEqual(result.ok && result.value.reply, "Use Approve or Discard on the card above.");
+});
+
+// ---- Story 11.3: /research queues a background job ----
+function researchDeps(over: Partial<ChatTurnDeps> = {}) {
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initJobStoreSchema(connection.db);
+  const llm = makeFakeLlmClient();
+  let searchCalls = 0;
+  const deps = baseDeps({
+    connection,
+    llmClient: llm as unknown as AnthropicMessagesClient,
+    searchFn: async () => {
+      searchCalls++;
+      return { ok: true, value: { answer: "x", citations: [] } };
+    },
+    ...over,
+  });
+  const jobs = () => (connection.db.prepare("SELECT question, status FROM research_jobs").all() as Array<{ question: string; status: string }>).map((r) => ({ ...r }));
+  return { deps, llm, jobs, searchCalls: () => searchCalls };
+}
+const vaultReady = { getNotionCreatePageBinding: () => ({ ok: true as const, value: { client: {} as never, config: { researchVaultDataSourceId: "ds" } as never } }) };
+
+test("/research queues a job, acknowledges, and never searches or calls a model", async () => {
+  const t = researchDeps(vaultReady);
+  const r = await chatTurn(t.deps, { message: "/research best budget laptops for college" });
+  assert.ok(r.ok);
+  if (!r.ok) return;
+  assert.equal(r.value.reply, "Queued. You'll get a notification when it's on Research Hub.");
+  assert.deepEqual(t.jobs(), [{ question: "best budget laptops for college", status: "queued" }]);
+  assert.equal(t.llm.calls.length, 0);
+  assert.equal(t.searchCalls(), 0);
+});
+
+test("/research with no question, no vault, or no search replies plainly and queues nothing", async () => {
+  const empty = researchDeps(vaultReady);
+  const a = await chatTurn(empty.deps, { message: "/research" });
+  assert.ok(a.ok && a.value.reply === "Say what to research, like /research best budget laptops for college.");
+  const noVault = researchDeps();
+  const b = await chatTurn(noVault.deps, { message: "/research laptops" });
+  assert.ok(b.ok && b.value.reply === "The Research Vault isn't set up yet, so there's nowhere to file research.");
+  const noSearch = researchDeps({ ...vaultReady, webSearchAvailable: false });
+  const c = await chatTurn(noSearch.deps, { message: "/research laptops" });
+  assert.ok(c.ok && c.value.reply === "Web search isn't set up yet (it needs a Perplexity key).");
+  assert.deepEqual([empty.jobs(), noVault.jobs(), noSearch.jobs()], [[], [], []]);
+  assert.equal(empty.llm.calls.length + noVault.llm.calls.length + noSearch.llm.calls.length, 0);
+});
+
+// ---- Story 11.4: a research-sized message gets a one-time offer ----
+function researchOfferDeps(t: ReturnType<typeof researchDeps>) {
+  return { connection: t.deps.connection!, webSearchAvailable: true, getNotionCreatePageBinding: vaultReady.getNotionCreatePageBinding, now: () => new Date("2026-08-22T18:00:00.000Z") };
+}
+
+test("a research-sized message gets a Yes/No offer: no model call, no search, nothing queued", async () => {
+  const t = researchDeps(vaultReady);
+  const r = await chatTurn(t.deps, { message: "give me a deep dive on heat pumps" });
+  assert.ok(r.ok);
+  if (!r.ok) return;
+  assert.equal(r.value.question?.text, "Do you want to do research on this?");
+  assert.deepEqual(r.value.question?.options.map((o) => o.label), ["Yes", "No"]);
+  assert.equal(r.value.question?.allowsFreeText, false);
+  assert.equal(r.value.question?.proposal?.kind, "research-offer");
+  assert.deepEqual(r.value.question?.proposal?.suggested, { question: "give me a deep dive on heat pumps" });
+  assert.equal(t.llm.calls.length, 0);
+  assert.equal(t.searchCalls(), 0);
+  assert.deepEqual(t.jobs(), []);
+});
+
+test("an imperative 'research X' line offers first and searches at once only when sent a second time", async () => {
+  const t = researchDeps(vaultReady);
+  const first = await chatTurn(t.deps, { message: "research best budget laptops" });
+  assert.ok(first.ok && first.value.question?.proposal?.kind === "research-offer");
+  assert.equal(t.searchCalls(), 0);
+  const second = await chatTurn(t.deps, { message: "  Research   best budget laptops " });
+  assert.ok(second.ok);
+  assert.equal(t.searchCalls(), 1);
+  assert.equal(t.jobs().length, 0);
+});
+
+test("answering Yes to the offer queues exactly one job; No queues nothing", async () => {
+  const t = researchDeps(vaultReady);
+  const offer = await chatTurn(t.deps, { message: "pros and cons of nuclear power" });
+  assert.ok(offer.ok && offer.value.question);
+  const q = offer.value.question!;
+  const yes = await confirmProposal({ store: t.deps.store, research: researchOfferDeps(t) }, { proposal: q.proposal!, accept: true, requestId: q.requestId });
+  assert.ok(yes.ok);
+  assert.equal(yes.ok && yes.value.message, "Queued. You'll get a notification when it's on Research Hub.");
+  assert.deepEqual(t.jobs(), [{ question: "pros and cons of nuclear power", status: "queued" }]);
+
+  const t2 = researchDeps(vaultReady);
+  const offer2 = await chatTurn(t2.deps, { message: "pros and cons of nuclear power" });
+  assert.ok(offer2.ok && offer2.value.question);
+  const q2 = offer2.value.question!;
+  const no = await confirmProposal({ store: t2.deps.store }, { proposal: q2.proposal!, accept: false, requestId: q2.requestId });
+  assert.ok(no.ok);
+  assert.equal(no.ok && no.value.message, "Okay. Nothing queued.");
+  assert.deepEqual(t2.jobs(), []);
+});
+
+test("Yes with no research deps replies that research is unavailable and queues nothing", async () => {
+  const t = researchDeps(vaultReady);
+  const offer = await chatTurn(t.deps, { message: "pros and cons of nuclear power" });
+  assert.ok(offer.ok && offer.value.question);
+  const q = offer.value.question!;
+  const yes = await confirmProposal({ store: t.deps.store }, { proposal: q.proposal!, accept: true, requestId: q.requestId });
+  assert.equal(yes.ok && yes.value.message, "Background research isn't available right now.");
+  assert.deepEqual(t.jobs(), []);
+});
+
+test("an ignored offer is cleared at the start of the next turn, whatever it says", async () => {
+  const t = researchDeps(vaultReady);
+  const a = await chatTurn(t.deps, { message: "pros and cons of nuclear power" });
+  assert.ok(a.ok && a.value.question);
+  assert.equal(listOpenInteractionRequests(t.deps.store).length, 1);
+  await chatTurn(t.deps, { message: "what's the latest AI news" });
+  assert.equal(listOpenInteractionRequests(t.deps.store).length, 0);
+  const surfaced = await surfaceOpenItems({ store: t.deps.store, session: t.deps.session, now: () => new Date() }, {});
+  assert.ok(surfaced.ok && surfaced.value.items.length === 0);
+});
+
+for (const typed of ["yes", "no"]) {
+  test(`typing "${typed}" with a research offer open points at the card and leaves the offer open`, async () => {
+    const t = researchDeps(vaultReady);
+    const a = await chatTurn(t.deps, { message: "pros and cons of nuclear power" });
+    assert.ok(a.ok && a.value.question);
+    const r = await chatTurn(t.deps, { message: typed });
+    assert.ok(r.ok);
+    assert.equal(r.ok && r.value.reply, "Use Yes or No on the card above.");
+    assert.equal(listOpenInteractionRequests(t.deps.store).length, 1);
+    assert.deepEqual(t.jobs(), []);
+    assert.equal(t.llm.calls.length, 0);
+  });
+}
+
+test("a failing offer clear logs one warn through the turn logger", async () => {
+  const logged: Array<{ level: string; event: string }> = [];
+  const t = researchDeps({ ...vaultReady, log: (e) => logged.push({ level: e.level, event: e.event }) });
+  const a = await chatTurn(t.deps, { message: "pros and cons of nuclear power" });
+  assert.ok(a.ok && a.value.question);
+  (t.deps.store as { listRecordsByKind: unknown }).listRecordsByKind = () => {
+    throw new Error("store down");
+  };
+  await chatTurn(t.deps, { message: "what's the latest AI news" });
+  assert.deepEqual(logged.filter((e) => e.event === "chat-turn.research-offer-clear-failed"), [{ level: "warn", event: "chat-turn.research-offer-clear-failed" }]);
+});
+
+test("a re-sent research line after the session forgot leaves only the fresh offer open", async () => {
+  const t = researchDeps(vaultReady);
+  const a = await chatTurn(t.deps, { message: "research best budget laptops" });
+  assert.ok(a.ok && a.value.question);
+  t.deps.session.researchOffered.clear(); // e.g. a restart: the session forgot, the store did not
+  const b = await chatTurn(t.deps, { message: "research best budget laptops" });
+  assert.ok(b.ok && b.value.question?.proposal?.kind === "research-offer");
+  assert.equal(listOpenInteractionRequests(t.deps.store).length, 1);
+  assert.equal(t.searchCalls(), 0);
+});
+
+test("no offer when research cannot run: no search key, no vault, or no connection", async () => {
+  const noSearch = researchDeps({ ...vaultReady, webSearchAvailable: false });
+  const noVault = researchDeps({ getNotionCreatePageBinding: () => ({ ok: false as const, error: { kind: "missing-field" as const, message: "no vault" } }) });
+  const noVaultId = researchDeps({ getNotionCreatePageBinding: () => ({ ok: true as const, value: { client: {} as never, config: {} as never } }) });
+  const noConn = researchDeps(vaultReady);
+  const { connection: _drop, ...withoutConnection } = noConn.deps;
+  const deps: ChatTurnDeps = withoutConnection;
+  for (const d of [noSearch.deps, noVault.deps, noVaultId.deps, deps]) {
+    const r = await chatTurn(d, { message: "pros and cons of nuclear power" });
+    assert.ok(r.ok);
+    assert.equal(r.ok && r.value.question?.proposal?.kind, undefined);
+    assert.equal(listOpenInteractionRequests(d.store).length, 0);
+  }
+});
+
+test("Yes to a research offer from an earlier day writes nothing and clears the request", async () => {
+  const t = researchDeps(vaultReady);
+  const offer = await chatTurn(t.deps, { message: "pros and cons of nuclear power" });
+  assert.ok(offer.ok && offer.value.question);
+  const q = offer.value.question!;
+  const later = () => new Date(Date.now() + 3 * 24 * 3600 * 1000);
+  const yes = await confirmProposal({ store: t.deps.store, research: researchOfferDeps(t), timeZone: "UTC", now: later }, { proposal: q.proposal!, accept: true, requestId: q.requestId });
+  assert.equal(yes.ok, false);
+  assert.equal(!yes.ok && yes.error.kind, "stale-proposal");
+  assert.deepEqual(t.jobs(), []);
+  assert.equal(listOpenInteractionRequests(t.deps.store).length, 0);
+});
+
+test("a throwing queue write replies with a failure and keeps the offer open", async () => {
+  const t = researchDeps(vaultReady);
+  const offer = await chatTurn(t.deps, { message: "pros and cons of nuclear power" });
+  assert.ok(offer.ok && offer.value.question);
+  const q = offer.value.question!;
+  const research = { ...researchOfferDeps(t), connection: { ...t.deps.connection!, writeTx: () => { throw new Error("database is locked"); } } as never };
+  const yes = await confirmProposal({ store: t.deps.store, research }, { proposal: q.proposal!, accept: true, requestId: q.requestId });
+  assert.equal(yes.ok, false);
+  assert.equal(!yes.ok && yes.error.kind, "unreachable");
+  assert.equal(!yes.ok && yes.error.message.includes("database is locked"), false);
+  assert.equal(listOpenInteractionRequests(t.deps.store).length, 1);
+  assert.deepEqual(t.jobs(), []);
+});
+
+test("plain factual questions get no offer", async () => {
+  const t = researchDeps(vaultReady);
+  const r = await chatTurn(t.deps, { message: "what's the latest AI news" });
+  assert.ok(r.ok && r.value.question === undefined);
+  assert.equal(t.searchCalls(), 1);
 });

@@ -68,6 +68,8 @@ import { morningView } from "./morning-view.ts";
 import { startNightCloseOut } from "./night-close-out.ts";
 import { planDay, type PlanDayDeps } from "./plan-day.ts";
 import { showPlan } from "./plan-view.ts";
+import { queueResearch } from "./queue-research.ts";
+import { openProposal } from "./open-proposal.ts";
 import { saveSearchResult, type SaveSearchResultDeps } from "./save-search-result.ts";
 import { sandboxQueue } from "./sandbox-queue.ts";
 import { declareTimeBudget } from "./time-budget.ts";
@@ -78,12 +80,13 @@ import type { ChatStore } from "../adapters/chat-store.ts";
 import type { MemoryItemStore } from "../adapters/memory-item-store.ts";
 import type { LogEntry } from "../adapters/logger.ts";
 import type { AnthropicMessagesClient } from "../adapters/llm-adapter.ts";
-import { getPlan, hasOpenProposalOfKind, putOpenInteractionRequest, withdrawRuleProposal, type MemoryStore } from "../adapters/memory-store.ts";
+import { clearInteractionRequest, getPlan, hasOpenProposalOfKind, listOpenInteractionRequests, putOpenInteractionRequest, withdrawRuleProposal, type MemoryStore } from "../adapters/memory-store.ts";
 import { buildMemoryForgetQuestion } from "../core/open-item-questions.ts";
 import type { MemoryContext } from "../core/memory-context.ts";
 import { errorCopyForThrown } from "../core/error-copy.ts";
 import type { ChatStreamEvent, ChatTurnRequest, ChatTurnResponse, MorningViewResponse } from "../types/api.ts";
-import type { CalendarEvent, ChatTurn, ExternalId, IsoDate, MemoryItem, PlanBlock, Result, Task, YohError } from "../types/domain.ts";
+import { parseResearchOffer, researchOfferKey, RESEARCH_OFFER_KIND, RESEARCH_OFFER_PROMPT } from "../core/research-offer.ts";
+import type { CalendarEvent, ChatTurn, ExternalId, IsoDate, MemoryItem, PlanBlock, Proposal, Result, Task, YohError } from "../types/domain.ts";
 
 /**
  * The largest number of `ChatTurn`s `chatTurn` will ever send to Claude —
@@ -268,6 +271,9 @@ export async function chatTurn(deps: ChatTurnDeps, input: ChatTurnRequest): Prom
   return result;
 }
 
+/** Reply to a typed yes/no while a research offer card is open: the card is the only way to answer it. */
+const RESEARCH_OFFER_USE_CARD_REPLY = "Use Yes or No on the card above.";
+
 async function routeChatTurn(
   deps: ChatTurnDeps,
   input: ChatTurnRequest,
@@ -275,6 +281,13 @@ async function routeChatTurn(
 ): Promise<Result<ChatTurnResponse, YohError>> {
   recordRecentMessage(deps, input.message);
   emitStatus(deps, STATUS_THINKING);
+  // A typed yes/no while a same-day research offer is open has no typed path: the card is the only way to
+  // answer it, and the offer stays open. Anything else Spencer types ignores the offer, which is then gone.
+  const offerStale = (createdAt: string) => changeSetIsStale(createdAt, deps.now(), deps.timeZone);
+  if (parseProposalAnswer(input.message) !== undefined && hasOpenProposalOfKind(deps.store, RESEARCH_OFFER_KIND, offerStale)) {
+    return { ok: true, value: { reply: RESEARCH_OFFER_USE_CARD_REPLY, receipts: [] } };
+  }
+  clearOpenResearchOffers(deps.store, deps.log);
 
   const line = input.message.trim();
   if (line.startsWith("/")) {
@@ -468,6 +481,11 @@ async function routeChatTurn(
     // or no draft could be built — fall through to the tool loop below.
   }
 
+  // Story 11.4: an obviously research-sized line gets a one-time Yes/No offer
+  // (no model call, no search) — before the non-prefix search check below.
+  const offered = await offerResearch(deps, input.message);
+  if (offered) return offered;
+
   // A deterministic, zero-model-call pre-check (`core/search-intent.ts`),
   // after every recognizer above and before the tool loop: a search-shaped
   // line goes straight to searchWeb.
@@ -482,6 +500,56 @@ async function routeChatTurn(
   }
 
   return runAgent(deps, input, reachedLlm);
+}
+
+/** Clears every open `research-offer` request (a concurrent answer may have cleared one already). */
+function clearOpenResearchOffers(store: MemoryStore, log: ChatTurnDeps["log"]): void {
+  try {
+    for (const record of listOpenInteractionRequests(store)) {
+      const proposal = (record.data.detail as { readonly proposal?: { readonly kind?: string } } | undefined)?.proposal;
+      if (record.data.requestKind !== "proposal" || proposal?.kind !== RESEARCH_OFFER_KIND) continue;
+      try {
+        clearInteractionRequest(store, record.id, record.version);
+      } catch {
+        // a concurrent answer already cleared it
+      }
+    }
+  } catch (error) {
+    // an unreadable store must not stop the turn; a stale offer is also hidden by its same-day expiry
+    log?.({ level: "warn", event: "chat-turn.research-offer-clear-failed", detail: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+/** True when `queueResearch` could actually run: web search, a vault data source and a connection. */
+function researchCanRun(deps: ChatTurnDeps): boolean {
+  if (!deps.webSearchAvailable || !deps.connection) return false;
+  const binding = deps.getNotionCreatePageBinding();
+  return binding.ok && Boolean(binding.value.config.researchVaultDataSourceId);
+}
+
+/**
+ * Story 11.4 (E11-R14): offers research once per message. Returns undefined — take the normal path — when the line
+ * isn't research-sized, was already offered this session, or an offer for the same question is still open.
+ */
+async function offerResearch(deps: ChatTurnDeps, message: string): Promise<Result<ChatTurnResponse, YohError> | undefined> {
+  const key = researchOfferKey(message);
+  if (deps.session.researchOffered.has(key)) return undefined;
+  const offer = parseResearchOffer(message);
+  if (!offer) return undefined;
+  if (!researchCanRun(deps)) return undefined;
+  const proposal: Proposal<{ readonly question: string }> = {
+    id: randomUUID(),
+    kind: RESEARCH_OFFER_KIND,
+    entityId: researchOfferKey(offer.question),
+    entityVersion: "",
+    suggested: { question: offer.question },
+    reason: RESEARCH_OFFER_PROMPT,
+    createdAt: deps.now().toISOString(),
+  };
+  const opened = await openProposal({ store: deps.store, now: deps.now }, { proposal });
+  if (!opened.ok) return undefined;
+  deps.session.researchOffered.add(key);
+  return { ok: true, value: { reply: "", receipts: [], question: opened.value } };
 }
 
 /** The final step of routing: the tool loop. Everything no deterministic recognizer handled ends here. */
@@ -590,6 +658,8 @@ async function dispatchSlashCommand(deps: ChatTurnDeps, line: string): Promise<R
       if (!command) return { ok: true, value: { reply: `Say what to remember, like ${match.example}.`, receipts: [] } };
       return runMemoryCommand(deps, command);
     }
+    case "/research":
+      return queueResearch(deps, { question: args });
     default:
       // Unreachable while COMMANDS lists only /morning and /night — a
       // future epic's registry entry gets its own `case` when that story

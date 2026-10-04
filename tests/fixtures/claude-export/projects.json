@@ -1,0 +1,4 @@
+[
+  { "uuid": "p1", "name": "Yoh", "prompt_template": "Keep answers short. I plan my day the night before.", "docs": [{ "filename": "notes.md", "content": "ignored" }] },
+  { "uuid": "p2", "name": "Empty", "prompt_template": "" }
+]

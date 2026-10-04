@@ -19,7 +19,7 @@ function tempDeps(overrides: Partial<MorningViewDeps> = {}): MorningViewDeps {
     store: createMemoryStore(connection),
     now: () => new Date(`${TODAY}T13:00:00.000Z`),
     timeZone: "UTC",
-    session: { recentMessages: [], lastSearchAnswer: undefined },
+    session: { recentMessages: [], lastSearchAnswer: undefined, researchOffered: new Set<string>() },
     ...overrides,
   };
 }

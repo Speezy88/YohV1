@@ -16,7 +16,7 @@ import type { ChatSession } from "../src/app/chat-session.ts";
 
 function tempDeps(overrides: { bindingOk?: boolean; session?: ChatSession; client?: NotionCreatePageClient; config?: NotionCreatePageConfig } = {}): SaveSearchResultDeps {
   return {
-    session: overrides.session ?? { recentMessages: [], lastSearchAnswer: undefined },
+    session: overrides.session ?? { recentMessages: [], lastSearchAnswer: undefined, researchOffered: new Set<string>() },
     timeZone: "America/New_York",
     now: () => new Date("2026-09-26T18:00:00.000Z"),
     getNotionCreatePageBinding: () =>
@@ -40,7 +40,7 @@ test("no recent search result -> a plain reply, nothing created", async () => {
 });
 
 test("Notion not configured -> a plain reply naming the problem", async () => {
-  const session: ChatSession = { recentMessages: [], lastSearchAnswer: { query: "hiking boots", answer: { answer: "Salomon test well.", citations: [] } } };
+  const session: ChatSession = { recentMessages: [], researchOffered: new Set<string>(), lastSearchAnswer: { query: "hiking boots", answer: { answer: "Salomon test well.", citations: [] } } };
   const result = await saveSearchResult(tempDeps({ bindingOk: false, session }), {});
   assert.equal(result.ok, true);
   // Task 4 (real-use fixes plan): a plain, honest sentence naming Notion —
@@ -102,7 +102,7 @@ function fakeResearchVaultClient(): NotionCreatePageClient & { readonly createCa
 
 test("Controller ruling: files the last search result via the REAL createPage('ResearchVault', ...), with the exact properties, and echoes a receipt", async () => {
   const client = fakeResearchVaultClient();
-  const session: ChatSession = { recentMessages: [], lastSearchAnswer: { query: "best hiking boots under $150", answer: { answer: "Salomon and Merrell both test well.", citations: ["https://example.com/a"] } } };
+  const session: ChatSession = { recentMessages: [], researchOffered: new Set<string>(), lastSearchAnswer: { query: "best hiking boots under $150", answer: { answer: "Salomon and Merrell both test well.", citations: ["https://example.com/a"] } } };
   const result = await saveSearchResult(tempDeps({ session, client, config: RESEARCH_VAULT_CONFIG }), {});
 
   assert.equal(result.ok, true);
@@ -120,7 +120,7 @@ test("Task 6C: a successful file appends one `research` outbox hint, keyed to th
   initNotificationStoreSchema(connection.db);
   const before = getMaxOutboxSeq(connection);
   const client = fakeResearchVaultClient();
-  const session: ChatSession = { recentMessages: [], lastSearchAnswer: { query: "best hiking boots under $150", answer: { answer: "Salomon and Merrell both test well.", citations: ["https://example.com/a"] } } };
+  const session: ChatSession = { recentMessages: [], researchOffered: new Set<string>(), lastSearchAnswer: { query: "best hiking boots under $150", answer: { answer: "Salomon and Merrell both test well.", citations: ["https://example.com/a"] } } };
   const result = await saveSearchResult({ ...tempDeps({ session, client, config: RESEARCH_VAULT_CONFIG }), connection }, {});
 
   assert.equal(result.ok, true);
@@ -133,7 +133,7 @@ test("Task 6C: a successful file appends one `research` outbox hint, keyed to th
 
 test("no connection given -> no hint, and saving still succeeds (the same 'tests that don't care' convention as create-task.ts)", async () => {
   const client = fakeResearchVaultClient();
-  const session: ChatSession = { recentMessages: [], lastSearchAnswer: { query: "best hiking boots under $150", answer: { answer: "Salomon and Merrell both test well.", citations: [] } } };
+  const session: ChatSession = { recentMessages: [], researchOffered: new Set<string>(), lastSearchAnswer: { query: "best hiking boots under $150", answer: { answer: "Salomon and Merrell both test well.", citations: [] } } };
   const result = await saveSearchResult(tempDeps({ session, client, config: RESEARCH_VAULT_CONFIG }), {});
   assert.equal(result.ok, true);
 });

@@ -106,6 +106,7 @@ import {
 } from "../adapters/notion-adapter.ts";
 import { createAnthropicMessagesClient, loadLlmAdapterConfigFromEnv, type AnthropicMessagesClient } from "../adapters/llm-adapter.ts";
 import { initLlmUsageStoreSchema } from "../adapters/llm-usage-store.ts";
+import { initJobStoreSchema } from "../adapters/job-store.ts";
 import { errorCopyForWire, GENERIC_SERVER_ERROR_MESSAGE } from "../core/error-copy.ts";
 import { search as runSearch } from "../adapters/search-adapter.ts";
 import { listNotifications, markNotificationRead } from "../app/notifications.ts";
@@ -113,6 +114,7 @@ import { listCommands } from "../app/commands.ts";
 import { chatTurn, type ChatTurnDeps } from "../app/chat-turn.ts";
 import type { ChatSession } from "../app/chat-session.ts";
 import type { SearchFn } from "../app/web-search.ts";
+import { failInterruptedResearchJobs, runNextResearchJob, RESEARCH_JOB_POLL_INTERVAL_MS, type RunResearchJobDeps } from "../app/run-research-job.ts";
 import { getHomeView, type HomeViewDeps } from "../app/home-view.ts";
 import { getCalendarDay, type CalendarDayDeps } from "../app/calendar-day.ts";
 import { declareTimeBudget } from "../app/time-budget.ts";
@@ -125,11 +127,13 @@ import {
   undoCheckOff,
   type CheckOffDeps,
 } from "../app/check-off.ts";
-import { deleteMemoryItem, editMemoryItem, moveMemoryItem, reviewMemoryItem, setMemoryExpiry } from "../app/memory-edit.ts";
+import { deleteMemoryItem, editMemoryItem, moveMemoryItem, recordSortFeedback, reviewMemoryItem, setMemoryExpiry } from "../app/memory-edit.ts";
 import { revertPlanningSetting } from "../app/settings-revert.ts";
 import { undoMemoryReceipt } from "../app/memory-undo.ts";
 import { viewMemory } from "../app/memory-view.ts";
 import { searchMemory } from "../app/memory-search.ts";
+import { importMemory } from "../app/import-memory.ts";
+import { parseMemoryImport } from "../core/memory-import.ts";
 import { surfaceOpenItems } from "../app/surface-open-items.ts";
 import { answerOpenItem, type AnswerOpenItemDeps } from "../app/answer-open-item.ts";
 import { approveReshuffleById, discardReshuffleById, requestReshuffleView } from "../app/decide-reshuffle.ts";
@@ -143,7 +147,7 @@ import { deleteTask, renameTask, updateTask, type UpdateTaskDeps } from "../app/
 import { planDayForChangeSet } from "../app/plan-day.ts";
 import { refitPlan } from "../app/refit-plan.ts";
 import type { ApplyChangeSetDeps } from "../app/apply-change-set.ts";
-import { listResearch, type ResearchListDeps } from "../app/research-list.ts";
+import { getResearchDocument, listResearch, type ResearchListDeps } from "../app/research-list.ts";
 import { sandboxQueue, type SandboxQueueDeps } from "../app/sandbox-queue.ts";
 import { finishSandboxSession, saveSandboxCardAndAdvance, type SandboxSubmitDeps } from "../app/sandbox-submit.ts";
 import { firstCardView } from "../core/sandbox-card-view.ts";
@@ -154,6 +158,7 @@ import type {
   EditMemoryRequest,
   MoveMemoryRequest,
   SetMemoryExpiryRequest,
+  SortFeedbackRequest,
   DeleteMemoryRequest,
   ReviewMemoryRequest,
   RevertSettingRequest,
@@ -434,6 +439,72 @@ export function startCheckOffCommitSweep(deps: CheckOffDeps, options: CheckOffCo
   };
 
   const startup = runOnce();
+  const handle = setIntervalFn(() => void runOnce(), intervalMs);
+  return {
+    startup,
+    runOnce,
+    stop(): void {
+      clearIntervalFn(handle);
+    },
+  };
+}
+
+// ============================================================================
+// Research job runner (Story 11.3, E11-R9) — runs queued /research jobs one at a
+// time in the background. All job logic is in `app/run-research-job.ts`.
+// ============================================================================
+
+export interface ResearchJobRunnerOptions {
+  readonly intervalMs?: number;
+  readonly setIntervalFn?: typeof setInterval;
+  readonly clearIntervalFn?: typeof clearInterval;
+  readonly log?: (entry: LogEntry) => void;
+}
+
+export interface ResearchJobRunnerHandle {
+  /** Settles once startup recovery (jobs a previous process left `running`) has run; it precedes the first tick. */
+  readonly startup: Promise<void>;
+  /** Runs one tick now, or joins the one already running, so ticks never overlap. */
+  runOnce(): Promise<void>;
+  stop(): void;
+}
+
+/** Recovers interrupted jobs first, then ticks every `intervalMs`: one job per tick. Idle ticks are silent. */
+export function startResearchJobRunner(deps: RunResearchJobDeps, options: ResearchJobRunnerOptions = {}): ResearchJobRunnerHandle {
+  const intervalMs = options.intervalMs ?? RESEARCH_JOB_POLL_INTERVAL_MS;
+  const setIntervalFn = options.setIntervalFn ?? setInterval;
+  const clearIntervalFn = options.clearIntervalFn ?? clearInterval;
+  const log = options.log ?? ((entry: LogEntry) => writeStructuredLog(entry));
+  const runDeps: RunResearchJobDeps = { ...deps, log };
+
+  const startup = (async () => {
+    try {
+      const result = await failInterruptedResearchJobs(runDeps, {});
+      if (!result.ok) log({ level: "error", event: "server.research-recovery-failed", detail: { message: result.error.message } });
+      else if (result.value.failed > 0) log({ level: "info", event: "server.research-recovery", detail: { ...result.value } });
+    } catch (err) {
+      log({ level: "error", event: "server.research-recovery-failed", detail: { message: err instanceof Error ? err.message : String(err) } });
+    }
+  })();
+
+  let inFlight: Promise<void> | undefined;
+  const runOnce = (): Promise<void> => {
+    if (inFlight) return inFlight;
+    inFlight = (async () => {
+      try {
+        await startup;
+        const result = await runNextResearchJob(runDeps, {});
+        if (!result.ok) log({ level: "error", event: "server.research-job-failed", detail: { message: result.error.message } });
+        else if (result.value.ran) log({ level: "info", event: "server.research-job", detail: { outcome: result.value.outcome } });
+      } catch (err) {
+        log({ level: "error", event: "server.research-job-failed", detail: { message: err instanceof Error ? err.message : String(err) } });
+      } finally {
+        inFlight = undefined;
+      }
+    })();
+    return inFlight;
+  };
+
   const handle = setIntervalFn(() => void runOnce(), intervalMs);
   return {
     startup,
@@ -852,7 +923,7 @@ function withChatToolLoopDeps<T extends Omit<ChatTurnDeps, "emit"> & AnswerOpenI
     deleteTask: tasksDeps ? (taskId) => deleteTask(tasksDeps, { taskId }) : NOTION_NOT_SET_UP("delete Tasks"),
     planDay: () => planDayForChangeSet(planDeps, {}),
     refitPlan: reshuffle
-      ? () => refitPlan({ ...reshuffle, store: chatDeps.store }, {})
+      ? (request) => refitPlan({ ...reshuffle, store: chatDeps.store }, request ? { request } : {})
       : async () => ({ ok: false, error: { kind: "missing-field", message: "I can't re-fit the Plan right now." } }),
   };
   return {
@@ -881,7 +952,7 @@ export function createApp(deps: ServerDeps) {
   const checkOffDeps: CheckOffDeps | undefined = deps.checkOff
     ? { ...deps.checkOff, connection: deps.connection, now: deps.checkOff.now ?? (() => new Date()), log }
     : undefined;
-  const chatSession: ChatSession = deps.chatSession ?? { recentMessages: [], lastSearchAnswer: undefined };
+  const chatSession: ChatSession = deps.chatSession ?? { recentMessages: [], lastSearchAnswer: undefined, researchOffered: new Set<string>() };
   // Task 6B: one merged deps object serves all three Tasks-page app/
   // functions (each reads only its own fields). Spread, never re-keyed, so
   // the write binding's name never appears in this file (AD-16).
@@ -1359,7 +1430,14 @@ export function createApp(deps: ServerDeps) {
       // error rather than a 500.
       .get("/api/research", async (c) => {
         if (!researchDeps) return c.json(RESEARCH_NOT_CONFIGURED, httpStatus(RESEARCH_NOT_CONFIGURED));
-        const result = wire(await listResearch(researchDeps, {}));
+        const result = wire(await listResearch(researchDeps, { pages: c.req.query("pages") }));
+        return c.json(result, httpStatus(result));
+      })
+      // Story 11.2 (E11-R2): one Research Vault document by id (the most
+      // recent when `id` is missing or unknown; `{}` for an empty vault).
+      .get("/api/research/document", async (c) => {
+        if (!researchDeps) return c.json(RESEARCH_NOT_CONFIGURED, httpStatus(RESEARCH_NOT_CONFIGURED));
+        const result = wire(await getResearchDocument(researchDeps, { id: c.req.query("id") }));
         return c.json(result, httpStatus(result));
       })
       // Story 8.5, AD-18/C5: one chat turn, its reply streamed on this
@@ -1448,6 +1526,31 @@ export function createApp(deps: ServerDeps) {
         const result = wire(await searchMemory(memoryPageDeps(deps, deps.memoryItems), { query: c.req.query("q") ?? "" }));
         return c.json(result, httpStatus(result));
       })
+      // Claude export import: the body is the reviewed candidates file; `?dryRun=1` reports without writing.
+      .post("/api/memory/import", async (c) => {
+        if (!deps.memoryItems) return c.json(MEMORY_NOT_CONFIGURED, httpStatus(MEMORY_NOT_CONFIGURED));
+        const refuse = (message: string) => {
+          const invalid: ApiFailure = { ok: false, error: { kind: "validation", message } };
+          return c.json(invalid, httpStatus(invalid));
+        };
+        // text/plain can be POSTed cross-origin without a preflight; text/markdown cannot, and this server answers no preflight.
+        if (!(c.req.header("content-type") ?? "").toLowerCase().startsWith("text/markdown")) return refuse("Send the candidates file with Content-Type: text/markdown.");
+        const dryRunParam = c.req.query("dryRun");
+        if (dryRunParam !== undefined && !["", "0", "false", "1", "true"].includes(dryRunParam)) return refuse("dryRun must be 1 or true.");
+        const parsed = parseMemoryImport(await c.req.text());
+        if (parsed.problems.length > 0) {
+          const shown = parsed.problems.slice(0, 5).map((p) => `Line ${p.line}: ${p.reason}`).join("; ");
+          const more = parsed.problems.length > 5 ? `; and ${parsed.problems.length - 5} more` : "";
+          return refuse(`The file could not be read. ${shown}${more}.`);
+        }
+        const result = wire(
+          await importMemory(
+            { memoryItems: deps.memoryItems, now: () => new Date(), timeZone: deps.chat?.timeZone ?? process.env["YOH_TIMEZONE"] ?? "UTC" },
+            { candidates: parsed.candidates, dryRun: dryRunParam === "1" || dryRunParam === "true" },
+          ),
+        );
+        return c.json(result, httpStatus(result));
+      })
       // Story 13.13: the day's one pending Pattern question (records `lastOfferedOn`); needs no `chat` deps.
       .get("/api/memory/pattern-offer", async (c) => {
         if (!deps.memoryItems) return c.json(MEMORY_NOT_CONFIGURED, httpStatus(MEMORY_NOT_CONFIGURED));
@@ -1518,6 +1621,16 @@ export function createApp(deps: ServerDeps) {
         async (c) => {
           if (!deps.memoryItems) return c.json(MEMORY_NOT_CONFIGURED, httpStatus(MEMORY_NOT_CONFIGURED));
           const result = wire(await moveMemoryItem(memoryPageDeps(deps, deps.memoryItems), c.req.valid("json")));
+          return c.json(result, httpStatus(result));
+        },
+      )
+      .post(
+        "/api/memory/sort-feedback",
+        validator("json", validateMemoryBody<SortFeedbackRequest>("memory/sort-feedback", (b) =>
+          itemIdProblem(b) ?? (b["verdict"] !== "right" && b["verdict"] !== "wrong" ? "verdict must be right or wrong" : typeof b["reason"] !== "string" ? "missing reason" : b["belongsIn"] !== undefined && typeof b["belongsIn"] !== "string" ? "bad belongsIn" : undefined))),
+        async (c) => {
+          if (!deps.memoryItems) return c.json(MEMORY_NOT_CONFIGURED, httpStatus(MEMORY_NOT_CONFIGURED));
+          const result = wire(await recordSortFeedback(memoryPageDeps(deps, deps.memoryItems), c.req.valid("json")));
           return c.json(result, httpStatus(result));
         },
       )
@@ -1642,7 +1755,7 @@ export function startServer(
 ): ServerHandle {
   const port = parsePort(env["YOH_SERVER_PORT"]);
   // Contract C3: one ChatSession per server process, shared by every chat route.
-  const chatSession: ChatSession = { recentMessages: [], lastSearchAnswer: undefined };
+  const chatSession: ChatSession = { recentMessages: [], lastSearchAnswer: undefined, researchOffered: new Set<string>() };
   const app = createApp({
     connection,
     chatSession,
@@ -2156,6 +2269,8 @@ function buildChatDeps(
     ...bindNotionCreatePage(getNotionCreatePageBinding),
     ...bindCalendarApply(getCalendarApplyBinding),
     changeSetWrites: { ...bindNotionCreatePage(getNotionCreatePageBinding), ...bindCalendarApply(getCalendarApplyBinding) },
+    // Story 11.4: a Yes on the research offer queues exactly as `/research` does.
+    research: { connection, webSearchAvailable: Boolean(perplexityApiKey), getNotionCreatePageBinding, now: () => new Date() },
     readFieldOptions,
     recordCompletion,
     lookupTask,
@@ -2174,6 +2289,7 @@ if (import.meta.main) {
   initSettingsStoreSchema(connection.db);
   initMemoryItemStoreSchema(connection.db);
   initCompletionLogSchema(connection.db);
+  initJobStoreSchema(connection.db);
   // Story 13.12 (Ruling E11): one-time, idempotent removal of the retired
   // periodic check-in's stored leftovers. Never fatal.
   try {
@@ -2218,6 +2334,11 @@ if (import.meta.main) {
   // previous process, then the commit timer takes over.
   const checkOffSweep = checkOff ? startCheckOffCommitSweep({ ...checkOff, connection, now: () => new Date() }) : undefined;
   const planSyncSweep = planSync ? startPlanCalendarSyncSweep(planSync) : undefined;
+  // Story 11.3 (E11-R9): recovery first, then one queued research job per tick. Needs search and the Notion vault.
+  const researchRunner =
+    chat?.webSearchAvailable && chat.getNotionCreatePageBinding().ok && chat.timeZone
+      ? startResearchJobRunner({ connection, searchFn: chat.searchFn, getNotionCreatePageBinding: chat.getNotionCreatePageBinding, timeZone: chat.timeZone, now: () => new Date() })
+      : undefined;
   writeStructuredLog({
     level: "info",
     event: "server.listening",
@@ -2234,6 +2355,7 @@ if (import.meta.main) {
     heartbeat.stop();
     checkOffSweep?.stop();
     planSyncSweep?.stop();
+    researchRunner?.stop();
     handle.close();
     setTimeout(() => {
       connection.close();

@@ -519,10 +519,10 @@ export async function readTaskFieldOptions(
 export type NotionResearchVaultReadConfig = Pick<NotionCreatePageConfig, "researchVaultDataSourceId" | "researchVaultPropertyNames">;
 
 /**
- * Reads every current Research Vault page and maps it to the minimal shape
- * the Research Hub page's list shows (`ResearchVaultRecord`): title, date
- * (absent if unset), how many source lines the "Sources" rich_text property
- * holds, and the page's own Notion url (so a row can link straight to it).
+ * Reads every current Research Vault page and maps it to a
+ * `ResearchVaultRecord`: title, date (absent if unset), the "Key Findings"
+ * body, the "Sources" lines (and their count), and the page's own Notion
+ * url (so a row can link straight to it). Read-only: nothing is written.
  * Always queries live (no caching layer in this file), and paginates
  * through every result page via the same `queryAllPages` helper
  * `readNotionTasks` uses.
@@ -1306,18 +1306,24 @@ function toProject(page: PageObjectResponse, names: NotionProjectPropertyNames):
   };
 }
 
-/** How many non-empty, trimmed lines `raw` (the "Sources" rich_text value) holds — `save-search-result.ts` writes one citation URL per line (`citations.join("\n")`). */
-function countSourceLines(raw: string): number {
-  return raw.split("\n").filter((line) => line.trim().length > 0).length;
+/** The non-empty, trimmed lines of `raw` (the "Sources" rich_text value) — `save-search-result.ts` writes one citation URL per line (`citations.join("\n")`). */
+function splitSourceLines(raw: string): string[] {
+  return raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
 }
 
 function toResearchVaultRecord(page: PageObjectResponse, names: NotionResearchVaultPropertyNames): ResearchVaultRecord {
   const dateStart = getDateStart(page, names.date);
+  const sources = splitSourceLines(getRichText(page, names.sources));
   return {
     id: page.id,
     title: getTitle(page, names.title),
     ...(dateStart !== undefined ? { date: toIsoDateOnly(dateStart) } : {}),
-    sourceCount: countSourceLines(getRichText(page, names.sources)),
+    keyFindings: getRichText(page, names.keyFindings),
+    sources,
+    sourceCount: sources.length,
     url: page.url,
   };
 }

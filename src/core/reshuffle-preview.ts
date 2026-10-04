@@ -155,6 +155,12 @@ export function parseReshuffleRequest(value: unknown): ReshuffleRequest | undefi
       return nonEmpty(v["planBlockId"]) && isIsoInstant(v["newStart"]) ? { kind: "move-block", planBlockId: v["planBlockId"], newStart: v["newStart"] } : undefined;
     case "pin-task":
       return nonEmpty(v["taskId"]) && isIsoInstant(v["newStart"]) ? { kind: "pin-task", taskId: v["taskId"], newStart: v["newStart"] } : undefined;
+    case "pin-routine":
+      return nonEmpty(v["routineId"]) && isIsoInstant(v["newStart"]) ? { kind: "pin-routine", routineId: v["routineId"], newStart: v["newStart"] } : undefined;
+    case "resize-task": {
+      const minutes = v["durationMinutes"];
+      return nonEmpty(v["taskId"]) && typeof minutes === "number" && Number.isInteger(minutes) && minutes > 0 ? { kind: "resize-task", taskId: v["taskId"], durationMinutes: minutes } : undefined;
+    }
     case "unpin-task":
       return nonEmpty(v["taskId"]) ? { kind: "unpin-task", taskId: v["taskId"] } : undefined;
     case "drop-task":

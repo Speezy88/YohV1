@@ -1,8 +1,9 @@
 /** Pure builder for the Memory page's item shape (Story 13.9). The caller gathers the lookups. */
 import type { MemoryItemView } from "../types/api.ts";
-import type { MemoryItem } from "../types/domain.ts";
+import type { MemoryItem, MemorySortFeedback } from "../types/domain.ts";
 import { localIsoDate } from "./local-time.ts";
 import { needsReviewLabel, type MemoryItemState } from "./memory-context.ts";
+import { isImportTag } from "./memory-import.ts";
 
 export interface MemoryItemViewLookups {
   readonly state?: MemoryItemState | undefined;
@@ -12,13 +13,15 @@ export interface MemoryItemViewLookups {
   readonly chain: readonly MemoryItem[];
   /** The host time zone: confirmation days are computed here, never sliced from the UTC instant. */
   readonly timeZone: string;
+  /** The item's sorting verdict, if any; shown only while the item is still in the folder it judged. */
+  readonly sortFeedback?: MemorySortFeedback | undefined;
 }
 
 export function toMemoryItemView(item: MemoryItem, lookups: MemoryItemViewLookups): MemoryItemView {
-  const { state, sourceTurn } = lookups;
+  const { state, sourceTurn, sortFeedback: fb } = lookups;
   const reason = state?.reason ? needsReviewLabel(state.reason) : undefined;
   const source: MemoryItemView["source"] =
-    item.sourceTurnId === undefined ? undefined : sourceTurn ? { conversationId: sourceTurn.conversationId, turnId: sourceTurn.turnId, date: sourceTurn.date } : "deleted";
+    item.sourceTurnId === undefined || isImportTag(item.sourceTurnId) ? undefined : sourceTurn ? { conversationId: sourceTurn.conversationId, turnId: sourceTurn.turnId, date: sourceTurn.date } : "deleted";
   const earlierVersions = lookups.chain
     .filter((v) => v.id !== item.id && v.status !== "deleted")
     .sort((a, b) => (a.confirmedAt < b.confirmedAt ? 1 : a.confirmedAt > b.confirmedAt ? -1 : 0))
@@ -40,5 +43,8 @@ export function toMemoryItemView(item: MemoryItem, lookups: MemoryItemViewLookup
     ...(reason !== undefined ? { notLoadedReason: reason } : {}),
     ...(source !== undefined ? { source } : {}),
     earlierVersions,
+    ...(fb && fb.folder === item.folder
+      ? { sortFeedback: { verdict: fb.verdict, reason: fb.reason, ...(fb.belongsIn !== undefined ? { belongsIn: fb.belongsIn } : {}) } }
+      : {}),
   };
 }
