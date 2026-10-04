@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  chatDateContext,
   CHAT_TOOLS,
   changeSetPrompt,
   CHANGE_SET_PARTIAL_NOTE,
@@ -140,4 +141,21 @@ test("claimsAWrite lets honest answers through", () => {
     assert.equal(claimsAWrite(text), false, text);
   }
   assert.equal(NOTHING_CHANGED_NOTE, "Nothing has been changed.");
+});
+
+test("chatDateContext names today, the time, tomorrow and the week ahead in the host time zone", () => {
+  // 01:48 UTC on Oct 4 is still Saturday Oct 3, 6:48 PM in Los Angeles.
+  const text = chatDateContext(new Date("2026-10-04T01:48:00.000Z"), "America/Los_Angeles");
+  assert.match(text, /Today is Saturday, October 3, 2026 \(2026-10-03\)/);
+  assert.match(text, /The local time is 6:48 PM, time zone America\/Los_Angeles/);
+  assert.match(text, /Tomorrow is Sunday, October 4 \(2026-10-04\)/);
+  assert.match(text, /Monday 2026-10-05, Tuesday 2026-10-06, Wednesday 2026-10-07, Thursday 2026-10-08, Friday 2026-10-09, Saturday 2026-10-10/);
+});
+
+test("chatDateContext steps whole calendar days across a daylight-saving change", () => {
+  // Sunday Nov 1 2026 is the 25-hour day in Los Angeles; 11:30 PM Saturday must still give Sunday as tomorrow.
+  const text = chatDateContext(new Date("2026-11-01T06:30:00.000Z"), "America/Los_Angeles");
+  assert.match(text, /Today is Saturday, October 31, 2026 \(2026-10-31\)/);
+  assert.match(text, /Tomorrow is Sunday, November 1 \(2026-11-01\)/);
+  assert.match(text, /Monday 2026-11-02/);
 });
