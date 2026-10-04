@@ -937,3 +937,41 @@ test("change-set: a throw writing the Plan hint does not lose the receipts", asy
   assert.equal(result.ok, true);
   if (result.ok) assert.deepEqual(result.value.receipts, ['Marked "Lab report" done.']);
 });
+
+// ---- change-set: valid only on the local day it was staged (audit fix-first, Task 4) ----
+
+function changeSetHarness(now: string) {
+  const { store, connection } = tempStoreWithConnection();
+  const completed: string[] = [];
+  const unused = async () => ({ ok: false as const, error: { kind: "validation" as const, message: "unused" } });
+  const proposal = { id: "cs-day", kind: "change-set", entityId: "chat", entityVersion: "", reason: "", createdAt: "2026-10-03T16:00:00.000Z",
+    suggested: { items: [{ kind: "complete-task", taskId: "t1", label: "Lab report" }] } };
+  putOpenInteractionRequest(store, "cs-day-request", { requestKind: "proposal", promptText: "x", detail: { proposal }, createdAt: NOW });
+  const deps: ConfirmProposalDeps = { store, connection, changeSet: {
+    timeZone: "America/New_York", now: () => new Date(now),
+    applyCalendarEdit: unused, createPage: unused, editTaskField: unused, renameTask: unused,
+    completeTask: async (taskId: string) => { completed.push(taskId); return { ok: true, value: undefined }; },
+    deleteTask: unused, planDay: unused, refitPlan: unused,
+  } };
+  return { store, connection, completed, proposal, deps };
+}
+
+test("change-set: an Approve on a later local day is stale-proposal, calls no change-set dependency, and clears the request", async () => {
+  const h = changeSetHarness("2026-10-04T16:00:00.000Z");
+  const result = await confirmProposal(h.deps, { proposal: h.proposal, accept: true, requestId: "cs-day-request" });
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.error.kind, "stale-proposal");
+  assert.deepEqual(h.completed, []);
+  assert.equal(getOpenInteractionRequest(h.store, "cs-day-request"), undefined);
+  h.store.close();
+});
+
+test("change-set: an Approve on the same local day applies and appends exactly one 'plan' hint", async () => {
+  const h = changeSetHarness("2026-10-03T23:00:00.000Z");
+  const before = getMaxOutboxSeq(h.connection);
+  const result = await confirmProposal(h.deps, { proposal: h.proposal, accept: true, requestId: "cs-day-request" });
+  assert.equal(result.ok, true);
+  assert.deepEqual(h.completed, ["t1"]);
+  assert.equal(tailOutboxSince(h.connection, before).filter((hint) => hint.topic === "plan").length, 1);
+  h.store.close();
+});
