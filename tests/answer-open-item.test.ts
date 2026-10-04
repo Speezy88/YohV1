@@ -337,6 +337,7 @@ function changeSetDeps(store: ReturnType<typeof tempStore>, completed: string[])
         completed.push(taskId);
         return { ok: true as const, value: undefined };
       },
+      deleteTask: unused,
       planDay: unused,
       refitPlan: unused,
     },

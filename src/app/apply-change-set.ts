@@ -34,6 +34,8 @@ export interface ApplyChangeSetDeps {
   readonly renameTask: (taskId: string, title: string) => Promise<Result<{ readonly receipt: string }, YohError>>;
   /** `app/check-off.ts`'s `checkOff`, pre-bound: keeps the Completion Log entry and the undo window. */
   readonly completeTask: (taskId: string) => Promise<Result<unknown, YohError>>;
+  /** `app/update-task.ts`'s `deleteTask`, pre-bound: the Task goes to Notion's Trash. */
+  readonly deleteTask: (taskId: string) => Promise<Result<{ readonly receipt: string }, YohError>>;
   /** `app/plan-day.ts`'s `planDay`, pre-bound. */
   readonly planDay: () => Promise<Result<{ readonly reply: string; readonly built: boolean }, YohError>>;
   /** `requestReshuffle({kind:"reflow-now"})` then `approveReshuffle`, pre-bound. */
@@ -54,6 +56,7 @@ const PAST: Readonly<Record<ChangeSetItem["kind"], readonly [string, string]>> =
   "update-task": ["Set", "Set"],
   "rename-task": ["Rename", "Renamed"],
   "complete-task": ["Mark", "Marked"],
+  "delete-task": ["Delete", "Deleted"],
   "plan-day": ["Build", "Built"],
   "refit-plan": ["Re-fit", "Re-fitted"],
 };
@@ -65,7 +68,7 @@ function receipt(item: ChangeSetItem, timeZone: string, extra?: string): string 
 }
 
 const CALENDAR_KINDS: ReadonlySet<ChangeSetItem["kind"]> = new Set(["create-event", "move-event", "resize-event", "delete-event"]);
-const NOTION_KINDS: ReadonlySet<ChangeSetItem["kind"]> = new Set(["create-task", "update-task", "rename-task", "complete-task"]);
+const NOTION_KINDS: ReadonlySet<ChangeSetItem["kind"]> = new Set(["create-task", "update-task", "rename-task", "complete-task", "delete-task"]);
 
 function serviceContext(item: ChangeSetItem): ErrorCopyContext {
   if (CALENDAR_KINDS.has(item.kind)) return { service: "Google Calendar" };
@@ -112,6 +115,10 @@ async function applyItem(deps: ApplyChangeSetDeps, item: ChangeSetItem): Promise
       const r = await deps.completeTask(item.taskId);
       return r.ok ? { ok: true, value: undefined } : r;
     }
+    case "delete-task": {
+      const r = await deps.deleteTask(item.taskId);
+      return r.ok ? { ok: true, value: r.value.receipt } : r;
+    }
     case "plan-day": {
       const r = await deps.planDay();
       if (!r.ok) return r;
@@ -136,6 +143,7 @@ const REQUIRED_STRINGS: Readonly<Record<ChangeSetItem["kind"], readonly string[]
   "update-task": ["taskId", "label", "field", "value"],
   "rename-task": ["taskId", "label", "newTitle"],
   "complete-task": ["taskId", "label"],
+  "delete-task": ["taskId", "label"],
   "plan-day": [],
   "refit-plan": [],
 };

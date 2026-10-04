@@ -105,6 +105,11 @@ export const CHAT_TOOLS: readonly ChatToolDefinition[] = [
     description: "Stage marking a Task done (id from list_tasks).",
     input_schema: { type: "object", properties: { taskId: { type: "string" } }, required: ["taskId"] },
   },
+  {
+    name: "delete_task",
+    description: "Stage deleting a Task (id from list_tasks). Use only when Spencer asks to delete or remove a Task, not when it is done.",
+    input_schema: { type: "object", properties: { taskId: { type: "string" } }, required: ["taskId"] },
+  },
   { name: "plan_day", description: "Stage building today's Plan from Tasks and Calendar. Use when there is no Plan yet.", input_schema: { type: "object", properties: {} } },
   { name: "refit_plan", description: "Stage re-fitting the rest of today's existing Plan around the calendar.", input_schema: { type: "object", properties: {} } },
 ];
@@ -202,6 +207,8 @@ export function describeChangeSetItem(item: ChangeSetItem, timeZone: string): st
       return `Rename "${item.label}" to "${item.newTitle}"`;
     case "complete-task":
       return `Mark "${item.label}" done`;
+    case "delete-task":
+      return `Delete the Task "${item.label}"`;
     case "plan-day":
       return "Build today's Plan";
     case "refit-plan":

@@ -651,14 +651,16 @@ test("setTaskStatus honors a custom taskPropertyNames.status override", async ()
   assert.deepEqual(Object.keys(call.properties ?? {}), ["Task Status"]);
 });
 
-test("AD-12: notion-adapter.ts's write surface is exactly setTaskStatus + updateTaskField + createPage — no generic 'update or create any Notion property/page' function exists", () => {
+test("AD-12 (amended 2026-10-04): notion-adapter.ts's write surface is exactly setTaskStatus + updateTaskField + createPage + archiveTask — no generic 'update or create any Notion property/page' function exists", () => {
   const source = readFileSync(join(import.meta.dirname, "..", "src", "adapters", "notion-adapter.ts"), "utf8");
   const updateCallSites = source.match(/\.pages\.update\(/g) ?? [];
-  assert.equal(updateCallSites.length, 1, "expected exactly one `client.pages.update(` call site: writePageProperty's single shared field-writer — setTaskStatus no longer trashes on completion (AD-12, reverted 2026-09-25)");
+  assert.equal(updateCallSites.length, 2, "expected exactly two `client.pages.update(` call sites: writePageProperty's single shared field-writer and archiveTask's move-to-Trash — setTaskStatus no longer trashes on completion (AD-12, reverted 2026-09-25)");
   const createCallSites = source.match(/\.pages\.create\(/g) ?? [];
   assert.equal(createCallSites.length, 1, "expected exactly one `client.pages.create(` call site: createPage's own (Story 6.3)");
   assert.doesNotMatch(source, /\.dataSources\.update\(|\.pages\.move\(/, "no other write/update capability may exist anywhere in this file (AD-12)");
-  assert.doesNotMatch(source, /in_trash/, "AD-12 (reverted 2026-09-25): no Phase 2 capability deletes anything from Notion — in_trash is never sent from any trigger");
+  const trashWrites = source.match(/in_trash:/g) ?? [];
+  assert.equal(trashWrites.length, 1, "AD-12 (amended 2026-10-04, Spencer): in_trash is sent from exactly one place, archiveTask, reached only from a chat change set Spencer approved — never on completion or from any ritual");
+  assert.match(source, /export async function archiveTask\([^)]*\)[^{]*\{[\s\S]*?in_trash: true/, "the one in_trash write lives inside archiveTask");
 });
 
 // ============================================================================

@@ -44,6 +44,8 @@ export interface FakeTasksDb {
   rows(): readonly FakeTaskSeed[];
   /** Every `pages.update` properties payload, in order. */
   readonly updates: Array<{ readonly pageId: string; readonly properties: Record<string, unknown> }>;
+  /** Ids of pages moved to the trash (`pages.update` with `in_trash: true`), in order. */
+  readonly trashed: string[];
   /** While `true`, `pages.update` and `pages.create` throw, as a Notion outage would. */
   setFailingWrites(failing: boolean): void;
 }
@@ -99,6 +101,7 @@ export function createFakeNotionTasksDb(opts: FakeTasksDbOptions = {}): FakeTask
   const priorityOptions = opts.priorityOptions ?? ["🔴 High", "🟡 Medium", "🟢 Low"];
   let rows: FakeTaskSeed[] = [...(opts.seed ?? [])];
   const updates: FakeTasksDb["updates"] = [];
+  const trashed: string[] = [];
   let failingWrites = false;
   let nextId = 1;
 
@@ -144,11 +147,17 @@ export function createFakeNotionTasksDb(opts: FakeTasksDbOptions = {}): FakeTask
       retrieve: async () => schema,
     },
     pages: {
-      update: async (args: { page_id: string; properties: Record<string, Record<string, unknown>> }) => {
+      update: async (args: { page_id: string; properties?: Record<string, Record<string, unknown>>; in_trash?: boolean }) => {
         if (failingWrites) throw new Error("fake Notion: service unavailable");
-        updates.push({ pageId: args.page_id, properties: args.properties });
+        if (args.in_trash === true) {
+          trashed.push(args.page_id);
+          rows = rows.filter((row) => row.id !== args.page_id);
+          return { object: "page", id: args.page_id };
+        }
+        const properties = args.properties ?? {};
+        updates.push({ pageId: args.page_id, properties });
         rows = rows.map((row) =>
-          row.id === args.page_id ? Object.entries(args.properties).reduce((r, [name, value]) => applyProperty(r, name, value), row) : row,
+          row.id === args.page_id ? Object.entries(properties).reduce((r, [name, value]) => applyProperty(r, name, value), row) : row,
         );
         return { object: "page", id: args.page_id };
       },
@@ -166,6 +175,7 @@ export function createFakeNotionTasksDb(opts: FakeTasksDbOptions = {}): FakeTask
     client,
     rows: () => rows,
     updates,
+    trashed,
     setFailingWrites: (failing) => {
       failingWrites = failing;
     },

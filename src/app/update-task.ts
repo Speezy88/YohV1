@@ -39,6 +39,8 @@ export interface UpdateTaskDeps {
   readonly updateTaskField: NotionTaskWriteBindings["updateTaskField"];
   /** `bindNotionTaskWrites(...)`'s title write (AD-12 amended 2026-09-27). */
   readonly updateTaskTitle: NotionTaskWriteBindings["updateTaskTitle"];
+  /** `bindNotionTaskWrites(...)`'s move-to-Trash write, reached only from an approved chat change set. */
+  readonly archiveTask: NotionTaskWriteBindings["archiveTask"];
   /** The live select options, so a receipt names Energy/Status the way Notion does. Optional; may throw (receipts then fall back to plain words). */
   readonly readFieldOptions?: () => Promise<TaskFieldOptions>;
   /** For the one `tasks` outbox hint after a successful write. */
@@ -49,6 +51,13 @@ export interface UpdateTaskDeps {
 export interface UpdateTaskInput extends UpdateTaskFieldRequest {
   readonly taskId: string;
 }
+
+export interface DeleteTaskInput {
+  readonly taskId: string;
+}
+
+/** Closing sentence of a deleted Task's receipt: Notion keeps a trashed page restorable. */
+export const DELETED_TASK_RECEIPT = "It's in Notion's Trash if you want it back.";
 
 export interface RenameTaskInput extends RenameTaskRequest {
   readonly taskId: string;
@@ -187,4 +196,22 @@ export async function renameTask(deps: UpdateTaskDeps, input: RenameTaskInput): 
 
   hint(deps, input.taskId);
   return { ok: true, value: { receipt: `Renamed to "${title}".` } };
+}
+
+export async function deleteTask(deps: UpdateTaskDeps, input: DeleteTaskInput): Promise<Result<{ readonly receipt: string }, YohError>> {
+  if (typeof input.taskId !== "string" || input.taskId.trim() === "") return invalid("That Task couldn't be found.");
+
+  let written: Result<void, YohError>;
+  try {
+    written = await deps.archiveTask(input.taskId);
+  } catch (err) {
+    written = { ok: false, error: { kind: "unreachable", message: errorCopyForThrown(err, { service: "Notion" }) } };
+  }
+  if (!written.ok) {
+    deps.log?.({ level: "error", event: "update-task.delete-failed", detail: { taskId: input.taskId, message: written.error.message } });
+    return { ok: false, error: { kind: written.error.kind, message: errorCopy(written.error, { service: "Notion" }) } };
+  }
+
+  hint(deps, input.taskId);
+  return { ok: true, value: { receipt: DELETED_TASK_RECEIPT } };
 }

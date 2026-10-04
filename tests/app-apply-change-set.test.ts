@@ -16,6 +16,7 @@ function fakeDeps(overrides: Partial<ApplyChangeSetDeps> = {}) {
     editTaskField: async (id, field) => { log.push(`field:${id}:${field}`); return ok({ receipt: "Due Date set to Mon, Oct 5." }); },
     renameTask: async (id, title) => { log.push(`rename:${id}:${title}`); return ok({ receipt: `Renamed to "${title}".` }); },
     completeTask: async (id) => { log.push(`complete:${id}`); return ok(undefined); },
+    deleteTask: async (id) => { log.push(`delete:${id}`); return ok({ receipt: "It's in Notion's Trash if you want it back." }); },
     planDay: async () => { log.push("plan"); return ok({ reply: "2 Tasks scheduled across 5 blocks.", built: true }); },
     refitPlan: async () => { log.push("refit"); return ok({ reply: "Moved 2 blocks." }); },
     ...overrides,
@@ -25,6 +26,24 @@ function fakeDeps(overrides: Partial<ApplyChangeSetDeps> = {}) {
 
 const workout: ChangeSetItem = { kind: "create-event", title: "Workout", start: "2026-10-03T17:10:00.000Z", end: "2026-10-03T18:50:00.000Z" };
 const dinner: ChangeSetItem = { kind: "create-event", title: "Dinner", start: "2026-10-03T22:00:00.000Z", end: "2026-10-03T23:00:00.000Z" };
+
+test("a delete-task item goes through deleteTask and its receipt says where the Task went", async () => {
+  const { deps, log } = fakeDeps();
+  const result = await applyChangeSet(deps, { changeSet: { items: [{ kind: "delete-task", taskId: "t-uc", label: "UC Supplements" }] } });
+  assert.equal(result.ok, true);
+  assert.deepEqual(log, ["delete:t-uc"]);
+  if (result.ok) assert.deepEqual(result.value.results.map((r) => [r.ok, r.text]), [[true, 'Deleted the Task "UC Supplements". It\'s in Notion\'s Trash if you want it back.']]);
+});
+
+test("a failed delete-task names Notion and changes nothing else", async () => {
+  const { deps } = fakeDeps({ deleteTask: async () => ({ ok: false, error: { kind: "unreachable", message: "x" } }) });
+  const result = await applyChangeSet(deps, { changeSet: { items: [{ kind: "delete-task", taskId: "t-uc", label: "UC Supplements" }] } });
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.value.results[0]!.ok, false);
+    assert.match(result.value.results[0]!.text, /^Couldn't delete the Task "UC Supplements": .*Notion/);
+  }
+});
 
 test("applies every item, with the Plan step last, and returns one receipt each", async () => {
   const { deps, log } = fakeDeps();

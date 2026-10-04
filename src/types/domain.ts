@@ -455,6 +455,7 @@ export type ChangeSetItem =
   | { readonly kind: "update-task"; readonly taskId: ExternalId; readonly label: string; readonly field: "dueDate" | "estimatedDurationMinutes" | "priority"; readonly value: string }
   | { readonly kind: "rename-task"; readonly taskId: ExternalId; readonly label: string; readonly newTitle: string }
   | { readonly kind: "complete-task"; readonly taskId: ExternalId; readonly label: string }
+  | { readonly kind: "delete-task"; readonly taskId: ExternalId; readonly label: string }
   | { readonly kind: "plan-day" }
   | { readonly kind: "refit-plan" };
 

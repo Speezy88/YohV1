@@ -848,6 +848,7 @@ test("change-set: accept applies the items and returns one receipt per applied i
         editTaskField: async () => ({ ok: true, value: { receipt: "" } }),
         renameTask: async () => ({ ok: true, value: { receipt: "" } }),
         completeTask: async () => ({ ok: true, value: undefined }),
+        deleteTask: async () => ({ ok: true, value: { receipt: "" } }),
         planDay: async () => ({ ok: true, value: { reply: "", built: true } }),
         refitPlan: async () => ({ ok: true, value: { reply: "" } }),
     } },
@@ -865,7 +866,7 @@ test("change-set: decline writes nothing", async () => {
   let called = false;
   const never = async () => { called = true; return { ok: true as const, value: undefined as never }; };
   const result = await confirmProposal(
-    { store: tempStore(), changeSet: { timeZone: "America/New_York", now: () => new Date(), applyCalendarEdit: never, createPage: never, editTaskField: never, renameTask: never, completeTask: never, planDay: never, refitPlan: never } },
+    { store: tempStore(), changeSet: { timeZone: "America/New_York", now: () => new Date(), applyCalendarEdit: never, createPage: never, editTaskField: never, renameTask: never, completeTask: never, deleteTask: never, planDay: never, refitPlan: never } },
     { proposal: { id: "cs2", kind: "change-set", entityId: "chat", entityVersion: "", reason: "", createdAt: "2026-10-03T16:00:00.000Z", suggested: { items: [{ kind: "plan-day" }] } }, accept: false },
   );
   assert.deepEqual(result, { ok: true, value: { applied: false, receipts: [] } });
@@ -886,6 +887,7 @@ test("change-set: a stale item is reported in plain copy and the rest still appl
         editTaskField: async () => ({ ok: true, value: { receipt: "" } }),
         renameTask: async () => ({ ok: true, value: { receipt: "" } }),
         completeTask: async () => ({ ok: true, value: undefined }),
+        deleteTask: async () => ({ ok: true, value: { receipt: "" } }),
         planDay: async () => ({ ok: true, value: { reply: "", built: true } }),
         refitPlan: async () => ({ ok: true, value: { reply: "" } }),
     } },
@@ -908,7 +910,7 @@ test("change-set: a malformed set returns the validation error, writes nothing, 
     suggested: { items: [{ kind: "complete-task", taskId: "t1", label: "Lab report" }, { kind: "nope" }] } };
   putOpenInteractionRequest(store, "cs4-request", { requestKind: "proposal", promptText: "x", detail: { proposal }, createdAt: NOW });
   const result = await confirmProposal(
-    { store, changeSet: { timeZone: "America/New_York", now: () => new Date("2026-10-03T16:00:00.000Z"), applyCalendarEdit: never, createPage: never, editTaskField: never, renameTask: never, completeTask: never, planDay: never, refitPlan: never } },
+    { store, changeSet: { timeZone: "America/New_York", now: () => new Date("2026-10-03T16:00:00.000Z"), applyCalendarEdit: never, createPage: never, editTaskField: never, renameTask: never, completeTask: never, deleteTask: never, planDay: never, refitPlan: never } },
     { proposal, accept: true, requestId: "cs4-request" },
   );
   assert.equal(result.ok, false);
@@ -927,6 +929,7 @@ test("change-set: a throw writing the Plan hint does not lose the receipts", asy
         timeZone: "America/New_York", now: () => new Date("2026-10-03T16:00:00.000Z"),
         applyCalendarEdit: unused, createPage: unused, editTaskField: unused, renameTask: unused,
         completeTask: async () => ({ ok: true, value: undefined }),
+        deleteTask: async () => ({ ok: true, value: { receipt: "" } }),
         planDay: unused, refitPlan: unused,
     } },
     { proposal, accept: true },

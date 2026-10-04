@@ -63,6 +63,7 @@ test("describeChangeSetItem writes a future-tense line per kind", () => {
   assert.equal(describeChangeSetItem(create, TZ), 'Add "Workout" on Sat, Oct 3, 1:10 PM–2:50 PM');
   assert.equal(describeChangeSetItem({ kind: "complete-task", taskId: "t", label: "Lab report" }, TZ), 'Mark "Lab report" done');
   assert.equal(describeChangeSetItem({ kind: "delete-event", eventId: "e", label: "Dinner", etag: "x" }, TZ), 'Delete "Dinner" from your calendar');
+  assert.equal(describeChangeSetItem({ kind: "delete-task", taskId: "t", label: "UC Supplements" }, TZ), 'Delete the Task "UC Supplements"');
   assert.equal(describeChangeSetItem({ kind: "plan-day" }, TZ), "Build today's Plan");
 });
 
@@ -98,7 +99,7 @@ test("every tool has a name, description and object schema; write tools are clas
   assert.equal(isWriteTool("list_tasks"), false);
   assert.deepEqual(
     CHAT_TOOLS.map((t) => t.name),
-    ["list_tasks", "list_events", "get_plan", "search_memory", "web_search", "create_event", "move_event", "resize_event", "delete_event", "create_task", "update_task", "complete_task", "plan_day", "refit_plan"],
+    ["list_tasks", "list_events", "get_plan", "search_memory", "web_search", "create_event", "move_event", "resize_event", "delete_event", "create_task", "update_task", "complete_task", "delete_task", "plan_day", "refit_plan"],
   );
 });
 

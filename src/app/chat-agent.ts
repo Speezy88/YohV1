@@ -92,7 +92,7 @@ function agentSystemPrompt(tone: string, now: Date, timeZone: string): string {
     "Write tools only stage a change. Spencer then approves or discards everything staged in one step. Never say a change has been made, added, moved, deleted or saved.",
     "Only a write tool call stages a change; describing one in text does nothing. Never ask Spencer to confirm in text: the Approve card is the only confirmation.",
     "Use ids exactly as a read tool returned them in this turn. Call list_tasks or list_events first when you need an id.",
-    "If a request needs something no tool covers (Canvas, deleting a Task, deleting an event Yoh did not create), say plainly that you can't do that.",
+    "If a request needs something no tool covers (Canvas, deleting an event Yoh did not create), say plainly that you can't do that.",
   ].join("\n");
 }
 
@@ -172,12 +172,14 @@ function sameTarget(a: ChangeSetItem, b: ChangeSetItem): boolean {
       return a.kind === "rename-task" && a.taskId === b.taskId;
     case "complete-task":
       return a.kind === "complete-task" && a.taskId === b.taskId;
+    case "delete-task":
+      return (a.kind === "update-task" || a.kind === "rename-task" || a.kind === "complete-task" || a.kind === "delete-task") && a.taskId === b.taskId;
     default:
       return false;
   }
 }
 
-/** One staged item per target: a later item for the same event, task field or plan step replaces the earlier one. */
+/** One staged item per target: a later item for the same event, task field or plan step replaces the earlier one, and deleting a Task replaces every earlier change to it. */
 function stage(staged: ChangeSetItem[], item: ChangeSetItem): void {
   for (let i = staged.length - 1; i >= 0; i--) {
     if (sameTarget(staged[i]!, item)) staged.splice(i, 1);
@@ -246,10 +248,11 @@ function runWriteTool(deps: ChatAgentDeps, name: string, args: Record<string, un
     return stagedOk({ kind: "create-task", properties });
   }
 
-  if (name === "update_task" || name === "complete_task") {
+  if (name === "update_task" || name === "complete_task" || name === "delete_task") {
     const task = seen.tasks.get(String(args["taskId"] ?? ""));
     if (!task) return err("No Task with that id was returned by list_tasks in this turn. Call list_tasks first and use its id.");
     if (name === "complete_task") return stagedOk({ kind: "complete-task", taskId: task.id, label: task.title });
+    if (name === "delete_task") return stagedOk({ kind: "delete-task", taskId: task.id, label: task.title });
     const field = String(args["field"] ?? "");
     const value = str(args["value"]);
     if (!value) return err("value is required.");

@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import { openSqliteConnection, type SqliteConnection } from "../src/adapters/sqlite.ts";
 import { getMaxOutboxSeq, initNotificationStoreSchema, tailOutboxSince } from "../src/adapters/notification-store.ts";
 import { bindNotionTaskWrites, readTaskFieldOptions } from "../src/adapters/notion-adapter.ts";
-import { renameTask, updateTask, type UpdateTaskDeps } from "../src/app/update-task.ts";
+import { deleteTask, renameTask, updateTask, type UpdateTaskDeps } from "../src/app/update-task.ts";
 import { createFakeNotionTasksDb, type FakeTasksDb } from "./fakes/fake-notion-tasks-db.ts";
 
 function setup(): { db: FakeTasksDb; connection: SqliteConnection; deps: UpdateTaskDeps } {
@@ -22,6 +22,7 @@ function setup(): { db: FakeTasksDb; connection: SqliteConnection; deps: UpdateT
   const deps: UpdateTaskDeps = {
     updateTaskField: writes.updateTaskField,
     updateTaskTitle: writes.updateTaskTitle,
+    archiveTask: writes.archiveTask,
     readFieldOptions: () => readTaskFieldOptions(db.client, { tasksDataSourceId: "tasks-ds" }),
     connection,
   };
@@ -82,6 +83,31 @@ test("renameTask writes the trimmed title through updateTaskTitle, with a receip
   assert.equal(result.value.receipt, 'Renamed to "Calc problem set 4".');
   assert.equal(db.rows()[0]!.title, "Calc problem set 4");
   assert.deepEqual(tailOutboxSince(connection, start).map((h) => h.topic), ["tasks"]);
+});
+
+test("deleteTask moves the Task to Notion's Trash, with a receipt and one hint", async () => {
+  const { db, deps, connection } = setup();
+  const start = getMaxOutboxSeq(connection);
+  const result = await deleteTask(deps, { taskId: "t1" });
+  assert.ok(result.ok);
+  assert.equal(result.value.receipt, "It's in Notion's Trash if you want it back.");
+  assert.deepEqual(db.trashed, ["t1"]);
+  assert.deepEqual(db.rows(), []);
+  assert.deepEqual(tailOutboxSince(connection, start).map((h) => h.topic), ["tasks"]);
+});
+
+test("deleteTask refuses a blank id and reports a Notion outage plainly, with no hint", async () => {
+  const { db, deps, connection } = setup();
+  const blank = await deleteTask(deps, { taskId: " " });
+  assert.equal(blank.ok, false);
+  db.setFailingWrites(true);
+  const start = getMaxOutboxSeq(connection);
+  const down = await deleteTask(deps, { taskId: "t1" });
+  assert.equal(down.ok, false);
+  if (down.ok) return;
+  assert.equal(down.error.message, "I couldn't reach Notion right now; nothing was changed.");
+  assert.equal(db.rows().length, 1);
+  assert.deepEqual(tailOutboxSince(connection, start), []);
 });
 
 test("renameTask refuses a blank title and reports a Notion outage plainly", async () => {
@@ -163,6 +189,7 @@ test("Priority: when the live options read succeeds but Priority has no options,
   const deps: UpdateTaskDeps = {
     updateTaskField: writes.updateTaskField,
     updateTaskTitle: writes.updateTaskTitle,
+    archiveTask: writes.archiveTask,
     readFieldOptions: () => readTaskFieldOptions(db.client, { tasksDataSourceId: "tasks-ds" }),
     connection,
   };

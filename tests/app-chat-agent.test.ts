@@ -114,7 +114,7 @@ test("the system prompt carries today's date, the time zone and the never-claim-
   assert.match(system, /America\/New_York/);
   assert.match(system, /never say a change has been made/i);
   assert.match(system, /never ask Spencer to confirm in text/i);
-  assert.match(system, /deleting a Task/);
+  assert.doesNotMatch(system, /deleting a Task/);
 });
 
 test("two events in one message become one change-set question and write nothing", async () => {
@@ -171,6 +171,44 @@ test("a write tool with an unknown id is rejected back to the model and stages n
   assert.match(toolResult(requests, 1), /No Task with that id/);
   assert.equal(openChangeSet(d), undefined);
   if (result.ok) assert.equal(result.value.question, undefined);
+});
+
+test("two Tasks found by name are staged for deletion in one change set and nothing is written", async () => {
+  const { client } = scripted([
+    [use("1", "list_tasks", { titleQuery: "s" })],
+    [use("2", "delete_task", { taskId: "t-stats" }), use("3", "delete_task", { taskId: "t-ps" })],
+    [say("Done, both are removed.")],
+  ]);
+  const d = deps(client);
+  const result = await chatAgent(d, input("remove the stats problem set and personal statement from the tasks"));
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  const items: ChangeSet["items"] = [
+    { kind: "delete-task", taskId: "t-stats", label: "Stats problem set" },
+    { kind: "delete-task", taskId: "t-ps", label: "Personal Statement" },
+  ];
+  assert.deepEqual(openChangeSet(d)?.items, items);
+  assert.equal(result.value.reply, changeSetPrompt(items, TZ));
+  assert.match(result.value.reply, /Delete the Task "Stats problem set"/);
+});
+
+test("delete_task with an id list_tasks did not return is rejected and stages nothing", async () => {
+  const { client, requests } = scripted([[use("1", "delete_task", { taskId: "made-up" })], [say("I couldn't find that task.")]]);
+  const d = deps(client);
+  await chatAgent(d, input("delete the essay task"));
+  assert.match(toolResult(requests, 1), /Call list_tasks first/);
+  assert.equal(openChangeSet(d), undefined);
+});
+
+test("deleting a Task replaces an earlier staged change to the same Task", async () => {
+  const { client } = scripted([
+    [use("1", "list_tasks", {})],
+    [use("2", "update_task", { taskId: "t-ps", field: "dueDate", value: "2026-10-06" }), use("3", "delete_task", { taskId: "t-ps" })],
+    [say("Staged.")],
+  ]);
+  const d = deps(client);
+  await chatAgent(d, input("push the personal statement to tuesday, actually just delete it"));
+  assert.deepEqual(openChangeSet(d)?.items, [{ kind: "delete-task", taskId: "t-ps", label: "Personal Statement" }]);
 });
 
 test("delete is refused for an event Yoh did not create and staged for one it did", async () => {

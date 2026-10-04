@@ -725,6 +725,36 @@ export async function updateTaskTitle(
   return writePageProperty(client, taskId, titleProperty, { title: [{ type: "text", text: { content: trimmed } }] });
 }
 
+// ============================================================================
+// archiveTask (2026-10-04, Spencer) — the write surface's one removal: an
+// EXISTING Task moved to Notion's Trash, from an approved chat change set only.
+// ============================================================================
+
+/**
+ * Moves Task `taskId` to Notion's Trash (`in_trash`), where Notion keeps it
+ * restorable, and writes no property. A blank id is refused (`validation`)
+ * before any call is made. Like `updateTaskTitle`, it returns a `Result`
+ * and never throws.
+ */
+export async function archiveTask(client: NotionWriteClient, taskId: string): Promise<Result<void, YohError>> {
+  if (taskId.trim().length === 0) {
+    return { ok: false, error: { kind: "validation", message: "That Task couldn't be found." } };
+  }
+  try {
+    await client.pages.update({ page_id: taskId, in_trash: true });
+    return { ok: true, value: undefined };
+  } catch (err) {
+    return {
+      ok: false,
+      error: {
+        kind: "unreachable",
+        message: `notion-adapter: could not move Task ${taskId} to the trash — ${err instanceof Error ? err.message : String(err)}`,
+        detail: err,
+      },
+    };
+  }
+}
+
 /** The single shared `client.pages.update` call site for every `updateTaskField` write except Status (which keeps its own, inside `setTaskStatus`, unchanged) — AD-12's write surface stays exactly these two call sites. */
 async function writePageProperty(
   client: NotionWriteClient,
@@ -871,6 +901,8 @@ export interface NotionTaskWriteBindings {
   ) => Promise<Result<void, YohError>>;
   /** Task 6B fix round: the Tasks page's inline rename (AD-12 amended 2026-09-27). */
   readonly updateTaskTitle: (taskId: string, title: string) => Promise<Result<void, YohError>>;
+  /** A chat change set's approved Task deletion (2026-10-04): the page goes to Notion's Trash. */
+  readonly archiveTask: (taskId: string) => Promise<Result<void, YohError>>;
 }
 
 export function bindNotionTaskWrites(getBinding: NotionTaskWriteBindingFn): NotionTaskWriteBindings {
@@ -879,6 +911,11 @@ export function bindNotionTaskWrites(getBinding: NotionTaskWriteBindingFn): Noti
       const binding = getBinding();
       if (!binding.ok) return binding;
       return updateTaskTitle(binding.value.client, binding.value.config, taskId, title);
+    },
+    archiveTask: async (taskId) => {
+      const binding = getBinding();
+      if (!binding.ok) return binding;
+      return archiveTask(binding.value.client, taskId);
     },
     setTaskStatus: async (taskId, status) => {
       const binding = getBinding();

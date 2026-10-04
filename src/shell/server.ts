@@ -139,7 +139,7 @@ import { errorCopyForThrown } from "../core/error-copy.ts";
 import { parseReshuffleRequest } from "../core/reshuffle-preview.ts";
 import { listTasks, type TasksViewDeps } from "../app/tasks-view.ts";
 import { createTask, previewQuickAdd, type CreateTaskDeps } from "../app/create-task.ts";
-import { renameTask, updateTask, type UpdateTaskDeps } from "../app/update-task.ts";
+import { deleteTask, renameTask, updateTask, type UpdateTaskDeps } from "../app/update-task.ts";
 import { planDayForChangeSet } from "../app/plan-day.ts";
 import { refitPlan } from "../app/refit-plan.ts";
 import type { ApplyChangeSetDeps } from "../app/apply-change-set.ts";
@@ -849,6 +849,7 @@ function withChatToolLoopDeps<T extends Omit<ChatTurnDeps, "emit"> & AnswerOpenI
     editTaskField: tasksDeps ? (taskId, field, value) => updateTask(tasksDeps, { taskId, field, value }) : NOTION_NOT_SET_UP("change Tasks"),
     renameTask: tasksDeps ? (taskId, title) => renameTask(tasksDeps, { taskId, title }) : NOTION_NOT_SET_UP("change Tasks"),
     completeTask: checkOffDeps ? (taskId) => checkOff(checkOffDeps, { taskId }) : NOTION_NOT_SET_UP("mark Tasks done"),
+    deleteTask: tasksDeps ? (taskId) => deleteTask(tasksDeps, { taskId }) : NOTION_NOT_SET_UP("delete Tasks"),
     planDay: () => planDayForChangeSet(planDeps, {}),
     refitPlan: reshuffle
       ? () => refitPlan({ ...reshuffle, store: chatDeps.store }, {})

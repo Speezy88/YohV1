@@ -46,7 +46,7 @@ and read only failures and the summary.
 ## Binding constraints
 - **Layering** (enforced by `tests/layering-rules.test.ts`): `shell/server.ts → app → {rituals, core, adapters}`; `shell/ritual-cli.ts → rituals → {core, adapters}`; rituals never import `app/`. `core/` imports only `types/` and `core/`. `web/` talks to the server only over HTTP/SSE and imports only `import type` from `src/types/`.
 - **app/**: every exported function is `(deps, input) => Promise<Result<Output, YohError>>` — nothing else may be exported except types/interfaces/constants. Pure parsers live in `core/`. One-shot per turn; never blocks for input.
-- **Writes**: only `app/` calls the Notion writes (`setTaskStatus`, `updateTaskField`, `createPage`, `updateTaskTitle`) and `applyCalendarEdit`. Shells are transport only: parse → call one app function → render its Result.
+- **Writes**: only `app/` calls the Notion writes (`setTaskStatus`, `updateTaskField`, `createPage`, `updateTaskTitle`, `archiveTask` — the one move-to-Trash, only from an approved chat change set) and `applyCalendarEdit`. Shells are transport only: parse → call one app function → render its Result.
 - **core/** is pure. Adapters may throw on I/O; `app/` converts to `Result`. `YohError.kind` ∈ missing-field, auth-expired, unreachable, rate-limited, validation, stale-proposal, conflict.
 - **Proposals** apply only via `app/confirm-proposal.ts` after an explicit yes; a decline writes nothing. Typed field answers and "save that" are direct writes.
 - **Storage**: `adapters/sqlite.ts` is the only opener; multi-step writes use `writeTx`; each user-visible change appends one outbox row in the same transaction. Chat transcript is client memory only.
