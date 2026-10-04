@@ -143,7 +143,7 @@ import { renameTask, updateTask, type UpdateTaskDeps } from "../app/update-task.
 import { planDayForChangeSet } from "../app/plan-day.ts";
 import { refitPlan } from "../app/refit-plan.ts";
 import type { ApplyChangeSetDeps } from "../app/apply-change-set.ts";
-import { listResearch, type ResearchListDeps } from "../app/research-list.ts";
+import { getResearchDocument, listResearch, type ResearchListDeps } from "../app/research-list.ts";
 import { sandboxQueue, type SandboxQueueDeps } from "../app/sandbox-queue.ts";
 import { finishSandboxSession, saveSandboxCardAndAdvance, type SandboxSubmitDeps } from "../app/sandbox-submit.ts";
 import { firstCardView } from "../core/sandbox-card-view.ts";
@@ -1359,7 +1359,14 @@ export function createApp(deps: ServerDeps) {
       // error rather than a 500.
       .get("/api/research", async (c) => {
         if (!researchDeps) return c.json(RESEARCH_NOT_CONFIGURED, httpStatus(RESEARCH_NOT_CONFIGURED));
-        const result = wire(await listResearch(researchDeps, {}));
+        const result = wire(await listResearch(researchDeps, { pages: c.req.query("pages") }));
+        return c.json(result, httpStatus(result));
+      })
+      // Story 11.2 (E11-R2): one Research Vault document by id (the most
+      // recent when `id` is missing or unknown; `{}` for an empty vault).
+      .get("/api/research/document", async (c) => {
+        if (!researchDeps) return c.json(RESEARCH_NOT_CONFIGURED, httpStatus(RESEARCH_NOT_CONFIGURED));
+        const result = wire(await getResearchDocument(researchDeps, { id: c.req.query("id") }));
         return c.json(result, httpStatus(result));
       })
       // Story 8.5, AD-18/C5: one chat turn, its reply streamed on this

@@ -804,7 +804,7 @@ test("DEFAULT_RESEARCH_VAULT_PROPERTY_NAMES matches Spencer's confirmed live Res
 // readResearchVault (Task 6C, FR-43)
 // ============================================================================
 
-function makeResearchVaultPage(overrides: { id: string; title: string; date?: string | null; sources?: string | null; url?: string }): PageObjectResponse {
+function makeResearchVaultPage(overrides: { id: string; title: string; date?: string | null; sources?: string | null; keyFindings?: string | null; url?: string }): PageObjectResponse {
   const richTextFor = (content: string) => [
     {
       type: "text" as const,
@@ -834,6 +834,7 @@ function makeResearchVaultPage(overrides: { id: string; title: string; date?: st
       "Research Title": { id: "title", type: "title", title: richTextFor(overrides.title) },
       Date: { id: "date", type: "date", date: overrides.date == null ? null : { start: overrides.date, end: null, time_zone: null } },
       Sources: { id: "sources", type: "rich_text", rich_text: overrides.sources == null ? [] : richTextFor(overrides.sources) },
+      "Key Findings": { id: "kf", type: "rich_text", rich_text: overrides.keyFindings == null ? [] : richTextFor(overrides.keyFindings) },
     },
   } as unknown as PageObjectResponse;
 }
@@ -850,9 +851,30 @@ test("readResearchVault maps title, date, source count (one per line), and the p
     id: "rv-1",
     title: "AP Bio registration deadline",
     date: "2026-09-20",
+    keyFindings: "",
+    sources: ["https://a.example", "https://b.example"],
     sourceCount: 2,
     url: "https://notion.so/rv-1",
   });
+});
+
+test("readResearchVault maps Key Findings to keyFindings and Sources to trimmed non-empty lines", async () => {
+  const client = new FakeNotionClient({
+    "research-vault-ds": [
+      [makeResearchVaultPage({ id: "rv-4", title: "T", keyFindings: "First.\n\nSecond.", sources: " https://a.example \n\n   \nhttps://b.example\n" })],
+    ],
+  });
+  const result = await readResearchVault(client, { researchVaultDataSourceId: "research-vault-ds" });
+  assert.equal(result[0]?.keyFindings, "First.\n\nSecond.");
+  assert.deepEqual(result[0]?.sources, ["https://a.example", "https://b.example"]);
+  assert.equal(result[0]?.sourceCount, 2);
+});
+
+test("readResearchVault gives empty keyFindings and sources when both properties are unset", async () => {
+  const client = new FakeNotionClient({ "research-vault-ds": [[makeResearchVaultPage({ id: "rv-5", title: "T" })]] });
+  const result = await readResearchVault(client, { researchVaultDataSourceId: "research-vault-ds" });
+  assert.equal(result[0]?.keyFindings, "");
+  assert.deepEqual(result[0]?.sources, []);
 });
 
 test("readResearchVault leaves date undefined when unset, and reports 0 sources for an unset Sources property", async () => {

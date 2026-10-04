@@ -514,8 +514,8 @@ const sandbox: NonNullable<ServerDeps["sandbox"]> = {
 // render, each with a real "Sources" rich_text value (one URL per line, the
 // same shape `app/save-search-result.ts` writes) so `sourceCount` is
 // genuine, not zero.
-function researchVaultPage(id: string, title: string, date: string, sources: readonly string[]): Record<string, unknown> {
-  const richText = (content: string) => [{ type: "text", plain_text: content, text: { content } }];
+function researchVaultPage(id: string, title: string, date: string, sources: readonly string[], keyFindings = ""): Record<string, unknown> {
+  const richText = (content: string) => (content === "" ? [] : [{ type: "text", plain_text: content, text: { content } }]);
   return {
     object: "page",
     id,
@@ -528,12 +528,30 @@ function researchVaultPage(id: string, title: string, date: string, sources: rea
       "Research Title": { id: "title", type: "title", title: richText(title) },
       Date: { id: "date", type: "date", date: { start: date, end: null, time_zone: null } },
       Sources: { id: "sources", type: "rich_text", rich_text: richText(sources.join("\n")) },
+      "Key Findings": { id: "kf", type: "rich_text", rich_text: richText(keyFindings) },
     },
   };
 }
+// Story 11.2: 23 rows so the library pages (20 + 3). The two real rows stay
+// the two newest; 20 older filler rows and one empty-body row follow.
+export const FIXTURE_RESEARCH_AP_BIO = {
+  id: "rv-ap-bio",
+  title: "AP Bio registration deadline",
+  body: ["Registration closes October 1, 2026.", "Late registration adds a fee of $40."],
+} as const;
+export const FIXTURE_RESEARCH_HIKING = { id: "rv-hiking", title: "Best hiking boots under $150", body: "Pick a mid-cut boot with a waterproof liner." } as const;
+export const FIXTURE_RESEARCH_EMPTY = { id: "rv-empty", title: "Old note with no body" } as const;
+export const FIXTURE_RESEARCH_PAGE_2_TITLE = "Filler research 02";
 const researchVaultRows = [
-  researchVaultPage("rv-ap-bio", "AP Bio registration deadline", "2026-09-20", ["https://example.com/ap-bio-1", "https://example.com/ap-bio-2"]),
-  researchVaultPage("rv-hiking", "Best hiking boots under $150", "2026-09-10", ["https://example.com/hiking"]),
+  researchVaultPage(FIXTURE_RESEARCH_AP_BIO.id, FIXTURE_RESEARCH_AP_BIO.title, "2026-09-20", ["https://example.com/ap-bio-1", "https://example.com/ap-bio-2"], FIXTURE_RESEARCH_AP_BIO.body.join("\n\n")),
+  researchVaultPage(FIXTURE_RESEARCH_HIKING.id, FIXTURE_RESEARCH_HIKING.title, "2026-09-10", ["https://example.com/hiking"], FIXTURE_RESEARCH_HIKING.body),
+  // Twenty filler rows, 20 down to 01 (dates 2026-08-20 .. 2026-08-01): 20..03 fill page 1, 02 and 01 land on page 2.
+  ...Array.from({ length: 20 }, (_, i) => {
+    const nn = String(20 - i).padStart(2, "0");
+    return researchVaultPage(`rv-filler-${nn}`, `Filler research ${nn}`, `2026-08-${nn}`, [`https://example.com/filler-${nn}`], `Filler findings ${nn}.`);
+  }),
+  // The oldest row: an empty body and no sources (page 2).
+  researchVaultPage(FIXTURE_RESEARCH_EMPTY.id, FIXTURE_RESEARCH_EMPTY.title, "2026-07-31", []),
 ];
 const researchVaultClient = {
   dataSources: {

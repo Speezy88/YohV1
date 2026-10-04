@@ -32,6 +32,7 @@ const VIEW: ResearchListResponse = {
     { id: "rv-1", title: "AP Bio registration deadline", date: "2026-09-20", sourceCount: 2, url: "https://notion.so/rv-1" },
     { id: "rv-2", title: "Undated find", sourceCount: 1, url: "https://notion.so/rv-2" },
   ],
+  hasMore: false,
 };
 
 describe("ResearchHubPage", () => {
