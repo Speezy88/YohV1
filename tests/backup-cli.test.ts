@@ -218,3 +218,14 @@ test("a source database with no outbox table still backs up", async () => {
   const result = await runBackup({ MEMORY_DB_PATH: sourcePath, YOH_BACKUP_PATH: mkdtempSync(join(tmpdir(), "yoh-backup-dst-")) }, () => new Date("2026-09-25T03:00:00.000Z"));
   assert.equal(result.ok, true);
 });
+
+test("the backup just written is never pruned, even when the clock is behind and its date sorts oldest", async () => {
+  const names = Array.from({ length: 16 }, (_, i) => `yoh-memory-2026-09-${String(i + 1).padStart(2, "0")}.db`);
+  const backupDir = backupDirWith(names);
+  const result = await runBackup({ MEMORY_DB_PATH: sourceWithHints(1), YOH_BACKUP_PATH: backupDir }, () => new Date("2026-01-01T03:00:00.000Z"));
+  assert.equal(result.ok, true);
+  const left = readdirSync(backupDir).sort();
+  assert.equal(left.length, 14);
+  assert.equal(left[0], "yoh-memory-2026-01-01.db");
+  assert.equal(left[1], "yoh-memory-2026-09-04.db");
+});

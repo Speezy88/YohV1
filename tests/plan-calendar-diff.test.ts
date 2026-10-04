@@ -12,7 +12,8 @@ const ev = (eventId: string, s: number, e: number, blockId?: string, title = "T"
 const blk = (id: string, kind: PlanBlock["kind"], s: number, e: number): PlanBlock => ({ id, kind, start: iso(s), end: iso(e), label: id } as PlanBlock);
 
 const run = (snapshot: PlanCalendarSnapshotEntry[], events: YohPlanEvent[], planBlocks: PlanBlock[] = []) =>
-  diffPlanCalendar({ snapshot, events, planBlocks, now: NOW.toISOString(), date: DATE });
+  // These cases are about what a deletion does, so every missing event is confirmed deleted.
+  diffPlanCalendar({ snapshot, events, planBlocks, now: NOW.toISOString(), date: DATE, confirmedDeletedEventIds: new Set(snapshot.map((s) => s.eventId).filter((id) => !events.some((e) => e.eventId === id))) });
 
 test("no changes: nothing changed", () => {
   const r = run([work("e1", "t1", 30, 60)], [ev("e1", 30, 60, "b-e1")]);
@@ -138,7 +139,7 @@ test("durations round to whole minutes", () => {
 
 test("a deleted block whose id left the Plan falls back to the Task title, else \"a block\", never the raw id", () => {
   const snap = [{ eventId: "e1", blockId: "gone", kind: "work" as const, taskId: "raw-notion-id", start: "2026-08-22T19:00:00.000Z", end: "2026-08-22T19:30:00.000Z" }];
-  const base = { snapshot: snap, events: [], planBlocks: [], now: "2026-08-22T18:00:00.000Z", date: "2026-08-22" };
+  const base = { snapshot: snap, events: [], planBlocks: [], now: "2026-08-22T18:00:00.000Z", date: "2026-08-22", confirmedDeletedEventIds: new Set(["e1"]) };
   assert.deepEqual(diffPlanCalendar({ ...base, taskTitles: new Map([["raw-notion-id", "Write"]]) }).changedTitles, ["Write"]);
   assert.deepEqual(diffPlanCalendar(base).changedTitles, ["a block"]);
 });

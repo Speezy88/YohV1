@@ -23,24 +23,29 @@ import { createNotification, initNotificationStoreSchema, OUTBOX_KEEP_ROWS, prun
 
 export type BackupResult = { readonly ok: true; readonly path: string } | { readonly ok: false; readonly message: string };
 
-/** How many of the newest nightly backups are kept (proposed default; Spencer has not confirmed the number). */
+/** How many nightly backups are kept (Spencer, 2026-10-04). */
 export const BACKUP_KEEP_COUNT = 14;
 
 /** Only the names `runBackup` itself writes: `yoh-memory-YYYY-MM-DD.db`. */
 const BACKUP_FILE_PATTERN = /^yoh-memory-\d{4}-\d{2}-\d{2}\.db$/;
 
-/** Deletes Yoh's own backup files in `targetDir` beyond the newest `keep` (by the date in the name); returns the names removed. */
-export function pruneBackups(targetDir: string, keep: number): string[] {
-  const backups = readdirSync(targetDir).filter((name) => BACKUP_FILE_PATTERN.test(name)).sort();
-  const stale = backups.slice(0, Math.max(0, backups.length - keep));
+/**
+ * Deletes Yoh's own backup files in `targetDir` beyond the newest `keep` (by the date in the name); returns the
+ * names removed. `justWritten` (a file name) counts toward `keep` but is never removed, so a clock that is
+ * behind cannot make tonight's backup look like the oldest one.
+ */
+export function pruneBackups(targetDir: string, keep: number, justWritten?: string): string[] {
+  const backups = readdirSync(targetDir).filter((name) => BACKUP_FILE_PATTERN.test(name) && name !== justWritten).sort();
+  const keepOthers = justWritten === undefined ? keep : keep - 1;
+  const stale = backups.slice(0, Math.max(0, backups.length - Math.max(0, keepOthers)));
   for (const name of stale) unlinkSync(`${targetDir}/${name}`);
   return stale;
 }
 
 /** Retention after a successful backup. A failure here is logged, never turned into a failed backup. */
-function pruneAfterBackup(connection: ReturnType<typeof openSqliteConnection>, targetDir: string): void {
+function pruneAfterBackup(connection: ReturnType<typeof openSqliteConnection>, targetDir: string, justWritten: string): void {
   try {
-    pruneBackups(targetDir, BACKUP_KEEP_COUNT);
+    pruneBackups(targetDir, BACKUP_KEEP_COUNT, justWritten);
   } catch (err) {
     process.stderr.write(`backup-cli: could not prune old backups — ${err instanceof Error ? err.message : String(err)}\n`);
   }
@@ -78,7 +83,7 @@ export async function runBackup(
     const dateStamp = now().toISOString().slice(0, 10);
     const targetPath = `${targetDir}/yoh-memory-${dateStamp}.db`;
     await connection.db.backup(targetPath);
-    pruneAfterBackup(connection, targetDir);
+    pruneAfterBackup(connection, targetDir, `yoh-memory-${dateStamp}.db`);
     return { ok: true, path: targetPath };
   } catch (err) {
     return { ok: false, message: `backup-cli: online backup failed — ${err instanceof Error ? err.message : String(err)}` };

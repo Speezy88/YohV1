@@ -140,7 +140,7 @@ export function tailOutboxSince(connection: SqliteConnection, sinceSeq: number):
   return rows.map((r) => ({ seq: r.seq, topic: r.topic, entityId: r.entity_id }));
 }
 
-/** How many of the newest outbox rows the nightly prune keeps (proposed default; Spencer has not confirmed the number). */
+/** How many of the newest outbox rows the nightly prune keeps (Spencer, 2026-10-04). */
 export const OUTBOX_KEEP_ROWS = 10_000;
 
 /**

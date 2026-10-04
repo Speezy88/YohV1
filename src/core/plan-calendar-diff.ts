@@ -16,11 +16,11 @@ export interface PlanCalendarDiffInput {
   /** Task titles, for a deleted block whose id is no longer in `planBlocks`. */
   readonly taskTitles?: ReadonlyMap<ExternalId, string>;
   /**
-   * Event ids Google reports as deleted. When given, a snapshot entry missing from `events` counts as
-   * Spencer's deletion only if its id is here; any other missing entry is treated as unchanged (a read
-   * that lagged or omitted it). When absent, every missing entry counts as deleted.
+   * Event ids Google reports as deleted. A snapshot entry missing from `events` counts as Spencer's
+   * deletion only if its id is here; any other missing entry is treated as unchanged (a read that
+   * lagged or omitted it).
    */
-  readonly confirmedDeletedEventIds?: ReadonlySet<string>;
+  readonly confirmedDeletedEventIds: ReadonlySet<string>;
 }
 
 export interface PlanCalendarDiff {
@@ -41,7 +41,7 @@ export function diffPlanCalendar(input: PlanCalendarDiffInput): PlanCalendarDiff
   // A missing entry that is not confirmed deleted stands in as an event still at its snapshot time.
   const confirmed = input.confirmedDeletedEventIds;
   const eventFor = (s: PlanCalendarSnapshotEntry): YohPlanEvent | undefined =>
-    eventById.get(s.eventId) ?? (confirmed === undefined || confirmed.has(s.eventId) ? undefined : { eventId: s.eventId, blockId: s.blockId, title: "", start: s.start, end: s.end });
+    eventById.get(s.eventId) ?? (confirmed.has(s.eventId) ? undefined : { eventId: s.eventId, blockId: s.blockId, title: "", start: s.start, end: s.end });
   const labelByBlock = new Map(input.planBlocks.map((b) => [b.id, b.label]));
   const future = input.snapshot.filter((s) => Date.parse(s.end) > nowMs);
 
