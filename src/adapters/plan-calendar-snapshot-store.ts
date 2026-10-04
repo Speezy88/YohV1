@@ -85,7 +85,7 @@ export function replacePlanCalendarSnapshotInTx(
 }
 
 /** The write state for one date (empty when nothing was ever written). */
-export function getPlanCalendarWriteState(db: Database.Database, date: string): PlanCalendarWriteState {
+function getPlanCalendarWriteState(db: Database.Database, date: string): PlanCalendarWriteState {
   ensureSnapshotTable(db);
   const row = db.prepare("SELECT writing_since, written_at FROM plan_calendar_write_state WHERE date = ?").get(date) as
     | { writing_since: string | null; written_at: string | null }
@@ -96,14 +96,14 @@ export function getPlanCalendarWriteState(db: Database.Database, date: string): 
   };
 }
 
-export function beginPlanCalendarWrite(db: Database.Database, date: string, at: string): void {
+function beginPlanCalendarWrite(db: Database.Database, date: string, at: string): void {
   ensureSnapshotTable(db);
   db.prepare(
     "INSERT INTO plan_calendar_write_state (date, writing_since) VALUES (?, ?) ON CONFLICT(date) DO UPDATE SET writing_since = excluded.writing_since",
   ).run(date, at);
 }
 
-export function finishPlanCalendarWrite(db: Database.Database, date: string, at: string): void {
+function finishPlanCalendarWrite(db: Database.Database, date: string, at: string): void {
   ensureSnapshotTable(db);
   db.prepare(
     "INSERT INTO plan_calendar_write_state (date, writing_since, written_at) VALUES (?, NULL, ?) ON CONFLICT(date) DO UPDATE SET writing_since = NULL, written_at = excluded.written_at",

@@ -43,7 +43,7 @@ export function routineIdForLabel(label: string): string {
   return `routine-${normalizeRoutineLabel(label).replace(/\s+/g, "-")}`;
 }
 
-export function normalizeRoutineLabel(label: string): string {
+function normalizeRoutineLabel(label: string): string {
   return label.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
@@ -62,7 +62,7 @@ const DAY_NAMES: Readonly<Record<string, RoutineDay>> = {
 };
 
 /** Parses a days phrase ("weekdays", "every day", "mondays and wednesdays"); undefined when any part is unrecognized. */
-export function parseRoutineDays(phrase: string): readonly RoutineDay[] | undefined {
+function parseRoutineDays(phrase: string): readonly RoutineDay[] | undefined {
   let text = phrase.trim().toLowerCase().replace(/[.!?]+$/, "").replace(/^on\s+/, "");
   if (/^(?:every\s*day|everyday|daily|each day)$/.test(text)) return ROUTINE_DAYS;
   text = text.replace(/^(?:every|each)\s+/, "");
@@ -79,7 +79,7 @@ export function parseRoutineDays(phrase: string): readonly RoutineDay[] | undefi
   return ROUTINE_DAYS.filter((d) => found.has(d));
 }
 
-export function formatRoutineDays(days: readonly RoutineDay[]): string {
+function formatRoutineDays(days: readonly RoutineDay[]): string {
   const set = new Set(days);
   if (set.size === 7) return "every day";
   if (set.size === 5 && WEEKDAYS.every((d) => set.has(d))) return "weekdays";
@@ -131,7 +131,7 @@ function formatClock(minutes: number): { text: string; meridiem: "AM" | "PM" } {
 }
 
 /** "3:00–3:30 PM", or "11:30 AM–1:00 PM" across noon. */
-export function formatRoutineTimeRange(startMinutes: number, durationMinutes: number): string {
+function formatRoutineTimeRange(startMinutes: number, durationMinutes: number): string {
   const start = formatClock(startMinutes);
   const end = formatClock(startMinutes + durationMinutes);
   return start.meridiem === end.meridiem ? `${start.text}–${end.text} ${end.meridiem}` : `${start.text} ${start.meridiem}–${end.text} ${end.meridiem}`;

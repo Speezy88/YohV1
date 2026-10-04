@@ -107,7 +107,7 @@ export function isProposalExpired(createdAt: IsoDateTime, now: Date): boolean {
 }
 
 /** The request id `openProposal` gives a proposal's interaction request. */
-export function reshuffleRequestId(proposalId: string): string {
+function reshuffleRequestId(proposalId: string): string {
   return `proposal:${proposalId}`;
 }
 
