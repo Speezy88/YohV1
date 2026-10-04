@@ -6,7 +6,7 @@ disagrees with the code, the code wins; report the drift.
 
 ## What Yoh is
 A single-user daily-planning assistant for Spencer: Notion (Tasks/Projects) +
-Google Calendar + Claude (Haiku 4.5 for classify/capture/answer) + Perplexity
+Google Calendar + Claude (Haiku 4.5 for the chat tool loop and structured drafts) + Perplexity
 (web search) + Pushover/SMTP notifications. Runs on Spencer's Raspberry Pi
 (`yoh`) under systemd, reached over the tailnet; the Mac is for development only.
 
@@ -60,7 +60,7 @@ and read only failures and the summary.
 - **Chat routing:** `chatTurn` in `src/app/chat-turn.ts` — deterministic recognizers (`src/core/chat-commands.ts`, `src/core/search-intent.ts`) → the `chatAgent` tool loop (`src/app/chat-agent.ts`, tools in `src/core/chat-tools.ts`). Read tools answer; write tools only stage items into one `"change-set"` Proposal, applied by `applyChangeSet` (`src/app/apply-change-set.ts`) after Approve. New deterministic routes go before the loop.
 - **Adding an HTTP route:** in `createApp` (`src/shell/server.ts`), copy an existing `.get`/`.post` (e.g. `/api/calendar/day`): validate input in the shell, call ONE app function, return `c.json(wire(result), httpStatus(result))`. Its dependencies go on `ServerDeps` and are built by a `build*Deps` function (`buildHomeViewDeps`, `buildCalendarDayDeps`, `buildChatDeps`, …).
 - **Errors:** adapters throw; app functions catch and return `{ ok: false, error }`, with user copy from `errorCopyForThrown` (`src/core/error-copy.ts`). Never leak raw error text to the UI.
-- **Live updates:** a store write calls `appendOutboxInTx(db, { topic, entityId })` in the same transaction. Topics: `plan`, `tasks`, `research`, `open-items`, `notification` (the `*_TOPIC` constants). Web listens with `onHint` (`web/src/lib/eventBus.ts`) and refetches on `hint.topic`.
+- **Live updates:** a store write calls `appendOutboxInTx(db, { topic, entityId })` in the same transaction. Topics: `plan`, `tasks`, `research`, `open-items`, `notification`, `memory` (the `*_TOPIC` constants). Web listens with `onHint` (`web/src/lib/eventBus.ts`) and refetches on `hint.topic`.
 - **Web → server calls:** `apiClient` (`web/src/lib/apiClient.ts`, typed Hono client), e.g. `apiClient.api["open-items"].$get()`. Types come from `src/types/api.ts` via `import type`.
 - **Web data hooks:** module-level store + `use*`/`refetch*`/`start*Stream` trio, e.g. `web/src/lib/homeView.ts`, `web/src/lib/openItems.ts`.
 - **E2E fake data:** `tests/e2e/fixture-server.ts` builds `ServerDeps` with fakes (`FIXTURE_TASKS`, `FIXTURE_OTHER_DAY_*`, a fake `runChatTurn`); add fixture data there, exported for specs to assert on.
