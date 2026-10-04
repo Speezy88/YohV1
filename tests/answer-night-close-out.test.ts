@@ -3,7 +3,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createMemoryStore, listNightCloseOutDone, getOpenInteractionRequest, getRitualRun, getSlipHistory, getUncheckedDay, putOpenInteractionRequest, putUncheckedDay } from "../src/adapters/memory-store.ts";
+import { createMemoryStore, putNightCloseOutDone, listNightCloseOutDone, getOpenInteractionRequest, getRitualRun, getSlipHistory, getUncheckedDay, putOpenInteractionRequest, putUncheckedDay } from "../src/adapters/memory-store.ts";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { initNotificationStoreSchema, listUnreadNotifications } from "../src/adapters/notification-store.ts";
 import { answerNightCloseOut } from "../src/app/answer-night-close-out.ts";
@@ -274,5 +274,15 @@ test("E12-R1: a failure to write the record never fails the close-out", async ()
   }) as typeof store.readModifyWrite;
   const result = await answerNightCloseOut(deps(store), { requestId: "night-close-out", questionId: "t1", answer: "completed" });
   assert.equal(result.ok, true);
+  store.close();
+});
+
+test("M8: a close-out for the date finished WITH a skip removes that date's done record left by an earlier /night", async () => {
+  const store = tempStore();
+  putNightCloseOutDone(store, { date: "2026-09-25", completedAt: "2026-09-25T20:00:00.000Z", via: "nothing-to-ask" });
+  putNightCloseOutDone(store, { date: "2026-09-24", completedAt: "2026-09-24T20:00:00.000Z", via: "answered" });
+  openReq(store, [{ taskId: "t1", taskTitle: "Draft the memo" }], "2026-09-25");
+  await answerNightCloseOut(deps(store), { requestId: "night-close-out", questionId: "t1", answer: "skip" });
+  assert.deepEqual(listNightCloseOutDone(store).map((r) => r.data.date), ["2026-09-24"]);
   store.close();
 });

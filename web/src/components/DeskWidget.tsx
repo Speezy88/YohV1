@@ -18,6 +18,6 @@ export function DeskWidget({ title, className = "", children }: DeskWidgetProps)
   );
 }
 
-export function DeskWidgetSkeleton({ reducedMotion }: { readonly reducedMotion: boolean }): React.JSX.Element {
-  return <div data-testid="desk-widget-skeleton" className={`h-[132px] rounded-2xl bg-surface-sunken ${reducedMotion ? "" : "animate-pulse"}`} />;
+export function DeskWidgetSkeleton({ reducedMotion, className = "" }: { readonly reducedMotion: boolean; readonly className?: string }): React.JSX.Element {
+  return <div data-testid="desk-widget-skeleton" className={`h-[132px] rounded-2xl bg-surface-sunken ${reducedMotion ? "" : "animate-pulse"} ${className}`} />;
 }

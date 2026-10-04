@@ -8,9 +8,14 @@ import { render, screen, fireEvent, within, waitFor } from "@testing-library/rea
 import DeskPage from "./Desk.tsx";
 import { apiClient } from "../lib/apiClient.ts";
 import { __resetDeskForTests } from "../lib/desk.ts";
+import { PageNavigationContext } from "../lib/navigationContext.tsx";
+import { PAGES } from "../lib/pages.ts";
+import { useReducedMotion } from "../hooks/useReducedMotion.ts";
 import type { DeskResponse } from "../../../src/types/api.ts";
 
 vi.mock("../lib/apiClient.ts", () => ({ apiClient: { api: { desk: { $get: vi.fn() } } } }));
+vi.mock("../hooks/useReducedMotion.ts", () => ({ useReducedMotion: vi.fn(() => false) }));
+const reduced = useReducedMotion as unknown as ReturnType<typeof vi.fn>;
 const get = apiClient.api.desk.$get as unknown as ReturnType<typeof vi.fn>;
 
 const BASE: DeskResponse = {
@@ -33,6 +38,7 @@ describe("DeskPage", () => {
   beforeEach(() => {
     __resetDeskForTests();
     get.mockReset();
+    reduced.mockReturnValue(false);
   });
 
   it("shows each widget's value from the response", async () => {
@@ -63,7 +69,9 @@ describe("DeskPage", () => {
     render(<DeskPage />);
     await screen.findByText("Nothing completed yet today.");
     expect(within(card("Tasks completed today")).getByText("0")).toBeInTheDocument();
-    expect(screen.getByLabelText("No on-time rate yet")).toHaveTextContent("—");
+    const onTime = card("On-time rate");
+    expect(within(onTime).getByText("No on-time rate yet")).toHaveClass("sr-only");
+    expect(within(onTime).getByText("—")).toHaveAttribute("aria-hidden", "true");
     expect(screen.getByText("No Tasks with a due date completed yet.")).toBeInTheDocument();
     expect(screen.getByText("Streak: 0 days · Longest: 0 days")).toBeInTheDocument();
     expect(card("Claude API spend this month")).toHaveTextContent("$0.00");
@@ -103,5 +111,56 @@ describe("DeskPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     await waitFor(() => expect(screen.getByText("75 min today")).toBeInTheDocument());
     expect(get).toHaveBeenCalledTimes(2);
+  });
+
+  it("the first skeleton card spans two columns like the loaded first card", () => {
+    get.mockReturnValue(new Promise(() => {}));
+    render(<DeskPage />);
+    const cards = screen.getAllByTestId("desk-widget-skeleton");
+    expect(cards[0]).toHaveClass("sm:col-span-2");
+    expect(cards[1]).not.toHaveClass("sm:col-span-2");
+  });
+
+  it("skeletons pulse normally and do not under reduced motion", () => {
+    get.mockReturnValue(new Promise(() => {}));
+    const { unmount } = render(<DeskPage />);
+    expect(screen.getAllByTestId("desk-widget-skeleton")[0]).toHaveClass("animate-pulse");
+    unmount();
+    reduced.mockReturnValue(true);
+    render(<DeskPage />);
+    for (const s of screen.getAllByTestId("desk-widget-skeleton")) expect(s).not.toHaveClass("animate-pulse");
+  });
+
+  it("Try again is disabled and busy while the retry is in flight", async () => {
+    get.mockResolvedValue({ json: async () => ({ ok: false, error: { message: "Server said no." } }) });
+    render(<DeskPage />);
+    await screen.findByText("Couldn't load Desk.");
+    let release!: (v: unknown) => void;
+    get.mockReturnValue(new Promise((r) => (release = r)));
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    const busy = await screen.findByRole("button", { name: "Try again" });
+    expect(busy).toBeDisabled();
+    expect(busy).toHaveAttribute("aria-busy", "true");
+    release({ json: async () => ({ ok: true, value: BASE }) });
+    await screen.findByText("75 min today");
+  });
+
+  describe("only fetches while Desk is the page in view", () => {
+    const deskIndex = PAGES.findIndex((p) => p.id === "desk");
+    const nav = (index: number) => ({ index, goTo: () => {}, next: () => {}, prev: () => {} });
+    it("makes no request while another page is current, and one on entering Desk", async () => {
+      serve({});
+      const ui = (index: number) => (
+        <PageNavigationContext.Provider value={nav(index)}>
+          <DeskPage />
+        </PageNavigationContext.Provider>
+      );
+      const { rerender } = render(ui(0));
+      await new Promise((r) => setTimeout(r, 20));
+      expect(get).not.toHaveBeenCalled();
+      rerender(ui(deskIndex));
+      await screen.findByText("75 min today");
+      expect(get).toHaveBeenCalledTimes(1);
+    });
   });
 });

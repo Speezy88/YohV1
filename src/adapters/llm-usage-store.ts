@@ -109,12 +109,21 @@ export function recordLlmUsage(connection: SqliteConnection, record: LlmUsageRec
  * convention.
  */
 export function listLlmUsage(connection: SqliteConnection): readonly LlmUsageRecord[] {
+  return readUsage(connection, "ORDER BY id ASC");
+}
+
+/** Rows whose `at` is at or after `sinceIso` (an ISO-8601 UTC string), oldest first, read through `idx_llm_usage_at`. */
+export function listLlmUsageSince(connection: SqliteConnection, sinceIso: string): readonly LlmUsageRecord[] {
+  return readUsage(connection, "WHERE at >= ? ORDER BY at ASC, id ASC", [sinceIso]);
+}
+
+function readUsage(connection: SqliteConnection, tail: string, params: readonly string[] = []): readonly LlmUsageRecord[] {
   const rows = connection.db
     .prepare(
       `SELECT at, model, purpose, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens
-       FROM llm_usage ORDER BY id ASC`,
+       FROM llm_usage ${tail}`,
     )
-    .all() as ReadonlyArray<{
+    .all(...params) as ReadonlyArray<{
     readonly at: string;
     readonly model: string;
     readonly purpose: LlmUsagePurpose;

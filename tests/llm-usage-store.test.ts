@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
-import { initLlmUsageStoreSchema, listLlmUsage, recordLlmUsage, type LlmUsageRecord } from "../src/adapters/llm-usage-store.ts";
+import { initLlmUsageStoreSchema, listLlmUsage, listLlmUsageSince, recordLlmUsage, type LlmUsageRecord } from "../src/adapters/llm-usage-store.ts";
 
 function freshConnection() {
   const connection = openSqliteConnection({ databasePath: ":memory:" });
@@ -88,5 +88,15 @@ test("recordLlmUsage throws on a genuine SQLite failure (e.g. a closed connectio
 test("listLlmUsage returns an empty array for a fresh store with no recorded rows", () => {
   const connection = freshConnection();
   assert.deepEqual(listLlmUsage(connection), []);
+  connection.close();
+});
+
+test("listLlmUsageSince returns only rows at or after the instant, oldest first", () => {
+  const connection = freshConnection();
+  const base = { model: "claude-haiku-4-5-20251001", inputTokens: 1, outputTokens: 1, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, purpose: "answer" } as const;
+  recordLlmUsage(connection, { ...base, at: "2026-08-31T23:00:00.000Z" });
+  recordLlmUsage(connection, { ...base, at: "2026-09-29T00:00:00.000Z" });
+  recordLlmUsage(connection, { ...base, at: "2026-10-02T00:00:00.000Z" });
+  assert.deepEqual(listLlmUsageSince(connection, "2026-09-29T00:00:00.000Z").map((r) => r.at), ["2026-09-29T00:00:00.000Z", "2026-10-02T00:00:00.000Z"]);
   connection.close();
 });

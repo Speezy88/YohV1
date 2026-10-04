@@ -64,4 +64,19 @@ describe("desk store", () => {
     expect(result.current.status).toBe("loaded");
     if (result.current.status === "loaded") expect(result.current.refreshFailed).toBeDefined();
   });
+
+  it("an older response never overwrites a newer one", async () => {
+    const older = VALUE;
+    const newer = { ...VALUE, minutesToday: 99 };
+    let resolveOlder!: (v: unknown) => void;
+    get.mockReturnValueOnce(new Promise((r) => (resolveOlder = r)));
+    get.mockResolvedValueOnce({ json: async () => ({ ok: true, value: newer }) });
+    const { result } = renderHook(() => useDesk());
+    const first = refetchDesk();
+    await refetchDesk();
+    expect(result.current.status === "loaded" && result.current.value.minutesToday).toBe(99);
+    resolveOlder({ json: async () => ({ ok: true, value: older }) });
+    await first;
+    expect(result.current.status === "loaded" && result.current.value.minutesToday).toBe(99);
+  });
 });

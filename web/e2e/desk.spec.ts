@@ -35,6 +35,11 @@ test("the widgets show the seeded values", async ({ page }) => {
   const done = page.locator("section", { has: page.getByRole("heading", { name: "Tasks completed today" }) });
   const now = await deskNow(page);
   const names = now.completedToday.map((item) => item.taskName);
+  // Lower bounds from the seed (`FIXTURE_DESK_*`): other specs only add completions, so these hold whatever ran before.
+  expect(now.minutesToday).toBeGreaterThanOrEqual(75);
+  expect(now.hoursWithYoh).toBeGreaterThanOrEqual(5);
+  expect(now.onTime.counted).toBeGreaterThanOrEqual(4);
+  expect(now.onTime.onTime).toBeGreaterThanOrEqual(2);
   expect(names.filter((name) => name.startsWith("Desk seed"))).toEqual([...COMPLETED_TODAY]);
   await expect(done.getByRole("listitem")).toHaveText(names);
   await expect(done.locator("p").first()).toHaveText(String(names.length));

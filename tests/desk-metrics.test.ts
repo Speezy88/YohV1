@@ -158,3 +158,35 @@ test("monthlySpend: month boundary in local time, unpriced model, no rows", () =
   const small = [{ ...u("2026-10-02T00:00:00.000Z"), inputTokens: 12_345, outputTokens: 6_789 }];
   assert.equal(monthlySpend(small, now, "UTC").monthUsd, 0.05); // 0.012345 + 0.033945 = 0.04629
 });
+
+test("M3: a completion with an unreadable completedAt is left out of every metric and never throws", () => {
+  const rows = [row("garbage", { dueDate: "2026-10-04", estimatedMinutes: 30 }), row("2026-10-04T15:00:00.000Z", { dueDate: "2026-10-04", estimatedMinutes: 10 })];
+  assert.equal(completedToday(rows, "2026-10-04", "UTC").length, 1);
+  assert.equal(minutesToday(rows, "2026-10-04", "UTC"), 10);
+  assert.deepEqual(onTimeRate(rows, "UTC"), { onTime: 1, counted: 1, percent: 100 });
+  const total = heatmapWeeks(rows, [], "2026-10-04", "UTC").flat().reduce((n, d) => n + d.completed, 0);
+  assert.equal(total, 1);
+});
+
+test("M3: a usage row with an unreadable at is left out and counted as unpriced", () => {
+  const base = { model: "claude-haiku-4-5-20251001", inputTokens: 1_000_000, outputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 };
+  const out = monthlySpend([{ ...base, at: "garbage" }, { ...base, at: "2026-10-04T12:00:00.000Z" }], new Date("2026-10-15T12:00:00Z"), "UTC");
+  assert.equal(out.unpricedCalls, 1);
+  assert.ok(out.monthUsd > 0);
+});
+
+test("I1a: 50,000 usage rows and 5,000 completions are processed well under 500 ms", () => {
+  const usage = Array.from({ length: 50_000 }, (_, i) => ({
+    model: "claude-haiku-4-5-20251001", inputTokens: 10, outputTokens: 10, cacheCreationInputTokens: 0, cacheReadInputTokens: 0,
+    at: new Date(Date.UTC(2026, 9, 1 + (i % 28), i % 24)).toISOString(),
+  }));
+  const rows = Array.from({ length: 5_000 }, (_, i) => row(new Date(Date.UTC(2026, 3, 1 + (i % 180), i % 24)).toISOString(), { dueDate: "2026-10-04", estimatedMinutes: 5 }));
+  const t0 = performance.now();
+  monthlySpend(usage, new Date("2026-10-15T12:00:00Z"), "America/Denver");
+  completedToday(rows, "2026-10-04", "America/Denver");
+  minutesToday(rows, "2026-10-04", "America/Denver");
+  onTimeRate(rows, "America/Denver");
+  heatmapWeeks(rows, [], "2026-10-04", "America/Denver");
+  const ms = performance.now() - t0;
+  assert.ok(ms < 500, `took ${ms.toFixed(0)} ms`);
+});

@@ -13,10 +13,12 @@ export interface StateMessageProps {
   readonly message: string;
   readonly detail?: string;
   readonly onRetry?: () => void;
+  /** A retry is in flight: the button is disabled and marked busy. */
+  readonly retrying?: boolean;
   readonly className?: string;
 }
 
-export function StateMessage({ variant, message, detail, onRetry, className = "" }: StateMessageProps): React.JSX.Element {
+export function StateMessage({ variant, message, detail, onRetry, retrying = false, className = "" }: StateMessageProps): React.JSX.Element {
   if (variant === "empty") {
     return (
       <div className={`flex flex-col gap-1 font-body ${className}`}>
@@ -35,7 +37,7 @@ export function StateMessage({ variant, message, detail, onRetry, className = ""
         </div>
       </div>
       {onRetry !== undefined && (
-        <button type="button" onClick={onRetry} className={`${BUTTON_SECONDARY} ${CONTROL_SM}`}>
+        <button type="button" onClick={onRetry} disabled={retrying} aria-busy={retrying} className={`${BUTTON_SECONDARY} ${CONTROL_SM}`}>
           Try again
         </button>
       )}

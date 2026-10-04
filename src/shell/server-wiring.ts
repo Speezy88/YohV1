@@ -10,7 +10,8 @@ import { Client } from "@notionhq/client";
 import { writeStructuredLog } from "../adapters/logger.ts";
 import type { SqliteConnection } from "../adapters/sqlite.ts";
 import { createMemoryStore, listNightCloseOutDone, listPlanDates, type MemoryStore } from "../adapters/memory-store.ts";
-import { listLlmUsage } from "../adapters/llm-usage-store.ts";
+import { listLlmUsageSince } from "../adapters/llm-usage-store.ts";
+import { localIsoDate } from "../core/local-time.ts";
 import { listCompletedTaskIdsOnDate, listActivityDays, listCompletions, recordActivityDay, recordCompletion as completionLogRecordCompletion, type RecordCompletionInput } from "../adapters/completion-log.ts";
 import { createTokenStore, loadGoogleOAuthConfigFromEnv, type TokenStore } from "../adapters/token-store.ts";
 import {
@@ -247,26 +248,47 @@ export function buildResearchDeps(notion: NotionFeatureConfig | undefined, env: 
   return { readResearchVault: () => readResearchVault(notion.notionClient, { researchVaultDataSourceId }) };
 }
 
+/** A minute: after a failed activity write, no retry (and so no log line) sooner than this. */
+const ACTIVITY_RETRY_MS = 60_000;
+/** Spend reads from this far before the local month starts, so any timezone's month start is covered; `monthlySpend` filters exactly. */
+const SPEND_READ_MARGIN_DAYS = 2;
+
 /**
  * Ruling E12-R3: the activity-day recorder. Remembers the last date it wrote,
- * so a process makes one SQLite write per day however many requests arrive.
+ * so a process makes one SQLite write per day however many requests arrive,
+ * and after a failed write waits a minute before trying again. Without
+ * `YOH_TIMEZONE` Desk is not configured (never a silent UTC).
  */
-export function buildDeskDeps(connection: SqliteConnection, env: Readonly<Record<string, string | undefined>>): NonNullable<ServerDeps["desk"]> {
+export function buildDeskDeps(connection: SqliteConnection, env: Readonly<Record<string, string | undefined>>, now: () => Date = () => new Date()): ServerDeps["desk"] {
+  const timeZone = env["YOH_TIMEZONE"];
+  if (!timeZone) return undefined;
   let lastWritten: IsoDate | undefined;
+  let lastFailedAt: number | undefined;
   const store = createMemoryStore(connection);
   return {
-    now: () => new Date(),
-    timeZone: env["YOH_TIMEZONE"] ?? "UTC",
+    now,
+    timeZone,
     recordActivityDay: (date) => {
       if (date === lastWritten) return;
-      recordActivityDay(connection, date);
+      if (lastFailedAt !== undefined && now().getTime() - lastFailedAt < ACTIVITY_RETRY_MS) return;
+      try {
+        recordActivityDay(connection, date);
+      } catch (err) {
+        lastFailedAt = now().getTime();
+        throw err;
+      }
       lastWritten = date;
+      lastFailedAt = undefined;
     },
     listCompletions: () => listCompletions(connection),
     listActivityDays: () => listActivityDays(connection),
     listPlanDates: () => listPlanDates(store),
     listCloseOutDates: () => listNightCloseOutDone(store).map((r) => r.data.date),
-    listUsage: () => listLlmUsage(connection),
+    listUsage: () => {
+      const monthStart = `${localIsoDate(now(), timeZone).slice(0, 7)}-01T00:00:00.000Z`;
+      const since = new Date(Date.parse(monthStart) - SPEND_READ_MARGIN_DAYS * 86_400_000).toISOString();
+      return listLlmUsageSince(connection, since);
+    },
   };
 }
 

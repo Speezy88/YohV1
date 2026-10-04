@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { openSqliteConnection } from "../src/adapters/sqlite.ts";
 import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
-import { createApp, type ServerDeps } from "../src/shell/server.ts";
+import { createApp, startServer, type ServerDeps } from "../src/shell/server.ts";
 
 function setup(overrides: Partial<NonNullable<ServerDeps["desk"]>> | "absent" = {}) {
   const connection = openSqliteConnection({ databasePath: ":memory:" });
@@ -51,4 +51,29 @@ test("GET /api/desk reports not-configured when desk deps are absent", async () 
   assert.equal(status, 503);
   assert.equal(body.ok, false);
   assert.equal(body.error!.kind, "unreachable");
+});
+
+test("I3: startServer forwards features.desk, so /api/desk answers and activity is recorded", async () => {
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db);
+  const written: string[] = [];
+  const desk: NonNullable<ServerDeps["desk"]> = {
+    now: () => new Date("2026-10-07T18:00:00.000Z"),
+    timeZone: "UTC",
+    recordActivityDay: (d) => void written.push(d),
+    listCompletions: () => [],
+    listActivityDays: () => [],
+    listPlanDates: () => [],
+    listCloseOutDates: () => [],
+    listUsage: () => [],
+  };
+  let fetchFn: ((request: Request) => Response | Promise<Response>) | undefined;
+  const serveFn = (options: { fetch: (request: Request) => Response | Promise<Response> }) => {
+    fetchFn = options.fetch;
+    return { close: () => {} };
+  };
+  startServer(connection, {}, serveFn, { desk });
+  const res = await fetchFn!(new Request("http://127.0.0.1/api/desk"));
+  assert.equal(res.status, 200);
+  assert.deepEqual(written, ["2026-10-07"]);
 });

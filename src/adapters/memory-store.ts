@@ -1198,6 +1198,13 @@ export function putNightCloseOutDone(store: MemoryStore, record: NightCloseOutDo
   store.readModifyWrite<NightCloseOutDone>(NIGHT_CLOSE_OUT_DONE_KIND, record.date, undefined, () => record);
 }
 
+/** Removes a date's finished-close-out record, if there is one (same idiom as `clearUncheckedDay`). */
+export function clearNightCloseOutDone(store: MemoryStore, date: IsoDate): void {
+  const current = store.getRecord<NightCloseOutDone>(NIGHT_CLOSE_OUT_DONE_KIND, date);
+  if (!current) return;
+  store.deleteRecord(NIGHT_CLOSE_OUT_DONE_KIND, date, current.version);
+}
+
 /** Every finished close-out, oldest date first. */
 export function listNightCloseOutDone(store: MemoryStore): StoredRecord<NightCloseOutDone>[] {
   return store.listRecordsByKind<NightCloseOutDone>(NIGHT_CLOSE_OUT_DONE_KIND);

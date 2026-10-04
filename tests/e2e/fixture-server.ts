@@ -727,7 +727,7 @@ const handle = startServer(
         return url.pathname === "/__fixture/state" ? fixtureState(url) : options.fetch(request);
       },
     }),
-  { homeView, calendarDay, checkOff, plan: reshufflePlanDeps, planSync: planSyncDeps, chat, chatHistory, memoryItems, ratings, tasks: tasksPage, research, sandbox, desk: buildDeskDeps(connection, { YOH_TIMEZONE: TIME_ZONE }) },
+  { homeView, calendarDay, checkOff, plan: reshufflePlanDeps, planSync: planSyncDeps, chat, chatHistory, memoryItems, ratings, tasks: tasksPage, research, sandbox, desk: buildDeskDeps(connection, { YOH_TIMEZONE: TIME_ZONE })! },
 );
 const sweep = startCheckOffCommitSweep({ connection, ...checkOff, now: () => new Date() }, { log: quiet });
 // Story 11.3: the real research runner over the fake search and the fake vault (short interval so specs stay fast).

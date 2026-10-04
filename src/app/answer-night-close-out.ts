@@ -6,7 +6,7 @@
  * for `next`, so the recompute always reflects this turn's own answer.
  * The last Task's answer is followed by one "anything else?" question.
  */
-import { getOpenInteractionRequest, updateInteractionRequestDetail, type MemoryStore } from "../adapters/memory-store.ts";
+import { clearNightCloseOutDone, getOpenInteractionRequest, updateInteractionRequestDetail, type MemoryStore } from "../adapters/memory-store.ts";
 import {
   applyNightCloseOutConfirmation,
   clearNightCloseOutRequestIfOpen,
@@ -80,6 +80,13 @@ async function withNext(
     // Not when the request vanished mid-answer (its other Tasks may be unanswered) or carried no date.
     if (skippedTaskIds.size === 0 && current !== undefined && closeOutDate !== UNKNOWN_CLOSE_OUT_DATE) {
       recordNightCloseOutDone(deps.store, closeOutDate, new Date().toISOString(), "answered", writeStructuredLog);
+    } else if (skippedTaskIds.size > 0 && closeOutDate !== UNKNOWN_CLOSE_OUT_DATE) {
+      // Ruling E12-R11: an earlier `/night` may have recorded this date as done; a skip now means it was not. A failed removal never fails the close-out.
+      try {
+        clearNightCloseOutDone(deps.store, closeOutDate);
+      } catch (err) {
+        writeStructuredLog({ level: "warn", event: "night-close-out.done-clear-failed", detail: { date: closeOutDate, error: err instanceof Error ? err.message : String(err) } });
+      }
     }
     const skippedTitles = tasks.filter((t) => skippedTaskIds.has(t.taskId)).map((t) => t.taskTitle);
     const closing =

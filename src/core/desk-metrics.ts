@@ -33,19 +33,34 @@ export interface DeskUsageRow extends LlmUsageCostRow {
 const DAY_MS = 86_400_000;
 const dayMs = (d: IsoDate): number => Date.parse(`${d}T00:00:00Z`);
 const addDays = (d: IsoDate, n: number): IsoDate => new Date(dayMs(d) + n * DAY_MS).toISOString().slice(0, 10);
-const localDateOf = (instant: string, timeZone: string): IsoDate => localIsoDate(new Date(instant), timeZone);
+/**
+ * One formatter per call of a metric (not per row), returning each instant's local date, or null when the
+ * instant does not parse: such a row is skipped, never thrown on. A bad `timeZone` still throws, on creation.
+ */
+function localDateReader(timeZone: string): (instant: string) => IsoDate | null {
+  const format = new Intl.DateTimeFormat("en-US", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" });
+  return (instant) => {
+    const ms = Date.parse(instant);
+    if (Number.isNaN(ms)) return null;
+    const parts = format.formatToParts(new Date(ms));
+    const get = (type: string): string => parts.find((p) => p.type === type)?.value ?? "";
+    return `${get("year")}-${get("month")}-${get("day")}`;
+  };
+}
 
 /** Every completion whose local date is `today`, newest first. */
 export function completedToday(rows: readonly DeskCompletionRow[], today: IsoDate, timeZone: string): DeskCompletedItem[] {
+  const localDateOf = localDateReader(timeZone);
   return rows
-    .filter((r) => localDateOf(r.completedAt, timeZone) === today)
+    .filter((r) => localDateOf(r.completedAt) === today)
     .map((r) => ({ taskName: r.taskName, completedAt: r.completedAt }))
     .sort((a, b) => (a.completedAt < b.completedAt ? 1 : a.completedAt > b.completedAt ? -1 : 0));
 }
 
 /** Estimated minutes of today's completions; a null estimate adds 0. */
 export function minutesToday(rows: readonly DeskCompletionRow[], today: IsoDate, timeZone: string): number {
-  return rows.filter((r) => localDateOf(r.completedAt, timeZone) === today).reduce((sum, r) => sum + (r.estimatedMinutes ?? 0), 0);
+  const localDateOf = localDateReader(timeZone);
+  return rows.filter((r) => localDateOf(r.completedAt) === today).reduce((sum, r) => sum + (r.estimatedMinutes ?? 0), 0);
 }
 
 /** Estimated minutes over every completion, as whole hours. */
@@ -55,12 +70,15 @@ export function hoursWithYoh(rows: readonly DeskCompletionRow[]): number {
 
 /** Of completions that have a due date, how many finished on or before it. */
 export function onTimeRate(rows: readonly DeskCompletionRow[], timeZone: string): { onTime: number; counted: number; percent: number | null } {
+  const localDateOf = localDateReader(timeZone);
   let counted = 0;
   let onTime = 0;
   for (const r of rows) {
     if (r.dueDate === null) continue;
+    const done = localDateOf(r.completedAt);
+    if (done === null) continue;
     counted += 1;
-    if (localDateOf(r.completedAt, timeZone) <= r.dueDate) onTime += 1;
+    if (done <= r.dueDate) onTime += 1;
   }
   return { onTime, counted, percent: counted === 0 ? null : Math.round((onTime / counted) * 100) };
 }
@@ -94,9 +112,11 @@ function levelFor(completed: number, active: boolean): DeskHeatmapDay["level"] {
 
 /** Ruling E12-R5: `DESK_HEATMAP_WEEKS` Sunday-start columns ending with today's week; no day after today. */
 export function heatmapWeeks(rows: readonly DeskCompletionRow[], activityDates: readonly IsoDate[], today: IsoDate, timeZone: string): DeskHeatmapDay[][] {
+  const localDateOf = localDateReader(timeZone);
   const counts = new Map<IsoDate, number>();
   for (const r of rows) {
-    const d = localDateOf(r.completedAt, timeZone);
+    const d = localDateOf(r.completedAt);
+    if (d === null) continue;
     counts.set(d, (counts.get(d) ?? 0) + 1);
   }
   const active = new Set(activityDates);
@@ -119,10 +139,16 @@ export function heatmapWeeks(rows: readonly DeskCompletionRow[], activityDates: 
 /** Ruling E12-R6: this calendar month's Claude spend. A call whose model has no price is left out and counted. */
 export function monthlySpend(rows: readonly DeskUsageRow[], now: Date, timeZone: string): { monthUsd: number; unpricedCalls: number } {
   const month = localIsoDate(now, timeZone).slice(0, 7);
+  const localDateOf = localDateReader(timeZone);
   let total = 0;
   let unpricedCalls = 0;
   for (const r of rows) {
-    if (localDateOf(r.at, timeZone).slice(0, 7) !== month) continue;
+    const d = localDateOf(r.at);
+    if (d === null) {
+      unpricedCalls += 1;
+      continue;
+    }
+    if (d.slice(0, 7) !== month) continue;
     try {
       total += costForRow(r);
     } catch {

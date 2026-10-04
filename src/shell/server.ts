@@ -209,7 +209,7 @@ if (import.meta.main) {
     ratings: createRatingStore(connection),
     ...(tasks ? { tasks } : {}),
     ...(research ? { research } : {}),
-    desk,
+    ...(desk ? { desk } : {}),
     ...(sandbox ? { sandbox } : {}),
   });
   // Story 7.10, AD-20: the startup sweep commits anything left overdue by a
