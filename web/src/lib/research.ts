@@ -92,10 +92,14 @@ export function useResearchList(): {
   const [loadingMore, setLoadingMore] = useState(false);
   const latest = useRef(0);
   const pages = useRef(1);
+  // The newest refetch still in flight, so a Show more can tell it superseded one.
+  const refetchInFlight = useRef(0);
 
   const refetch = useCallback(async (): Promise<void> => {
     const seq = ++latest.current;
+    refetchInFlight.current = seq;
     const outcome = await fetchResearch(pages.current);
+    if (refetchInFlight.current === seq) refetchInFlight.current = 0;
     if (seq !== latest.current) return;
     setState((prev) => {
       if (outcome.ok) return { status: "loaded", value: outcome.value, loadedAt: new Date() };
@@ -106,6 +110,7 @@ export function useResearchList(): {
 
   const showMore = useCallback(async (): Promise<void> => {
     const seq = ++latest.current;
+    const supersededRefresh = refetchInFlight.current !== 0;
     const previous = pages.current;
     const next = previous + 1;
     // Set before fetching so a refetch that supersedes this one asks for the larger page too.
@@ -122,12 +127,14 @@ export function useResearchList(): {
         if (seq === latest.current) {
           pages.current = previous;
           setMoreFailed(true);
+          // The refresh this request superseded was dropped; run it once so it is not lost.
+          if (supersededRefresh) void refetch();
         }
       }
     } finally {
       setLoadingMore(false);
     }
-  }, []);
+  }, [refetch]);
 
   useEffect(() => {
     void refetch();

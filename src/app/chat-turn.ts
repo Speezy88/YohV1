@@ -271,6 +271,9 @@ export async function chatTurn(deps: ChatTurnDeps, input: ChatTurnRequest): Prom
   return result;
 }
 
+/** Reply to a typed yes/no while a research offer card is open: the card is the only way to answer it. */
+const RESEARCH_OFFER_USE_CARD_REPLY = "Use Yes or No on the card above.";
+
 async function routeChatTurn(
   deps: ChatTurnDeps,
   input: ChatTurnRequest,
@@ -278,8 +281,13 @@ async function routeChatTurn(
 ): Promise<Result<ChatTurnResponse, YohError>> {
   recordRecentMessage(deps, input.message);
   emitStatus(deps, STATUS_THINKING);
-  // An offer Spencer ignored by typing something else is gone: the card's Yes works only while it is the latest thing.
-  clearOpenResearchOffers(deps.store);
+  // A typed yes/no while a same-day research offer is open has no typed path: the card is the only way to
+  // answer it, and the offer stays open. Anything else Spencer types ignores the offer, which is then gone.
+  const offerStale = (createdAt: string) => changeSetIsStale(createdAt, deps.now(), deps.timeZone);
+  if (parseProposalAnswer(input.message) !== undefined && hasOpenProposalOfKind(deps.store, RESEARCH_OFFER_KIND, offerStale)) {
+    return { ok: true, value: { reply: RESEARCH_OFFER_USE_CARD_REPLY, receipts: [] } };
+  }
+  clearOpenResearchOffers(deps.store, deps.log);
 
   const line = input.message.trim();
   if (line.startsWith("/")) {
@@ -495,7 +503,7 @@ async function routeChatTurn(
 }
 
 /** Clears every open `research-offer` request (a concurrent answer may have cleared one already). */
-function clearOpenResearchOffers(store: MemoryStore): void {
+function clearOpenResearchOffers(store: MemoryStore, log: ChatTurnDeps["log"]): void {
   try {
     for (const record of listOpenInteractionRequests(store)) {
       const proposal = (record.data.detail as { readonly proposal?: { readonly kind?: string } } | undefined)?.proposal;
@@ -506,8 +514,9 @@ function clearOpenResearchOffers(store: MemoryStore): void {
         // a concurrent answer already cleared it
       }
     }
-  } catch {
+  } catch (error) {
     // an unreadable store must not stop the turn; a stale offer is also hidden by its same-day expiry
+    log?.({ level: "warn", event: "chat-turn.research-offer-clear-failed", detail: error instanceof Error ? error.message : String(error) });
   }
 }
 

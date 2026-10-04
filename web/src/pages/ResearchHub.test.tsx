@@ -144,12 +144,56 @@ describe("ResearchHubPage", () => {
     expect(screen.getAllByTestId("research-row")[0]).not.toHaveAttribute("aria-current");
   });
 
-  it("a row holds no block elements, and the box heading region is a polite live region (M10)", async () => {
+  it("a row holds no block elements, and the box itself is not a live region", async () => {
     api.research.$get.mockResolvedValue(envelope({ ok: true, value: VIEW }));
     render(<ResearchHubPage />);
     const region = await box();
     for (const row of screen.getAllByTestId("research-row")) expect(row.querySelector("div")).toBeNull();
-    expect(within(region).getByRole("heading", { name: "AP Bio registration deadline" }).parentElement).toHaveAttribute("aria-live", "polite");
+    expect(region.querySelector("[aria-live]")).toBeNull();
+  });
+
+  it("one always-mounted status region says Showing {title} only after a row click or a deep link", async () => {
+    api.research.$get.mockResolvedValue(envelope({ ok: true, value: VIEW }));
+    render(<ResearchHubPage />);
+    const status = screen.getByRole("status");
+    expect(status).toHaveClass("sr-only");
+    await box();
+    expect(status).toHaveTextContent("");
+    fireEvent.click(screen.getAllByTestId("research-row")[1]!);
+    await waitFor(() => expect(status).toHaveTextContent("Showing Undated find"));
+    act(() => openResearchDocument("rv-1"));
+    await waitFor(() => expect(status).toHaveTextContent("Showing AP Bio registration deadline"));
+    expect(screen.getByRole("status")).toBe(status);
+  });
+
+  it("a hint refresh of the open document does not announce again", async () => {
+    api.research.$get.mockResolvedValue(envelope({ ok: true, value: VIEW }));
+    render(<ResearchHubPage />);
+    await box();
+    fireEvent.click(screen.getAllByTestId("research-row")[1]!);
+    const status = screen.getByRole("status");
+    await waitFor(() => expect(status).toHaveTextContent("Showing Undated find"));
+    // The text is cleared by the next announcement only; a refetch with no selection change leaves it unchanged.
+    const before = status.textContent;
+    await act(async () => {});
+    expect(status.textContent).toBe(before);
+  });
+
+  it("mounting with a selection already made does not scroll or announce", async () => {
+    const scrollBy = vi.fn();
+    Element.prototype.scrollBy = scrollBy;
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      const [top, bottom] = this.dataset.testid === "research-box" ? [900, 1100] : [0, 700];
+      return { top, bottom, left: 0, right: 0, width: 0, height: bottom - top, x: 0, y: top, toJSON: () => ({}) };
+    });
+    api.research.$get.mockResolvedValue(envelope({ ok: true, value: VIEW }));
+    openResearchDocument("rv-2");
+    render(<ResearchHubPage />);
+    await box();
+    await waitFor(() => expect(screen.getByRole("region", { name: "Research document" })).toHaveTextContent("Undated find"));
+    expect(scrollBy).not.toHaveBeenCalled();
+    expect(screen.getByRole("status")).toHaveTextContent("");
+    rect.mockRestore();
   });
 
   it("opening a row or a deep link scrolls the page so the box is in view; the initial load does not", async () => {

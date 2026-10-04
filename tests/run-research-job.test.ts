@@ -283,6 +283,10 @@ test("M2: the page was filed but the done write throws -> failed row keeps the p
   const notes = listUnreadNotifications(ctx.connection);
   assert.deepEqual(notes.map((n) => n.kind), ["research-failed"]);
   assert.equal(notes[0]!.body, "It was filed, but Yoh couldn't record it. Check Research Hub.");
+  assert.equal(notes[0]!.title, "Research filed, but not recorded: filed then lost");
+  assert.equal(notes[0]!.deepLink, "research:new-page-id");
+  const hints = ctx.connection.db.prepare("SELECT topic, entity_id FROM outbox WHERE topic = 'research'").all();
+  assert.deepEqual(hints.map((h: any) => ({ ...h })), [{ topic: "research", entity_id: "new-page-id" }]);
   assert.equal(row.error, notes[0]!.body);
   ctx.connection.close();
 });

@@ -1694,6 +1694,32 @@ test("an ignored offer is cleared at the start of the next turn, whatever it say
   assert.ok(surfaced.ok && surfaced.value.items.length === 0);
 });
 
+for (const typed of ["yes", "no"]) {
+  test(`typing "${typed}" with a research offer open points at the card and leaves the offer open`, async () => {
+    const t = researchDeps(vaultReady);
+    const a = await chatTurn(t.deps, { message: "pros and cons of nuclear power" });
+    assert.ok(a.ok && a.value.question);
+    const r = await chatTurn(t.deps, { message: typed });
+    assert.ok(r.ok);
+    assert.equal(r.ok && r.value.reply, "Use Yes or No on the card above.");
+    assert.equal(listOpenInteractionRequests(t.deps.store).length, 1);
+    assert.deepEqual(t.jobs(), []);
+    assert.equal(t.llm.calls.length, 0);
+  });
+}
+
+test("a failing offer clear logs one warn through the turn logger", async () => {
+  const logged: Array<{ level: string; event: string }> = [];
+  const t = researchDeps({ ...vaultReady, log: (e) => logged.push({ level: e.level, event: e.event }) });
+  const a = await chatTurn(t.deps, { message: "pros and cons of nuclear power" });
+  assert.ok(a.ok && a.value.question);
+  (t.deps.store as { listRecordsByKind: unknown }).listRecordsByKind = () => {
+    throw new Error("store down");
+  };
+  await chatTurn(t.deps, { message: "what's the latest AI news" });
+  assert.deepEqual(logged.filter((e) => e.event === "chat-turn.research-offer-clear-failed"), [{ level: "warn", event: "chat-turn.research-offer-clear-failed" }]);
+});
+
 test("a re-sent research line after the session forgot leaves only the fresh offer open", async () => {
   const t = researchDeps(vaultReady);
   const a = await chatTurn(t.deps, { message: "research best budget laptops" });

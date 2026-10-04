@@ -48,7 +48,15 @@ function failJob(deps: RunResearchJobDeps, job: ResearchJob, text: string, pageI
   const finishedAt = deps.now().toISOString();
   deps.connection.writeTx((tx) => {
     markResearchJobFailedInTx(tx, job.id, { error: text, finishedAt, ...(pageId ? { pageId } : {}) });
-    createNotificationInTx(tx, { kind: "research-failed", title: `Couldn't finish research: ${researchTopic(job.question)}`, body: text, deepLink: "chat", createdAt: finishedAt });
+    const topic = researchTopic(job.question);
+    createNotificationInTx(tx, {
+      kind: "research-failed",
+      title: pageId ? `Research filed, but not recorded: ${topic}` : `Couldn't finish research: ${topic}`,
+      body: text,
+      deepLink: pageId ? `research:${pageId}` : "chat",
+      createdAt: finishedAt,
+    });
+    if (pageId) appendOutboxInTx(tx, { topic: RESEARCH_TOPIC, entityId: pageId });
   });
 }
 

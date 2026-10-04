@@ -101,6 +101,32 @@ describe("useResearchList paging", () => {
     });
   }
 
+  it("a failed Show more that superseded a refresh runs one refetch so the refresh is not lost", async () => {
+    $get.mockResolvedValueOnce(ok({ items: [item(1)], hasMore: true }));
+    const { result } = renderHook(() => useResearchList());
+    await waitFor(() => expect(result.current.state.status).toBe("loaded"));
+    let resolveRefresh!: (v: unknown) => void;
+    $get.mockImplementationOnce(() => new Promise((r) => (resolveRefresh = r)));
+    let refresh!: Promise<void>;
+    act(() => {
+      refresh = result.current.refetch();
+    });
+    $get.mockResolvedValueOnce(fail());
+    $get.mockResolvedValueOnce(ok({ items: [item(1), item(9)], hasMore: false }));
+    await act(async () => {
+      await result.current.showMore();
+      resolveRefresh(ok({ items: [item(1)], hasMore: true }));
+      await refresh;
+    });
+    await waitFor(() => {
+      const s = result.current.state;
+      expect(s.status === "loaded" && s.value.items.length).toBe(2);
+    });
+    expect($get).toHaveBeenCalledTimes(4);
+    expect($get).toHaveBeenLastCalledWith({ query: { pages: "1" } });
+    expect(result.current.moreFailed).toBe(true);
+  });
+
   it("a failed showMore keeps the rows and sets moreFailed; a later success clears it", async () => {
     $get.mockResolvedValueOnce(ok({ items: [item(1)], hasMore: true }));
     const { result } = renderHook(() => useResearchList());

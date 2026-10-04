@@ -71,7 +71,7 @@ function isHttpUrl(line: string): boolean {
 function ResearchBoxContent({ doc }: { readonly doc: ResearchDocument }): React.JSX.Element {
   return (
     <section aria-label="Research document" data-wheel-nav="off" className="flex flex-col gap-4 rounded-2xl bg-surface-raised px-5 py-5 shadow-extruded-lg">
-      <header aria-live="polite" className="flex flex-col gap-1">
+      <header className="flex flex-col gap-1">
         <h2 className="m-0 font-body text-title font-bold text-ink-primary">{doc.title}</h2>
         {doc.date && (
           <span data-testid="research-box-date" className="font-body text-small text-ink-secondary">
@@ -194,7 +194,14 @@ export default function ResearchHubPage(): React.JSX.Element {
   // Not on the initial load or a hint refresh (neither changes the selection). This scrolls the page's own
   // scroller by the `block: "nearest"` distance rather than calling `box.scrollIntoView`, which would also
   // scroll the page stack's overflow-hidden ancestors while a deep link's page transition is still running.
+  // Not on mount with a selection that already exists (coming back to the page), only on a change after it.
+  const previousSelectedId = useRef(selectedId);
+  const announceNext = useRef(false);
+  const [announcement, setAnnouncement] = useState("");
   useEffect(() => {
+    if (previousSelectedId.current === selectedId) return;
+    previousSelectedId.current = selectedId;
+    announceNext.current = selectedId !== undefined;
     const root = rootRef.current;
     const box = boxRef.current;
     if (selectedId === undefined || !root || !box) return;
@@ -204,6 +211,14 @@ export default function ResearchHubPage(): React.JSX.Element {
     if (delta !== 0) root.scrollBy?.({ top: delta, behavior: reducedMotion ? "auto" : "smooth" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId]);
+  // One always-mounted status region: said once when a row click or deep link has opened a document,
+  // never on the initial load or a hint refresh.
+  useEffect(() => {
+    if (!announceNext.current || document.state.status !== "loaded") return;
+    announceNext.current = false;
+    const title = document.state.value.document?.title;
+    if (title) setAnnouncement(`Showing ${title}`);
+  }, [document.state]);
   const items = state.status === "loaded" ? state.value.items : [];
   const hasMore = state.status === "loaded" && state.value.hasMore;
   // The row marker follows the document actually returned, not the id asked for.
@@ -218,6 +233,10 @@ export default function ResearchHubPage(): React.JSX.Element {
       </header>
 
       <AskResearchBox />
+
+      <div role="status" className="sr-only">
+        {announcement}
+      </div>
 
       {showBox && (
         <div ref={boxRef} data-testid="research-box">
