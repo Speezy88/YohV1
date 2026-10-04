@@ -9,6 +9,8 @@ import { initCompletionLogSchema, listActivityDays } from "../src/adapters/compl
 import { createApp, type ServerDeps } from "../src/shell/server.ts";
 import { buildDeskDeps } from "../src/shell/server-wiring.ts";
 
+const NO_READS = { listCompletions: () => [], listActivityDays: () => [], listPlanDates: () => [], listCloseOutDates: () => [], listUsage: () => [] };
+
 function setup(desk?: ServerDeps["desk"]) {
   const connection = openSqliteConnection({ databasePath: ":memory:" });
   initNotificationStoreSchema(connection.db);
@@ -18,14 +20,14 @@ function setup(desk?: ServerDeps["desk"]) {
 
 test("a request to an /api/* route records today", async () => {
   const written: string[] = [];
-  const { app } = setup({ now: () => new Date("2026-10-04T12:00:00.000Z"), timeZone: "UTC", recordActivityDay: (d) => void written.push(d) });
+  const { app } = setup({ now: () => new Date("2026-10-04T12:00:00.000Z"), timeZone: "UTC", recordActivityDay: (d) => void written.push(d), ...NO_READS });
   await app.request("/api/research");
   assert.deepEqual(written, ["2026-10-04"]);
 });
 
 test("GET /api/health does not record", async () => {
   const written: string[] = [];
-  const { app } = setup({ now: () => new Date("2026-10-04T12:00:00.000Z"), timeZone: "UTC", recordActivityDay: (d) => void written.push(d) });
+  const { app } = setup({ now: () => new Date("2026-10-04T12:00:00.000Z"), timeZone: "UTC", recordActivityDay: (d) => void written.push(d), ...NO_READS });
   const res = await app.request("/api/health");
   assert.equal(res.status, 200);
   assert.deepEqual(written, []);
@@ -38,7 +40,7 @@ test("a throwing dep still returns the route's normal response, and is logged", 
   const app = createApp({
     connection,
     log: (e) => void logs.push(e.event),
-    desk: { now: () => new Date(), timeZone: "UTC", recordActivityDay: () => { throw new Error("boom"); } },
+    desk: { now: () => new Date(), timeZone: "UTC", recordActivityDay: () => { throw new Error("boom"); }, ...NO_READS },
   });
   const res = await app.request("/api/research");
   assert.equal(res.status, 503, "the route's own not-configured answer");

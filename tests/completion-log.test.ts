@@ -18,6 +18,7 @@ import {
   listCompletedTaskIdsOnDate,
   recordActivityDay,
   listActivityDays,
+  listCompletions,
   recordCompletion,
   recordCompletionInTx,
   recordSlipEventInTx,
@@ -257,5 +258,17 @@ test("listActivityDays returns dates oldest first", () => {
   recordActivityDay(connection, "2026-09-30");
   recordActivityDay(connection, "2026-10-01");
   assert.deepEqual(listActivityDays(connection), ["2026-09-30", "2026-10-01", "2026-10-03"]);
+  connection.close();
+});
+
+test("listCompletions returns every row oldest first with the Desk's fields", () => {
+  const connection = tempStore();
+  const base = { taskId: "t", area: null, source: "check-off" as const };
+  recordCompletion(connection, { ...base, taskId: "b", taskName: "Later", dueDate: "2026-10-05", estimatedMinutes: 30, completedAt: "2026-10-03T10:00:00.000Z" });
+  recordCompletion(connection, { ...base, taskId: "a", taskName: "Earlier", dueDate: null, estimatedMinutes: null, completedAt: "2026-10-02T10:00:00.000Z", source: "close-out" });
+  assert.deepEqual(listCompletions(connection), [
+    { taskName: "Earlier", dueDate: null, estimatedMinutes: null, completedAt: "2026-10-02T10:00:00.000Z" },
+    { taskName: "Later", dueDate: "2026-10-05", estimatedMinutes: 30, completedAt: "2026-10-03T10:00:00.000Z" },
+  ]);
   connection.close();
 });

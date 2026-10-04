@@ -20,6 +20,7 @@ import {
   createMemoryStore,
   putNightCloseOutDone,
   listNightCloseOutDone,
+  listPlanDates,
   ConflictError,
   putOpenInteractionRequest,
   getOpenInteractionRequest,
@@ -1336,5 +1337,14 @@ test("night-close-out-done: a second put for the same date keeps the first", () 
   assert.equal(all.length, 1);
   assert.equal(all[0]!.data.completedAt, "2026-10-02T23:00:00.000Z");
   assert.equal(all[0]!.data.via, "answered");
+  store.close();
+});
+
+test("listPlanDates returns the date of every Plan record, oldest first", () => {
+  const store = createMemoryStore(openSqliteConnection({ databasePath: ":memory:" }));
+  assert.deepEqual(listPlanDates(store), []);
+  putPlan(store, makePlan({ id: "plan-2026-08-23", date: "2026-08-23" }));
+  putPlan(store, makePlan());
+  assert.deepEqual(listPlanDates(store), ["2026-08-22", "2026-08-23"]);
   store.close();
 });

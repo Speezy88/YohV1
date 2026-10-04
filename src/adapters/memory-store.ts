@@ -677,6 +677,11 @@ export function getPlan(store: MemoryStore, date: IsoDate): StoredRecord<Plan> |
   return store.getRecord<Plan>(PLAN_KIND, date);
 }
 
+/** The date of every stored Plan record, oldest first (the Desk's streak reads these). */
+export function listPlanDates(store: MemoryStore): IsoDate[] {
+  return store.listRecordsByKind<Plan>(PLAN_KIND).map((r) => r.data.date);
+}
+
 /**
  * Stores `plan` under its own `date` — "put" semantics, like
  * `putTimeBudget`/`putOpenInteractionRequest`: the caller doesn't thread a

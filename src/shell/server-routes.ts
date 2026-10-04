@@ -54,7 +54,7 @@ import { deleteTask, renameTask, updateTask, type UpdateTaskDeps } from "../app/
 import { planDayForChangeSet } from "../app/plan-day.ts";
 import { refitPlan } from "../app/refit-plan.ts";
 import type { ApplyChangeSetDeps } from "../app/apply-change-set.ts";
-import { recordActivity, type DeskDeps } from "../app/desk.ts";
+import { getDesk, recordActivity, type DeskDeps } from "../app/desk.ts";
 import { getResearchDocument, listResearch, type ResearchListDeps } from "../app/research-list.ts";
 import { sandboxQueue, type SandboxQueueDeps } from "../app/sandbox-queue.ts";
 import { finishSandboxSession, saveSandboxCardAndAdvance, type SandboxSubmitDeps } from "../app/sandbox-submit.ts";
@@ -287,6 +287,12 @@ const NOTION_NOT_CONFIGURED: ApiFailure = {
 const RESEARCH_NOT_CONFIGURED: ApiFailure = {
   ok: false,
   error: { kind: "unreachable", message: "I'm not set up to do that yet — my Notion connection isn't configured." },
+};
+
+/** Epic 12: `GET /api/desk`'s "not configured" failure (the server was started without the Desk's deps). */
+const DESK_NOT_CONFIGURED: ApiFailure = {
+  ok: false,
+  error: { kind: "unreachable", message: "I can't show your Desk right now — it isn't set up on this server." },
 };
 
 const TASKS_GROUP_BY: ReadonlySet<string> = new Set<TasksGroupBy>(["due", "area", "status", "priority"]);
@@ -926,6 +932,12 @@ export function createApp(deps: ServerDeps) {
           return c.json(result, httpStatus(result));
         },
       )
+      // Epic 12: the Desk page's one read, computed from Yoh's own records (no Notion).
+      .get("/api/desk", async (c) => {
+        if (!deskDeps) return c.json(DESK_NOT_CONFIGURED, httpStatus(DESK_NOT_CONFIGURED));
+        const result = wire(await getDesk({ ...deskDeps, log }, {}));
+        return c.json(result, httpStatus(result));
+      })
       // Task 6C (FR-43, UX-DR43): the Research Hub page's one route — pure
       // transport over `app/research-list.ts`'s `listResearch` (a live
       // Notion read of the Research Vault, most recent first, server-

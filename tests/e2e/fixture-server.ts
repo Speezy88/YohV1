@@ -38,8 +38,9 @@ import { appendOutboxInTx, initNotificationStoreSchema } from "../../src/adapter
 import { findUncommittedCheckOffForTask, initPlanStateStoreSchema, replaceDayPinsAndDropsInTx } from "../../src/adapters/plan-state-store.ts";
 import { listOpenReshuffleProposals } from "../../src/adapters/reshuffle-proposal-store.ts";
 import { initJobStoreSchema } from "../../src/adapters/job-store.ts";
-import { initCompletionLogSchema,listCompletedTaskIdsOnDate } from "../../src/adapters/completion-log.ts";
-import { clearInteractionRequest, createMemoryStore, listOpenInteractionRequests, putPlan, putTimeBudget } from "../../src/adapters/memory-store.ts";
+import { initLlmUsageStoreSchema, recordLlmUsage } from "../../src/adapters/llm-usage-store.ts";
+import { initCompletionLogSchema, listCompletedTaskIdsOnDate, recordActivityDay, recordCompletion } from "../../src/adapters/completion-log.ts";
+import { clearInteractionRequest, createMemoryStore, listOpenInteractionRequests, putNightCloseOutDone, putPlan, putTimeBudget } from "../../src/adapters/memory-store.ts";
 import {
   bindNotionTaskWrites,
   createPage as notionCreatePage,
@@ -92,6 +93,7 @@ initMemoryItemStoreSchema(connection.db);
 initRatingStoreSchema(connection.db);
 initCompletionLogSchema(connection.db);
 initJobStoreSchema(connection.db);
+initLlmUsageStoreSchema(connection.db);
 
 const store = createMemoryStore(connection);
 // Story 13.1: the REAL chat store — `chatExchange` stores both turns even though `runChatTurn` is scripted.
@@ -122,6 +124,42 @@ function defaultPlan(version: number): Plan {
   };
 }
 putPlan(store, defaultPlan(1));
+
+// Epic 12: fixed Desk records, all relative to the fixture's "today" (UTC). The web spec asserts on `FIXTURE_DESK_*`.
+const daysAgo = (n: number): string => new Date(Date.parse(`${today}T00:00:00Z`) - n * 86_400_000).toISOString().slice(0, 10);
+const deskCompletion = (id: string, estimatedMinutes: number | null, dueDate: string | null, at: string): void =>
+  recordCompletion(connection, { taskId: `desk-seed-${id}`, taskName: `Desk seed ${id}`, area: null, dueDate, estimatedMinutes, completedAt: at, source: "check-off" });
+// Today: three completions (30 min on time, 45 min late, no estimate and no due date).
+deskCompletion("today-1", 30, today, `${today}T00:00:01.000Z`);
+deskCompletion("today-2", 45, daysAgo(1), `${today}T00:00:02.000Z`);
+deskCompletion("today-3", null, null, `${today}T00:00:03.000Z`);
+// Earlier days: 5 completions (level 4), 3 (level 3), 1 (level 2), and an activity-only day (level 1).
+for (let i = 1; i <= 5; i++) deskCompletion(`d3-${i}`, 20, i === 1 ? daysAgo(4) : null, `${daysAgo(3)}T12:0${i}:00.000Z`);
+for (let i = 1; i <= 3; i++) deskCompletion(`d4-${i}`, 30, null, `${daysAgo(4)}T12:0${i}:00.000Z`);
+deskCompletion("d5-1", 60, daysAgo(5), `${daysAgo(5)}T12:00:00.000Z`);
+recordActivityDay(connection, daysAgo(6));
+// Streak: today pending; days 1-3 ago are closed out (current 3); days 5-9 ago are a run of 5 (longest); day 4 ago is the gap.
+for (const n of [1, 2, 3, 5, 6, 7, 8, 9]) {
+  const date = daysAgo(n);
+  putPlan(store, { ...defaultPlan(1), id: `plan-${date}`, date, blocks: [] });
+  putNightCloseOutDone(store, { date, completedAt: `${date}T23:00:00.000Z`, via: "answered" });
+}
+// Spend: two priced calls this month ($2 input + $5 output) and one from last month that must not count.
+const thisMonthStart = `${today.slice(0, 7)}-01T00:00:00.000Z`;
+const usage = (at: string, inputTokens: number, outputTokens: number) =>
+  recordLlmUsage(connection, { at, model: "claude-haiku-4-5", purpose: "agent", inputTokens, outputTokens, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 });
+usage(thisMonthStart, 2_000_000, 0);
+usage(thisMonthStart, 0, 1_000_000);
+usage(new Date(Date.parse(thisMonthStart) - 86_400_000).toISOString(), 9_000_000, 0);
+
+/** The Desk values the seed above produces, for `web/e2e/desk.spec.ts`. */
+export const FIXTURE_DESK_COMPLETED_TODAY = ["Desk seed today-3", "Desk seed today-2", "Desk seed today-1"] as const; // newest first
+export const FIXTURE_DESK_MINUTES_TODAY = 75;
+export const FIXTURE_DESK_HOURS_WITH_YOH = 5; // 325 min over 12 completions
+export const FIXTURE_DESK_ON_TIME = { onTime: 2, counted: 4, percent: 50 } as const;
+export const FIXTURE_DESK_STREAK = { current: 3, longest: 5 } as const;
+export const FIXTURE_DESK_HEATMAP_LEVELS = { today: 3, daysAgo3: 4, daysAgo4: 3, daysAgo5: 2, daysAgo6: 1 } as const;
+export const FIXTURE_DESK_SPEND = { monthUsd: 7, unpricedCalls: 0 } as const;
 
 /**
  * Yoh Plan calendar sync (web/e2e/plan-calendar-sync.spec.ts): the fake calendar mirrors what Yoh

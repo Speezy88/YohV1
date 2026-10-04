@@ -90,6 +90,22 @@ export function listActivityDays(connection: SqliteConnection): IsoDate[] {
   return (connection.db.prepare("SELECT date FROM activity_days ORDER BY date").all() as { date: IsoDate }[]).map((r) => r.date);
 }
 
+/** One completion as the Desk page reads it. */
+export interface CompletionRecord {
+  readonly taskName: string;
+  readonly dueDate: IsoDate | null;
+  readonly estimatedMinutes: number | null;
+  readonly completedAt: IsoDateTime;
+}
+
+/** Every completion row, oldest first. Read-only. */
+export function listCompletions(connection: SqliteConnection): CompletionRecord[] {
+  const rows = connection.db
+    .prepare("SELECT task_name, due_date, estimated_minutes, completed_at FROM completions ORDER BY completed_at, id")
+    .all() as { task_name: string; due_date: string | null; estimated_minutes: number | null; completed_at: string }[];
+  return rows.map((r) => ({ taskName: r.task_name, dueDate: r.due_date, estimatedMinutes: r.estimated_minutes, completedAt: r.completed_at }));
+}
+
 const SLIP_EVENTS_DDL = `
   CREATE TABLE IF NOT EXISTS slip_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

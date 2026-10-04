@@ -9,8 +9,9 @@
 import { Client } from "@notionhq/client";
 import { writeStructuredLog } from "../adapters/logger.ts";
 import type { SqliteConnection } from "../adapters/sqlite.ts";
-import { createMemoryStore, type MemoryStore } from "../adapters/memory-store.ts";
-import { listCompletedTaskIdsOnDate, recordActivityDay, recordCompletion as completionLogRecordCompletion, type RecordCompletionInput } from "../adapters/completion-log.ts";
+import { createMemoryStore, listNightCloseOutDone, listPlanDates, type MemoryStore } from "../adapters/memory-store.ts";
+import { listLlmUsage } from "../adapters/llm-usage-store.ts";
+import { listCompletedTaskIdsOnDate, listActivityDays, listCompletions, recordActivityDay, recordCompletion as completionLogRecordCompletion, type RecordCompletionInput } from "../adapters/completion-log.ts";
 import { createTokenStore, loadGoogleOAuthConfigFromEnv, type TokenStore } from "../adapters/token-store.ts";
 import {
   bindCalendarApply,
@@ -252,6 +253,7 @@ export function buildResearchDeps(notion: NotionFeatureConfig | undefined, env: 
  */
 export function buildDeskDeps(connection: SqliteConnection, env: Readonly<Record<string, string | undefined>>): NonNullable<ServerDeps["desk"]> {
   let lastWritten: IsoDate | undefined;
+  const store = createMemoryStore(connection);
   return {
     now: () => new Date(),
     timeZone: env["YOH_TIMEZONE"] ?? "UTC",
@@ -260,6 +262,11 @@ export function buildDeskDeps(connection: SqliteConnection, env: Readonly<Record
       recordActivityDay(connection, date);
       lastWritten = date;
     },
+    listCompletions: () => listCompletions(connection),
+    listActivityDays: () => listActivityDays(connection),
+    listPlanDates: () => listPlanDates(store),
+    listCloseOutDates: () => listNightCloseOutDone(store).map((r) => r.data.date),
+    listUsage: () => listLlmUsage(connection),
   };
 }
 

@@ -795,6 +795,34 @@ export interface ResearchListItem {
   readonly url: string;
 }
 
+/** One Task completed today, as the Desk page lists it. */
+export interface DeskCompletedItem {
+  readonly taskName: string;
+  readonly completedAt: IsoDateTime;
+}
+
+/** One heatmap day: `level` is 0 (nothing) to 4 (five or more completed). */
+export interface DeskHeatmapDay {
+  readonly date: IsoDate;
+  readonly completed: number;
+  readonly level: 0 | 1 | 2 | 3 | 4;
+}
+
+/** `GET /api/desk`'s value (Epic 12): everything the Desk page shows, from Yoh's own records. */
+export interface DeskResponse {
+  readonly today: IsoDate;
+  readonly completedToday: readonly DeskCompletedItem[];
+  readonly minutesToday: number;
+  readonly hoursWithYoh: number;
+  /** Completions with a due date: how many finished on or before it. `percent` is null when none were counted. */
+  readonly onTime: { readonly onTime: number; readonly counted: number; readonly percent: number | null };
+  readonly streak: { readonly current: number; readonly longest: number };
+  /** Week columns, oldest first, Sunday first within a column; no day after today. */
+  readonly heatmap: { readonly weeks: readonly (readonly DeskHeatmapDay[])[] };
+  /** This calendar month's Claude API spend; `unpricedCalls` counts calls left out for want of a price. */
+  readonly spend: { readonly monthUsd: number; readonly unpricedCalls: number };
+}
+
 /** `GET /api/research`'s value: the most recent Research Vault items, newest first, server-limited (AD-17). */
 export interface ResearchListResponse {
   readonly items: readonly ResearchListItem[];
