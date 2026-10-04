@@ -111,6 +111,9 @@ function resolveDraftDateFields(
   return { ok: true };
 }
 
+/** Matches the reply `draftItem` returns when no draft could be built from the line (no question opened). */
+export const CREATE_ITEM_NO_DRAFT_REPLY = /^I couldn't tell what you want in the new /;
+
 export async function draftItem(deps: CreateItemDeps, input: CreateItemInput): Promise<Result<ChatTurnResponse, YohError>> {
   const now = deps.now();
   const today = localIsoDate(now, deps.timeZone);

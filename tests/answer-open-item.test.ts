@@ -293,3 +293,66 @@ test("answerOpenItem passes a pattern Yes's message and receipt through", async 
   assert.equal(result.value.next, "done");
   c.close();
 });
+
+function openChangeSet(store: ReturnType<typeof tempStore>): void {
+  putOpenInteractionRequest(store, "proposal:change-set-1", {
+    requestKind: "proposal",
+    promptText: 'Mark "Draft the memo" done?',
+    detail: {
+      proposal: {
+        id: "change-set-1",
+        kind: "change-set",
+        entityId: "change-set-1",
+        entityVersion: "new",
+        suggested: { items: [{ kind: "complete-task", taskId: "t1", label: "Draft the memo" }] },
+        reason: 'Mark "Draft the memo" done?',
+        createdAt: "2026-08-22T12:00:00.000Z",
+      },
+      cursor: { questionId: "confirm" },
+    },
+    createdAt: "2026-08-22T12:00:00.000Z",
+  });
+}
+
+function changeSetDeps(store: ReturnType<typeof tempStore>, completed: string[]) {
+  const unused = async () => ({ ok: false as const, error: { kind: "validation" as const, message: "unused" } });
+  return {
+    ...fullDeps(store),
+    changeSet: {
+      timeZone: "America/New_York",
+      now: () => new Date("2026-08-22T18:00:00.000Z"),
+      applyCalendarEdit: unused,
+      createPage: unused,
+      editTaskField: unused,
+      renameTask: unused,
+      completeTask: async (taskId: string) => {
+        completed.push(taskId);
+        return { ok: true as const, value: undefined };
+      },
+      planDay: unused,
+      refitPlan: unused,
+    },
+  };
+}
+
+test("answerOpenItem approves a change-set proposal through deps.changeSet and reports its receipts", async () => {
+  const store = tempStore();
+  openChangeSet(store);
+  const completed: string[] = [];
+  const result = await answerOpenItem(changeSetDeps(store, completed), { requestId: "proposal:change-set-1", questionId: "confirm", answer: "approve" });
+  assert.equal(result.ok, true);
+  assert.deepEqual(completed, ["t1"]);
+  if (result.ok) assert.deepEqual(result.value.receipts, ['Marked "Draft the memo" done.']);
+  store.close();
+});
+
+test("answerOpenItem discarding a change-set proposal writes nothing", async () => {
+  const store = tempStore();
+  openChangeSet(store);
+  const completed: string[] = [];
+  const result = await answerOpenItem(changeSetDeps(store, completed), { requestId: "proposal:change-set-1", questionId: "confirm", answer: "discard" });
+  assert.equal(result.ok, true);
+  assert.deepEqual(completed, []);
+  assert.equal(getOpenInteractionRequest(store, "proposal:change-set-1"), undefined);
+  store.close();
+});

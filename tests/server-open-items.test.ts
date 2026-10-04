@@ -169,6 +169,40 @@ test("GET /api/open-items and POST /api/open-items/answer share the SAME chatDep
   connection.close();
 });
 
+test("POST /api/open-items/answer binds changeSet: approving a change-set proposal reaches applyChangeSet, and a missing Notion binding reports plainly", async () => {
+  const connection = openSqliteConnection({ databasePath: ":memory:" });
+  initNotificationStoreSchema(connection.db);
+  const store = createMemoryStore(connection);
+  putOpenInteractionRequest(store, "proposal:change-set-1", {
+    requestKind: "proposal",
+    promptText: 'Mark "Draft the memo" done?',
+    createdAt: "2026-09-26T12:00:00.000Z",
+    detail: {
+      proposal: {
+        id: "change-set-1",
+        kind: "change-set",
+        entityId: "change-set-1",
+        entityVersion: "new",
+        suggested: { items: [{ kind: "complete-task", taskId: "t1", label: "Draft the memo" }] },
+        reason: 'Mark "Draft the memo" done?',
+        createdAt: "2026-09-26T12:00:00.000Z",
+      },
+      cursor: { questionId: "confirm" },
+    },
+  });
+  const app = createApp({ connection, log: () => {}, chat: chatDepsFor({ store, timeZone: "America/New_York" }) });
+
+  const res = await app.request("/api/open-items/answer", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ requestId: "proposal:change-set-1", questionId: "confirm", answer: "approve" } satisfies AnswerOpenItemRequest),
+  });
+  const text = await res.text();
+  assert.match(text, /Notion isn't set up, so I can't mark Tasks done/);
+  assert.doesNotMatch(text, /changeSet/, "the dependency is bound, never reported missing");
+  connection.close();
+});
+
 test("server.ts is transport only for open items (AD-16): interaction-request writes go through app/, never memory-store.ts directly", () => {
   const source = readFileSync(join(import.meta.dirname, "..", "src", "shell", "server.ts"), "utf8");
   const storeImport = source.match(/import\s*\{([^}]*)\}\s*from\s*["']\.\.\/adapters\/memory-store\.ts["']/);

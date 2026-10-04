@@ -21,7 +21,7 @@ import { createChatStore, initChatStoreSchema, type ChatStore } from "../src/ada
 import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
 import { createMemoryItemStore, initMemoryItemStoreSchema } from "../src/adapters/memory-item-store.ts";
 import { PLAN_EDIT_HOW_TO_REPLY } from "../src/core/plan-edit-commands.ts";
-import { CALENDAR_DELETE_NOT_SUPPORTED_REPLY, chatTurn, MAX_CHAT_HISTORY_TURNS, STATUS_THINKING, type ChatTurnDeps } from "../src/app/chat-turn.ts";
+import { chatTurn, MAX_CHAT_HISTORY_TURNS, STATUS_THINKING, type ChatTurnDeps } from "../src/app/chat-turn.ts";
 import { COMMANDS } from "../src/app/commands.ts";
 import type { AnthropicMessagesClient } from "../src/adapters/llm-adapter.ts";
 import type { ChatSession } from "../src/app/chat-session.ts";
@@ -144,6 +144,80 @@ function baseDeps(overrides: Partial<ChatTurnDeps> = {}): ChatTurnDeps {
   };
 }
 
+/**
+ * A scripted client for the tool loop. A request with `tools` (the loop's)
+ * gets the next scripted turn; any other request (a draft parser's own call
+ * before a line falls through) gets "NONE", which every draft parser reads
+ * as "no draft".
+ */
+function toolLoopClient(turns: unknown[][]) {
+  const calls: Record<string, unknown>[] = [];
+  let i = 0;
+  const client = {
+    messages: {
+      create: (async (params: Record<string, unknown>) => {
+        calls.push(params);
+        const tools = params["tools"] as { name: string }[] | undefined;
+        const content = tools && tools[0]?.name === "list_tasks" ? turns[Math.min(i++, turns.length - 1)]! : [{ type: "text", text: "NONE" }];
+        return { content, stop_reason: content.some((c) => (c as { type: string }).type === "tool_use") ? "tool_use" : "end_turn", usage: { input_tokens: 1, output_tokens: 1 } };
+      }) as unknown as AnthropicMessagesClient["messages"]["create"],
+    },
+  };
+  return { client: client as AnthropicMessagesClient, calls, loopCalls: () => calls.filter((c) => Array.isArray(c["tools"]) && (c["tools"] as { name: string }[])[0]?.name === "list_tasks") };
+}
+
+test("an unmatched line goes to the tool loop in one model call, with tools attached", async () => {
+  const { client, calls } = toolLoopClient([[{ type: "text", text: "Napoleon was a French general." }]]);
+  const result = await chatTurn(baseDeps({ llmClient: client }), { message: "who was napoleon" });
+  assert.equal(result.ok, true);
+  if (result.ok) assert.equal(result.value.reply, "Napoleon was a French general.");
+  assert.equal(calls.length, 1);
+  assert.ok(Array.isArray(calls[0]!["tools"]));
+});
+
+test("'add the workout and dinner to my google calendar for today' reaches the tool loop, not a Tasks draft", async () => {
+  const { client } = toolLoopClient([
+    [
+      { type: "tool_use", id: "1", name: "create_event", input: { title: "Workout", date: "2026-08-22", startTime: "13:10", endTime: "14:50" } },
+      { type: "tool_use", id: "2", name: "create_event", input: { title: "Dinner", date: "2026-08-22", startTime: "18:00", endTime: "19:00" } },
+    ],
+    [{ type: "text", text: "Staged." }],
+  ]);
+  const result = await chatTurn(baseDeps({ llmClient: client }), { message: "add the workout and dinner to my google calendar for today" });
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.doesNotMatch(result.value.reply, /couldn't tell what you want/i);
+    assert.equal((result.value.question?.proposal as { kind?: string } | undefined)?.kind, "change-set");
+  }
+});
+
+test("a create-item line whose draft finds nothing reaches the tool loop; a draft that asks a question does not", async () => {
+  const { client, loopCalls } = toolLoopClient([[{ type: "text", text: "Here is what I would add." }]]);
+  const result = await chatTurn(baseDeps({ llmClient: client }), { message: "create a task to email Alex" });
+  assert.equal(loopCalls().length, 1);
+  if (result.ok) assert.equal(result.value.reply, "Here is what I would add.");
+});
+
+test("a calendar delete request reaches the tool loop instead of a fixed refusal", async () => {
+  const { client, calls } = toolLoopClient([[{ type: "text", text: "I can only delete events Yoh created." }]]);
+  const result = await chatTurn(baseDeps({ llmClient: client }), { message: "cancel my dentist appointment tomorrow" });
+  assert.equal(calls.length, 1);
+  if (result.ok) assert.equal(result.value.reply, "I can only delete events Yoh created.");
+});
+
+test("a deterministic command still costs zero model calls", async () => {
+  const { client, calls } = toolLoopClient([[{ type: "text", text: "unused" }]]);
+  await chatTurn(baseDeps({ llmClient: client }), { message: "plan" });
+  assert.equal(calls.length, 0);
+});
+
+test("a turn answered by the tool loop is not marked handledDeterministically", async () => {
+  const { client } = toolLoopClient([[{ type: "text", text: "Hi." }]]);
+  const result = await chatTurn(baseDeps({ llmClient: client }), { message: "hello there" });
+  assert.equal(result.ok, true);
+  if (result.ok) assert.notEqual(result.value.handledDeterministically, true);
+});
+
 // ============================================================================
 // Dispatch order (Story 8.3, restored to its original priority by Story 8.4):
 // a recognized deterministic command never calls the LLM client at all; an
@@ -175,7 +249,7 @@ test("Story 8.4: a recognized Plan-view command never reaches classifyChatIntent
   assert.equal((llmClient as any).calls.length, 0, "a Task-4 recognizer match must short-circuit BEFORE classifyChatIntent ever runs");
 });
 
-test("chatTurn falls through to answerQuestion for an unmatched line, costing exactly three LLM calls (chatTurn's own classifyCapture, then classifyChatIntent, then answerQuestion's own call)", async () => {
+test("chatTurn falls through to the tool loop for an unmatched line, costing exactly one LLM call when the model answers directly", async () => {
   const llmClient = makeFakeLlmClient("Reheat the leftovers, probably.");
   const deps = baseDeps({ llmClient });
 
@@ -195,8 +269,8 @@ test("chatTurn falls through to answerQuestion for an unmatched line, costing ex
   assert.equal(result.value.reply, "Reheat the leftovers, probably.");
   assert.equal(
     (llmClient as any).calls.length,
-    3,
-    "expected exactly three Claude calls for the unmatched input: classifyCapture, classifyChatIntent, then the general-qa answer",
+    1,
+    "expected exactly one Claude call for the unmatched input: the tool loop's single answering turn",
   );
 });
 
@@ -217,11 +291,8 @@ test("chatTurn trims an untrimmed history down to MAX_CHAT_HISTORY_TURNS before 
 
   await chatTurn({ ...deps, chatHistory }, { message: "turn-50" });
 
-  // calls[0] is chatTurn's own classifyCapture call, calls[1]
-  // is its classifyChatIntent call (Story 8.4, sent only the current line,
-  // not the history); calls[2] is answerQuestion's own call, the one this
-  // test is actually about.
-  const sentMessages = (llmClient as any).calls[2].messages as ReadonlyArray<{ role: string; content: string | ReadonlyArray<{ text: string }> }>;
+  // calls[0] is the tool loop's own (and only) call.
+  const sentMessages = (llmClient as any).calls[0].messages as ReadonlyArray<{ role: string; content: string | ReadonlyArray<{ text: string }> }>;
   // Real-use fixes plan, Task 9: the LAST message carries the conversation-
   // history cache breakpoint (`llm-adapter.ts`'s `toCacheableMessages`), so
   // its `content` is a one-element text-block array rather than a bare
@@ -254,8 +325,8 @@ test("Story 8.6 (Task 7): trimming drops a leading assistant turn if one slips t
 
   await chatTurn({ ...deps, chatHistory }, { message: "turn-49" });
 
-  // calls[0] is classifyCapture, calls[1] is classifyChatIntent, calls[2] is answerQuestion (see the test above).
-  const sentMessages = (llmClient as any).calls[2].messages as ReadonlyArray<{ role: string; content: string }>;
+  // calls[0] is the tool loop's own (and only) call.
+  const sentMessages = (llmClient as any).calls[0].messages as ReadonlyArray<{ role: string; content: string }>;
   assert.equal(sentMessages[0]!.role, "user", "the trimmed history handed to the Messages API must never start with 'assistant'");
 });
 
@@ -355,27 +426,17 @@ test("Review Focus #3 (F6, Epic 6 retro): 'save that to my notion research vault
   );
 });
 
-test("Review Focus #4: a calendar-edit line whose draft is NONE falls through to classify/answerQuestion, not an empty reply", async () => {
-  const llmClient = makeFakeLlmClient("NONE");
-  const deps = baseDeps({ llmClient, readCalendarEventsFn: async () => [] });
+test("Review Focus #4 / Ruling P4: a calendar-edit-shaped line with no draft reaches the tool loop, not an empty reply", async () => {
+  const { client, calls, loopCalls } = toolLoopClient([[{ type: "text", text: "Which topic?" }]]);
+  const deps = baseDeps({ llmClient: client, readCalendarEventsFn: async () => [] });
 
-  const result = await chatTurn(deps, {
-    message: "move on to the next topic",
-  });
+  const result = await chatTurn(deps, { message: "move on to the next topic" });
 
   assert.equal(result.ok, true);
   if (!result.ok) return;
-  // draftCalendarEditRequest's own call returns "NONE" -> proposeCalendarEdit
-  // returns the empty fall-through convention -> classifyCapture (also
-  // "NONE") -> classifyChatIntent (also "NONE", not "SEARCH: ...",
-  // so GENERAL) -> answerQuestion, which answers with this same fake
-  // client's fixed response text.
-  assert.equal(result.value.reply, "NONE");
-  assert.equal(
-    (llmClient as any).calls.length,
-    4,
-    "expected draftCalendarEditRequest, then classifyCapture, then classifyChatIntent, then answerQuestion — the empty fall-through must never be handed back to Spencer as a real (blank) answer",
-  );
+  assert.equal(result.value.reply, "Which topic?");
+  assert.equal(loopCalls().length, 1);
+  assert.equal(calls.length, 2, "the calendar drafter's own call, then the tool loop's one call");
 });
 
 test("an ordinary message classified as general-question never calls search(), and still answers via the general-qa path", async () => {
@@ -897,27 +958,18 @@ function fakeTasksNotionCreateClient() {
   };
 }
 
-test("chatTurn routes a captured Task description through draftItem's Tasks-database path, not general chat", async () => {
-  const llmClient = fakeCaptureRoutingClient({ capture: "TASK" });
-  const deps = baseDeps({
-    llmClient,
-    getNotionCreatePageBinding: () => ({
-      ok: true,
-      value: {
-        client: fakeTasksNotionCreateClient(),
-        config: { tasksDataSourceId: "tasks-ds", projectsDataSourceId: "projects-ds", researchVaultDataSourceId: "vault-ds" },
-      },
-    }),
-  });
-
-  const result = await chatTurn(deps, { message: "Lab report draft, due Thursday" });
+test("a free-text task description reaches the tool loop, which stages a create_task change set", async () => {
+  const { client, loopCalls } = toolLoopClient([
+    [{ type: "tool_use", id: "1", name: "create_task", input: { title: "Lab report draft", dueDate: "2026-08-27" } }],
+    [{ type: "text", text: "Staged." }],
+  ]);
+  const result = await chatTurn(baseDeps({ llmClient: client }), { message: "Lab report draft, due Thursday" });
   assert.equal(result.ok, true);
   if (!result.ok) return;
-  assert.match(result.value.question?.text ?? "", /Here's what I'll create in Tasks/);
-  assert.deepEqual(
-    result.value.question?.options.map((o) => o.label),
-    ["Create", "Cancel"],
-  );
+  assert.equal(loopCalls().length, 2);
+  const proposal = result.value.question?.proposal as { kind?: string; suggested?: { items: { kind: string }[] } } | undefined;
+  assert.equal(proposal?.kind, "change-set");
+  assert.equal(proposal?.suggested?.items[0]?.kind, "create-task");
 });
 
 test("chatTurn does NOT capture a question — it falls through to the ordinary chat/search path", async () => {
@@ -1062,102 +1114,15 @@ test("the broadened deterministic calendar recognizer routes the incident line a
   }
 });
 
-test("'Lab report draft, due Thursday' still routes to a Task, not a calendar event — no calendar shape at all", async () => {
-  const llmClient = fakeCaptureRoutingClient({ capture: "TASK" });
-  const deps = baseDeps({
-    llmClient,
-    getNotionCreatePageBinding: () => ({
-      ok: true,
-      value: {
-        client: fakeTasksNotionCreateClient(),
-        config: { tasksDataSourceId: "tasks-ds", projectsDataSourceId: "projects-ds", researchVaultDataSourceId: "vault-ds" },
-      },
-    }),
-  });
-
-  const result = await chatTurn(deps, { message: "Lab report draft, due Thursday" });
-  assert.equal(result.ok, true);
-  if (!result.ok) return;
-  assert.match(result.value.question?.text ?? "", /Here's what I'll create in Tasks/);
-  const proposal = result.value.question!.proposal as { readonly kind: string };
-  assert.equal(proposal.kind, "notion-page-draft");
-});
-
-test("classifyCapture's 'event' outcome is the backstop for a calendar-shaped line that slips past the deterministic recognizer — it still routes to calendar create, never a Task", async () => {
-  const llmClient = fakeCaptureRoutingClient({
-    capture: "EVENT",
-    calendarDraft: "CREATE: Dinner with Jamie | 2026-08-23T23:00:00.000Z | 2026-08-24T00:00:00.000Z | ASSUMED",
-  });
-  const deps = baseDeps({
-    llmClient,
-    readCalendarEventsFn: async () => [],
-    proposeNewCalendarEventFn: (change) => ({
-      id: "calendar-create-1",
-      kind: "calendar-edit",
-      entityId: "new-event",
-      entityVersion: "new",
-      suggested: { kind: "create", calendarId: change.calendarId, title: change.title, start: change.start, end: change.end },
-      reason: "adapter reason",
-      createdAt: "2026-08-22T18:00:00.000Z",
-    }),
-  });
-
-  // Deliberately outside isCalendarEditCommand's own trigger shapes (no
-  // create-verb-at-start, no event/meeting/appointment/call/block noun, no
-  // "meet with"/"meeting with") — this is exactly the free-text case
-  // classifyCapture's "event" outcome exists to catch.
-  const result = await chatTurn(deps, { message: "dinner with Jamie tomorrow night" });
-
-  assert.equal(result.ok, true);
-  if (!result.ok) return;
-  assert.ok(result.value.question, "expected the 'event' classification to open a calendar-create confirm question");
-  const proposal = result.value.question!.proposal as { readonly suggested: { readonly kind: string } };
-  assert.equal(proposal.suggested.kind, "create");
-});
-
-test("classifyCapture's 'event' outcome falls through to general chat (never a blank reply) when draftCalendarEditRequest itself comes back NONE", async () => {
-  const llmClient = fakeCaptureRoutingClient({ capture: "EVENT", calendarDraft: "NONE" });
-  const deps = baseDeps({ llmClient, readCalendarEventsFn: async () => [] });
-
-  const result = await chatTurn(deps, {
-    message: "dinner with Jamie tomorrow night",
-  });
-
-  assert.equal(result.ok, true);
-  if (!result.ok) return;
-  assert.equal(result.value.question, undefined);
-  assert.notEqual(result.value.reply, "", "a double-miss (event, then NONE draft) must never surface a blank reply");
-});
-
-// ============================================================================
-// Post-review fix, Important #1 (AD-13): a cancel/delete/remove/clear
-// Calendar request gets a plain, honest reply — no draft, and (this is the
-// point of the fix) no LLM call at all, not even classifyCapture's own
-// "event" backstop. A fake LLM client that throws on ANY call proves this.
-// ============================================================================
-
 function throwingLlmClient(): AnthropicMessagesClient {
   return {
     messages: {
       create: (async () => {
-        throw new Error("unexpected LLM call for a deterministically-recognized cancel/delete request");
+        throw new Error("unexpected LLM call for a deterministically-recognized line");
       }) as AnthropicMessagesClient["messages"]["create"],
     },
   };
 }
-
-test("a cancel/delete/remove Calendar request gets a plain 'can't delete' reply, with zero LLM calls and no draft", async () => {
-  for (const message of ["delete my meeting with Alex tomorrow at 3", "cancel the meeting with Alex tomorrow", "remove my meeting with Alex at 3pm"]) {
-    const deps = baseDeps({ llmClient: throwingLlmClient() });
-
-    const result = await chatTurn(deps, { message });
-
-    assert.equal(result.ok, true, `expected "${message}" to succeed`);
-    if (!result.ok) continue;
-    assert.equal(result.value.reply, CALENDAR_DELETE_NOT_SUPPORTED_REPLY, `expected "${message}" to get the plain can't-delete reply`);
-    assert.equal(result.value.question, undefined, `expected "${message}" to open no draft/confirm question`);
-  }
-});
 
 test("'add a task to email Alex tomorrow', 'create a project for the science fair', and 'remind me to call Alex' do NOT route to Calendar", async () => {
   const cases: ReadonlyArray<{ readonly message: string; readonly capture: "TASK" | "NONE" }> = [
@@ -1182,7 +1147,6 @@ test("'add a task to email Alex tomorrow', 'create a project for the science fai
 
     assert.equal(result.ok, true, `expected "${message}" to succeed`);
     if (!result.ok) continue;
-    assert.notEqual(result.value.reply, CALENDAR_DELETE_NOT_SUPPORTED_REPLY, `expected "${message}" NOT to get the can't-delete reply`);
     if (result.value.question) {
       const proposal = result.value.question.proposal as { readonly kind?: string; readonly suggested?: { readonly kind?: string } } | undefined;
       assert.notEqual(proposal?.suggested?.kind, "create", `expected "${message}" NOT to open a calendar-create confirm question`);
@@ -1434,7 +1398,7 @@ test("chatTurn falls back to just the current message when the chat store throws
   } as ChatStore;
   const result = await chatTurn(baseDeps({ llmClient, chatHistory, log: (e) => logged.push(e.event) }), { message: "what should I do about the dishes" });
   assert.equal(result.ok, true);
-  const sent = (llmClient as any).calls[2].messages as ReadonlyArray<{ role: string; content: string | ReadonlyArray<{ text: string }> }>;
+  const sent = (llmClient as any).calls[0].messages as ReadonlyArray<{ role: string; content: string | ReadonlyArray<{ text: string }> }>;
   assert.equal(sent.length, 1);
   assert.equal(sent[0]!.role, "user");
   assert.ok(logged.includes("chat-turn.history-read-failed"));
@@ -1443,7 +1407,7 @@ test("chatTurn falls back to just the current message when the chat store throws
 test("chatTurn without a chat store sends just the current message as history", async () => {
   const llmClient = makeFakeLlmClient("answer");
   await chatTurn(baseDeps({ llmClient }), { message: "what should I do about the dishes" });
-  const sent = (llmClient as any).calls[2].messages as ReadonlyArray<{ role: string }>;
+  const sent = (llmClient as any).calls[0].messages as ReadonlyArray<{ role: string }>;
   assert.equal(sent.length, 1);
 });
 
@@ -1452,7 +1416,7 @@ test("history for the model always ends with the current message, even when the 
   const prior = seededChatStore([{ role: "user", text: "earlier" }, { role: "assistant", text: "reply" }]);
   const chatHistory = { appendTurn: () => { throw new Error("boom"); }, turnsForDate: prior.turnsForDate, clearAll: () => {}, hasUserTurnAfter: () => false, getTurn: () => undefined, searchTurns: () => [], listConversations: () => [], conversationTurns: () => undefined, deleteConversation: () => false } as ChatStore;
   await chatTurn(baseDeps({ llmClient, chatHistory }), { message: "what should I do about the dishes" });
-  const sent = (llmClient as any).calls[2].messages as ReadonlyArray<{ role: string; content: string | ReadonlyArray<{ text: string }> }>;
+  const sent = (llmClient as any).calls[0].messages as ReadonlyArray<{ role: string; content: string | ReadonlyArray<{ text: string }> }>;
   const norm = sent.map((m) => ({ role: m.role, content: typeof m.content === "string" ? m.content : m.content[0]!.text }));
   assert.deepEqual(norm.map((m) => m.role), ["user", "assistant", "user"]);
   assert.equal(norm[2]!.content, "what should I do about the dishes");
@@ -1465,7 +1429,7 @@ test("consecutive same-role stored turns (an orphaned user turn) are merged befo
     { role: "user", text: "what should I do about the dishes" },
   ]);
   await chatTurn(baseDeps({ llmClient, chatHistory }), { message: "what should I do about the dishes" });
-  const sent = (llmClient as any).calls[2].messages as ReadonlyArray<{ role: string; content: string | ReadonlyArray<{ text: string }> }>;
+  const sent = (llmClient as any).calls[0].messages as ReadonlyArray<{ role: string; content: string | ReadonlyArray<{ text: string }> }>;
   assert.equal(sent.length, 1);
   const c = sent[0]!.content;
   assert.equal(typeof c === "string" ? c : c[0]!.text, "first\n\nwhat should I do about the dishes");
@@ -1479,7 +1443,7 @@ test("Story 13.5: handledDeterministically is set for a slash command and unset 
 });
 
 // Story 13.6: memory reaches only the general answer, and a store that throws never blocks it.
-test("chatTurn general answer carries always-loaded memory; only the answer call sees it", async () => {
+test("chatTurn general answer carries always-loaded memory in the tool loop's call", async () => {
   const connection = openSqliteConnection({ databasePath: ":memory:" });
   initNotificationStoreSchema(connection.db);
   initMemoryItemStoreSchema(connection.db);
@@ -1489,9 +1453,9 @@ test("chatTurn general answer carries always-loaded memory; only the answer call
   const result = await chatTurn(baseDeps({ llmClient, memoryItems }), { message: "what should I do about the dishes" });
   assert.equal(result.ok, true);
   const calls = (llmClient as any).calls as any[];
-  assert.equal(calls.length, 3);
+  assert.equal(calls.length, 1);
   const has = (c: any) => JSON.stringify(c.system).includes("Prefers plain words");
-  assert.deepEqual(calls.map(has), [false, false, true]);
+  assert.deepEqual(calls.map(has), [true]);
   connection.close();
 });
 
@@ -1504,7 +1468,7 @@ test("chatTurn answers without memory when the memory store throws", async () =>
 });
 
 // ---- Story 13.11: which turns are substantive ----
-test("substantive: /morning, /plan and a researched answer are marked; a plain general answer is not", async () => {
+test("substantive: /morning, /plan, a researched answer and a tool-loop answer are marked", async () => {
   const store = tempStore();
   putPlan(store, samplePlanFixture());
   const morning = await chatTurn(baseDeps({ llmClient: makeFakeLlmClient(), store }), { message: "/morning" });
@@ -1517,7 +1481,7 @@ test("substantive: /morning, /plan and a researched answer are marked; a plain g
   );
   assert.ok(searched.ok && searched.value.substantive === true);
   const chat = await chatTurn(baseDeps({ llmClient: makeFakeLlmClient("GENERAL") }), { message: "how are you" });
-  assert.ok(chat.ok && chat.value.substantive === undefined);
+  assert.ok(chat.ok && chat.value.substantive === true, "chatAgent marks every loop answer substantive (plan Task 5)");
 });
 
 test("Story 13.13: /morning carries the day's Pattern question as `question`; a second /morning the same day does not", async () => {

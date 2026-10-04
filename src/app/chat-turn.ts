@@ -8,22 +8,13 @@
  * Plan-view, Mid-Day Re-Flow, Blocker report, why-prioritized (Story 8.3),
  * then save-search-result, create-item, calendar-edit (Story 8.4, F6/Epic 6
  * retro order) — then, once every deterministic recognizer above has
- * failed, a `classifyCapture` call (real-use fixes plan, Task 2 — replaces
- * the old two-way `detectTaskCapture`, Story 8.8, FR-26 extended: a
- * free-text description with none of the above phrasing is classified as
- * `"event"`, `"task"`, or `"none"` — an `"event"` routes through the SAME
- * calendar-create path `isCalendarEditCommand` uses, `"task"` through the
- * SAME `draftItem` create-path an explicit "create a task ..." line uses)
- * — then a `classifyChatIntent` call for a `"search-trigger"` vs. everything
- * else, and only once NONE of the above matched does it fall through to
- * `app/general-question.ts`'s `answerQuestion` as the final, unconditional
- * fallback. This restores the original, pre-Epic-8 dispatch order (every
- * deterministic recognizer checked before either paid classifier call) and
- * its two invariants: a recognized command costs ZERO Claude calls, and a
- * truly unmatched line costs exactly three (`classifyCapture`, then
- * `classifyChatIntent`, then the general-qa answer). It never itself emits
+ * failed, one `chatAgent` tool loop (`app/chat-agent.ts`) — the model reads
+ * Tasks, Calendar, the Plan, memory and the web through tools, and stages
+ * any change as a single "change-set" proposal that waits for a yes. A
+ * recognized command costs ZERO Claude calls; an unmatched line costs
+ * between one and `CHAT_AGENT_MAX_STEPS`. It never itself emits
  * a `"done"`/`"error"` stream event — only
- * `"status"` and (relayed from `answerQuestion`) `"delta"`. The caller that
+ * `"status"` and `"delta"`. The caller that
  * owns the stream's terminal event (a future server) builds it from this
  * function's own returned `Result`, after the last delta.
  *
@@ -38,7 +29,6 @@
 import { randomUUID } from "node:crypto";
 import {
   isBlockerReportCommand,
-  isCalendarDeleteRequestCommand,
   isCalendarEditCommand,
   isMidDayReflowCommand,
   isPlanDayCommand,
@@ -54,16 +44,16 @@ import { parseRoutineCommand } from "../core/routine-commands.ts";
 import { resolveRelativeDate } from "../core/relative-date.ts";
 import { firstCardView } from "../core/sandbox-card-view.ts";
 import { parseSearchIntent } from "../core/search-intent.ts";
+import { resolveToneSystemPrompt } from "../core/tone.ts";
 import { parseSlashMemoryCommand, recognizeMemoryCommand, type MemoryCommand } from "../core/memory-commands.ts";
 import { MEMORY_FOLDERS_IN_ORDER, memoryFolderLabel } from "../core/memory-folders.ts";
-import { classifyCapture, classifyChatIntent } from "../adapters/llm-adapter.ts";
 import { reportBlocker } from "./blocker-report.ts";
 import { RECENT_MESSAGES_WINDOW, type ChatSession } from "./chat-session.ts";
 import { proposeCalendarEdit, type CalendarEditDeps } from "./calendar-edit.ts";
 import { COMMANDS } from "./commands.ts";
-import { draftItem, type CreateItemDeps } from "./create-item.ts";
+import { CREATE_ITEM_NO_DRAFT_REPLY, draftItem, type CreateItemDeps } from "./create-item.ts";
 import { dayView } from "./day-view.ts";
-import { answerQuestion } from "./general-question.ts";
+import { chatAgent, type ChatAgentDeps } from "./chat-agent.ts";
 import { recallMemoryContext } from "./memory-recall.ts";
 import { manageRoutine } from "./routines.ts";
 import { requestReshuffle } from "./request-reshuffle.ts";
@@ -90,7 +80,7 @@ import { buildMemoryForgetQuestion } from "../core/open-item-questions.ts";
 import type { MemoryContext } from "../core/memory-context.ts";
 import { errorCopyForThrown } from "../core/error-copy.ts";
 import type { ChatStreamEvent, ChatTurnRequest, ChatTurnResponse, MorningViewResponse } from "../types/api.ts";
-import type { CalendarEvent, ChatIntent, ChatTurn, ExternalId, IsoDate, MemoryItem, PlanBlock, Result, Task, YohError } from "../types/domain.ts";
+import type { CalendarEvent, ChatTurn, ExternalId, IsoDate, MemoryItem, PlanBlock, Result, Task, YohError } from "../types/domain.ts";
 
 /**
  * The largest number of `ChatTurn`s `chatTurn` will ever send to Claude —
@@ -115,15 +105,6 @@ export const STATUS_THINKING = "Thinking…";
  */
 export const STATUS_CHECKING_TASKS = "Checking your Tasks…";
 
-/**
- * Real-use fixes plan, Task 2 (post-review fix, Important #1, AD-13): the
- * plain, honest reply for a recognized cancel/delete/remove/clear Calendar
- * request (`isCalendarDeleteRequestCommand`) — deliberately reached
- * BEFORE any LLM call (no draft, nothing drafted, nothing persisted), since
- * AD-13 says there is no delete variant for Yoh to attempt at all.
- */
-export const CALENDAR_DELETE_NOT_SUPPORTED_REPLY = "I can't delete or cancel calendar events for you — you'll need to do that directly in Google Calendar.";
-
 /** A reshuffle request that can't be honored carries its plain reason as a validation failure; chat says it as a reply. */
 function rejectedRequestReply(error: YohError): Result<ChatTurnResponse, YohError> | undefined {
   return error.kind === "validation" ? { ok: true, value: { reply: error.message, receipts: [] } } : undefined;
@@ -132,6 +113,8 @@ function rejectedRequestReply(error: YohError): Result<ChatTurnResponse, YohErro
 const NO_PLAN_TODAY_REPLY = "There's no Plan for today yet. Say \"plan my day\" to make one.";
 
 export interface ChatTurnDeps extends CreateItemDeps, CalendarEditDeps, WebSearchDeps, SaveSearchResultDeps {
+  /** Pre-bound read helper for the tool loop (`app/chat-agent.ts`). Absent in a test that never reaches the loop's memory tool. */
+  readonly agentSearchMemory?: ChatAgentDeps["searchMemory"];
   readonly store: MemoryStore;
   /** Server-owned chat history (Story 13.1); absent -> the model sees only the current message. */
   readonly chatHistory?: ChatStore;
@@ -235,9 +218,8 @@ function emitStatus(deps: ChatTurnDeps, text: string): void {
  * [], question: undefined}` means the line only LOOKED like a calendar edit
  * (the LLM draft came back NONE), not a real error or a real confirm
  * question. Returns `undefined` for exactly that shape so both call sites
- * below (the deterministic `isCalendarEditCommand` branch, and
- * `classifyCapture`'s `"event"` branch) fall through to the next dispatch
- * step identically, rather than ever handing Spencer back a blank reply.
+ * below (the deterministic `isCalendarEditCommand` branch and the tool
+ * loop) fall through to the next dispatch step identically, rather than ever handing Spencer back a blank reply.
  */
 async function tryCalendarCreate(deps: ChatTurnDeps, line: string, today: IsoDate): Promise<Result<ChatTurnResponse, YohError> | undefined> {
   const result = await proposeCalendarEdit(deps, { line, today });
@@ -267,8 +249,8 @@ function recordRecentMessage(deps: ChatTurnDeps, message: string): void {
  * Dispatches `input.message` against this story's five deterministic
  * recognizers, in the same priority order `chat-cli.ts` used to check them
  * inline (Time Budget, Plan-view, Mid-Day Re-Flow, Blocker report,
- * why-prioritized), then falls through to `app/general-question.ts`'s
- * `answerQuestion` as the sole, unconditional fallback.
+ * why-prioritized), then falls through to the `chatAgent` tool loop as the
+ * sole, unconditional fallback.
  */
 /** Marks an OK result as a substantive turn (Story 13.11): only `chatExchange` reads it, to decide on a rating prompt. */
 function substantive(result: Result<ChatTurnResponse, YohError>): Result<ChatTurnResponse, YohError> {
@@ -404,19 +386,10 @@ async function routeChatTurn(
   if (isSaveSearchResultCommand(input.message)) return saveSearchResult(deps, {});
 
   const createItemCommand = parseCreateItemCommand(input.message);
-  if (createItemCommand) return draftItem(deps, { ...createItemCommand, ...(await recallFor(deps, createItemCommand.request)) });
-
-  // Post-review fix, Important #1 (AD-13): checked BEFORE isCalendarEditCommand
-  // (and before any LLM call) — a cancel/delete/remove/clear Calendar
-  // request gets a plain, honest answer instead of a draft nothing should
-  // ever attempt. See core/chat-commands.ts's isCalendarDeleteRequestCommand
-  // doc comment for why this can't just be folded into isCalendarEditCommand
-  // returning false: chatTurn must actually REPLY here, not merely decline
-  // to match, or the line would otherwise fall through to classifyCapture's
-  // own "event" backstop (an LLM call) and risk drafting a real MOVE/RESIZE/
-  // CREATE against a request that was never asking for one.
-  if (isCalendarDeleteRequestCommand(input.message)) {
-    return { ok: true, value: { reply: CALENDAR_DELETE_NOT_SUPPORTED_REPLY, receipts: [] } };
+  if (createItemCommand) {
+    const drafted = await draftItem(deps, { ...createItemCommand, ...(await recallFor(deps, createItemCommand.request)) });
+    // No draft could be built from the line: let the tool loop handle it.
+    if (!(drafted.ok && drafted.value.question === undefined && CREATE_ITEM_NO_DRAFT_REPLY.test(drafted.value.reply))) return drafted;
   }
 
   // Epic 10 (10.3, R8): routine declarations — before the plan-edit reply.
@@ -487,77 +460,49 @@ async function routeChatTurn(
     const today = localIsoDate(deps.now(), deps.timeZone);
     const calendarResult = await tryCalendarCreate(deps, input.message, today);
     if (calendarResult) return calendarResult;
-    // else: not actually a calendar edit ("move on to the next topic") —
-    // fall through to the classify/general-chat path below.
+    // else: not actually a calendar edit ("move on to the next topic"),
+    // or no draft could be built — fall through to the tool loop below.
   }
 
-  // Real-use fixes plan, Task 5 ("the web search is not working"): a
-  // deterministic, zero-API-call pre-check (`core/search-intent.ts`'s
-  // `parseSearchIntent`) — checked AFTER every deterministic recognizer
-  // above (so "price of bitcoin today" is never captured as a Task by
-  // classifyCapture just below, and never mistaken for calendar/create-item/
-  // save-search-result) and BEFORE classifyCapture, so a search-shaped line
-  // never spends either paid classifier call at all. On a hit, this returns
-  // straight from searchWeb — no classifier, no capture call, matching
-  // `classifyChatIntent`'s own SEARCH-trigger contract just below.
+  // A deterministic, zero-model-call pre-check (`core/search-intent.ts`),
+  // after every recognizer above and before the tool loop: a search-shaped
+  // line goes straight to searchWeb.
   const searchIntent = parseSearchIntent(input.message);
   if (searchIntent) return substantive(await searchWeb(deps, { query: searchIntent.query }));
 
-  // Real-use fixes plan, Task 2 (replaces Story 8.8's two-way
-  // detectTaskCapture): "Lab report draft, due Thursday" matches none of the
-  // deterministic recognizers above (no "create/add/new", no Notion
-  // mention, no calendar-create shape) — one more LLM call, but ONLY once
-  // every deterministic check has already failed, mirroring
-  // classifyChatIntent's own AD-14 cost discipline immediately below. A
-  // "task" hit routes through the SAME confirm-then-write pipeline an
-  // explicit "create a task ..." command uses — draftItem persists its
-  // Proposal via openProposal and returns it as this turn's `question`;
-  // nothing is written yet. An "event" hit routes through the SAME
-  // draft-then-confirm calendar-create path `isCalendarEditCommand` uses
-  // just above — this is the backstop for a time-bound request that slipped
-  // past that broadened but still deterministic regex, so it still never
-  // reaches Notion as a Task (the incident this task fixes: a calendar
-  // request captured as a Task with an unresolved literal-text due date).
-  // `classifyCapture` is a bare adapter call (unlike every other capability
-  // above, which is itself an `app/*.ts` function that already converts a
-  // thrown adapter failure into a `Result`), so this try/catch is what keeps
-  // AD-8's "app/ catches and converts" contract true for `chatTurn` as a
-  // whole — a transport failure here must never block the ordinary chat
-  // turn, same as `classifyChatIntent`'s own catch immediately below.
-  let captured: "task" | "event" | "none" = "none";
+  return runAgent(deps, input, reachedLlm);
+}
+
+/** The final step of routing: the tool loop. Everything no deterministic recognizer handled ends here. */
+async function runAgent(deps: ChatTurnDeps, input: ChatTurnRequest, reachedLlm: { value: boolean }): Promise<Result<ChatTurnResponse, YohError>> {
   reachedLlm.value = true;
-  try {
-    captured = await classifyCapture(deps.llmClient, input.message, deps.connection);
-  } catch {
-    captured = "none";
-  }
-  if (captured === "event") {
-    const today = localIsoDate(deps.now(), deps.timeZone);
-    const calendarResult = await tryCalendarCreate(deps, input.message, today);
-    if (calendarResult) return calendarResult;
-    // else: classifyCapture said "event" but draftCalendarEditRequest
-    // itself came back NONE (a rare double-miss) — fall through to
-    // classify/general-chat below rather than ever returning a blank reply.
-  } else if (captured === "task") {
-    return draftItem(deps, { database: "Tasks", request: input.message, ...(await recallFor(deps, input.message)) });
-  }
-
-  let chatIntent: ChatIntent = { kind: "general-question" };
-  try {
-    chatIntent = await classifyChatIntent(deps.llmClient, input.message, deps.connection);
-  } catch {
-    chatIntent = { kind: "general-question" }; // a classifier failure must never block the ordinary chat turn.
-  }
-  if (chatIntent.kind === "search-trigger") return substantive(await searchWeb(deps, { query: chatIntent.query }));
-
-  return answerQuestion(
+  // chatAgent emits its own "Searching the web…" status, so searchWeb runs without `emit`.
+  const { emit: _emit, ...depsWithoutEmit } = deps;
+  const searchWebForModel: ChatAgentDeps["searchWeb"] = async (query) => {
+    const found = await searchWeb(depsWithoutEmit, { query });
+    return found.ok ? { ok: true, value: { text: found.value.reply } } : found;
+  };
+  const recall = await recallFor(deps, input.message);
+  return chatAgent(
     {
       llmClient: deps.llmClient,
-      webSearchAvailable: deps.webSearchAvailable,
+      store: deps.store,
       ...(deps.connection ? { connection: deps.connection } : {}),
+      timeZone: deps.timeZone,
+      now: deps.now,
+      readTasks: deps.readTasks,
+      readCalendarEventsForDate: deps.readCalendarEventsForDate,
+      searchMemory: deps.agentSearchMemory ?? (async () => ({ ok: true, value: { text: "Memory search isn't available right now." } })),
+      searchWeb: searchWebForModel,
       ...(deps.emit ? { emit: deps.emit } : {}),
+      ...(deps.log ? { log: deps.log } : {}),
     },
-    { message: input.message, history: trimHistory(historyForModel(deps, input.message)), ...(await recallFor(deps, input.message)) },
+    {
+      message: input.message,
+      history: trimHistory(historyForModel(deps, input.message)),
+      systemPrompt: resolveToneSystemPrompt(input.message, deps.webSearchAvailable ?? true, COMMANDS),
+      ...recall,
+    },
   );
 }
 

@@ -32,6 +32,8 @@ export interface AnswerOpenItemDeps extends AnswerDataCompletenessDeps, AnswerNi
   readonly log?: (entry: LogEntry) => void;
   /** Needed only to approve an open `"reshuffle"` proposal: everything `approveReshuffle` needs besides `store`. */
   readonly reshuffle?: NonNullable<ConfirmProposalDeps["reshuffle"]>;
+  /** Needed only to approve an open `"change-set"` proposal: the pre-bound write paths `applyChangeSet` calls. */
+  readonly changeSet?: NonNullable<ConfirmProposalDeps["changeSet"]>;
   /** `notion-adapter.ts`'s `createPage`, pre-bound — needed only if an open `"proposal"` item is a `"notion-page-draft"` kind (Story 8.4's first real user of this path). Widens this deps object so it also structurally satisfies `confirm-proposal.ts`'s `ConfirmProposalDeps`. */
   readonly createPage?: (
     database: NotionDatabaseTarget,

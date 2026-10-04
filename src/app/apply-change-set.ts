@@ -29,7 +29,7 @@ export interface ApplyChangeSetDeps {
   readonly applyCalendarEdit: (proposal: Proposal<CalendarEditChange>) => Promise<Result<{ readonly eventId: string; readonly calendarId: string }, YohError>>;
   readonly createPage: (database: NotionDatabaseTarget, properties: Readonly<Record<string, string>>) => Promise<Result<{ readonly pageId: string; readonly url?: string }, YohError>>;
   /** `app/update-task.ts`'s `updateTask`, pre-bound to its deps. */
-  readonly updateTaskField: (taskId: string, field: "dueDate" | "estimatedDurationMinutes" | "priority", value: string) => Promise<Result<{ readonly receipt: string }, YohError>>;
+  readonly editTaskField: (taskId: string, field: "dueDate" | "estimatedDurationMinutes" | "priority", value: string) => Promise<Result<{ readonly receipt: string }, YohError>>;
   /** `app/update-task.ts`'s `renameTask`, pre-bound. */
   readonly renameTask: (taskId: string, title: string) => Promise<Result<{ readonly receipt: string }, YohError>>;
   /** `app/check-off.ts`'s `checkOff`, pre-bound: keeps the Completion Log entry and the undo window. */
@@ -101,7 +101,7 @@ async function applyItem(deps: ApplyChangeSetDeps, item: ChangeSetItem): Promise
       return r.ok ? { ok: true, value: undefined } : r;
     }
     case "update-task": {
-      const r = await deps.updateTaskField(item.taskId, item.field, item.value);
+      const r = await deps.editTaskField(item.taskId, item.field, item.value);
       return r.ok ? { ok: true, value: undefined } : r;
     }
     case "rename-task": {

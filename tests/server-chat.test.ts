@@ -337,19 +337,11 @@ test("startServer threads the chat feature through and builds ONE ChatSession fo
   connection.close();
 });
 
-test("POST /api/chat with the REAL chatTurn streams the general-question reply as deltas from the LLM stream, then done", async () => {
-  // A fake Anthropic client: the classifier call (non-streaming) gets text
-  // that isn't a search trigger; the general-question call streams words.
+test("POST /api/chat with the REAL chatTurn answers through the tool loop: one delta carrying the reply, then done", async () => {
+  // A fake Anthropic client: the tool loop's one (non-streaming) call ends with a text answer.
   const llmClient = {
     messages: {
-      create: async (params: { stream?: boolean }) => {
-        if (params.stream) {
-          return (async function* () {
-            for (const word of ["Hello", "from", "Yoh."]) yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: `${word} ` } };
-          })();
-        }
-        return { content: [{ type: "text", text: '{"kind":"general-question"}' }] };
-      },
+      create: async () => ({ content: [{ type: "text", text: "Hello from Yoh." }], stop_reason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 } }),
     },
   };
   const connection = openSqliteConnection({ databasePath: ":memory:" });
@@ -358,7 +350,7 @@ test("POST /api/chat with the REAL chatTurn streams the general-question reply a
   const events = parseSseBody(await (await postChat(app, { message: "tell me something", history: [{ role: "user", content: "tell me something" }] })).text());
   assert.deepEqual(events[0], { type: "status", text: "Thinking…" });
   const deltas = events.filter((e): e is Extract<ChatStreamEvent, { type: "delta" }> => e.type === "delta").map((e) => e.text);
-  assert.deepEqual(deltas, ["Hello ", "from ", "Yoh. "]);
+  assert.deepEqual(deltas, ["Hello from Yoh."]);
   const last = events.at(-1);
   assert.equal(last?.type, "done");
   assert.equal(last?.type === "done" ? last.response.reply : undefined, deltas.join(""));

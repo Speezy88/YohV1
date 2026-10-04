@@ -140,6 +140,9 @@ import { parseReshuffleRequest } from "../core/reshuffle-preview.ts";
 import { listTasks, type TasksViewDeps } from "../app/tasks-view.ts";
 import { createTask, previewQuickAdd, type CreateTaskDeps } from "../app/create-task.ts";
 import { renameTask, updateTask, type UpdateTaskDeps } from "../app/update-task.ts";
+import { planDay } from "../app/plan-day.ts";
+import { refitPlan } from "../app/refit-plan.ts";
+import type { ApplyChangeSetDeps } from "../app/apply-change-set.ts";
 import { listResearch, type ResearchListDeps } from "../app/research-list.ts";
 import { sandboxQueue, type SandboxQueueDeps } from "../app/sandbox-queue.ts";
 import { finishSandboxSession, saveSandboxCardAndAdvance, type SandboxSubmitDeps } from "../app/sandbox-submit.ts";
@@ -611,6 +614,8 @@ export interface ServerDeps {
    * `eventStream.sleep`.
    */
   readonly chat?: Omit<ChatTurnDeps & AnswerOpenItemDeps, "session" | "emit"> & {
+    /** The change-set write bindings, spread from the adapters' binders by `buildChatDeps`. */
+    readonly changeSetWrites?: ChatChangeSetWrites;
     readonly runChatTurn?: ChatTurnFn;
     /** Story 13.11 test seam: the [0,1) rating draw (the e2e fixture forces it). */
     readonly ratingDraw?: () => number;
@@ -791,6 +796,80 @@ function currentIsoDate(instant: Date, timeZone: string): IsoDate {
   return `${get("year")}-${get("month")}-${get("day")}`;
 }
 
+/** The write bindings a change set needs that `bindNotionCreatePage` and `bindCalendarApply` provide. */
+type ChatChangeSetWrites = ReturnType<typeof bindNotionCreatePage> & ReturnType<typeof bindCalendarApply>;
+
+const NOTION_NOT_SET_UP = (what: string) => async (): Promise<{ ok: false; error: YohError }> => ({
+  ok: false,
+  error: { kind: "missing-field", message: `Notion isn't set up, so I can't ${what}.` },
+});
+const CALENDAR_NOT_SET_UP: { ok: false; error: YohError } = {
+  ok: false,
+  error: { kind: "missing-field", message: "Google Calendar isn't set up, so I can't change it." },
+};
+const PAGE_NOT_SET_UP: { ok: false; error: YohError } = {
+  ok: false,
+  error: { kind: "missing-field", message: "Notion isn't set up, so I can't create Tasks." },
+};
+
+/**
+ * The chat tool loop's bound dependencies (Epic 14): `agentSearchMemory` for
+ * its memory tool and `changeSet` for a confirmed change set. Each closure
+ * only binds deps and calls one app function; the write paths are the same
+ * ones the single-change routes use. Built in `createApp` because the Tasks,
+ * check-off and chat deps live in different `build*Deps` functions.
+ */
+function withChatToolLoopDeps<T extends Omit<ChatTurnDeps, "emit"> & AnswerOpenItemDeps & { readonly changeSetWrites?: ChatChangeSetWrites }>(
+  chatDeps: T,
+  memorySearchDeps: ReturnType<typeof memoryPageDeps> | undefined,
+  checkOffDeps: CheckOffDeps | undefined,
+  tasksDeps: UpdateTaskDeps | undefined,
+): T {
+  const planDeps = {
+    store: chatDeps.store,
+    session: chatDeps.session,
+    llmClient: chatDeps.llmClient,
+    timeZone: chatDeps.timeZone,
+    now: chatDeps.now,
+    readTasks: chatDeps.readTasks,
+    readCalendarEvents: chatDeps.readCalendarEventsFn,
+    ...(chatDeps.writeCalendarPlan ? { writeCalendarPlan: chatDeps.writeCalendarPlan } : {}),
+    ...(chatDeps.log ? { log: chatDeps.log } : {}),
+  };
+  const { reshuffle } = chatDeps;
+  // The page-create and calendar writes arrive pre-bound from `buildChatDeps` (spread from their adapter binders); absent, the same binders report "not set up".
+  const writes = chatDeps.changeSetWrites ?? { ...bindNotionCreatePage(() => PAGE_NOT_SET_UP), ...bindCalendarApply(() => CALENDAR_NOT_SET_UP) };
+  const changeSet: ApplyChangeSetDeps = {
+    timeZone: chatDeps.timeZone,
+    now: chatDeps.now,
+    ...writes,
+    editTaskField: tasksDeps ? (taskId, field, value) => updateTask(tasksDeps, { taskId, field, value }) : NOTION_NOT_SET_UP("change Tasks"),
+    renameTask: tasksDeps ? (taskId, title) => renameTask(tasksDeps, { taskId, title }) : NOTION_NOT_SET_UP("change Tasks"),
+    completeTask: checkOffDeps ? (taskId) => checkOff(checkOffDeps, { taskId }) : NOTION_NOT_SET_UP("mark Tasks done"),
+    planDay: () => planDay(planDeps, {}),
+    refitPlan: reshuffle
+      ? () => refitPlan({ ...reshuffle, store: chatDeps.store }, {})
+      : async () => ({ ok: false, error: { kind: "missing-field", message: "I can't re-fit the Plan right now." } }),
+  };
+  return {
+    ...chatDeps,
+    ...(memorySearchDeps
+      ? {
+          agentSearchMemory: async (query: string) => {
+            const found = await searchMemory(memorySearchDeps, { query });
+            if (!found.ok) return found;
+            const lines = [
+              ...found.value.items.map((i) => `- ${i.text}`),
+              ...found.value.turns.map((t) => `- (${t.date}, ${t.role}) ${t.snippet}`),
+            ];
+            return { ok: true as const, value: { text: lines.length > 0 ? lines.join("\n") : "Nothing in memory matches that." } };
+          },
+        }
+      : {}),
+    changeSet,
+  };
+}
+
 export function createApp(deps: ServerDeps) {
   const log = deps.log ?? ((entry: LogEntry) => writeStructuredLog(entry));
   const now = deps.now ?? (() => performance.now());
@@ -834,6 +913,7 @@ export function createApp(deps: ServerDeps) {
       ...(deps.ratings ? { ratings: deps.ratings } : {}),
       session: chatSession,
     };
+    chatDeps = withChatToolLoopDeps(chatDeps, deps.memoryItems ? memoryPageDeps(deps, deps.memoryItems) : undefined, checkOffDeps, tasksDeps);
   }
 
   return (
@@ -2071,6 +2151,7 @@ function buildChatDeps(
     ...bindNotionTaskWrites(getNotionTaskWriteBinding),
     ...bindNotionCreatePage(getNotionCreatePageBinding),
     ...bindCalendarApply(getCalendarApplyBinding),
+    changeSetWrites: { ...bindNotionCreatePage(getNotionCreatePageBinding), ...bindCalendarApply(getCalendarApplyBinding) },
     readFieldOptions,
     recordCompletion,
     lookupTask,
