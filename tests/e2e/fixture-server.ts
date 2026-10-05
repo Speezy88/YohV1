@@ -152,6 +152,14 @@ usage(thisMonthStart, 2_000_000, 0);
 usage(thisMonthStart, 0, 1_000_000);
 usage(new Date(Date.parse(thisMonthStart) - 86_400_000).toISOString(), 9_000_000, 0);
 
+/** Epic 12 Task 6: the fake Crypto feed's fixed values (BTC `ok`), for `web/e2e/desk.spec.ts`. No provider is contacted. */
+export const FIXTURE_DESK_FEEDS_FETCHED_AT = "2026-10-04T15:30:00.000Z";
+export const FIXTURE_DESK_FEEDS_CRYPTO = [
+  { symbol: "BTC", priceUsd: 67123.4, changePercent: 1.2 },
+  { symbol: "SOL", priceUsd: 142.57, changePercent: -0.8 },
+  { symbol: "ETH", priceUsd: 3456.78, changePercent: null },
+] as const;
+
 /** The Desk values the seed above produces, for `web/e2e/desk.spec.ts`. */
 export const FIXTURE_DESK_COMPLETED_TODAY = ["Desk seed today-3", "Desk seed today-2", "Desk seed today-1"] as const; // newest first
 export const FIXTURE_DESK_MINUTES_TODAY = 75;
@@ -727,7 +735,7 @@ const handle = startServer(
         return url.pathname === "/__fixture/state" ? fixtureState(url) : options.fetch(request);
       },
     }),
-  { homeView, calendarDay, checkOff, plan: reshufflePlanDeps, planSync: planSyncDeps, chat, chatHistory, memoryItems, ratings, tasks: tasksPage, research, sandbox, desk: buildDeskDeps(connection, { YOH_TIMEZONE: TIME_ZONE })! },
+  { homeView, calendarDay, checkOff, plan: reshufflePlanDeps, planSync: planSyncDeps, chat, chatHistory, memoryItems, ratings, tasks: tasksPage, research, sandbox, desk: buildDeskDeps(connection, { YOH_TIMEZONE: TIME_ZONE })!, deskFeeds: { timeZone: TIME_ZONE, readCrypto: async () => ({ status: "ok", value: { tickers: FIXTURE_DESK_FEEDS_CRYPTO }, fetchedAt: FIXTURE_DESK_FEEDS_FETCHED_AT }) } },
 );
 const sweep = startCheckOffCommitSweep({ connection, ...checkOff, now: () => new Date() }, { log: quiet });
 // Story 11.3: the real research runner over the fake search and the fake vault (short interval so specs stay fast).

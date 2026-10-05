@@ -55,6 +55,7 @@ import { planDayForChangeSet } from "../app/plan-day.ts";
 import { refitPlan } from "../app/refit-plan.ts";
 import type { ApplyChangeSetDeps } from "../app/apply-change-set.ts";
 import { getDesk, recordActivity, type DeskDeps } from "../app/desk.ts";
+import { getDeskFeeds, type DeskFeedsDeps } from "../app/desk-feeds.ts";
 import { getResearchDocument, listResearch, type ResearchListDeps } from "../app/research-list.ts";
 import { sandboxQueue, type SandboxQueueDeps } from "../app/sandbox-queue.ts";
 import { finishSandboxSession, saveSandboxCardAndAdvance, type SandboxSubmitDeps } from "../app/sandbox-submit.ts";
@@ -100,6 +101,8 @@ import { runEventStream, getPlanSyncRunner, CHAT_NOT_CONFIGURED, sseMessage, run
 export interface ServerDeps {
   /** Rulings E12-R3/R14: records the days Spencer clicked or typed (`POST /api/activity`). Absent, nothing is recorded. */
   readonly desk?: DeskDeps;
+  /** Epic 12 (E12-R21): the Desk's public-feed widgets; absent without `YOH_TIMEZONE`. */
+  readonly deskFeeds?: DeskFeedsDeps;
   /** The process's one SQLite connection (AD-10), opened at startup in `server.ts`. */
   readonly connection: SqliteConnection;
   /** One structured log line (Consistency Conventions: single-line JSON to stderr). */
@@ -445,6 +448,7 @@ export function createApp(deps: ServerDeps) {
   // plus the shared logger, the same "spread, default `log` in" convention
   // `tasksDeps` above uses.
   const deskDeps: DeskDeps | undefined = deps.desk;
+  const deskFeedsDeps: DeskFeedsDeps | undefined = deps.deskFeeds;
   const researchDeps: ResearchListDeps | undefined = deps.research ? { ...deps.research, log } : undefined;
   // Story 9.2: one merged deps object serves sandboxQueue AND
   // submitSandboxCard — each reads only its own fields, mirroring
@@ -933,6 +937,12 @@ export function createApp(deps: ServerDeps) {
       .get("/api/desk", async (c) => {
         if (!deskDeps) return c.json(DESK_NOT_CONFIGURED, httpStatus(DESK_NOT_CONFIGURED));
         const result = wire(await getDesk({ ...deskDeps, log }, {}));
+        return c.json(result, httpStatus(result));
+      })
+      // E12-R21: the feed widgets' own read, so a slow provider never delays /api/desk.
+      .get("/api/desk/feeds", async (c) => {
+        if (!deskFeedsDeps) return c.json(DESK_NOT_CONFIGURED, httpStatus(DESK_NOT_CONFIGURED));
+        const result = wire(await getDeskFeeds(deskFeedsDeps, {}));
         return c.json(result, httpStatus(result));
       })
       // Task 6C (FR-43, UX-DR43): the Research Hub page's one route — pure

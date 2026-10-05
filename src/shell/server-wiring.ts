@@ -9,6 +9,7 @@
 import { Client } from "@notionhq/client";
 import { writeStructuredLog } from "../adapters/logger.ts";
 import type { SqliteConnection } from "../adapters/sqlite.ts";
+import { createCryptoFeed, type CryptoFetch } from "../adapters/crypto-feed.ts";
 import { createMemoryStore, listNightCloseOutDone, listPlanDates, type MemoryStore } from "../adapters/memory-store.ts";
 import { listLlmUsageSince } from "../adapters/llm-usage-store.ts";
 import { localIsoDate } from "../core/local-time.ts";
@@ -252,6 +253,17 @@ export function buildResearchDeps(notion: NotionFeatureConfig | undefined, env: 
 const ACTIVITY_RETRY_MS = 60_000;
 /** Spend reads from this far before the local month starts, so any timezone's month start is covered; `monthlySpend` filters exactly. */
 const SPEND_READ_MARGIN_DAYS = 2;
+
+/**
+ * Ruling E12-R21: the Desk's public-feed widgets (real `fetch`, one cache per
+ * feed). Without `YOH_TIMEZONE` Desk is not configured, so neither are its feeds.
+ */
+export function buildDeskFeedsDeps(env: Readonly<Record<string, string | undefined>>, fetchFn: CryptoFetch = (url, init) => fetch(url, init), now: () => Date = () => new Date()): ServerDeps["deskFeeds"] {
+  const timeZone = env["YOH_TIMEZONE"];
+  if (!timeZone) return undefined;
+  const crypto = createCryptoFeed({ fetch: fetchFn, now, log: writeStructuredLog });
+  return { timeZone, readCrypto: () => crypto.read() };
+}
 
 /**
  * Ruling E12-R3: the activity-day recorder. Remembers the last date it wrote,

@@ -2,10 +2,11 @@
  * web/src/pages/Desk.tsx — Epic 12: the Desk page. Six widgets from
  * `GET /api/desk` (copy: Ruling E12-R9): Tasks completed today, Worked,
  * On-time rate, Streak and Claude API spend this month, then the full-width
- * Activity heatmap (Task 5).
+ * Activity heatmap (Task 5), then the Crypto feed widget (Task 6, its own request).
  */
 import { useContext, useEffect } from "react";
 import { DeskWidget, DeskWidgetSkeleton } from "../components/DeskWidget.tsx";
+import { DeskCrypto } from "../components/DeskCrypto.tsx";
 import { DeskHeatmap } from "../components/DeskHeatmap.tsx";
 import { CheckGlyph } from "../components/icons/Glyphs.tsx";
 import { StateMessage } from "../components/StateMessage.tsx";
@@ -13,6 +14,7 @@ import { useReducedMotion } from "../hooks/useReducedMotion.ts";
 import { PageNavigationContext } from "../lib/navigationContext.tsx";
 import { PAGES } from "../lib/pages.ts";
 import { refetchDesk, startDeskStream, useDesk } from "../lib/desk.ts";
+import { startDeskFeedsStream, useDeskFeeds, type DeskFeedsState } from "../lib/deskFeeds.ts";
 import type { DeskResponse } from "../../../src/types/api.ts";
 
 const DESK_PAGE_INDEX = PAGES.findIndex((p) => p.id === "desk");
@@ -45,7 +47,7 @@ function CompletedWidget({ items }: { readonly items: DeskResponse["completedTod
   );
 }
 
-function Widgets({ value }: { readonly value: DeskResponse }): React.JSX.Element {
+function Widgets({ value, feeds, reducedMotion }: { readonly value: DeskResponse; readonly feeds: DeskFeedsState; readonly reducedMotion: boolean }): React.JSX.Element {
   const { onTime, streak, spend } = value;
   return (
     <>
@@ -87,17 +89,21 @@ function Widgets({ value }: { readonly value: DeskResponse }): React.JSX.Element
         <p className={CAPTION}>Last 26 weeks</p>
         <DeskHeatmap weeks={value.heatmap.weeks} />
       </DeskWidget>
+      <DeskCrypto state={feeds} reducedMotion={reducedMotion} />
     </>
   );
 }
 
 export default function DeskPage(): React.JSX.Element {
   const state = useDesk();
+  const feeds = useDeskFeeds();
   const reducedMotion = useReducedMotion();
   const nav = useContext(PageNavigationContext);
   // Every page stays mounted, so fetch only while Desk is the page in view (no provider: a lone render, always active).
   const isActive = nav === undefined || nav.index === DESK_PAGE_INDEX;
   useEffect(() => (isActive ? startDeskStream() : undefined), [isActive]);
+  // The feeds are their own request, so a slow provider never delays the metrics above.
+  useEffect(() => (isActive ? startDeskFeedsStream() : undefined), [isActive]);
 
   return (
     <div className="flex h-full flex-col gap-5 overflow-y-auto p-8 pb-24 max-sm:p-4 max-sm:pb-24">
@@ -107,9 +113,9 @@ export default function DeskPage(): React.JSX.Element {
       ) : (
         <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
           {state.status === "loading" ? (
-            Array.from({ length: 6 }, (_, i) => <DeskWidgetSkeleton key={i} reducedMotion={reducedMotion} className={i === 0 ? "sm:col-span-2" : i === 5 ? "sm:col-span-2 lg:col-span-3" : ""} />)
+            Array.from({ length: 7 }, (_, i) => <DeskWidgetSkeleton key={i} reducedMotion={reducedMotion} className={i === 0 ? "sm:col-span-2" : i === 5 ? "sm:col-span-2 lg:col-span-3" : ""} />)
           ) : (
-            <Widgets value={state.value} />
+            <Widgets value={state.value} feeds={feeds} reducedMotion={reducedMotion} />
           )}
         </div>
       )}

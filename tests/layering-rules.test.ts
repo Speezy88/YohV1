@@ -325,3 +325,13 @@ test("AD-16: rituals/ names no Notion/Calendar write beyond the night close-out'
   }
   assert.deepEqual(found.sort(), [...RITUAL_WRITE_ALLOWLIST], "a new write in rituals/ needs a deliberate allowlist entry");
 });
+
+test("AD-22: the Desk feed adapters import nothing from the Notion, Calendar, LLM, search or store adapters, and read takes no argument", () => {
+  const forbidden = /(notion|calendar|llm|search|store|sqlite|token)/i;
+  for (const name of ["feed-cache.ts", "crypto-feed.ts"]) {
+    const src = readFileSync(join(SRC_DIR, "adapters", name), "utf8");
+    const offenders = moduleSpecifiers(src).filter((s) => s.startsWith("./") && forbidden.test(s));
+    assert.deepEqual(offenders, [], name);
+    assert.ok(!/read\s*\(\s*\w+\s*[:,)]/.test(src), `${name}: read takes no argument`);
+  }
+});

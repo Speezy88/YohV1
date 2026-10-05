@@ -215,3 +215,79 @@ test("Desk logs no Content Security Policy violation", async ({ page }) => {
   await page.waitForTimeout(300);
   expect(problems).toEqual([]);
 });
+
+// ---- Task 6: the Crypto feed widget (fake feed on the fixture server; no provider is ever contacted) ----
+
+// Mirrors the fixture's `FIXTURE_DESK_FEEDS_*` exports (`tests/e2e/fixture-server.ts`).
+const FEEDS_FETCHED_AT = "2026-10-04T15:30:00.000Z";
+const FEED_TICKERS = [
+  { symbol: "BTC", priceUsd: 67123.4, changePercent: 1.2 },
+  { symbol: "SOL", priceUsd: 142.57, changePercent: -0.8 },
+  { symbol: "ETH", priceUsd: 3456.78, changePercent: null },
+] as const;
+const cryptoCard = (page: Page) => page.locator("section", { has: page.getByRole("heading", { name: "Crypto" }) });
+
+async function routeCrypto(page: Page, crypto: unknown): Promise<void> {
+  await page.route("**/api/desk/feeds", (route) => route.fulfill({ json: { ok: true, value: { timeZone: "UTC", crypto } } }));
+}
+
+test("the Crypto widget shows the fixture's prices, signed changes and caption", async ({ page }) => {
+  await openDesk(page);
+  const card = cryptoCard(page);
+  await expect(card.getByRole("listitem")).toHaveText(["BTC$67,123+1.2%", "SOL$142.57−0.8%", "ETH$3,457"]);
+  await expect(card.getByText("Kraken · change since 00:00 UTC · updated 3:30 PM")).toBeVisible();
+  // Placed after the Activity heatmap.
+  const order = await page.getByTestId("page-desk").getByRole("heading", { level: 2 }).allTextContents();
+  expect(order.indexOf("Crypto")).toBe(order.indexOf("Activity") + 1);
+});
+
+test("a stale feed keeps the values and shows the unavailable line; the other widgets still render", async ({ page }) => {
+  await routeCrypto(page, { status: "stale", value: { tickers: FEED_TICKERS }, fetchedAt: FEEDS_FETCHED_AT });
+  await openDesk(page);
+  const card = cryptoCard(page);
+  await expect(card.getByRole("listitem")).toHaveCount(3);
+  await expect(card.getByText("Unavailable · last updated 3:30 PM")).toBeVisible();
+  await expect(card.getByText(/Kraken ·/)).toHaveCount(0);
+  await expect(page.getByText(/^\d+ min today$/)).toBeVisible();
+  await expect(page.getByRole("group", { name: "Activity, last 26 weeks" })).toBeVisible();
+});
+
+test("an unavailable feed shows only the unavailable line, in the ink-secondary color", async ({ page }) => {
+  await routeCrypto(page, { status: "unavailable" });
+  await openDesk(page);
+  const card = cryptoCard(page);
+  const line = card.getByText("Unavailable", { exact: true });
+  await expect(line).toBeVisible();
+  await expect(card.getByRole("listitem")).toHaveCount(0);
+  const { color, token } = await line.evaluate((el) => {
+    const probe = document.createElement("div");
+    probe.style.color = "var(--color-ink-secondary)";
+    document.body.appendChild(probe);
+    const token = getComputedStyle(probe).color;
+    probe.remove();
+    return { color: getComputedStyle(el).color, token };
+  });
+  expect(color).toBe(token);
+  await expect(page.getByText(/^\d+ min today$/)).toBeVisible();
+  await expect(page.getByRole("group", { name: "Activity, last 26 weeks" })).toBeVisible();
+});
+
+for (const scheme of ["light", "dark"] as const) {
+  test(`axe passes with the Crypto widget in ${scheme}`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: scheme });
+    await openDesk(page);
+    await expect(cryptoCard(page).getByRole("listitem")).toHaveCount(3);
+    const results = await new AxeBuilder({ page }).include('[data-testid="page-desk"]').analyze();
+    expect(results.violations).toEqual([]);
+  });
+}
+
+test("no request leaves the page for any host but the fixture", async ({ page }) => {
+  const hosts = new Set<string>();
+  page.on("request", (req) => {
+    if (/^https?:/.test(req.url())) hosts.add(new URL(req.url()).host);
+  });
+  await openDesk(page);
+  await expect(cryptoCard(page).getByRole("listitem")).toHaveCount(3);
+  expect([...hosts]).toEqual([new URL(page.url()).host]);
+});

@@ -829,6 +829,31 @@ export interface DeskResponse {
   readonly spend: { readonly monthUsd: number; readonly unpricedCalls: number };
 }
 
+/** Ruling E12-R17: one public feed's answer. `stale` keeps the last good value; `unavailable` has none (or an expired one's `fetchedAt`). */
+export interface FeedResult<T> {
+  readonly status: "ok" | "stale" | "unavailable";
+  readonly value?: T;
+  readonly fetchedAt?: IsoDateTime;
+}
+
+/** Ruling E12-R18: one coin's price. `changePercent` is since 00:00 UTC (Kraken's daily open), null when the open is unknown. */
+export interface CryptoTicker {
+  readonly symbol: "BTC" | "SOL" | "ETH";
+  readonly priceUsd: number;
+  readonly changePercent: number | null;
+}
+
+/** The crypto feed's value, in the order BTC, SOL, ETH. */
+export interface CryptoFeedValue {
+  readonly tickers: readonly CryptoTicker[];
+}
+
+/** `GET /api/desk/feeds`'s value (Ruling E12-R21): each feed fails on its own, so this is always an ok envelope. */
+export interface DeskFeedsResponse {
+  readonly timeZone: string;
+  readonly crypto: FeedResult<CryptoFeedValue>;
+}
+
 /** `GET /api/research`'s value: the most recent Research Vault items, newest first, server-limited (AD-17). */
 export interface ResearchListResponse {
   readonly items: readonly ResearchListItem[];

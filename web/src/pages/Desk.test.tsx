@@ -7,16 +7,18 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, within, waitFor } from "@testing-library/react";
 import DeskPage from "./Desk.tsx";
 import { apiClient } from "../lib/apiClient.ts";
+import { __resetDeskFeedsForTests } from "../lib/deskFeeds.ts";
 import { __resetDeskForTests } from "../lib/desk.ts";
 import { PageNavigationContext } from "../lib/navigationContext.tsx";
 import { PAGES } from "../lib/pages.ts";
 import { useReducedMotion } from "../hooks/useReducedMotion.ts";
 import type { DeskResponse } from "../../../src/types/api.ts";
 
-vi.mock("../lib/apiClient.ts", () => ({ apiClient: { api: { desk: { $get: vi.fn() } } } }));
+vi.mock("../lib/apiClient.ts", () => ({ apiClient: { api: { desk: { $get: vi.fn(), feeds: { $get: vi.fn() } } } } }));
 vi.mock("../hooks/useReducedMotion.ts", () => ({ useReducedMotion: vi.fn(() => false) }));
 const reduced = useReducedMotion as unknown as ReturnType<typeof vi.fn>;
 const get = apiClient.api.desk.$get as unknown as ReturnType<typeof vi.fn>;
+const getFeeds = apiClient.api.desk.feeds.$get as unknown as ReturnType<typeof vi.fn>;
 
 const BASE: DeskResponse = {
   today: "2026-10-04",
@@ -37,7 +39,10 @@ const card = (name: string) => screen.getByRole("heading", { name }).closest("[d
 describe("DeskPage", () => {
   beforeEach(() => {
     __resetDeskForTests();
+    __resetDeskFeedsForTests();
     get.mockReset();
+    getFeeds.mockReset();
+    getFeeds.mockReturnValue(new Promise(() => {}));
     reduced.mockReturnValue(false);
   });
 
@@ -96,10 +101,22 @@ describe("DeskPage", () => {
     expect(card("Claude API spend this month")).toHaveTextContent("$1.50");
   });
 
+  it("shows the Crypto widget after the heatmap, and a failed feeds request leaves the metrics alone", async () => {
+    serve({});
+    getFeeds.mockRejectedValue(new Error("down"));
+    render(<DeskPage />);
+    await screen.findByText("75 min today");
+    const crypto = card("Crypto");
+    await within(crypto).findByText("Unavailable");
+    expect(screen.getByText("50%")).toBeInTheDocument();
+    const order = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
+    expect(order.indexOf("Crypto")).toBe(order.indexOf("Activity") + 1);
+  });
+
   it("shows skeleton cards while loading", () => {
     get.mockReturnValue(new Promise(() => {}));
     render(<DeskPage />);
-    expect(screen.getAllByTestId("desk-widget-skeleton").length).toBe(6);
+    expect(screen.getAllByTestId("desk-widget-skeleton").length).toBe(7); // six metric widgets and the Crypto feed widget
     expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
   });
 
