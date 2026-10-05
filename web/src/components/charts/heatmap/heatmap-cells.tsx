@@ -26,7 +26,9 @@ import {
   HEATMAP_LOADING_BASE_CELL_OPACITY,
   HEATMAP_LOADING_CONCEAL_MS,
   heatmapLoadingCellParticipates,
+  readCssCubicBezier,
   readCssDurationMs,
+  readCssPx,
   resolveHeatmapEnterFadeDurationSec,
 } from "./heatmap-animation";
 import { heatmapLevelCellFillOpacity } from "./heatmap-colors";
@@ -48,11 +50,11 @@ import {
 
 const HEATMAP_INACTIVE_OPACITY = 0.3;
 /** Smooth tween for inactive opacity + scale on hover. */
-// Yoh: the duration is the --duration-control token (was 0.22).
+// Yoh: the duration and ease are the --duration-control / --ease-control tokens (were 0.22 and a literal ease).
 function inactiveTransition() {
   return {
     duration: readCssDurationMs("--duration-control") / 1000,
-    ease: [0.4, 0, 0.2, 1] as const,
+    ease: readCssCubicBezier("--ease-control"),
   };
 }
 const HEATMAP_CONCEAL_TRANSITION = {
@@ -427,6 +429,9 @@ const HeatmapMotionCell = memo(function HeatmapMotionCell({
     staggeredTransition,
   ]);
 
+  // Yoh: half the ring width plus half the 1px rim: the ring's inner edge meets the rim's outer edge.
+  const ringOffset = useMemo(() => readCssPx("--focus-ring-width") / 2 + 0.5, []);
+
   const cellProps = {
     className: "visx-heatmap-rect",
     height: cell.height,
@@ -467,22 +472,35 @@ const HeatmapMotionCell = memo(function HeatmapMotionCell({
               role: "img",
               tabIndex: tabIndexValue,
             })}
-        // Yoh: level 0 keeps a rim (--color-rim-structural); the focused cell
-        // gets the focus ring (--color-accent-solid, --focus-ring-width).
-        stroke={
-          isFocused
-            ? "var(--color-accent-solid)"
-            : level === 0
-              ? "var(--color-rim-structural)"
-              : "none"
-        }
+        // Yoh: every cell has a rim (--color-rim-structural), so its edge
+        // reads against the card at any level; the focus ring is the
+        // separate rect below, outside the cell.
+        stroke="var(--color-rim-structural)"
         style={{
           cursor: interactive ? "pointer" : undefined,
           opacity: dataOpacity,
           outline: "none",
         }}
-        strokeWidth={isFocused ? "var(--focus-ring-width)" : 1}
+        strokeWidth={1}
       />
+      {isFocused ? (
+        // Yoh: the focus ring, drawn outside the cell (past the rim's outer
+        // half) so it sits on the card, never on the cell's fill.
+        <rect
+          className="visx-heatmap-focus-ring"
+          data-heatmap-focus-ring=""
+          fill="none"
+          height={cell.height + 2 * ringOffset}
+          pointerEvents="none"
+          rx={cornerRadius + ringOffset}
+          ry={cornerRadius + ringOffset}
+          stroke="var(--color-accent-solid)"
+          strokeWidth="var(--focus-ring-width)"
+          width={cell.width + 2 * ringOffset}
+          x={cell.x - ringOffset}
+          y={cell.y - ringOffset}
+        />
+      ) : null}
       <motion.rect
         {...cellProps}
         fill={emptyFill}
@@ -559,14 +577,41 @@ export const HeatmapCells = memo(function HeatmapCells({
     ]
   );
 
+  // Yoh: the focused cell's coordinates, so its tooltip can be shown again
+  // (pointer leaves) or refreshed (data changes) while it holds focus.
+  const focusedArgs = useRef<{
+    column: number;
+    row: number;
+    x: number;
+    y: number;
+  } | null>(null);
+  const enterRef = useRef(handleCellEnter);
+  enterRef.current = handleCellEnter;
+
   const handleCellLeave = useCallback(() => {
     if (!cellsInteractive) {
       return;
     }
 
+    const held = focusedArgs.current;
+    const heldBin = held ? data[held.column]?.bins[held.row] : undefined;
+    if (held && heldBin) {
+      // A cell holds keyboard focus: its tooltip stays.
+      enterRef.current(held.column, held.row, heldBin, held.x, held.y);
+      return;
+    }
     setHoveredCell(null);
     setTooltipData(null);
-  }, [cellsInteractive, setHoveredCell, setTooltipData]);
+  }, [cellsInteractive, data, setHoveredCell, setTooltipData]);
+
+  // Yoh: after the data changes, the focused cell's tooltip shows the current count.
+  useEffect(() => {
+    const held = focusedArgs.current;
+    const heldBin = held ? data[held.column]?.bins[held.row] : undefined;
+    if (held && heldBin) {
+      enterRef.current(held.column, held.row, heldBin, held.x, held.y);
+    }
+  }, [data]);
 
   // Yoh: roving focus. `focusedCell` is the last focused cell (the one tab
   // stop); until then it is today's cell, the last day of the last column.
@@ -604,6 +649,7 @@ export const HeatmapCells = memo(function HeatmapCells({
     (column: number, row: number, bin: HeatmapBin, x: number, y: number) => {
       setFocusedCell({ column, row });
       setRingCell({ column, row });
+      focusedArgs.current = { column, row, x, y };
       handleCellEnter(column, row, bin, x, y);
       cellElements.current
         .get(`${column}-${row}`)
@@ -614,12 +660,14 @@ export const HeatmapCells = memo(function HeatmapCells({
 
   const handleCellBlur = useCallback(() => {
     setRingCell(null);
+    focusedArgs.current = null;
     handleCellLeave();
   }, [handleCellLeave]);
 
   const handleCellKeyDown = useCallback(
     (event: KeyboardEvent<SVGRectElement>, column: number, row: number) => {
       if (event.key === "Escape") {
+        focusedArgs.current = null;
         setHoveredCell(null);
         setTooltipData(null);
         return;

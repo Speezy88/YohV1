@@ -135,6 +135,38 @@ describe("DeskHeatmap", () => {
     await waitFor(() => expect(screen.queryByText("Oct 1, 2026", { selector: "div" })).toBeNull());
   });
 
+  it("M9: the pointer leaving the chart keeps the tooltip while a cell holds keyboard focus", async () => {
+    render(<DeskHeatmap weeks={WEEKS} />);
+    const c = cell("Oct 1, 2026: 5 Tasks completed");
+    c.focus();
+    await screen.findByText("Oct 1, 2026", { selector: "div" });
+    const other = cell("Sep 30, 2026: 3 Tasks completed");
+    fireEvent.pointerEnter(other);
+    fireEvent.pointerLeave(other);
+    fireEvent.pointerLeave(screen.getByRole("group", { name: "Activity, last 26 weeks" }).parentElement!);
+    expect(document.activeElement).toBe(c);
+    await screen.findByText("Oct 1, 2026", { selector: "div" });
+    // Without focus, leaving the chart still hides it.
+    c.blur();
+    await waitFor(() => expect(screen.queryByText("Oct 1, 2026", { selector: "div" })).toBeNull());
+    fireEvent.pointerEnter(other);
+    await screen.findByText("Sep 30, 2026", { selector: "div" });
+    fireEvent.pointerLeave(other);
+    fireEvent.pointerLeave(screen.getByRole("group", { name: "Activity, last 26 weeks" }).parentElement!);
+    await waitFor(() => expect(screen.queryByText("Sep 30, 2026", { selector: "div" })).toBeNull());
+  });
+
+  it("M9: the tooltip of a focused cell shows the current count after the data changes", async () => {
+    const { rerender } = render(<DeskHeatmap weeks={WEEKS} />);
+    cell("Oct 1, 2026: 5 Tasks completed").focus();
+    await screen.findByText("Oct 1, 2026", { selector: "div" });
+    expect(screen.getAllByText("5 Tasks completed").length).toBeGreaterThan(0);
+    const changed = [WEEK_A.map((d) => (d.date === "2026-10-01" ? day("2026-10-01", 6) : d)), WEEK_B];
+    rerender(<DeskHeatmap weeks={changed} />);
+    await waitFor(() => expect(screen.getAllByText("6 Tasks completed").length).toBeGreaterThan(0));
+    expect(screen.queryByText("5 Tasks completed")).toBeNull();
+  });
+
   it("words the tooltip for opened and empty days", async () => {
     render(<DeskHeatmap weeks={WEEKS} />);
     fireEvent.focus(cell("Sep 29, 2026: opened Yoh, no Tasks completed"));

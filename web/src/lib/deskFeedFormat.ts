@@ -29,7 +29,20 @@ export function formatFeedDateTime(iso: string, timeZone: string): string {
   return new Intl.DateTimeFormat("en-US", { timeZone, month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true }).format(new Date(iso)).replace(/ /g, " ");
 }
 
-/** The caption for a feed that is not `ok`: `Unavailable · last updated 3:30 PM`, or `Unavailable` with no value ever fetched. */
-export function unavailableCaption(fetchedAt: string | undefined, timeZone: string): string {
-  return fetchedAt === undefined ? "Unavailable" : `Unavailable · last updated ${formatFeedTime(fetchedAt, timeZone)}`;
+/** The host-zone calendar date of `date` as `YYYY-MM-DD`. */
+function zoneDate(date: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
+}
+
+/**
+ * Ruling E12-R23: a feed caption time. `3:30 PM` when the value is from the
+ * host's today, `Oct 3, 3:30 PM` otherwise; always in the host zone.
+ */
+export function formatFeedStamp(iso: string, timeZone: string, now: Date = new Date()): string {
+  return zoneDate(new Date(iso), timeZone) === zoneDate(now, timeZone) ? formatFeedTime(iso, timeZone) : formatFeedDateTime(iso, timeZone);
+}
+
+/** The caption for a feed that is not `ok`: `Unavailable · last updated 3:30 PM` (with the date when not today), or `Unavailable` with no value ever fetched. */
+export function unavailableCaption(fetchedAt: string | undefined, timeZone: string, now: Date = new Date()): string {
+  return fetchedAt === undefined ? "Unavailable" : `Unavailable · last updated ${formatFeedStamp(fetchedAt, timeZone, now)}`;
 }

@@ -3,6 +3,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import type { LogEntry } from "../src/adapters/logger.ts";
 import { createNewsFeed, NEWS_REFRESH_MS, NEWS_SOURCES } from "../src/adapters/news-feed.ts";
 
 const NPR = NEWS_SOURCES.find((s) => s.source === "NPR")!.url;
@@ -36,7 +37,7 @@ test("only the two fixed URLs are requested, with nothing else", async () => {
   assert.deepEqual(requests.map((r) => r.url).sort(), [NPR, TC].sort());
   assert.equal(NPR, "https://feeds.npr.org/1006/rss.xml");
   assert.equal(TC, "https://techcrunch.com/category/artificial-intelligence/feed/");
-  for (const r of requests) assert.equal((r.init as { headers?: unknown }).headers, undefined);
+  for (const r of requests) assert.deepEqual((r.init as { headers?: unknown }).headers, { "User-Agent": "Yoh/1.0 (personal dashboard)" });
 });
 
 test("the newest 4 of each source, merged newest first", async () => {
@@ -91,4 +92,40 @@ test("a source whose feed has no usable items fails that source", async () => {
 test("the refresh interval is 60 minutes, and read takes no argument", () => {
   assert.equal(NEWS_REFRESH_MS, 60 * 60 * 1000);
   assert.equal(setup().feed.read.length, 0);
+});
+
+test("M3: RSS requests use redirect manual; a cross-host redirect fails, a same-host one is followed once", async () => {
+  const requests: { url: string; redirect: string | undefined }[] = [];
+  const respond = (url: string, redirect: string | undefined) => {
+    requests.push({ url, redirect });
+    const hdr = (loc: string) => ({ get: (n: string) => (n.toLowerCase() === "location" ? loc : null) });
+    if (url === NPR) return { ok: false, status: 301, headers: hdr("https://evil.example/feed"), text: async () => "" };
+    if (url === TC) return { ok: false, status: 301, headers: hdr("/moved/feed"), text: async () => "" };
+    if (url === "https://techcrunch.com/moved/feed") return { ok: true, status: 200, text: async () => rss("t", 2, 1) };
+    return { ok: false, status: 500, text: async () => "" };
+  };
+  const feed = createNewsFeed({ fetch: (async (url: string, init: { redirect?: string }) => respond(url, init.redirect)) as never, now: () => new Date("2026-10-04T23:00:00.000Z"), log: () => {} });
+  const r = await feed.read();
+  assert.equal(r.status, "stale");
+  assert.ok(r.value!.items.every((i) => i.source === "TechCrunch"));
+  assert.ok(requests.every((q) => q.redirect === "manual"));
+  assert.equal(requests.filter((q) => q.url.includes("evil")).length, 0);
+  assert.equal(requests.filter((q) => q.url === "https://techcrunch.com/moved/feed").length, 1);
+});
+
+test("M5: an item dated more than 24 h after now is dropped", async () => {
+  const { feed, routes } = setup();
+  const item = (t: string, d: string) => `<item><title>${t}</title><link>https://example.org/${t}</link><pubDate>${d}</pubDate></item>`;
+  routes[NPR] = { body: `<rss><channel>${item("soon", "Mon, 05 Oct 2026 22:00:00 GMT")}${item("far", "Tue, 06 Oct 2026 00:00:00 GMT")}${item("past", "Sun, 04 Oct 2026 01:00:00 GMT")}</channel></rss>` };
+  const titles = (await feed.read()).value!.items.filter((i) => i.source === "NPR").map((i) => i.title);
+  assert.deepEqual(titles.sort(), ["past", "soon"]);
+});
+
+test("M7: a failure log carries a fixed reason and never the body", async () => {
+  const logs: LogEntry[] = [];
+  const feed = createNewsFeed({ fetch: (async () => ({ ok: false, status: 503, text: async () => "SECRET-BODY" })) as never, now: () => new Date(), log: (e) => logs.push(e) });
+  await feed.read();
+  assert.ok(logs.length > 0);
+  assert.ok(logs.every((l) => (l.detail as { reason: string }).reason === "http-503"));
+  assert.doesNotMatch(JSON.stringify(logs), /SECRET-BODY/);
 });

@@ -5,7 +5,7 @@
  * only that line. A change is always signed in text, never by color alone.
  */
 import { DeskWidget, DeskWidgetSkeleton } from "./DeskWidget.tsx";
-import { formatChangePercent, formatFeedTime, formatUsdPrice, unavailableCaption } from "../lib/deskFeedFormat.ts";
+import { formatChangePercent, formatFeedStamp, formatUsdPrice, unavailableCaption } from "../lib/deskFeedFormat.ts";
 import type { DeskFeedsState } from "../lib/deskFeeds.ts";
 
 const CAPTION = "m-0 font-body text-small text-ink-secondary";
@@ -38,7 +38,7 @@ export function DeskCrypto({ state, reducedMotion }: { readonly state: DeskFeeds
       )}
       <p className={CAPTION}>
         {crypto.status === "ok" && crypto.fetchedAt
-          ? `Kraken · change since 00:00 UTC · updated ${formatFeedTime(crypto.fetchedAt, timeZone)}`
+          ? `Kraken · change since 00:00 UTC · updated ${formatFeedStamp(crypto.fetchedAt, timeZone)}`
           : unavailableCaption(crypto.fetchedAt, timeZone)}
       </p>
     </DeskWidget>

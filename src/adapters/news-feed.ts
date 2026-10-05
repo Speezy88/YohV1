@@ -11,23 +11,27 @@
  */
 import { parseRssItems } from "../core/rss.ts";
 import type { FeedResult, NewsFeedValue, NewsItem } from "../types/api.ts";
-import { createCachedFeed } from "./feed-cache.ts";
+import { createCachedFeed, fetchFeedText, type FeedFetch } from "./feed-cache.ts";
 import type { LogEntry } from "./logger.ts";
 
 export const NEWS_REFRESH_MS = 60 * 60 * 1000;
 export const NEWS_ITEMS_PER_SOURCE = 4;
+/** Review M5: an item dated further ahead of `now` than this is dropped. */
+export const NEWS_FUTURE_LIMIT_MS = 24 * 60 * 60 * 1000;
 export const NEWS_SOURCES = [
   { source: "NPR", url: "https://feeds.npr.org/1006/rss.xml" },
   { source: "TechCrunch", url: "https://techcrunch.com/category/artificial-intelligence/feed/" },
 ] as const;
 
 /** The slice of `fetch` the feed needs (the global `fetch` satisfies it). */
-export type NewsFetch = (url: string, init: { readonly signal: AbortSignal }) => Promise<{ readonly ok: boolean; text(): Promise<string> }>;
+export type NewsFetch = FeedFetch;
 
 export interface NewsFeedConfig {
   readonly fetch: NewsFetch;
   readonly now: () => Date;
   readonly log: (entry: LogEntry) => void;
+  /** `YOH_FEED_USER_AGENT`; the default is used when empty or absent. */
+  readonly userAgent?: string | undefined;
 }
 
 export function createNewsFeed(config: NewsFeedConfig): { read(): Promise<FeedResult<NewsFeedValue>> } {
@@ -38,9 +42,10 @@ export function createNewsFeed(config: NewsFeedConfig): { read(): Promise<FeedRe
       now: config.now,
       log: config.log,
       load: async (signal) => {
-        const res = await config.fetch(url, { signal });
-        if (!res.ok) throw new Error("news-feed: non-2xx");
-        const items = parseRssItems(await res.text())
+        const text = await fetchFeedText(config.fetch, url, { signal, userAgent: config.userAgent, followSameHost: true });
+        const latest = config.now().getTime() + NEWS_FUTURE_LIMIT_MS;
+        const items = parseRssItems(text)
+          .filter((i) => Date.parse(i.publishedAt) <= latest)
           .sort((a, b) => b.publishedAt.localeCompare(a.publishedAt))
           .slice(0, NEWS_ITEMS_PER_SOURCE)
           .map((i): NewsItem => ({ title: i.title, url: i.link, source, publishedAt: i.publishedAt }));

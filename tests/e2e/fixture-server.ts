@@ -153,7 +153,8 @@ usage(thisMonthStart, 0, 1_000_000);
 usage(new Date(Date.parse(thisMonthStart) - 86_400_000).toISOString(), 9_000_000, 0);
 
 /** Epic 12 Task 6: the fake Crypto feed's fixed values (BTC `ok`), for `web/e2e/desk.spec.ts`. No provider is contacted. */
-export const FIXTURE_DESK_FEEDS_FETCHED_AT = "2026-10-04T15:30:00.000Z";
+/** Today (the fixture zone is UTC) at 3:30 PM, so captions read `3:30 PM` without a date (Ruling E12-R23). */
+export const FIXTURE_DESK_FEEDS_FETCHED_AT = `${new Date().toISOString().slice(0, 10)}T15:30:00.000Z`;
 export const FIXTURE_DESK_FEEDS_CRYPTO = [
   { symbol: "BTC", priceUsd: 67123.4, changePercent: 1.2 },
   { symbol: "SOL", priceUsd: 142.57, changePercent: -0.8 },

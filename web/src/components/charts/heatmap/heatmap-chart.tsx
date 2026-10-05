@@ -479,7 +479,17 @@ function HeatmapChartSurface({
   return (
     <div
       className={cn("relative w-full", layout === "fill" && "h-full")}
-      onPointerLeave={clearInteraction}
+      // Yoh: leaving the chart keeps the tooltip while a cell holds keyboard focus.
+      onPointerLeave={() => {
+        const active = document.activeElement;
+        if (
+          active instanceof SVGElement &&
+          containerRef.current?.contains(active)
+        ) {
+          return;
+        }
+        clearInteraction();
+      }}
       ref={containerRef}
       style={{ opacity: reducedOpacity }}
     >

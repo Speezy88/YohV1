@@ -5,22 +5,24 @@
  * nothing but the one URL is sent). Caching, timeout, back-off and last-good
  * come from `feed-cache.ts` (Ruling E12-R17); this file builds the request and
  * parses the answer. A non-empty `error` array, or any of the three pairs
- * missing or not a finite number, fails the whole read.
+ * missing or not a finite number above 0, fails the whole read.
  */
 import type { CryptoFeedValue, CryptoTicker, FeedResult } from "../types/api.ts";
-import { createCachedFeed } from "./feed-cache.ts";
+import { createCachedFeed, fetchFeedText, type FeedFetch } from "./feed-cache.ts";
 import type { LogEntry } from "./logger.ts";
 
 export const CRYPTO_REFRESH_MS = 5 * 60 * 1000;
 export const KRAKEN_TICKER_URL = "https://api.kraken.com/0/public/Ticker?pair=XBTUSD,ETHUSD,SOLUSD";
 
 /** The slice of `fetch` the feed needs (the global `fetch` satisfies it). */
-export type CryptoFetch = (url: string, init: { readonly signal: AbortSignal }) => Promise<{ readonly ok: boolean; json(): Promise<unknown> }>;
+export type CryptoFetch = FeedFetch;
 
 export interface CryptoFeedConfig {
   readonly fetch: CryptoFetch;
   readonly now: () => Date;
   readonly log: (entry: LogEntry) => void;
+  /** `YOH_FEED_USER_AGENT`; the default is used when empty or absent. */
+  readonly userAgent?: string | undefined;
 }
 
 /** Display order is BTC, SOL, ETH; `match` is the text in Kraken's result key (`XXBTZUSD`, `SOLUSD`, `XETHZUSD`). */
@@ -44,7 +46,7 @@ function parseTicker(body: unknown): CryptoFeedValue {
     const entry = key === undefined ? undefined : result[key];
     if (!isRecord(entry) || !Array.isArray(entry["c"])) throw new Error(`crypto-feed: ${symbol} missing`);
     const priceUsd = Number(entry["c"][0]);
-    if (typeof entry["c"][0] !== "string" || !Number.isFinite(priceUsd)) throw new Error(`crypto-feed: ${symbol} price invalid`);
+    if (typeof entry["c"][0] !== "string" || !Number.isFinite(priceUsd) || priceUsd <= 0) throw new Error(`crypto-feed: ${symbol} price invalid`);
     const open = typeof entry["o"] === "string" ? Number(entry["o"]) : NaN;
     const changePercent = Number.isFinite(open) && open !== 0 ? ((priceUsd - open) / open) * 100 : null;
     return { symbol, priceUsd, changePercent };
@@ -59,9 +61,8 @@ export function createCryptoFeed(config: CryptoFeedConfig): { read(): Promise<Fe
     now: config.now,
     log: config.log,
     load: async (signal) => {
-      const res = await config.fetch(KRAKEN_TICKER_URL, { signal });
-      if (!res.ok) throw new Error("crypto-feed: non-2xx");
-      return parseTicker(await res.json());
+      const text = await fetchFeedText(config.fetch, KRAKEN_TICKER_URL, { signal, userAgent: config.userAgent });
+      return parseTicker(JSON.parse(text));
     },
   });
 }

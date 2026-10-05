@@ -10,21 +10,16 @@
  * `feed-cache.ts` (Ruling E12-R17).
  */
 import type { FeedResult, WeatherFeedValue } from "../types/api.ts";
-import { createCachedFeed } from "./feed-cache.ts";
+import { createCachedFeed, DEFAULT_FEED_USER_AGENT, FeedError, fetchFeedText, type FeedFetch } from "./feed-cache.ts";
 import type { LogEntry } from "./logger.ts";
 
 export const WEATHER_REFRESH_MS = 30 * 60 * 1000;
 /** The one location (Ruling E12-R19). */
 export const WEATHER_LOCATION = { name: "Seattle, WA", latitude: 47.6062, longitude: -122.3321 } as const;
 export const WEATHER_POINTS_URL = `https://api.weather.gov/points/${WEATHER_LOCATION.latitude},${WEATHER_LOCATION.longitude}`;
-const DEFAULT_USER_AGENT = "Yoh/1.0 (personal dashboard)";
 
-export interface WeatherRequestInit {
-  readonly signal: AbortSignal;
-  readonly headers: Readonly<Record<string, string>>;
-}
 /** The slice of `fetch` the feed needs (the global `fetch` satisfies it). */
-export type WeatherFetch = (url: string, init: WeatherRequestInit) => Promise<{ readonly ok: boolean; readonly status: number; json(): Promise<unknown> }>;
+export type WeatherFetch = FeedFetch;
 
 export interface WeatherFeedConfig {
   readonly fetch: WeatherFetch;
@@ -70,14 +65,16 @@ function urlOf(props: unknown, key: string): string {
 }
 
 export function createWeatherFeed(config: WeatherFeedConfig): { read(): Promise<FeedResult<WeatherFeedValue>> } {
-  const headers = { "User-Agent": config.userAgent || DEFAULT_USER_AGENT, Accept: "application/geo+json" };
+  const userAgent = config.userAgent || DEFAULT_FEED_USER_AGENT;
   let grid: { readonly hourly: string; readonly daily: string } | undefined;
 
   async function get(url: string, signal: AbortSignal): Promise<unknown> {
-    const res = await config.fetch(url, { signal, headers });
-    if (res.status === 404) grid = undefined; // the grid may have moved: look it up again next time
-    if (!res.ok) throw new Error("weather-feed: non-2xx");
-    return res.json();
+    try {
+      return JSON.parse(await fetchFeedText(config.fetch, url, { signal, userAgent, accept: "application/geo+json" }));
+    } catch (err) {
+      if (err instanceof FeedError && err.reason === "http-404") grid = undefined; // the grid may have moved: look it up again next time
+      throw err;
+    }
   }
 
   return createCachedFeed<WeatherFeedValue>({

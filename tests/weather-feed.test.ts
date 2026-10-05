@@ -47,6 +47,7 @@ test("every request sends User-Agent and Accept", async () => {
   for (const q of requests) {
     assert.equal(q.init.headers?.["User-Agent"], "Yoh/1.0 (personal dashboard)");
     assert.equal(q.init.headers?.["Accept"], "application/geo+json");
+    assert.equal((q.init as { redirect?: string }).redirect, "error");
   }
 });
 
@@ -111,4 +112,19 @@ test("a failing step fails the read", async () => {
 test("the refresh interval is 30 minutes, and read takes no argument", () => {
   assert.equal(WEATHER_REFRESH_MS, 30 * 60 * 1000);
   assert.equal(setup().feed.read.length, 0);
+});
+
+test("M15: a forecast or forecastHourly URL on another host is rejected", async () => {
+  for (const key of ["forecast", "forecastHourly"]) {
+    const { feed, routes } = setup();
+    routes[WEATHER_POINTS_URL] = { body: { properties: { ...POINTS.properties, [key]: "https://evil.example/gridpoints/x" } } };
+    const r = await feed.read();
+    assert.equal(r.status, "unavailable", key);
+  }
+});
+
+test("M4: a daytime daily forecast whose first period is This Afternoon is what next shows today", async () => {
+  const { feed, routes } = setup();
+  routes[DAILY] = { body: { properties: { periods: [{ name: "This Afternoon", temperature: 62, temperatureUnit: "F", shortForecast: "Mostly Sunny" }, ...DAILY_BODY.properties.periods] } } };
+  assert.deepEqual((await feed.read()).value!.next, { name: "This Afternoon", temperatureF: 62, summary: "Mostly Sunny" });
 });

@@ -91,6 +91,15 @@ function Widgets({ value, feeds, reducedMotion }: { readonly value: DeskResponse
         <p className={CAPTION}>Last 26 weeks</p>
         <DeskHeatmap weeks={value.heatmap.weeks} />
       </DeskWidget>
+      <FeedWidgets feeds={feeds} reducedMotion={reducedMotion} />
+    </>
+  );
+}
+
+/** The three public-feed widgets: their own request, so they render while the metrics load or fail. */
+function FeedWidgets({ feeds, reducedMotion }: { readonly feeds: DeskFeedsState; readonly reducedMotion: boolean }): React.JSX.Element {
+  return (
+    <>
       <DeskCrypto state={feeds} reducedMotion={reducedMotion} />
       <DeskWeather state={feeds} reducedMotion={reducedMotion} />
       <DeskNews state={feeds} reducedMotion={reducedMotion} />
@@ -113,11 +122,19 @@ export default function DeskPage(): React.JSX.Element {
     <div className="flex h-full flex-col gap-5 overflow-y-auto p-8 pb-24 max-sm:p-4 max-sm:pb-24">
       <h1 className="font-body text-display font-bold tracking-tight text-ink-primary">Desk</h1>
       {state.status === "error" ? (
-        <StateMessage variant="error" className="rounded-2xl bg-surface-raised p-5 shadow-extruded-lg" message="Couldn't load Desk." onRetry={() => void refetchDesk()} retrying={state.retrying === true} />
+        <>
+          <StateMessage variant="error" className="rounded-2xl bg-surface-raised p-5 shadow-extruded-lg" message="Couldn't load Desk." onRetry={() => void refetchDesk()} retrying={state.retrying === true} />
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+            <FeedWidgets feeds={feeds} reducedMotion={reducedMotion} />
+          </div>
+        </>
       ) : (
         <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
           {state.status === "loading" ? (
-            Array.from({ length: 9 }, (_, i) => <DeskWidgetSkeleton key={i} reducedMotion={reducedMotion} className={i === 0 ? "sm:col-span-2" : i === 5 || i === 8 ? "sm:col-span-2 lg:col-span-3" : ""} />)
+            <>
+              {Array.from({ length: 6 }, (_, i) => <DeskWidgetSkeleton key={i} reducedMotion={reducedMotion} className={i === 0 ? "sm:col-span-2" : i === 5 ? "sm:col-span-2 lg:col-span-3" : ""} />)}
+              <FeedWidgets feeds={feeds} reducedMotion={reducedMotion} />
+            </>
           ) : (
             <Widgets value={state.value} feeds={feeds} reducedMotion={reducedMotion} />
           )}

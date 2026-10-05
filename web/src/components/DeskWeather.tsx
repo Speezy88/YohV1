@@ -4,7 +4,7 @@
  * swaps the caption for the unavailable line; `unavailable` shows only that line.
  */
 import { DeskWidget, DeskWidgetSkeleton } from "./DeskWidget.tsx";
-import { formatFeedTime, unavailableCaption } from "../lib/deskFeedFormat.ts";
+import { formatFeedStamp, unavailableCaption } from "../lib/deskFeedFormat.ts";
 import type { DeskFeedsState } from "../lib/deskFeeds.ts";
 
 const CAPTION = "m-0 font-body text-small text-ink-secondary";
@@ -35,7 +35,7 @@ export function DeskWeather({ state, reducedMotion }: { readonly state: DeskFeed
         </>
       )}
       <p className={CAPTION}>
-        {weather.status === "ok" && weather.fetchedAt ? `National Weather Service · updated ${formatFeedTime(weather.fetchedAt, timeZone)}` : unavailableCaption(weather.fetchedAt, timeZone)}
+        {weather.status === "ok" && weather.fetchedAt ? `National Weather Service · updated ${formatFeedStamp(weather.fetchedAt, timeZone)}` : unavailableCaption(weather.fetchedAt, timeZone)}
       </p>
     </DeskWidget>
   );

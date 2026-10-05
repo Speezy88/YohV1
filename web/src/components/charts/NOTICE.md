@@ -10,12 +10,12 @@ The legend files (`heatmap-legend*.tsx`; the Desk draws its own five-label legen
 
 ## Local changes (each is marked `// Yoh:` in the code)
 
-- `heatmap-cells.tsx`: cells are `role="img"` with an accessible name (`cellLabel` prop), one roving tab stop (today's cell, or the last focused), arrow keys / Home / End (`heatmap-focus.ts`), tooltip on focus, Escape hides it, blur hides it, a focus ring drawn as a stroke from `--color-accent-solid` and `--focus-ring-width`; level 0 gets a `--color-rim-structural` stroke; hover transition duration reads `--duration-control`; tooltip data carries `completed`.
-- `heatmap-chart.tsx`: the `<svg>` is a labelled `role="group"` (new `ariaLabel` prop), no longer `aria-hidden`.
+- `heatmap-cells.tsx`: cells are `role="img"` with an accessible name (`cellLabel` prop), one roving tab stop (today's cell, or the last focused), arrow keys / Home / End (`heatmap-focus.ts`), tooltip on focus, Escape hides it, blur hides it, a focus ring drawn as its own rect outside the cell (from `--color-accent-solid` and `--focus-ring-width`, so it sits on the card, not the fill); every cell gets a `--color-rim-structural` stroke; hover transition duration and ease read `--duration-control` / `--ease-control`; the focused cell keeps its tooltip when the pointer leaves, and it shows the current count after the data changes; tooltip data carries `completed`.
+- `heatmap-chart.tsx`: the `<svg>` is a labelled `role="group"` (new `ariaLabel` prop), no longer `aria-hidden`; the container's pointer-leave does not clear the tooltip while a cell holds focus.
 - `heatmap-context.tsx`: `HeatmapBin` and `HeatmapTooltipData` gain an optional `completed`.
 - `heatmap-tooltip.tsx`: `formatDate`, `formatWeekday` props; `formatLabel` receives `completed`.
 - `tooltip/tooltip-box.tsx`: `z-(--z-popover)` instead of a bare numeric z-index; token-backed radius and shadow (`rounded-md`, `shadow-extruded-md`), no backdrop blur; fade duration reads `--duration-control`.
-- `heatmap-animation.ts`: enter duration default is 0; new `readCssDurationMs` reads a `tokens.css` duration.
+- `heatmap-animation.ts`: enter duration default is 0; new `readCssDurationMs`, `readCssPx` and `readCssCubicBezier` read `tokens.css` values.
 - `heatmap-colors.ts`, `pattern-preset.tsx`: the hard-coded `#e879f9` became `var(--color-accent-solid)`; the pattern-stroke mix uses `--color-surface-base` instead of `white`.
 - `chart-loading-label.tsx`, `shimmering-text.tsx`: ink tokens instead of `--muted-foreground` / `--foreground`.
 - New file `heatmap/heatmap-focus.ts`: the pure keyboard movement.

@@ -4,7 +4,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createCachedFeed, FEED_BACKOFF_MS, FEED_STALE_LIMIT_MS, FEED_TIMEOUT_MS } from "../src/adapters/feed-cache.ts";
+import { createCachedFeed, FeedError, FEED_BACKOFF_MS, FEED_STALE_LIMIT_MS, FEED_TIMEOUT_MS } from "../src/adapters/feed-cache.ts";
 import type { LogEntry } from "../src/adapters/logger.ts";
 
 const T0 = Date.parse("2026-10-07T12:00:00.000Z");
@@ -117,4 +117,74 @@ test("one log line per state change, and no error text", async () => {
   await feed.read();
   await feed.read();
   assert.deepEqual(logs.map((l) => l.event), ["demo.unavailable", "demo.recovered"]);
+});
+
+test("M1: a value is stamped with the time its request started, so a poll one period later refetches", async () => {
+  let clock = T0;
+  let calls = 0;
+  const feed = createCachedFeed<string>({
+    name: "demo", refreshMs: 300_000, now: () => new Date(clock), log: () => {},
+    load: async () => { clock += 400; return `v${++calls}`; },
+  });
+  const first = await feed.read();
+  assert.equal(first.fetchedAt, new Date(T0).toISOString());
+  clock = T0 + 300_000; // the web's next 5-minute poll
+  assert.equal((await feed.read()).value, "v2");
+});
+
+test("M13: a negative age (clock stepped back) is expired for freshness and for the back-off", async () => {
+  let calls = 0;
+  let fail = false;
+  const { feed, advance } = setup(async () => { calls++; if (fail) throw new Error("x"); return `v${calls}`; });
+  await feed.read();
+  advance(-10_000);
+  assert.equal((await feed.read()).value, "v2");
+  fail = true;
+  advance(310_000);
+  await feed.read(); // fails
+  assert.equal(calls, 3);
+  advance(-5_000);
+  await feed.read(); // back-off age is negative: a new request, not the held fallback
+  assert.equal(calls, 4);
+});
+
+test("M15: a read that joins an in-flight request which then fails gets the stale answer and does not throw", async () => {
+  let calls = 0;
+  let reject!: (e: Error) => void;
+  const { feed, advance } = setup(() => { calls++; if (calls === 1) return Promise.resolve("good"); return new Promise<string>((_, rej) => (reject = rej)); });
+  await feed.read();
+  advance(300_000);
+  const a = feed.read();
+  const b = feed.read();
+  reject(new Error("down"));
+  const [ra, rb] = await Promise.all([a, b]);
+  assert.deepEqual(ra, rb);
+  assert.equal(ra.status, "stale");
+  assert.equal(ra.value, "good");
+  assert.equal(calls, 2);
+});
+
+test("M15: the timeout aborts a load that never answers (timeoutMs injected)", async () => {
+  const logs: LogEntry[] = [];
+  const feed = createCachedFeed<string>({
+    name: "demo", refreshMs: 1000, timeoutMs: 10, now: () => new Date(T0), log: (e) => logs.push(e),
+    load: (signal) => new Promise<string>((_, rej) => signal.addEventListener("abort", () => rej(signal.reason))),
+  });
+  const started = Date.now();
+  assert.equal((await feed.read()).status, "unavailable");
+  assert.ok(Date.now() - started < 2000);
+  assert.deepEqual((logs[0]!.detail as { reason: string }), { reason: "timeout" });
+});
+
+test("M7: the logged reason is one of the fixed set, never the error text", async () => {
+  const cases: [unknown, string][] = [
+    [new FeedError("http-503"), "http-503"], [new FeedError("too-large"), "too-large"], [new FeedError("redirect"), "redirect"],
+    [new TypeError("fetch failed: ECONNREFUSED secret"), "network"], [new SyntaxError("Unexpected token <"), "parse"],
+  ];
+  for (const [err, reason] of cases) {
+    const logs: LogEntry[] = [];
+    const feed = createCachedFeed<string>({ name: "d", refreshMs: 1, now: () => new Date(T0), log: (e) => logs.push(e), load: async () => { throw err; } });
+    await feed.read();
+    assert.deepEqual(logs[0]!.detail, { reason });
+  }
 });

@@ -9,6 +9,7 @@
 import { Client } from "@notionhq/client";
 import { writeStructuredLog } from "../adapters/logger.ts";
 import type { SqliteConnection } from "../adapters/sqlite.ts";
+import type { FeedFetch } from "../adapters/feed-cache.ts";
 import { createCryptoFeed } from "../adapters/crypto-feed.ts";
 import { createWeatherFeed } from "../adapters/weather-feed.ts";
 import { createNewsFeed } from "../adapters/news-feed.ts";
@@ -257,10 +258,7 @@ const ACTIVITY_RETRY_MS = 60_000;
 const SPEND_READ_MARGIN_DAYS = 2;
 
 /** The slice of `fetch` every Desk feed adapter needs (the global `fetch` satisfies it). */
-export type DeskFeedFetch = (
-  url: string,
-  init: { readonly signal: AbortSignal; readonly headers?: Record<string, string> },
-) => Promise<{ readonly ok: boolean; readonly status: number; json(): Promise<unknown>; text(): Promise<string> }>;
+export type DeskFeedFetch = FeedFetch;
 
 /**
  * Ruling E12-R21: the Desk's public-feed widgets (real `fetch`, one cache per
@@ -269,9 +267,9 @@ export type DeskFeedFetch = (
 export function buildDeskFeedsDeps(env: Readonly<Record<string, string | undefined>>, fetchFn: DeskFeedFetch = (url, init) => fetch(url, init), now: () => Date = () => new Date()): ServerDeps["deskFeeds"] {
   const timeZone = env["YOH_TIMEZONE"];
   if (!timeZone) return undefined;
-  const crypto = createCryptoFeed({ fetch: fetchFn, now, log: writeStructuredLog });
+  const crypto = createCryptoFeed({ fetch: fetchFn, now, log: writeStructuredLog, userAgent: env["YOH_FEED_USER_AGENT"] });
   const weather = createWeatherFeed({ fetch: fetchFn, now, log: writeStructuredLog, userAgent: env["YOH_FEED_USER_AGENT"] });
-  const news = createNewsFeed({ fetch: fetchFn, now, log: writeStructuredLog });
+  const news = createNewsFeed({ fetch: fetchFn, now, log: writeStructuredLog, userAgent: env["YOH_FEED_USER_AGENT"] });
   return { timeZone, readCrypto: () => crypto.read(), readWeather: () => weather.read(), readNews: () => news.read() };
 }
 

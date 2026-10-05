@@ -32,8 +32,9 @@ test("the request URL is exactly the ruled one and carries nothing else", async 
   assert.equal(requests.length, 1);
   assert.equal(requests[0]!.url, "https://api.kraken.com/0/public/Ticker?pair=XBTUSD,ETHUSD,SOLUSD");
   assert.equal(KRAKEN_TICKER_URL, requests[0]!.url);
-  const init = requests[0]!.init as { headers?: unknown; body?: unknown; method?: string; signal?: unknown } | undefined;
-  assert.equal(init?.headers, undefined);
+  const init = requests[0]!.init as { headers?: unknown; body?: unknown; method?: string; signal?: unknown; redirect?: string } | undefined;
+  assert.deepEqual(init?.headers, { "User-Agent": "Yoh/1.0 (personal dashboard)" });
+  assert.equal(init?.redirect, "error");
   assert.equal(init?.body, undefined);
   assert.ok(init?.method === undefined || init.method === "GET");
 });
@@ -60,6 +61,9 @@ test("changePercent is null when the open is missing or 0", async () => {
 const bad: [string, () => { status?: number; body: string }][] = [
   ["a non-empty error array", () => json({ ...SAMPLE, error: ["EGeneral:Too many requests"] })],
   ["a missing pair", () => json({ error: [], result: { XXBTZUSD: SAMPLE.result.XXBTZUSD, SOLUSD: SAMPLE.result.SOLUSD } })],
+  ["an empty price string", () => json({ error: [], result: { ...SAMPLE.result, SOLUSD: { c: [""], o: "1" } } })],
+  ["a negative price", () => json({ error: [], result: { ...SAMPLE.result, SOLUSD: { c: ["-5"], o: "1" } } })],
+  ["a zero price", () => json({ error: [], result: { ...SAMPLE.result, SOLUSD: { c: ["0"], o: "1" } } })],
   ["a non-numeric price", () => json({ error: [], result: { ...SAMPLE.result, SOLUSD: { c: ["abc", "1"], o: "1" } } })],
   ["a non-2xx status", () => ({ status: 503, body: JSON.stringify(SAMPLE) })],
   ["invalid JSON", () => ({ body: "<html>nope" })],

@@ -22,6 +22,36 @@ export function readCssDurationMs(name: string): number {
   return raw.endsWith("ms") ? value : value * 1000;
 }
 
+/** Yoh: a tokens.css length in px (`2px`); 0 when it is unset (jsdom, SSR). */
+export function readCssPx(name: string): number {
+  if (typeof document === "undefined") {
+    return 0;
+  }
+  const value = Number.parseFloat(
+    getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+  );
+  return Number.isNaN(value) ? 0 : value;
+}
+
+/** Yoh: a tokens.css `cubic-bezier(a, b, c, d)` as four numbers; linear when it is unset (jsdom, SSR). */
+export function readCssCubicBezier(
+  name: string
+): readonly [number, number, number, number] {
+  const fallback = [0, 0, 1, 1] as const;
+  if (typeof document === "undefined") {
+    return fallback;
+  }
+  const raw = getComputedStyle(document.documentElement)
+    .getPropertyValue(name)
+    .trim();
+  const match = /^cubic-bezier\(([^)]*)\)$/.exec(raw);
+  const parts = match?.[1]?.split(",").map((n) => Number.parseFloat(n));
+  if (!parts || parts.length !== 4 || parts.some((n) => Number.isNaN(n))) {
+    return fallback;
+  }
+  return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 1, parts[3] ?? 1];
+}
+
 /** Default cubic-bezier for heatmap cell enter / loading transitions. */
 export const HEATMAP_DEFAULT_ENTER_EASE = [0.85, 0, 0.916, 0.282] as const;
 

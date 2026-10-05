@@ -165,17 +165,35 @@ test("the five levels have five distinct fills and strokes, each the token's val
   );
   style.cells.forEach((c, level) => {
     expect(c.fill, `level ${level} fill`).toBe(style.fills[level]);
-    expect(c.stroke, `level ${level} stroke`).toBe(level === 0 ? style.rim : "none");
+    expect(c.stroke, `level ${level} stroke`).toBe(style.rim); // every cell has the rim (Ruling E12-R24)
     expect(c.opacity).toBe("1");
   });
-  expect(new Set(style.cells.map((c) => `${c.fill}|${c.stroke}`)).size).toBe(5);
-  await tabIntoGrid(page);
-  const ring = await page.evaluate(() => {
-    const cs = getComputedStyle(document.activeElement!);
-    return { stroke: cs.stroke, width: cs.strokeWidth };
-  });
-  expect(ring.stroke).toBe(style.accent);
-  expect(ring.width).toBe(style.ringWidth);
+  expect(new Set(style.cells.map((c) => c.fill)).size).toBe(5);
+  // Focus a level 4 cell: the ring is its own rect, outside the cell, so it sits on the card and not on the fill.
+  const level4 = cellName(days.find((d) => d.level === 4)!);
+  await page.evaluate((name) => (document.querySelector(`[role="img"][aria-label="${name}"]`) as SVGElement).focus(), level4);
+  await expect(page.locator("[data-heatmap-focus-ring]")).toHaveCount(1);
+  const ring = await page.evaluate((name) => {
+    const cell = document.querySelector(`[role="img"][aria-label="${name}"]`) as SVGElement;
+    const ringEl = document.querySelector("[data-heatmap-focus-ring]") as SVGElement | null;
+    if (!ringEl) return null;
+    const cs = getComputedStyle(ringEl);
+    const c = cell.getBoundingClientRect();
+    const r = ringEl.getBoundingClientRect();
+    return { stroke: cs.stroke, width: cs.strokeWidth, fill: cs.fill, cellStroke: getComputedStyle(cell).stroke, cell: { x: c.x, y: c.y, w: c.width, h: c.height }, ring: { x: r.x, y: r.y, w: r.width, h: r.height } };
+  }, level4);
+  expect(ring).not.toBeNull();
+  expect(ring!.stroke).toBe(style.accent);
+  expect(ring!.width).toBe(style.ringWidth);
+  expect(ring!.fill).toBe("none");
+  expect(ring!.cellStroke).toBe(style.rim);
+  // The ring's box is larger than the cell's on every side, and its inner edge starts outside the cell.
+  expect(ring!.ring.w).toBeGreaterThan(ring!.cell.w);
+  expect(ring!.ring.h).toBeGreaterThan(ring!.cell.h);
+  expect(ring!.ring.x).toBeLessThan(ring!.cell.x);
+  expect(ring!.ring.y).toBeLessThan(ring!.cell.y);
+  expect(ring!.ring.x + ring!.ring.w).toBeGreaterThan(ring!.cell.x + ring!.cell.w);
+  expect(ring!.ring.y + ring!.ring.h).toBeGreaterThan(ring!.cell.y + ring!.cell.h);
 });
 
 test("the heatmap scrolls sideways inside its region at 390px, starts at the newest week, and the page does not scroll sideways", async ({ page }) => {
@@ -219,7 +237,8 @@ test("Desk logs no Content Security Policy violation", async ({ page }) => {
 // ---- Task 6: the Crypto feed widget (fake feed on the fixture server; no provider is ever contacted) ----
 
 // Mirrors the fixture's `FIXTURE_DESK_FEEDS_*` exports (`tests/e2e/fixture-server.ts`).
-const FEEDS_FETCHED_AT = "2026-10-04T15:30:00.000Z";
+// Today (the fixture zone is UTC) at 3:30 PM, so captions read `3:30 PM` with no date.
+const FEEDS_FETCHED_AT = `${new Date().toISOString().slice(0, 10)}T15:30:00.000Z`;
 const FEED_TICKERS = [
   { symbol: "BTC", priceUsd: 67123.4, changePercent: 1.2 },
   { symbol: "SOL", priceUsd: 142.57, changePercent: -0.8 },

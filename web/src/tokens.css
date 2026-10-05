@@ -220,8 +220,8 @@
   --ease-control: cubic-bezier(0.2, 0, 0, 1);
 
   /* Epic 12 Task 5: the Desk heatmap (Bklit chart, copied in). Five fixed
-     steps (Story 12.2): level 0 is the sunken surface (its cell also gets a
-     --color-rim-structural stroke); levels 1-4 are --color-accent-solid at
+     steps (Story 12.2): level 0 is the sunken surface (every cell gets a
+     --color-rim-structural stroke, so its edge reads at any level); levels 1-4 are --color-accent-solid at
      four stepped opacities. Both themes come from accent-solid's light-dark(). */
   --color-heatmap-level-0: var(--color-surface-sunken);
   --color-heatmap-level-1: color-mix(in srgb, var(--color-accent-solid) 25%, transparent);

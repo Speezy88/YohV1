@@ -10,7 +10,7 @@ import { useReducedMotion } from "../hooks/useReducedMotion.ts";
 import { formatHeatmapDay, formatHeatmapWeekday, heatmapCellLabel, heatmapCountLine, toHeatmapColumns } from "../lib/deskHeatmap.ts";
 import { HeatmapCells } from "./charts/heatmap/heatmap-cells.tsx";
 import { HeatmapChart } from "./charts/heatmap/heatmap-chart.tsx";
-import { readCssDurationMs } from "./charts/heatmap/heatmap-animation.ts";
+import { readCssDurationMs, readCssPx } from "./charts/heatmap/heatmap-animation.ts";
 import type { HeatmapBin } from "./charts/heatmap/heatmap-context.tsx";
 import type { HeatmapLevelColors } from "./charts/heatmap/heatmap-colors.ts";
 import { HeatmapTooltip } from "./charts/heatmap/heatmap-tooltip.tsx";
@@ -26,10 +26,10 @@ const LEVEL_COLORS: HeatmapLevelColors = [
 // Full class names, so Tailwind finds them.
 const LEGEND: readonly { readonly label: string; readonly swatch: string }[] = [
   { label: "None", swatch: "bg-heatmap-level-0 border border-rim-structural" },
-  { label: "Opened", swatch: "bg-heatmap-level-1" },
-  { label: "1–2", swatch: "bg-heatmap-level-2" },
-  { label: "3–4", swatch: "bg-heatmap-level-3" },
-  { label: "5+", swatch: "bg-heatmap-level-4" },
+  { label: "Opened", swatch: "bg-heatmap-level-1 border border-rim-structural" },
+  { label: "1–2", swatch: "bg-heatmap-level-2 border border-rim-structural" },
+  { label: "3–4", swatch: "bg-heatmap-level-3 border border-rim-structural" },
+  { label: "5+", swatch: "bg-heatmap-level-4 border border-rim-structural" },
 ];
 const CELL_SIZE = 18;
 const CELL_GAP = 4;
@@ -42,6 +42,7 @@ export interface DeskHeatmapProps {
 export function DeskHeatmap({ weeks }: DeskHeatmapProps): React.JSX.Element {
   const reducedMotion = useReducedMotion();
   const data = useMemo(() => toHeatmapColumns(weeks), [weeks]);
+  const cornerRadius = useMemo(() => readCssPx("--radius-xs"), []);
   const regionRef = useRef<HTMLDivElement>(null);
   const enter = useMemo(() => {
     const ms = readCssDurationMs("--duration-heatmap-enter");
@@ -79,7 +80,7 @@ export function DeskHeatmap({ weeks }: DeskHeatmapProps): React.JSX.Element {
           enterTransition={enter.transition}
           className="w-max"
         >
-          <HeatmapCells cornerRadius={3} cellLabel={cellLabel} hideGhostCells={false} inactiveOpacity={reducedMotion ? 1 : undefined} />
+          <HeatmapCells cornerRadius={cornerRadius} cellLabel={cellLabel} hideGhostCells={false} inactiveOpacity={reducedMotion ? 1 : undefined} />
           <HeatmapTooltip
             instant={reducedMotion}
             formatDate={formatHeatmapDay}

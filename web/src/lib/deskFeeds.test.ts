@@ -5,7 +5,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, waitFor, act } from "@testing-library/react";
 import { apiClient } from "./apiClient.ts";
-import { __resetDeskFeedsForTests, startDeskFeedsStream, useDeskFeeds } from "./deskFeeds.ts";
+import { __resetDeskFeedsForTests, DESK_FEEDS_MAX_AGE_MS, startDeskFeedsStream, useDeskFeeds } from "./deskFeeds.ts";
 
 vi.mock("./apiClient.ts", () => ({ apiClient: { api: { desk: { feeds: { $get: vi.fn() } } } } }));
 
@@ -96,5 +96,41 @@ describe("deskFeeds store", () => {
     stop();
     await vi.advanceTimersByTimeAsync(20 * 60 * 1000);
     expect(get).toHaveBeenCalledTimes(1);
+  });
+
+  it("E12-R23: a refetch that fails more than 15 minutes after the last load shows ok feeds as stale; a later success clears it", async () => {
+    vi.useFakeTimers();
+    const { result } = renderHook(() => useDeskFeeds());
+    stops.push(startDeskFeedsStream());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(DESK_FEEDS_MAX_AGE_MS).toBe(15 * 60 * 1000);
+    get.mockRejectedValue(new Error("down"));
+    // Polls at 5 and 10 minutes fail inside the window: still ok.
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+    const early = result.current;
+    expect(early.status === "loaded" && early.value.crypto.status).toBe("ok");
+    // The poll at 15 minutes is exactly the limit; the one at 20 is over it.
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+    const late = result.current;
+    expect(late.status).toBe("loaded");
+    if (late.status === "loaded") {
+      expect(late.value.crypto).toEqual({ status: "stale", value: { tickers: [] }, fetchedAt: "2026-10-04T15:30:00.000Z" });
+      expect(late.value.weather.status).toBe("unavailable");
+    }
+    get.mockResolvedValue({ json: async () => ({ ok: true, value: VALUE }) });
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+    const after = result.current;
+    expect(after.status === "loaded" && after.value.crypto.status).toBe("ok");
+  });
+
+  it("E12-R23: an error answer (not a throw) degrades the same way", async () => {
+    vi.useFakeTimers();
+    const { result } = renderHook(() => useDeskFeeds());
+    stops.push(startDeskFeedsStream());
+    await vi.advanceTimersByTimeAsync(0);
+    get.mockResolvedValue({ json: async () => ({ ok: false, error: { message: "x" } }) });
+    await vi.advanceTimersByTimeAsync(20 * 60 * 1000);
+    const s = result.current;
+    expect(s.status === "loaded" && s.value.crypto.status).toBe("stale");
   });
 });

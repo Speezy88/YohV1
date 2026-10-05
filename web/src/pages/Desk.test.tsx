@@ -123,6 +123,24 @@ describe("DeskPage", () => {
     expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
   });
 
+  it("M10: the three feed widgets render beside the error when /api/desk fails", async () => {
+    get.mockResolvedValue({ json: async () => ({ ok: false, error: { message: "Server said no." } }) });
+    getFeeds.mockResolvedValue({ json: async () => ({ ok: true, value: { timeZone: "UTC", crypto: { status: "ok", value: { tickers: [{ symbol: "BTC", priceUsd: 67123.4, changePercent: 1.2 }] }, fetchedAt: "2026-10-04T15:30:00.000Z" }, weather: { status: "unavailable" }, news: { status: "unavailable" } } }) });
+    render(<DeskPage />);
+    expect(await screen.findByText("Couldn't load Desk.")).toBeInTheDocument();
+    expect(await screen.findByText("$67,123")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Weather · Seattle, WA" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Business and AI news" })).toBeInTheDocument();
+  });
+
+  it("M10: the feed widgets show their own value while /api/desk is still loading", async () => {
+    get.mockReturnValue(new Promise(() => {}));
+    getFeeds.mockResolvedValue({ json: async () => ({ ok: true, value: { timeZone: "UTC", crypto: { status: "ok", value: { tickers: [{ symbol: "BTC", priceUsd: 67123.4, changePercent: 1.2 }] }, fetchedAt: "2026-10-04T15:30:00.000Z" }, weather: { status: "unavailable" }, news: { status: "unavailable" } } }) });
+    render(<DeskPage />);
+    expect(await screen.findByText("$67,123")).toBeInTheDocument();
+    expect(screen.getAllByTestId("desk-widget-skeleton").length).toBe(6 + 0);
+  });
+
   it("shows an error with Try again that refetches", async () => {
     get.mockResolvedValue({ json: async () => ({ ok: false, error: { message: "Server said no." } }) });
     render(<DeskPage />);
