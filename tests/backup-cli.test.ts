@@ -152,7 +152,7 @@ function backupDirWith(names: readonly string[]): string {
   return dir;
 }
 
-test("pruneBackups keeps the newest N of Yoh's own backup files and never touches other files", () => {
+test("pruneBackups keeps the newest N of Meeseek's own backup files and never touches other files", () => {
   const dir = backupDirWith([
     "yoh-memory-2026-09-20.db", "yoh-memory-2026-09-21.db", "yoh-memory-2026-09-22.db", "yoh-memory-2026-09-23.db",
     "notes.txt", "yoh-memory-old.db", "yoh-memory-2026-09-19.db.bak", "other-2026-09-01.db",

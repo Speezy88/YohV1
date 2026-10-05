@@ -59,9 +59,9 @@ interface FixtureTaskRow {
 
 async function openChatAndRunSandbox(page: Page): Promise<void> {
   await page.goto("/");
-  await page.getByRole("button", { name: /ask yoh/i }).click();
+  await page.getByRole("button", { name: /ask meeseek/i }).click();
   await expect(page.getByTestId("chat-panel")).toBeVisible();
-  const input = page.getByTestId("chat-panel").getByRole("combobox", { name: "Message Yoh" });
+  const input = page.getByTestId("chat-panel").getByRole("combobox", { name: "Message Meeseek" });
   await input.fill("/sandbox");
   // The Command Palette (Story 8.7) mounts as soon as the draft starts with
   // "/" and fetches the command registry (`GET /api/commands`) on its OWN
@@ -142,7 +142,7 @@ test("/sandbox: Skip on the first card writes nothing and advances; Save on the 
   await notification.click();
   // A "chat" (not "chat:/sandbox") deepLink is a no-op navigation — the
   // panel was already open and nothing is typed into it.
-  await expect(chat.getByRole("combobox", { name: "Message Yoh" })).toBeVisible();
+  await expect(chat.getByRole("combobox", { name: "Message Meeseek" })).toBeVisible();
   await expect(page.getByTestId("notification-card").filter({ hasText: "Saved 1 Task" })).toHaveCount(0);
 });
 

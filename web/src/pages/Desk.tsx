@@ -56,7 +56,7 @@ function Widgets({ value, feeds, reducedMotion }: { readonly value: DeskResponse
       <CompletedWidget items={value.completedToday} />
       <DeskWidget title="Worked">
         <p className={FIGURE}>{value.minutesToday} min today</p>
-        <p className={CAPTION}>{value.hoursWithYoh} h with Yoh</p>
+        <p className={CAPTION}>{value.hoursWithYoh} h with Meeseek</p>
       </DeskWidget>
       <DeskWidget title="On-time rate">
         {onTime.percent === null ? (

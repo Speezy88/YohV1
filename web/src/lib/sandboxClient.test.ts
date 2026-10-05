@@ -47,7 +47,7 @@ describe("sandboxClient", () => {
   it("requestSandboxSkip resolves ok:false with the fixed copy on a thrown network error, never throwing itself and never leaking err.message", async () => {
     api[":taskId"].skip.$post.mockRejectedValue(new Error("network down"));
     const result = await requestSandboxSkip("t1", { exclude: [] });
-    expect(result).toEqual({ ok: false, message: "Couldn't reach Yoh — try again." });
+    expect(result).toEqual({ ok: false, message: "Couldn't reach Meeseek — try again." });
   });
 
   it("requestSandboxFinish resolves ok:true with the server's savedCount/failedTitles", async () => {

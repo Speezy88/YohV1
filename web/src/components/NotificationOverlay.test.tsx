@@ -173,9 +173,9 @@ describe("NotificationOverlay", () => {
 
   it("shows a bold title line separate from the body when they differ", () => {
     renderWithNav([
-      { id: "n1", kind: "operational", title: "Yoh: morning running slow", body: "This morning's Plan took 8.0s to build.", createdAt: "2026-01-01T00:00:00.000Z", deepLink: null },
+      { id: "n1", kind: "operational", title: "Meeseek: morning running slow", body: "This morning's Plan took 8.0s to build.", createdAt: "2026-01-01T00:00:00.000Z", deepLink: null },
     ]);
-    expect(screen.getByText("Yoh: morning running slow")).toBeInTheDocument();
+    expect(screen.getByText("Meeseek: morning running slow")).toBeInTheDocument();
     expect(screen.getByText("This morning's Plan took 8.0s to build.")).toBeInTheDocument();
   });
 
@@ -187,7 +187,7 @@ describe("NotificationOverlay", () => {
   it("a long body gets a 'Show more' toggle that expands it without dismissing or navigating", () => {
     const dismiss = vi.spyOn(notificationsModule, "dismissNotification");
     const longBody = "A".repeat(200);
-    const { goTo } = renderWithNav([{ id: "n1", kind: "operational", title: "Yoh: something", body: longBody, createdAt: "2026-01-01T00:00:00.000Z", deepLink: null }]);
+    const { goTo } = renderWithNav([{ id: "n1", kind: "operational", title: "Meeseek: something", body: longBody, createdAt: "2026-01-01T00:00:00.000Z", deepLink: null }]);
 
     const toggle = screen.getByRole("button", { name: "Show more" });
     fireEvent.click(toggle);

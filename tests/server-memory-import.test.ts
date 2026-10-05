@@ -16,7 +16,7 @@ function setup() {
   const post = (path: string, body: string) => app.request(path, { method: "POST", headers: { "Content-Type": "text/markdown" }, body });
   return { connection, memoryItems, app, post };
 }
-const FILE = "## About you\n- Runs most mornings. (2025-11-02)\n\n## Goals & projects\n- Is building Yoh.\n";
+const FILE = "## About you\n- Runs most mornings. (2025-11-02)\n\n## Goals & projects\n- Is building Meeseek.\n";
 
 test("an unparseable file is a 400 that names the line, and writes nothing", async () => {
   const { post, memoryItems } = setup();
@@ -49,7 +49,7 @@ test("dry run reports and writes nothing; the real run files", async () => {
   const realBody = (await real.json()) as { ok: true; value: ImportMemoryResponse };
   assert.equal(realBody.value.dryRun, false);
   assert.match(realBody.value.batchTag, /^import:claude-\d{4}-\d{2}-\d{2}$/);
-  assert.deepEqual(memoryItems.listItems().map((i) => i.text).sort(), ["Is building Yoh.", "Runs most mornings."]);
+  assert.deepEqual(memoryItems.listItems().map((i) => i.text).sort(), ["Is building Meeseek.", "Runs most mornings."]);
 
   const again = await post("/api/memory/import", FILE);
   const againBody = (await again.json()) as { ok: true; value: ImportMemoryResponse };

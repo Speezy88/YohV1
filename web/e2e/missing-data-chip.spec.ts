@@ -14,7 +14,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 async function openChat(page: Page): Promise<void> {
   await page.goto("/");
-  await page.getByRole("button", { name: /ask yoh/i }).click();
+  await page.getByRole("button", { name: /ask meeseek/i }).click();
   await expect(page.getByTestId("chat-panel")).toBeVisible();
 }
 

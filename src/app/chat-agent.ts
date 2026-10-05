@@ -97,7 +97,7 @@ function agentSystemPrompt(tone: string, now: Date, timeZone: string): string {
     "Only a write tool call stages a change; describing one in text does nothing. Never ask Spencer to confirm in text: the Approve card is the only confirmation.",
     "Use ids exactly as a read tool returned them in this turn. Call list_tasks, list_events or get_plan first when you need an id.",
     "To change one block of today's Plan, call get_plan, then move_block, resize_block or remove_block. Use refit_plan only when Spencer asks to re-fit the whole day.",
-    "If a request needs something no tool covers (Canvas, deleting an event Yoh did not create, resizing or removing a Routine or break), say plainly that you can't do that.",
+    "If a request needs something no tool covers (Canvas, deleting an event Meeseek did not create, resizing or removing a Routine or break), say plainly that you can't do that.",
   ].join("\n");
 }
 
@@ -275,7 +275,7 @@ function runWriteTool(deps: ChatAgentDeps, name: string, args: Record<string, un
     if (event.calendarId !== undefined) return err("That event is on a read-only calendar and can't be changed here.");
     if (!event.etag) return err("That event can't be changed right now.");
     if (name === "delete_event") {
-      if (event.yohCreated !== true) return err("I can only delete events Yoh created. Tell Spencer to delete this one in Google Calendar.");
+      if (event.yohCreated !== true) return err("I can only delete events Meeseek created. Tell Spencer to delete this one in Google Calendar.");
       return stagedOk({ kind: "delete-event", eventId: event.id, label: event.title, etag: event.etag });
     }
     const date = String(args["date"] ?? "");

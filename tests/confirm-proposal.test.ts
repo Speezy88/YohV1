@@ -735,7 +735,7 @@ function patternHarness(kind: "area-overrun" | "area-slips" = "area-overrun", no
     entityId: `${kind}::History`,
     entityVersion: "new",
     suggested,
-    reason: "Yoh noticed History Tasks run about 30 min over.\n5 times since Aug 1: Aug 1, Aug 20\nPlan for that?",
+    reason: "Meeseek noticed History Tasks run about 30 min over.\n5 times since Aug 1: Aug 1, Aug 20\nPlan for that?",
     createdAt: NOW,
   };
   const requestId = `proposal:${id}`;

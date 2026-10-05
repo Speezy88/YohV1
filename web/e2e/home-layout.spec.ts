@@ -39,7 +39,7 @@ test("no page bleed: after Home -> Tasks, the Tasks search box is not covered by
   expect(groupResolvesInsideTasks).toBe(true);
 });
 
-test("Polish-3: the Tasks quick-add input sits below the table region and isn't covered by the Ask Yoh pill", async ({ page }) => {
+test("Polish-3: the Tasks quick-add input sits below the table region and isn't covered by the Ask Meeseek pill", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Tasks", exact: true }).click();
   await expect.poll(async () => (await page.getByTestId("page-tasks").boundingBox())?.y).toBe(0);

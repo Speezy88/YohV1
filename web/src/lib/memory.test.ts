@@ -157,7 +157,7 @@ describe("memory write helpers", () => {
     w.expiry.$post.mockRejectedValue(new Error("boom"));
     const out = await setExpiry("m1", null);
     expect(out.ok).toBe(false);
-    if (!out.ok) expect(out.message).toBe("I couldn't reach Yoh's server just now.");
+    if (!out.ok) expect(out.message).toBe("I couldn't reach Meeseek's server just now.");
     expect(w.expiry.$post).toHaveBeenCalledWith({ json: { itemId: "m1", expiresOn: null } });
   });
 

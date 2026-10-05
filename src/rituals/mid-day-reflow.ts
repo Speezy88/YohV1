@@ -574,7 +574,7 @@ export async function runMidDayReflow(deps: MidDayReflowDeps): Promise<Result<Mi
     log({ level: "warn", event: "mid-day-reflow.no-time-budget", detail: { date: today } });
     return failure(
       "missing-field",
-      "mid-day-reflow: no Time Budget has been declared yet — tell Yoh how much time you have (e.g. `time budget 6 hours` in chat) and re-trigger the re-flow",
+      "mid-day-reflow: no Time Budget has been declared yet — tell Meeseek how much time you have (e.g. `time budget 6 hours` in chat) and re-trigger the re-flow",
     );
   }
   // `elapsedBudgetMinutes` was computed above via `elapsedMinutesWithinBlock`

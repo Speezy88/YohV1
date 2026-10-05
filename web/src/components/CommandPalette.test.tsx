@@ -62,7 +62,7 @@ describe("CommandPalette", () => {
     vi.spyOn(commands, "fetchCommands").mockRejectedValueOnce(new Error("boom")).mockResolvedValueOnce(REGISTRY);
     render(
       <div>
-        <textarea aria-label="Message Yoh" role="combobox" aria-controls={COMMAND_PALETTE_ID} aria-expanded />
+        <textarea aria-label="Message Meeseek" role="combobox" aria-controls={COMMAND_PALETTE_ID} aria-expanded />
         <CommandPalette query="/m" onRun={() => {}} onClose={() => {}} />
       </div>,
     );
@@ -71,7 +71,7 @@ describe("CommandPalette", () => {
     retry.focus();
     fireEvent.click(retry);
     await waitFor(() => expect(screen.getByTestId("command-row-/morning")).toBeInTheDocument());
-    expect(screen.getByRole("combobox", { name: "Message Yoh" })).toHaveFocus();
+    expect(screen.getByRole("combobox", { name: "Message Meeseek" })).toHaveFocus();
   });
 
   it("lists every command, filtered live by query", async () => {

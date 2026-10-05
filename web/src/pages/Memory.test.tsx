@@ -107,7 +107,7 @@ describe("MemoryPage", () => {
     await screen.findByRole("navigation", { name: "Memory" });
     expect(screen.getByText('Nothing here yet. Say "remember that ..." in Chat.')).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Patterns/ }));
-    expect(screen.getByText("No patterns yet. Yoh will ask before adding one.")).toBeInTheDocument();
+    expect(screen.getByText("No patterns yet. Meeseek will ask before adding one.")).toBeInTheDocument();
   });
 
   it("restores the last selection", async () => {

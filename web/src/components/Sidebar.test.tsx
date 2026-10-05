@@ -22,9 +22,9 @@ function renderWithNav(nav: PageNavigation) {
 }
 
 describe("Sidebar", () => {
-  it("shows the Yoh wordmark", () => {
+  it("shows the Meeseek wordmark", () => {
     renderWithNav({ index: 0, goTo: vi.fn(), next: vi.fn(), prev: vi.fn() });
-    expect(screen.getByText("Yoh")).toBeInTheDocument();
+    expect(screen.getByText("Meeseek")).toBeInTheDocument();
   });
 
   it("the active item sets one weight (bold) and the inactive items set one (medium); never both", () => {

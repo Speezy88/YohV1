@@ -101,9 +101,9 @@ test("a Conversation opens read-only, with its Remembered Receipt and no actions
 
 test("View in Memory on a receipt opens the Memory page on that item", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: /ask yoh/i }).click();
+  await page.getByRole("button", { name: /ask meeseek/i }).click();
   const chat = page.getByTestId("chat-panel");
-  const input = chat.getByRole("combobox", { name: "Message Yoh" });
+  const input = chat.getByRole("combobox", { name: "Message Meeseek" });
   await input.fill("remember that Chem club is a club, not a class");
   await input.press("Enter");
   await expect(chat.getByTestId("remembered-receipt")).toContainText("Remembered:", { timeout: 10_000 });

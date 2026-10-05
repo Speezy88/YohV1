@@ -100,7 +100,7 @@ function shortDate(date: IsoDate): string {
 export function describePattern(p: PatternProposal): { headline: string; evidence: string; question: string } {
   const evidence = `${p.occurrences} times since ${shortDate(p.firstSeen)}: ${p.sampleDates.map(shortDate).join(", ")}`;
   if (p.kind === "area-overrun") {
-    return { headline: `Yoh noticed ${p.area} Tasks run about ${p.paddingMinutes ?? 0} min over.`, evidence, question: "Plan for that?" };
+    return { headline: `Meeseek noticed ${p.area} Tasks run about ${p.paddingMinutes ?? 0} min over.`, evidence, question: "Plan for that?" };
   }
-  return { headline: `Yoh noticed ${p.area} Tasks keep slipping to the next day.`, evidence, question: "Remember that?" };
+  return { headline: `Meeseek noticed ${p.area} Tasks keep slipping to the next day.`, evidence, question: "Remember that?" };
 }

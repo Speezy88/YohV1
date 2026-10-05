@@ -127,7 +127,7 @@ test("parseSearchIntent: search verbs mid-sentence and first-person statements s
 });
 
 test("parseSearchIntent: a polite lead before the verb is stripped from the query", () => {
-  assert.deepEqual(parseSearchIntent("hey Yoh, could you please look up the Seahawks score"), { query: "the Seahawks score" });
+  assert.deepEqual(parseSearchIntent("hey Meeseek, could you please look up the Seahawks score"), { query: "the Seahawks score" });
 });
 
 test("parseSearchIntent returns undefined for an empty or blank line", () => {

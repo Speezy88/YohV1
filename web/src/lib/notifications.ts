@@ -96,7 +96,7 @@ function addLocal(prefix: string, title: string, body: string): string {
 
 function addLocalUnreachable(): void {
   if (unreachableId !== undefined) return;
-  unreachableId = addLocal("unreachable", "Yoh server unreachable", "The connection to Yoh dropped and couldn't reconnect. Retrying in the background.");
+  unreachableId = addLocal("unreachable", "Meeseek server unreachable", "The connection to Meeseek dropped and couldn't reconnect. Retrying in the background.");
 }
 
 /**

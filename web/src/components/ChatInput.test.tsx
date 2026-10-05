@@ -12,7 +12,7 @@ import * as chatStreamModule from "../lib/chatStream.ts";
 import * as commands from "../lib/commands.ts";
 
 function box(): HTMLElement {
-  return screen.getByRole("combobox", { name: "Message Yoh" });
+  return screen.getByRole("combobox", { name: "Message Meeseek" });
 }
 
 const COMMAND_REGISTRY = [
@@ -45,9 +45,9 @@ describe("ChatInput", () => {
   it("Enter sends the draft", () => {
     const sendSpy = vi.spyOn(chatStore, "send").mockResolvedValue(undefined);
     render(<ChatInput />);
-    fireEvent.change(box(), { target: { value: "Hi Yoh" } });
+    fireEvent.change(box(), { target: { value: "Hi Meeseek" } });
     fireEvent.keyDown(box(), { key: "Enter" });
-    expect(sendSpy).toHaveBeenCalledWith("Hi Yoh");
+    expect(sendSpy).toHaveBeenCalledWith("Hi Meeseek");
   });
 
   it("Shift+Enter, and Enter mid-IME-composition, never send", () => {

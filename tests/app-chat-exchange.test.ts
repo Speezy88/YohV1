@@ -39,7 +39,7 @@ const ok = (reply: string, extra: Partial<ChatTurnResponse> = {}): Result<ChatTu
   value: { reply, receipts: [], ...extra },
 });
 
-test("stores the user turn before the inner turn and the Yoh turn after done", async () => {
+test("stores the user turn before the inner turn and the Meeseek turn after done", async () => {
   let seenDuringTurn: string[] = [];
   const h = makeDeps(async (d) => {
     seenDuringTurn = h.chatHistory.turnsForDate("2026-08-22").map((t) => t.role);
@@ -55,7 +55,7 @@ test("stores the user turn before the inner turn and the Yoh turn after done", a
   assert.deepEqual(turns.map((t) => [t.role, t.text, t.truncated]), [["user", "hi", false], ["assistant", "Hello", false]]);
 });
 
-test("Yoh turn text appends the question text; card-only reply is not stored", async () => {
+test("Meeseek turn text appends the question text; card-only reply is not stored", async () => {
   const q = { requestId: "r", questionId: "q", text: "Move it?", options: [], allowsFreeText: false };
   const h = makeDeps(async () => ok("Sure.", { question: q }));
   await chatExchange(h.deps, { message: "x" });
@@ -66,7 +66,7 @@ test("Yoh turn text appends the question text; card-only reply is not stored", a
   assert.equal(h2.chatHistory.turnsForDate("2026-08-22").length, 1);
 });
 
-test("a failed inner Result is returned without a done event or Yoh turn", async () => {
+test("a failed inner Result is returned without a done event or Meeseek turn", async () => {
   const error: YohError = { kind: "unreachable", message: "down" };
   const h = makeDeps(async () => ({ ok: false, error }));
   const result = await chatExchange(h.deps, { message: "x" });
@@ -95,7 +95,7 @@ test("an aborted stream stores the partial text as truncated", async () => {
   assert.deepEqual([yoh?.text, yoh?.truncated], ["part", true]);
 });
 
-test("an aborted stream with nothing sent stores no Yoh turn", async () => {
+test("an aborted stream with nothing sent stores no Meeseek turn", async () => {
   const h = makeDeps(async () => ok("never seen"), { isAborted: () => true });
   await chatExchange(h.deps, { message: "x" });
   assert.equal(h.chatHistory.turnsForDate("2026-08-22").length, 1);

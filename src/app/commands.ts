@@ -44,7 +44,7 @@ export const COMMANDS: readonly CommandDescriptor[] = [
   },
   {
     name: "/research",
-    description: "Queues a research question. Yoh searches in the background, files the answer to the Research Vault, and notifies you when it's on Research Hub.",
+    description: "Queues a research question. Meeseek searches in the background, files the answer to the Research Vault, and notifies you when it's on Research Hub.",
     example: "/research best budget laptops for college",
   },
 ];

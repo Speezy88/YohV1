@@ -231,10 +231,10 @@ test("a create-item draft that asks a question is returned as-is, with zero tool
 
 test("cancel / delete / remove calendar phrasings each reach the tool loop instead of a fixed refusal", async () => {
   for (const message of ["delete my meeting with Alex tomorrow at 3", "cancel the meeting with Alex tomorrow", "remove my meeting with Alex at 3pm"]) {
-    const { client, calls } = toolLoopClient([[{ type: "text", text: "I can only delete events Yoh created." }]]);
+    const { client, calls } = toolLoopClient([[{ type: "text", text: "I can only delete events Meeseek created." }]]);
     const result = await chatTurn(baseDeps({ llmClient: client }), { message });
     assert.equal(calls.length, 1, `expected "${message}" to cost one loop call`);
-    assert.equal(result.ok && result.value.reply, "I can only delete events Yoh created.");
+    assert.equal(result.ok && result.value.reply, "I can only delete events Meeseek created.");
   }
 });
 
@@ -474,7 +474,7 @@ test("Review Focus #4 / Ruling P4: a calendar-edit-shaped line with no draft rea
 
 test("an ordinary message classified as general-question never calls search(), and still answers via the general-qa path", async () => {
   const searchCalls: string[] = [];
-  const llmClient = makeFakeLlmClient("Yoh's own answer.");
+  const llmClient = makeFakeLlmClient("Meeseek's own answer.");
   const deps = baseDeps({
     llmClient,
     searchFn: async (query) => {
@@ -488,7 +488,7 @@ test("an ordinary message classified as general-question never calls search(), a
   });
 
   assert.equal(result.ok, true);
-  if (result.ok) assert.equal(result.value.reply, "Yoh's own answer.");
+  if (result.ok) assert.equal(result.value.reply, "Meeseek's own answer.");
   assert.equal(searchCalls.length, 0);
 });
 

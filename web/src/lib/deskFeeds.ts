@@ -30,7 +30,7 @@ function notify(): void {
 }
 
 /** Fixed copy for a failed request; a caught Error's own text is never stored or shown. */
-const UNREACHABLE_COPY = "I couldn't reach Yoh's server just now.";
+const UNREACHABLE_COPY = "I couldn't reach Meeseek's server just now.";
 
 function staled<T>(feed: FeedResult<T>): FeedResult<T> {
   return feed.status === "ok" ? { ...feed, status: "stale" } : feed;

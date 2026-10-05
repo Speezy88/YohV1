@@ -1086,7 +1086,7 @@ export async function applyCalendarEdit(
     if (!hasYohMarker(liveEvent)) {
       return {
         ok: false,
-        error: { kind: "validation", message: "calendar-adapter: only an event Yoh created can be deleted", detail: { eventId: change.eventId } },
+        error: { kind: "validation", message: "calendar-adapter: only an event Meeseek created can be deleted", detail: { eventId: change.eventId } },
       };
     }
     try {

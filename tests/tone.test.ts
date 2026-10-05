@@ -133,7 +133,7 @@ test("buildToneSystemPrompt: exhaustively covers every ToneRegister value with a
   }
 });
 
-test("buildToneSystemPrompt: both instructions tell Claude about Yoh's real capabilities, so a capability question or an off-phrasing request isn't answered as a generic, tool-blind assistant", () => {
+test("buildToneSystemPrompt: both instructions tell Claude about Meeseek's real capabilities, so a capability question or an off-phrasing request isn't answered as a generic, tool-blind assistant", () => {
   const casual = buildToneSystemPrompt("casual-peer");
   const factual = buildToneSystemPrompt("concise-educational");
   for (const instruction of [casual, factual]) {
@@ -303,14 +303,14 @@ test("resolveEscalatedToneSystemPrompt: exhaustively covers every ToneRegister a
 // this codebase).
 // ============================================================================
 
-test("buildToneSystemPrompt's capability list says Yoh can build today's Plan on demand and read any day's Calendar (Tasks 1 and 5)", () => {
+test("buildToneSystemPrompt's capability list says Meeseek can build today's Plan on demand and read any day's Calendar (Tasks 1 and 5)", () => {
   const instruction = buildToneSystemPrompt("casual-peer");
   assert.match(instruction, /\/plan/);
   assert.match(instruction, /plan my day/i);
   assert.match(instruction, /read any day's calendar/i);
 });
 
-test("buildToneSystemPrompt's capability list never claims Yoh can delete or cancel a Calendar event", () => {
+test("buildToneSystemPrompt's capability list never claims Meeseek can delete or cancel a Calendar event", () => {
   const instruction = buildToneSystemPrompt("casual-peer");
   assert.doesNotMatch(instruction, /can\s+(?:delete|cancel)\s+(?:a\s+)?calendar/i);
   assert.match(instruction, /cannot delete or cancel a calendar event/i);

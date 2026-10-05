@@ -181,7 +181,7 @@ export function __resetMemoryForTests(options: { readonly keepStorage?: boolean 
 /** How long the delete-conversation Undo Toast stays up; the request is sent when it closes. */
 export const MEMORY_UNDO_WINDOW_MS = 6000;
 const SEARCH_DEBOUNCE_MS = 250;
-const UNREACHABLE = "I couldn't reach Yoh's server just now.";
+const UNREACHABLE = "I couldn't reach Meeseek's server just now.";
 
 export type Outcome<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly message: string };
 

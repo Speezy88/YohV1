@@ -17,12 +17,12 @@ function msg(overrides: Partial<ChatViewMessage> = {}): ChatViewMessage {
 
 describe("ChatMessage", () => {
   it("right-aligns Spencer's turn on surface-sunken", () => {
-    render(<ChatMessage message={msg({ role: "user", text: "Hi Yoh" })} />);
+    render(<ChatMessage message={msg({ role: "user", text: "Hi Meeseek" })} />);
     expect(screen.getByTestId("chat-message-m1")).toHaveClass("justify-end");
-    expect(screen.getByText("Hi Yoh").closest(".bg-surface-sunken")).not.toBeNull();
+    expect(screen.getByText("Hi Meeseek").closest(".bg-surface-sunken")).not.toBeNull();
   });
 
-  it("left-aligns Yoh's turn, flat (no surface-sunken)", () => {
+  it("left-aligns Meeseek's turn, flat (no surface-sunken)", () => {
     render(<ChatMessage message={msg({ text: "Hi Spencer" })} />);
     expect(screen.getByTestId("chat-message-m1")).toHaveClass("justify-start");
     expect(screen.getByText("Hi Spencer").closest(".bg-surface-sunken")).toBeNull();
@@ -216,7 +216,7 @@ describe("ChatMessage rating prompt (Story 13.11)", () => {
   it("renders the prompt after a finished reply, and not while streaming or on Spencer's turn", () => {
     const rating = { promptId: "p1", phase: "open" as const };
     const { unmount } = render(<ChatMessage message={msg({ text: "Plan updated.", rating })} />);
-    expect(screen.getByRole("radiogroup", { name: "How is Yoh doing?" })).toBeInTheDocument();
+    expect(screen.getByRole("radiogroup", { name: "How is Meeseek doing?" })).toBeInTheDocument();
     unmount();
     render(<ChatMessage message={msg({ text: "x", status: "streaming", rating })} />);
     expect(screen.queryByRole("radiogroup")).toBeNull();

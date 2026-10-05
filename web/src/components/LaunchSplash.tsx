@@ -10,7 +10,7 @@
  * dialog — it's the initial paint, not an interruption of anything the user
  * was doing. `PageShell` owns when it shows and its exit fade.
  */
-export const SPLASH_WORDMARK_SIZE = "clamp(3rem, 12vw, 6rem)";
+export const SPLASH_WORDMARK_SIZE = "clamp(2.75rem, 10vw, 5rem)";
 
 export function LaunchSplash(): React.JSX.Element {
   return (
@@ -18,7 +18,7 @@ export function LaunchSplash(): React.JSX.Element {
       className="absolute inset-0 z-(--z-splash) flex items-center justify-center bg-surface-base font-wordmark font-bold text-ink-primary"
       style={{ fontSize: SPLASH_WORDMARK_SIZE }}
     >
-      Yoh Meeseek
+      Meeseek
     </div>
   );
 }

@@ -6,7 +6,7 @@ import * as openItems from "../../lib/openItems.ts";
 import * as memory from "../../lib/memory.ts";
 
 const q = (over: Partial<OpenItemQuestion> = {}): OpenItemQuestion => ({
-  requestId: "proposal:p1", questionId: "confirm", text: "Yoh noticed X.\n5 times since Sep 3\nPlan for that?",
+  requestId: "proposal:p1", questionId: "confirm", text: "Meeseek noticed X.\n5 times since Sep 3\nPlan for that?",
   options: [{ label: "Yes", value: "yes" }, { label: "No", value: "no" }], allowsFreeText: false,
   proposal: { id: "p1", kind: "pattern", entityId: "e", entityVersion: "new", suggested: { evidence: "5 times since Sep 3" }, reason: "r", createdAt: "2026-09-29T10:00:00Z" },
   ...over,
@@ -48,7 +48,7 @@ describe("PendingPatterns", () => {
     vi.spyOn(openItems, "submitOpenItemAnswer").mockResolvedValue({ ok: false, kind: "unreachable", message: "raw" });
     render(<ul><PendingPatterns questions={[q()]} /></ul>);
     fireEvent.click(screen.getByRole("button", { name: "Yes" }));
-    await waitFor(() => expect(screen.getByText("I couldn't reach Yoh's server just now.")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("I couldn't reach Meeseek's server just now.")).toBeInTheDocument());
     expect(screen.getByRole("button", { name: "Yes" })).toBeInTheDocument();
   });
 });

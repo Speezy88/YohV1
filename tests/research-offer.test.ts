@@ -5,7 +5,7 @@ import { parseSearchIntent } from "../src/core/search-intent.ts";
 
 const MATCHES: ReadonlyArray<readonly [string, string]> = [
   ["research the best budget laptops for college", "the best budget laptops for college"],
-  ["Hey Yoh, can you please research electric bikes", "electric bikes"],
+  ["Hey Meeseek, can you please research electric bikes", "electric bikes"],
   ["research", "research"],
   ["give me a deep dive on heat pumps", "give me a deep dive on heat pumps"],
   ["compare heat pumps with an in depth analysis", "compare heat pumps with an in depth analysis"],

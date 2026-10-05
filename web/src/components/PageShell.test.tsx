@@ -143,7 +143,7 @@ describe("PageShell", () => {
 
   it("the launch splash covers the initial render and resolves once the shell is ready", () => {
     render(<PageShell />);
-    expect(screen.getByText("Yoh Meeseek")).toBeInTheDocument();
+    expect(screen.getByTestId("launch-splash")).toHaveTextContent("Meeseek");
   });
 
   it("off-screen pages are aria-hidden and inert in the default slide layout too, not only under reduced motion", () => {
@@ -192,7 +192,7 @@ describe("PageShell", () => {
     render(<PageShell />);
     const splash = screen.getByTestId("launch-splash");
     expect(splash.className).toMatch(/opacity-0/);
-    expect(screen.getByText("Yoh Meeseek")).toBeInTheDocument();
+    expect(screen.getByTestId("launch-splash")).toHaveTextContent("Meeseek");
     fireEvent.transitionEnd(splash);
     expect(screen.queryByTestId("launch-splash")).not.toBeInTheDocument();
   });
@@ -290,9 +290,9 @@ describe("PageShell", () => {
     expect(screen.getByRole("button", { name: /^home$/i })).toHaveAttribute("aria-current", "page");
   });
 
-  it("clicking the Ask Yoh pill also opens the Chat panel", () => {
+  it("clicking the Ask Meeseek pill also opens the Chat panel", () => {
     render(<PageShell />);
-    fireEvent.click(screen.getByRole("button", { name: /ask yoh/i }));
+    fireEvent.click(screen.getByRole("button", { name: /ask meeseek/i }));
     expect(screen.getByTestId("chat-panel")).toBeInTheDocument();
   });
   // Task 8 (polish-6): landmarks and the modal chat panel.
@@ -337,7 +337,7 @@ describe("PageShell", () => {
 
   it("closing the Chat panel returns focus to the opener only after the shell is no longer inert", () => {
     render(<PageShell />);
-    const pill = screen.getByRole("button", { name: /ask yoh/i });
+    const pill = screen.getByRole("button", { name: /ask meeseek/i });
     pill.focus();
     const root = screen.getByTestId("page-shell-root");
     let inertWhenFocused: boolean | undefined;

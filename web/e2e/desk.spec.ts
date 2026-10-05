@@ -45,7 +45,7 @@ test("the widgets show the seeded values", async ({ page }) => {
   await expect(done.getByRole("listitem")).toHaveText(names);
   await expect(done.locator("p").first()).toHaveText(String(names.length));
   await expect(page.getByText(`${now.minutesToday} min today`)).toBeVisible();
-  await expect(page.getByText(`${now.hoursWithYoh} h with Yoh`)).toBeVisible();
+  await expect(page.getByText(`${now.hoursWithYoh} h with Meeseek`)).toBeVisible();
   await expect(page.getByText(`${now.onTime.percent}%`, { exact: true })).toBeVisible();
   await expect(page.getByText(`${now.onTime.onTime} of ${now.onTime.counted} Tasks with a due date`)).toBeVisible();
   await expect(page.getByText("Streak: 3 days · Longest: 5 days")).toBeVisible();
@@ -94,8 +94,8 @@ async function heatmapDays(page: Page): Promise<HeatDay[]> {
 }
 // Mirrors lib/deskHeatmap.ts's wording, from the ISO date's own parts.
 const dayText = (iso: string): string => new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
-const countText = (d: HeatDay): string => (d.completed > 0 ? `${d.completed} ${d.completed === 1 ? "Task" : "Tasks"} completed` : d.level >= 1 ? "Opened Yoh, no Tasks completed" : "No activity");
-const cellName = (d: HeatDay): string => `${dayText(d.date)}: ${d.completed > 0 ? countText(d) : d.level >= 1 ? "opened Yoh, no Tasks completed" : "no activity"}`;
+const countText = (d: HeatDay): string => (d.completed > 0 ? `${d.completed} ${d.completed === 1 ? "Task" : "Tasks"} completed` : d.level >= 1 ? "Opened Meeseek, no Tasks completed" : "No activity");
+const cellName = (d: HeatDay): string => `${dayText(d.date)}: ${d.completed > 0 ? countText(d) : d.level >= 1 ? "opened Meeseek, no Tasks completed" : "no activity"}`;
 const isoMinus = (iso: string, days: number): string => new Date(Date.parse(`${iso}T00:00:00Z`) - days * 86_400_000).toISOString().slice(0, 10);
 
 /** Focus the Tasks list region just before the heatmap, then Tab once: the next stop is the grid. */

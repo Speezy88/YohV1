@@ -73,7 +73,7 @@ export function validateFiling(candidates: readonly MemoryCandidate[], ctx: Fili
 }
 
 const ACK_WORDS = new Set(
-  ("ok okay thanks thank you yoh so much got it sounds good sure yes yeah yep no nope cool great perfect nice will do makes sense that works for me all a lot very appreciate").split(" "),
+  ("ok okay thanks thank you yoh meeseek so much got it sounds good sure yes yeah yep no nope cool great perfect nice will do makes sense that works for me all a lot very appreciate").split(" "),
 );
 
 /** Story 13.5 (FR-54): a turn too small to be worth a model call. Pure. */

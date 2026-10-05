@@ -11,7 +11,7 @@ const LINE = "Remembered: Chem club is a club, not a class · Corrections · Und
 
 async function openChat(page: Page): Promise<void> {
   await page.goto("/");
-  await page.getByRole("button", { name: /ask yoh/i }).click();
+  await page.getByRole("button", { name: /ask meeseek/i }).click();
   await expect(page.getByTestId("chat-panel")).toBeVisible();
 }
 
@@ -22,7 +22,7 @@ test.beforeEach(async ({ request }) => {
 test("remember shows the receipt line and Undo removes it", async ({ page }) => {
   await openChat(page);
   const chat = page.getByTestId("chat-panel");
-  const input = chat.getByRole("combobox", { name: "Message Yoh" });
+  const input = chat.getByRole("combobox", { name: "Message Meeseek" });
   await input.fill(REMEMBER);
   await input.press("Enter");
 
@@ -36,7 +36,7 @@ test("remember shows the receipt line and Undo removes it", async ({ page }) => 
 test("after another message the line no longer offers Undo", async ({ page }) => {
   await openChat(page);
   const chat = page.getByTestId("chat-panel");
-  const input = chat.getByRole("combobox", { name: "Message Yoh" });
+  const input = chat.getByRole("combobox", { name: "Message Meeseek" });
   await input.fill(REMEMBER);
   await input.press("Enter");
   await expect(chat.getByTestId("remembered-receipt")).toHaveText(LINE, { timeout: 10_000 });

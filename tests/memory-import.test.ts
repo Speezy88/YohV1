@@ -15,7 +15,7 @@ const FILE = [
   "- Has a peanut allergy. (2025-03-10) [sensitive:health]",
   "",
   "## goals-projects",
-  "* Is building Yoh on a Raspberry Pi.",
+  "* Is building Meeseek on a Raspberry Pi.",
 ].join("\n");
 
 test("parses headings, list lines, dates and sensitive markers", () => {
@@ -24,7 +24,7 @@ test("parses headings, list lines, dates and sensitive markers", () => {
   assert.deepEqual(r.candidates, [
     { line: 7, folder: "about-you", text: "Runs most mornings before school." },
     { line: 8, folder: "about-you", text: "Has a peanut allergy.", sensitive: "health" },
-    { line: 11, folder: "goals-projects", text: "Is building Yoh on a Raspberry Pi." },
+    { line: 11, folder: "goals-projects", text: "Is building Meeseek on a Raspberry Pi." },
   ]);
 });
 
@@ -65,7 +65,7 @@ test("an empty file has no candidates and no problems", () => {
 test("render then parse round-trips, in folder order", () => {
   const text = renderMemoryImport(
     [
-      { folder: "goals-projects", text: "Is building Yoh." },
+      { folder: "goals-projects", text: "Is building Meeseek." },
       { folder: "about-you", text: "Has a peanut allergy.", sensitive: "health", sourceDate: "2025-03-10" },
     ],
     ["Delete lines you do not want."],
@@ -77,7 +77,7 @@ test("render then parse round-trips, in folder order", () => {
   assert.deepEqual(r.problems, []);
   assert.deepEqual(r.candidates.map((c) => [c.folder, c.text, c.sensitive]), [
     ["about-you", "Has a peanut allergy.", "health"],
-    ["goals-projects", "Is building Yoh.", undefined],
+    ["goals-projects", "Is building Meeseek.", undefined],
   ]);
 });
 

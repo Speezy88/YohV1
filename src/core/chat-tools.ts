@@ -42,7 +42,7 @@ export const CHAT_TOOLS: readonly ChatToolDefinition[] = [
   { name: "get_plan", description: "Read today's stored Plan blocks. Each block has an id you must use for move_block, resize_block or remove_block.", input_schema: { type: "object", properties: {} } },
   {
     name: "search_memory",
-    description: "Search what Yoh remembers about Spencer.",
+    description: "Search what Meeseek remembers about Spencer.",
     input_schema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
   },
   {
@@ -75,7 +75,7 @@ export const CHAT_TOOLS: readonly ChatToolDefinition[] = [
   },
   {
     name: "delete_event",
-    description: "Stage deleting an event Yoh created (yohCreated is true in list_events). Any other event cannot be deleted here.",
+    description: "Stage deleting an event Meeseek created (yohCreated is true in list_events). Any other event cannot be deleted here.",
     input_schema: { type: "object", properties: { eventId: { type: "string" } }, required: ["eventId"] },
   },
   {

@@ -14,7 +14,7 @@ const FIXTURE_CHAT_REPLY = "Hello, Spencer. This is a fixture reply, streamed in
 
 async function openChat(page: Page): Promise<void> {
   await page.goto("/");
-  await page.getByRole("button", { name: /ask yoh/i }).click();
+  await page.getByRole("button", { name: /ask meeseek/i }).click();
   await expect(page.getByTestId("chat-panel")).toBeVisible();
 }
 
@@ -22,16 +22,16 @@ test.beforeEach(async ({ request }) => {
   await request.post("/__fixture/reset");
 });
 
-test("Enter shows Spencer's turn and the Thinking Indicator at once, then Yoh's reply streams in over POST /api/chat", async ({ page }) => {
+test("Enter shows Spencer's turn and the Thinking Indicator at once, then Meeseek's reply streams in over POST /api/chat", async ({ page }) => {
   await openChat(page);
   const chat = page.getByTestId("chat-panel");
-  const input = chat.getByRole("combobox", { name: "Message Yoh" });
-  await input.fill("Hello Yoh");
+  const input = chat.getByRole("combobox", { name: "Message Meeseek" });
+  await input.fill("Hello Meeseek");
 
   const chatResponse = page.waitForResponse((r) => r.url().endsWith("/api/chat") && r.request().method() === "POST");
   await input.press("Enter");
 
-  await expect(chat.getByText("Hello Yoh")).toBeVisible();
+  await expect(chat.getByText("Hello Meeseek")).toBeVisible();
   await expect(chat.getByTestId("thinking-indicator")).toBeVisible();
   await expect(input).toHaveValue("");
 
@@ -46,7 +46,7 @@ test("Enter shows Spencer's turn and the Thinking Indicator at once, then Yoh's 
 test("Esc closes the Chat panel; the unsent draft and the transcript survive close and reopen", async ({ page }) => {
   await openChat(page);
   const chat = page.getByTestId("chat-panel");
-  const input = chat.getByRole("combobox", { name: "Message Yoh" });
+  const input = chat.getByRole("combobox", { name: "Message Meeseek" });
   await input.fill("First message");
   await input.press("Enter");
   await expect(chat.getByText(FIXTURE_CHAT_REPLY)).toBeVisible({ timeout: 5_000 });
@@ -55,31 +55,31 @@ test("Esc closes the Chat panel; the unsent draft and the transcript survive clo
   await page.keyboard.press("Escape");
   await expect(chat).not.toBeVisible();
 
-  await page.getByRole("button", { name: /ask yoh/i }).click();
+  await page.getByRole("button", { name: /ask meeseek/i }).click();
   await expect(input).toHaveValue("Draft that never got sent");
   await expect(chat.getByText("First message")).toBeVisible();
   await expect(chat.getByText(FIXTURE_CHAT_REPLY)).toBeVisible();
 });
 
-test("the Close button closes the panel; focus returns to the Ask Yoh pill", async ({ page }) => {
+test("the Close button closes the panel; focus returns to the Ask Meeseek pill", async ({ page }) => {
   await openChat(page);
   await page.getByRole("button", { name: "Close chat" }).click();
   await expect(page.getByTestId("chat-panel")).not.toBeVisible();
-  await expect(page.getByRole("button", { name: /ask yoh/i })).toBeFocused();
+  await expect(page.getByRole("button", { name: /ask meeseek/i })).toBeFocused();
 });
 
 // Polish-6 final-review fixes (S1, S2, S3, S5, skip link, Back): keyboard and focus in a real browser.
 
 const NOTIFICATION = { id: "n-e2e", kind: "operational", title: "E2E notice", body: "E2E notice body", deepLink: null, createdAt: new Date().toISOString() };
 
-test("S1: after the missing-data chip runs /sandbox, Escape returns focus to the Ask Yoh pill", async ({ page }) => {
+test("S1: after the missing-data chip runs /sandbox, Escape returns focus to the Ask Meeseek pill", async ({ page }) => {
   await openChat(page);
   const chat = page.getByTestId("chat-panel");
   await chat.getByTestId("missing-data-chip").click();
   await expect(chat.getByTestId("sandbox-card").or(chat.getByText("Nothing's missing a Due Date or Duration."))).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(chat).not.toBeVisible();
-  await expect(page.getByRole("button", { name: /ask yoh/i })).toBeFocused();
+  await expect(page.getByRole("button", { name: /ask meeseek/i })).toBeFocused();
 });
 
 test("S2: Escape closes the panel after a click on the transcript left focus on body", async ({ page }) => {
@@ -96,7 +96,7 @@ test("S3: with the panel open, Tab reaches a notification's buttons", async ({ p
   );
   await page.goto("/");
   await expect(page.getByTestId("notification-card")).toBeVisible();
-  await page.getByRole("button", { name: /ask yoh/i }).click();
+  await page.getByRole("button", { name: /ask meeseek/i }).click();
   await expect(page.getByTestId("chat-panel")).toBeVisible();
   const dismiss = page.getByRole("button", { name: "Dismiss notification" });
   let reached = false;
@@ -115,7 +115,7 @@ test("S5: after Try again the commands load and focus is back on the Chat Input"
     return route.fulfill({ status: 500, json: { ok: false, error: { kind: "unreachable", message: "no" } } });
   });
   await openChat(page);
-  const input = page.getByRole("combobox", { name: "Message Yoh" });
+  const input = page.getByRole("combobox", { name: "Message Meeseek" });
   await input.fill("/");
   await page.getByRole("button", { name: "Try again" }).click();
   await expect(page.getByRole("option").first()).toBeVisible();
@@ -136,7 +136,7 @@ test("browser Back with the panel open closes the panel and keeps the page", asy
   await page.keyboard.press("ArrowDown");
   await expect.poll(() => page.evaluate(() => location.hash)).not.toBe("#home");
   const hash = await page.evaluate(() => location.hash);
-  await page.getByRole("button", { name: /ask yoh/i }).click();
+  await page.getByRole("button", { name: /ask meeseek/i }).click();
   await expect(page.getByTestId("chat-panel")).toBeVisible();
   await page.goBack();
   await expect(page.getByTestId("chat-panel")).not.toBeVisible();

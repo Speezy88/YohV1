@@ -341,7 +341,7 @@ test("POST /api/chat with the REAL chatTurn answers through the tool loop: one d
   // A fake Anthropic client: the tool loop's one (non-streaming) call ends with a text answer.
   const llmClient = {
     messages: {
-      create: async () => ({ content: [{ type: "text", text: "Hello from Yoh." }], stop_reason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 } }),
+      create: async () => ({ content: [{ type: "text", text: "Hello from Meeseek." }], stop_reason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 } }),
     },
   };
   const connection = openSqliteConnection({ databasePath: ":memory:" });
@@ -350,7 +350,7 @@ test("POST /api/chat with the REAL chatTurn answers through the tool loop: one d
   const events = parseSseBody(await (await postChat(app, { message: "tell me something", history: [{ role: "user", content: "tell me something" }] })).text());
   assert.deepEqual(events[0], { type: "status", text: "Thinking…" });
   const deltas = events.filter((e): e is Extract<ChatStreamEvent, { type: "delta" }> => e.type === "delta").map((e) => e.text);
-  assert.deepEqual(deltas, ["Hello from Yoh."]);
+  assert.deepEqual(deltas, ["Hello from Meeseek."]);
   const last = events.at(-1);
   assert.equal(last?.type, "done");
   assert.equal(last?.type === "done" ? last.response.reply : undefined, deltas.join(""));

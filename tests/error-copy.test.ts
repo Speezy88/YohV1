@@ -71,7 +71,7 @@ test("errorCopy: missing-field keeps an already-plain, actionable sentence verba
   const error: YohError = {
     kind: "missing-field",
     message:
-      "morning-ritual: no Time Budget has been declared yet — tell Yoh how much time you have (e.g. `time budget 6 hours` in chat) and re-run the Morning Ritual",
+      "morning-ritual: no Time Budget has been declared yet — tell Meeseek how much time you have (e.g. `time budget 6 hours` in chat) and re-run the Morning Ritual",
   };
   const copy = errorCopy(error);
   assert.match(copy, /Time Budget/i);

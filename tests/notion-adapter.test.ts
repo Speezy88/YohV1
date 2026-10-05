@@ -408,7 +408,7 @@ test("readNotionTasks leaves Energy unset for a value matching neither the optio
   assert.equal(result.tasks[0]?.energy, undefined);
 });
 
-test("readNotionTasks normalizes Status/Energy option casing to the fixed Yoh enums", async () => {
+test("readNotionTasks normalizes Status/Energy option casing to the fixed Meeseek enums", async () => {
   const client = new FakeNotionClient({
     "tasks-ds": [
       [

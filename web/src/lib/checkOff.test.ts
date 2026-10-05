@@ -44,7 +44,7 @@ describe("checkOff client", () => {
     api[":id"].undo.$post.mockResolvedValue(respond({ ok: false, error: { kind: "conflict", message: "too late" } }));
     expect(await requestUndo("p1")).toEqual({ ok: false, message: "too late" });
     api.$post.mockRejectedValue(new Error("offline"));
-    expect(await requestCheckOff("t1")).toEqual({ ok: false, message: "Couldn't reach Yoh — try again." });
+    expect(await requestCheckOff("t1")).toEqual({ ok: false, message: "Couldn't reach Meeseek — try again." });
   });
 
   it("remainingMs is the server's commitAt - asOf, never below zero", () => {

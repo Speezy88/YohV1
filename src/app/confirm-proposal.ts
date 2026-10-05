@@ -416,7 +416,7 @@ function confirmPattern(
     }
     padding = checked.value;
   }
-  const text = describePattern(p).headline.replace(/^Yoh noticed /, "");
+  const text = describePattern(p).headline.replace(/^Meeseek noticed /, "");
   let itemId: string;
   try {
     itemId = deps.connection.writeTx((db) => {

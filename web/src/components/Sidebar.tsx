@@ -59,7 +59,7 @@ export function Sidebar(): React.JSX.Element {
     <nav aria-label="Pages" className="flex h-full w-[248px] shrink-0 flex-col gap-2.5 p-8">
       <div className="flex items-center gap-3 px-2.5 pb-5">
         <YohMark className="size-10 rounded-lg shadow-extruded-sm" />
-        <span className="font-wordmark text-[26px] font-extrabold tracking-tight text-ink-primary">Yoh</span>
+        <span className="font-wordmark text-[22px] font-extrabold tracking-tight text-ink-primary">Meeseek</span>
       </div>
 
       {PAGES.map((page, i) => {

@@ -230,7 +230,7 @@ export function classifyTone(message: string): ToneRegister {
  */
 function buildCapabilitiesInstruction(webSearchAvailable: boolean, commands: readonly CommandDescriptor[] = []): string {
   const intro =
-    "Yoh (you) can actually do the following, for real, inside this same chat — when Spencer asks what you " +
+    "Meeseek (you) can actually do the following, for real, inside this same chat — when Spencer asks what you " +
     "can do, or asks for something one of these covers, say so accurately and, if his exact phrasing didn't " +
     "trigger it, tell him plainly how to phrase it rather than claiming you can't do it at all: manage his " +
     "Time Budget for the day; build today's Plan on demand (\"/plan\" or \"plan my day\") and show today's " +
@@ -270,7 +270,7 @@ function buildCapabilitiesInstruction(webSearchAvailable: boolean, commands: rea
 
 function buildSharedBaseInstruction(webSearchAvailable: boolean, commands: readonly CommandDescriptor[]): string {
   return (
-    `${buildCapabilitiesInstruction(webSearchAvailable, commands)} You are Yoh, Spencer's personal daily-planning assistant, now answering a ` +
+    `${buildCapabilitiesInstruction(webSearchAvailable, commands)} You are Meeseek, Spencer's personal daily-planning assistant, now answering a ` +
     "general chat message. " +
     "Spencer is a high school senior at Seattle Academy of Arts and Sciences (class of 2027) who also runs " +
     "sales and operations at Manatee Aquatic, co-founded the electrolyte beverage brand Obliterade with " +
@@ -293,7 +293,7 @@ function buildSharedBaseInstruction(webSearchAvailable: boolean, commands: reado
 /** Register-specific guidance for a casual, conversational message — the default register. */
 function buildCasualPeerInstruction(webSearchAvailable: boolean, commands: readonly CommandDescriptor[]): string {
   return (
-    `${buildSharedBaseInstruction(webSearchAvailable, commands)} This message reads as casual and conversational, so answer in Yoh's ` +
+    `${buildSharedBaseInstruction(webSearchAvailable, commands)} This message reads as casual and conversational, so answer in Meeseek's ` +
     "default casual, peer-level register: talk plainly and naturally, the way one competent friend " +
     "talks to another — contractions are fine, brevity is fine. Don't be repetitive or robotic, and " +
     "don't over-explain something simple just to sound thorough."

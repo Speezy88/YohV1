@@ -405,7 +405,7 @@ export async function send(message: string): Promise<void> {
       sending: false,
       hydrated: state.hydrated,
     });
-    addLocalFailureNotice("Couldn't reach Yoh. Your message is back in the box to try again.");
+    addLocalFailureNotice("Couldn't reach Meeseek. Your message is back in the box to try again.");
   }
 }
 

@@ -91,7 +91,7 @@ export function MemorySearchResults({
           <button type="button" className={HIT} onClick={() => onOpenTurn(t.conversationId, t.turnId)}>
             <span className="text-body font-medium text-ink-primary">{t.snippet}</span>
             <span className={CAPTION}>
-              Conversation {formatConversationDay(t.date)} · {t.role === "user" ? "You" : "Yoh"}
+              Conversation {formatConversationDay(t.date)} · {t.role === "user" ? "You" : "Meeseek"}
             </span>
           </button>
         </li>

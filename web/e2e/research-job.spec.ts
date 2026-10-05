@@ -11,10 +11,10 @@ const QUESTION = `how do AP Bio late fees work ${Date.now()}`;
 
 test("/research queues a job, a Research ready notification appears, and opening it shows the document on Research Hub", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: /ask yoh/i }).click();
+  await page.getByRole("button", { name: /ask meeseek/i }).click();
   const chat = page.getByTestId("chat-panel");
   await expect(chat).toBeVisible();
-  const input = chat.getByRole("combobox", { name: "Message Yoh" });
+  const input = chat.getByRole("combobox", { name: "Message Meeseek" });
   await input.fill(`/research ${QUESTION}`);
   await input.press("Enter");
 

@@ -759,7 +759,7 @@ export async function runMorningRitual(deps: MorningRitualDeps): Promise<Result<
     log({ level: "warn", event: "morning-ritual.no-time-budget", detail: { date: today } });
     return failure(
       "missing-field",
-      "morning-ritual: no Time Budget has been declared yet — tell Yoh how much time you have (e.g. `time budget 6 hours` in chat) and re-run the Morning Ritual",
+      "morning-ritual: no Time Budget has been declared yet — tell Meeseek how much time you have (e.g. `time budget 6 hours` in chat) and re-run the Morning Ritual",
     );
   }
   if (resolvedBudget.carriedForward) {

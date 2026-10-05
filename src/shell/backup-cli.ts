@@ -148,7 +148,7 @@ export async function main(env: Readonly<Record<string, string | undefined>> = p
   }
 
   process.stderr.write(`backup-cli: ${result.message}\n`);
-  await alertBackupFailure(env, "Yoh: nightly backup failed", result.message);
+  await alertBackupFailure(env, "Meeseek: nightly backup failed", result.message);
   return 1;
 }
 
@@ -177,7 +177,7 @@ export async function runEntry(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     process.stderr.write(`backup-cli: fatal error: ${message}\n`);
-    await alertBackupFailure(env, "Yoh: nightly backup failed", `backup-cli: unexpected error — ${message}`);
+    await alertBackupFailure(env, "Meeseek: nightly backup failed", `backup-cli: unexpected error — ${message}`);
     return 1;
   }
 }

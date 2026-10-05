@@ -14,7 +14,7 @@ import { HONEST_REJECTION, submitOpenItemAnswer } from "../../lib/openItems.ts";
 import { refetchMemory } from "../../lib/memory.ts";
 import { MEMORY_FOLDER_LABELS } from "../../lib/memoryApi.ts";
 
-const UNREACHABLE = "I couldn't reach Yoh's server just now.";
+const UNREACHABLE = "I couldn't reach Meeseek's server just now.";
 const CAPTION = "m-0 font-body text-small text-ink-secondary";
 
 interface Settled {

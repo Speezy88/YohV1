@@ -531,7 +531,7 @@ test(
     assert.equal(
       refitDurationMinutes,
       30,
-      "the Task's FULL original duration is treated as outstanding — Yoh does not guess at partial progress during a reported Blocker",
+      "the Task's FULL original duration is treated as outstanding — Meeseek does not guess at partial progress during a reported Blocker",
     );
   },
 );

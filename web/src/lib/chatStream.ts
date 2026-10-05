@@ -76,5 +76,5 @@ export async function streamChat(request: ChatTurnRequest, handlers: StreamChatH
     if (event.type === "done" || event.type === "error") settled = true;
     handlers.onEvent(event);
   });
-  if (!settled) throw new Error("chat: the reply stream ended before Yoh finished");
+  if (!settled) throw new Error("chat: the reply stream ended before Meeseek finished");
 }

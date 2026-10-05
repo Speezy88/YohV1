@@ -16,8 +16,8 @@ async function calendarCreates(page: Page): Promise<number> {
 
 async function sendChangeSet(page: Page) {
   await page.goto("/");
-  await page.getByRole("button", { name: /ask yoh/i }).click();
-  const input = page.getByRole("combobox", { name: "Message Yoh" });
+  await page.getByRole("button", { name: /ask meeseek/i }).click();
+  const input = page.getByRole("combobox", { name: "Message Meeseek" });
   await input.fill(CHANGE_SET_MESSAGE);
   await input.press("Enter");
   return page.getByTestId("chat-panel");

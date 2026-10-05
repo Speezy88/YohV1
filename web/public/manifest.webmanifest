@@ -1,7 +1,7 @@
 {
-  "name": "Yoh",
-  "short_name": "Yoh",
-  "description": "Yoh — a personal daily-planning assistant.",
+  "name": "Meeseek",
+  "short_name": "Meeseek",
+  "description": "Meeseek — a personal daily-planning assistant.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#EEF2F8",

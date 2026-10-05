@@ -49,7 +49,7 @@ describe("labels", () => {
     const d = new Date("2026-10-03T00:00:00.000Z");
     expect(heatmapCellLabel(d, 4, 5)).toBe("Oct 3, 2026: 5 Tasks completed");
     expect(heatmapCellLabel(d, 2, 1)).toBe("Oct 3, 2026: 1 Task completed");
-    expect(heatmapCellLabel(d, 1, 0)).toBe("Oct 3, 2026: opened Yoh, no Tasks completed");
+    expect(heatmapCellLabel(d, 1, 0)).toBe("Oct 3, 2026: opened Meeseek, no Tasks completed");
     expect(heatmapCellLabel(d, 0, 0)).toBe("Oct 3, 2026: no activity");
   });
 });
@@ -88,7 +88,7 @@ describe("DeskHeatmap", () => {
     expect(cell("Oct 7, 2026: 1 Task completed")).toBeInTheDocument();
     expect(screen.queryByRole("img", { name: /Oct 8, 2026/ })).toBeNull();
     expect(cell("Sep 30, 2026: 3 Tasks completed")).toBeInTheDocument();
-    expect(cell("Sep 29, 2026: opened Yoh, no Tasks completed")).toBeInTheDocument();
+    expect(cell("Sep 29, 2026: opened Meeseek, no Tasks completed")).toBeInTheDocument();
     expect(cell("Sep 27, 2026: no activity")).toBeInTheDocument();
   });
 
@@ -169,8 +169,8 @@ describe("DeskHeatmap", () => {
 
   it("words the tooltip for opened and empty days", async () => {
     render(<DeskHeatmap weeks={WEEKS} />);
-    fireEvent.focus(cell("Sep 29, 2026: opened Yoh, no Tasks completed"));
-    await screen.findByText("Opened Yoh, no Tasks completed");
+    fireEvent.focus(cell("Sep 29, 2026: opened Meeseek, no Tasks completed"));
+    await screen.findByText("Opened Meeseek, no Tasks completed");
     fireEvent.focus(cell("Sep 27, 2026: no activity"));
     await screen.findByText("No activity");
   });

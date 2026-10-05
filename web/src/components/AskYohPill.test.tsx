@@ -12,7 +12,7 @@ describe("AskYohPill", () => {
 
   it("renders a focusable button synchronously — no gate, no wait", () => {
     render(<AskYohPill />);
-    const button = screen.getByRole("button", { name: /ask yoh/i });
+    const button = screen.getByRole("button", { name: /ask meeseek/i });
     button.focus();
     expect(button).toHaveFocus();
   });
@@ -20,7 +20,7 @@ describe("AskYohPill", () => {
   it("clicking opens the Chat panel", () => {
     const open = vi.spyOn(chatPanel, "openChatPanel").mockImplementation(() => {});
     render(<AskYohPill />);
-    fireEvent.click(screen.getByRole("button", { name: /ask yoh/i }));
+    fireEvent.click(screen.getByRole("button", { name: /ask meeseek/i }));
     expect(open).toHaveBeenCalledTimes(1);
   });
 
@@ -31,7 +31,7 @@ describe("AskYohPill", () => {
 
   it("has hover shadow step, pressed inset and a focus ring", () => {
     render(<AskYohPill />);
-    const cls = screen.getByRole("button", { name: /ask yoh/i }).className;
+    const cls = screen.getByRole("button", { name: /ask meeseek/i }).className;
     expect(cls).toContain("hover:shadow-extruded-lg");
     expect(cls).toContain("active:shadow-inset");
     expect(cls).toContain(FOCUS_RING);

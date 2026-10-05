@@ -10,11 +10,11 @@ test.beforeEach(async ({ request }) => {
 
 test("/night ends by asking for anything else; Nothing else closes out", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: /ask yoh/i }).click();
+  await page.getByRole("button", { name: /ask meeseek/i }).click();
   const chat = page.getByTestId("chat-panel");
   await expect(chat).toBeVisible();
 
-  const input = page.getByRole("combobox", { name: "Message Yoh" });
+  const input = page.getByRole("combobox", { name: "Message Meeseek" });
   await input.fill("/night");
   await input.press("Enter");
 

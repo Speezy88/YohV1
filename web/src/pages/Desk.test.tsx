@@ -58,7 +58,7 @@ describe("DeskPage", () => {
     expect(rows.map((r) => r.textContent)).toEqual(["Newest task", "Older task"]);
     expect(within(done).getByText("Newest task").className).toContain("line-through");
     expect(within(done).getByRole("region", { name: "Tasks completed today, list" })).toHaveAttribute("tabindex", "0");
-    expect(screen.getByText("5 h with Yoh")).toBeInTheDocument();
+    expect(screen.getByText("5 h with Meeseek")).toBeInTheDocument();
     expect(screen.getByText("50%")).toBeInTheDocument();
     expect(screen.getByText("2 of 4 Tasks with a due date")).toBeInTheDocument();
     expect(screen.getByText("Streak: 3 days · Longest: 5 days")).toBeInTheDocument();

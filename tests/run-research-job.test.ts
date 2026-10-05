@@ -224,7 +224,7 @@ test("recovery: every running job -> failed with one research-failed each; queue
   const q = ctx.queue("still queued");
   const result = await failInterruptedResearchJobs(ctx.deps, {});
   assert.deepEqual(result, { ok: true, value: { failed: 1 } });
-  const text = "Yoh restarted before it finished. It may already be on Research Hub; if not, send /research again.";
+  const text = "Meeseek restarted before it finished. It may already be on Research Hub; if not, send /research again.";
   assert.deepEqual(ctx.job(a), { status: "failed", page_id: null, error: text });
   assert.equal(ctx.job(q).status, "queued");
   const notes = listUnreadNotifications(ctx.connection);
@@ -264,7 +264,7 @@ test("M1: a job left running is failed at claim time and the next queued job run
   const result = await runNextResearchJob(ctx.deps, {});
   assert.deepEqual(result, { ok: true, value: { ran: true, outcome: "done" } });
   assert.equal(ctx.job(orphan).status, "failed");
-  assert.equal(ctx.job(orphan).error, "Yoh restarted before it finished. It may already be on Research Hub; if not, send /research again.");
+  assert.equal(ctx.job(orphan).error, "Meeseek restarted before it finished. It may already be on Research Hub; if not, send /research again.");
   assert.equal(ctx.job(next).status, "done");
   assert.deepEqual(listUnreadNotifications(ctx.connection).map((n) => n.kind).sort(), ["research-failed", "research-ready"]);
   ctx.connection.close();
@@ -282,7 +282,7 @@ test("M2: the page was filed but the done write throws -> failed row keeps the p
   assert.equal(row.page_id, "new-page-id");
   const notes = listUnreadNotifications(ctx.connection);
   assert.deepEqual(notes.map((n) => n.kind), ["research-failed"]);
-  assert.equal(notes[0]!.body, "It was filed, but Yoh couldn't record it. Check Research Hub.");
+  assert.equal(notes[0]!.body, "It was filed, but Meeseek couldn't record it. Check Research Hub.");
   assert.equal(notes[0]!.title, "Research filed, but not recorded: filed then lost");
   assert.equal(notes[0]!.deepLink, "research:new-page-id");
   const hints = ctx.connection.db.prepare("SELECT topic, entity_id FROM outbox WHERE topic = 'research'").all();

@@ -24,7 +24,7 @@ function setup(now: () => Date = () => NOW) {
       entityId: `area-overrun:${area}`,
       entityVersion: "new",
       suggested: { kind: "area-overrun", area, occurrences: 5, paddingMinutes: 30, evidence: "5 times since Sep 3: Sep 3" } as unknown as PatternProposal,
-      reason: `Yoh noticed ${area} Tasks run about 30 min over.\n5 times since Sep 3: Sep 3\nPlan for that?`,
+      reason: `Meeseek noticed ${area} Tasks run about 30 min over.\n5 times since Sep 3: Sep 3\nPlan for that?`,
       createdAt,
     };
     if (withRequest) {

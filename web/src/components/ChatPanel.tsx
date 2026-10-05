@@ -103,7 +103,7 @@ export function ChatPanel(): React.JSX.Element | null {
     // — a generic "first textarea or input" would instead grab an inline
     // Structured Question's free-text field when one renders above it in
     // the stream.
-    panelRef.current?.querySelector<HTMLElement>('textarea[aria-label="Message Yoh"]')?.focus();
+    panelRef.current?.querySelector<HTMLElement>('textarea[aria-label="Message Meeseek"]')?.focus();
   }, [open]);
 
   // Escape and the Tab cycle live on `document` while the panel is open, so
@@ -186,14 +186,14 @@ export function ChatPanel(): React.JSX.Element | null {
         ref={panelRef}
         data-testid="chat-panel"
         role="dialog"
-        aria-label="Chat with Yoh"
+        aria-label="Chat with Meeseek"
         aria-modal="true"
         className="fixed bottom-6 left-[268px] right-6 top-6 z-(--z-chat) flex flex-col gap-4 rounded-2xl border-[length:var(--rim-width)] border-rim-structural bg-surface-raised p-6 shadow-extruded-lg"
       >
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <YohMark className="size-[34px] rounded-md" />
-            <span className="font-body text-title font-bold text-ink-primary">Yoh</span>
+            <span className="font-body text-title font-bold text-ink-primary">Meeseek</span>
           </div>
           <div className="flex items-center gap-3">
             {chipLabel && (

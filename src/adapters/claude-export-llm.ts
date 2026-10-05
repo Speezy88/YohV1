@@ -25,7 +25,7 @@ const DISTILLED_MAX_TOKENS = 8000;
 
 function systemPrompt(kind: ExportSourceKind): string {
   return [
-    "You extract durable facts about Spencer for Yoh, his daily-planning assistant.",
+    "You extract durable facts about Spencer for Meeseek, his daily-planning assistant.",
     kind === "distilled"
       ? "The input is another assistant's saved notes about Spencer and the instructions he wrote for his projects. Rewrite what is durable as separate facts."
       : "The input is messages Spencer wrote to another assistant, grouped by conversation; each heading carries the conversation's date. Return at most 5 facts for the whole input, and [] when nothing is durable.",

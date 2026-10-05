@@ -44,12 +44,12 @@ export function ChatInput(): React.JSX.Element {
         rows={1}
         value={draft}
         role="combobox"
-        aria-label="Message Yoh"
+        aria-label="Message Meeseek"
         aria-expanded={showPalette}
         aria-autocomplete="list"
         aria-haspopup="listbox"
         aria-controls={showPalette ? COMMAND_PALETTE_ID : undefined}
-        placeholder="Ask Yoh, or type / for commands"
+        placeholder="Ask Meeseek, or type / for commands"
         aria-activedescendant={activeDescendant}
         className="field-sizing-content max-h-32 min-w-0 flex-1 resize-none self-center bg-transparent py-2.5 font-body text-body text-ink-primary outline-none placeholder:text-ink-secondary"
         onChange={(e) => handleChange(e.target.value)}

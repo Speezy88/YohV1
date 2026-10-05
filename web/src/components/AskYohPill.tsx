@@ -26,7 +26,7 @@ export function AskYohPill(): React.JSX.Element {
       <button
         type="button"
         data-testid="ask-yoh-pill"
-        aria-label="Ask Yoh (Command K)"
+        aria-label="Ask Meeseek (Command K)"
         onClick={openChatPanel}
         className={`notification-glass pointer-events-auto flex h-[46px] items-center gap-2.5 rounded-full py-0 pl-2 pr-4 font-body text-small font-bold text-ink-primary shadow-extruded-md hover:shadow-extruded-lg active:shadow-inset ${FOCUS_RING} ${CONTROL_TRANSITION}`}
       >
@@ -36,7 +36,7 @@ export function AskYohPill(): React.JSX.Element {
         >
           <ChatGlyph size={15} className="text-on-accent-solid" />
         </span>
-        Ask Yoh
+        Ask Meeseek
         <span className="pl-1 font-body text-caption font-medium text-ink-secondary">⌘K</span>
       </button>
     </div>

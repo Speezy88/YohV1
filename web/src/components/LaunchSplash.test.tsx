@@ -3,9 +3,9 @@ import { render, screen } from "@testing-library/react";
 import { LaunchSplash } from "./LaunchSplash.tsx";
 
 describe("LaunchSplash", () => {
-  it("shows the Yoh Meeseek wordmark and nothing else", () => {
+  it("shows the Meeseek wordmark and nothing else", () => {
     const { container } = render(<LaunchSplash />);
-    expect(screen.getByText("Yoh Meeseek")).toBeInTheDocument();
+    expect(screen.getByText("Meeseek")).toBeInTheDocument();
     expect(container.firstElementChild?.childElementCount).toBe(0);
   });
 

@@ -436,7 +436,7 @@ export default function TasksPage(): React.JSX.Element {
       </section>
 
       {/* Polish-3: one bottom dock, pinned below the table (never scrolls
-          away, keeps clear of the floating Ask Yoh pill via the same
+          away, keeps clear of the floating Ask Meeseek pill via the same
           `pb-24` bottom clearance every page reserves for it) — quick-add
           full width on top, search + grouping on one row underneath. */}
       <div data-testid="tasks-dock" data-wheel-nav="off" className="flex shrink-0 flex-col gap-3 rounded-2xl bg-surface-raised px-4 py-4 shadow-extruded-lg">

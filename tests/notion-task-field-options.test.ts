@@ -11,7 +11,7 @@ import { createFakeNotionTasksDb } from "./fakes/fake-notion-tasks-db.ts";
 
 const CONFIG = { tasksDataSourceId: "tasks-ds", projectsDataSourceId: "projects-ds" };
 
-test("readTaskFieldOptions lists the live Area options and maps live Energy/Status names onto Yoh's enums", async () => {
+test("readTaskFieldOptions lists the live Area options and maps live Energy/Status names onto Meeseek's enums", async () => {
   const db = createFakeNotionTasksDb();
   const options = await readTaskFieldOptions(db.client, CONFIG);
   assert.deepEqual(options.area, ["School", "Bio", "Math", "Errands", "Personal"]);

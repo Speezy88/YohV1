@@ -280,10 +280,10 @@ describe("TasksPage", () => {
   // Polish 4 Task 1 (Spencer): the old hint line ("Add a date, a time
   // like 30m, …") and the row it sat in are gone — nothing is rendered,
   // and no empty row is reserved, until something is actually read.
-  it("reserves no row for 'Yoh reads' when nothing has been read yet", async () => {
+  it("reserves no row for 'Meeseek reads' when nothing has been read yet", async () => {
     await renderLoaded();
     expect(screen.queryByText(/Add a date, a time like/)).not.toBeInTheDocument();
-    expect(screen.queryByText("Yoh reads:")).not.toBeInTheDocument();
+    expect(screen.queryByText("Meeseek reads:")).not.toBeInTheDocument();
     expect(screen.queryByTestId("quick-add-chip")).not.toBeInTheDocument();
 
     api.tasks.parse.$post.mockResolvedValue(envelope({ ok: true, value: { title: "Call the dentist", unmatchedAreas: [] } }));
@@ -291,7 +291,7 @@ describe("TasksPage", () => {
     fireEvent.change(input, { target: { value: "Call the dentist" } });
     // A title-only preview reads no fields at all: still no "Yoh reads" row.
     await waitFor(() => expect(api.tasks.parse.$post).toHaveBeenCalled());
-    expect(screen.queryByText("Yoh reads:")).not.toBeInTheDocument();
+    expect(screen.queryByText("Meeseek reads:")).not.toBeInTheDocument();
   });
 
   it("a failed create takes the row back out and shows a plain failure notice", async () => {

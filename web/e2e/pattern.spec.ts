@@ -16,7 +16,7 @@ async function seedPattern(request: import("@playwright/test").APIRequestContext
 
 async function openChat(page: Page): Promise<void> {
   await page.goto("/");
-  await page.getByRole("button", { name: /ask yoh/i }).click();
+  await page.getByRole("button", { name: /ask meeseek/i }).click();
   await expect(page.getByTestId("chat-panel")).toBeVisible();
 }
 
@@ -71,7 +71,7 @@ test("/morning carries the card and reopening the panel shows no second one that
   );
   await openChat(page);
   const chat = page.getByTestId("chat-panel");
-  const input = chat.getByRole("combobox", { name: "Message Yoh" });
+  const input = chat.getByRole("combobox", { name: "Message Meeseek" });
   await input.fill("/morning");
   await input.press("Enter");
   await expect(chat.getByText("Fixture morning.")).toBeVisible({ timeout: 10_000 });
@@ -83,7 +83,7 @@ test("/morning carries the card and reopening the panel shows no second one that
   await expect(chat.getByText("Okay. I won't ask about that again for a while.")).toBeVisible({ timeout: 10_000 });
   await page.unroute("**/api/memory/pattern-offer");
   await page.getByRole("button", { name: "Close chat" }).click();
-  await page.getByRole("button", { name: /ask yoh/i }).click();
+  await page.getByRole("button", { name: /ask meeseek/i }).click();
   await expect(page.getByTestId("chat-panel")).toBeVisible();
   await expect(page.getByTestId("structured-question")).toHaveCount(0);
 });

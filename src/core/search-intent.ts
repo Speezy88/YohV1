@@ -49,7 +49,7 @@
 const EXPLICIT_SEARCH_PREFIX_RE = /^search:\s*(.+)$/is;
 
 /** A leading polite/address phrase before an imperative ("hey Yoh, can you please look up …"). */
-export const POLITE_LEAD = String.raw`(?:(?:hey\s+)?yoh[,:]?\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?`;
+export const POLITE_LEAD = String.raw`(?:(?:hey\s+)?(?:meeseek|yoh)[,:]?\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?`;
 
 /** A search verb used as an imperative — only at the start of the message (after an optional polite lead), so "I need to research colleges" or "remind me to look up flights" stay tasks/captures. */
 const SEARCH_VERB_RE = new RegExp(

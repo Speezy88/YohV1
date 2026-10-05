@@ -26,7 +26,7 @@ async function settle<T>(request: () => Promise<{ json(): Promise<unknown> }>): 
     const result = (await res.json()) as { ok: true; value: T } | { ok: false; error: { message: string } };
     return result.ok ? { ok: true, value: result.value } : { ok: false, message: result.error.message };
   } catch {
-    return { ok: false, message: "I couldn't reach Yoh's server just now." };
+    return { ok: false, message: "I couldn't reach Meeseek's server just now." };
   }
 }
 

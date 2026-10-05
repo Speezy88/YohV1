@@ -116,7 +116,7 @@ describe("focus return (S1, polish-6 review)", () => {
     expect(pill).toHaveFocus();
   });
 
-  it("falls back to the Ask Yoh pill when the opener is gone at close", () => {
+  it("falls back to the Ask Meeseek pill when the opener is gone at close", () => {
     const pill = document.createElement("button");
     pill.setAttribute("data-testid", "ask-yoh-pill");
     const link = document.createElement("button");

@@ -84,13 +84,13 @@ describe("memory sorting feedback", () => {
   });
 
   it("a failed save keeps the panel and the reason and shows the error", async () => {
-    send.mockResolvedValue({ ok: false, message: "I couldn't reach Yoh's server just now." });
+    send.mockResolvedValue({ ok: false, message: "I couldn't reach Meeseek's server just now." });
     row();
     openPanel();
     fireEvent.click(screen.getByRole("button", { name: "Wrong" }));
     fireEvent.change(reasonField(), { target: { value: "It's a habit." } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("I couldn't reach Yoh's server just now.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("I couldn't reach Meeseek's server just now.");
     expect(reasonField()).toHaveValue("It's a habit.");
   });
 

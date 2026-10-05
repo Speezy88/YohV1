@@ -31,14 +31,14 @@ function completedPhrase(completed: number): string {
 /** The text after the date: `5 Tasks completed`, `Opened Yoh, no Tasks completed` or `No activity`. */
 export function heatmapCountLine(level: number, completed: number): string {
   if (completed > 0) return completedPhrase(completed);
-  return level >= 1 ? "Opened Yoh, no Tasks completed" : "No activity";
+  return level >= 1 ? "Opened Meeseek, no Tasks completed" : "No activity";
 }
 
 /** A cell's accessible name. */
 export function heatmapCellLabel(date: Date, level: number, completed: number): string {
   const when = formatHeatmapDay(date);
   if (completed > 0) return `${when}: ${completedPhrase(completed)}`;
-  return level >= 1 ? `${when}: opened Yoh, no Tasks completed` : `${when}: no activity`;
+  return level >= 1 ? `${when}: opened Meeseek, no Tasks completed` : `${when}: no activity`;
 }
 
 const WEEKDAY_FORMAT = new Intl.DateTimeFormat("en-US", { weekday: "long", timeZone: "UTC" });

@@ -23,8 +23,8 @@ import type { SearchFn } from "./web-search.ts";
 export const RESEARCH_JOB_POLL_INTERVAL_MS = 3000;
 
 const EMPTY_RESULT_COPY = "The search didn't find anything useful.";
-const INTERRUPTED_COPY = "Yoh restarted before it finished. It may already be on Research Hub; if not, send /research again.";
-const FILED_NOT_RECORDED_COPY = "It was filed, but Yoh couldn't record it. Check Research Hub.";
+const INTERRUPTED_COPY = "Meeseek restarted before it finished. It may already be on Research Hub; if not, send /research again.";
+const FILED_NOT_RECORDED_COPY = "It was filed, but Meeseek couldn't record it. Check Research Hub.";
 const SEARCH_TIMEOUT_COPY = "The search took too long.";
 
 /** The longest the runner waits for one search before failing the job (E11 review M5). */

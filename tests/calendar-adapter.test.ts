@@ -1496,7 +1496,7 @@ test("applyCalendarEdit deletes an event that carries the chat marker", async ()
   assert.equal(client.deleteCalls.length, 1);
 });
 
-test("applyCalendarEdit refuses to delete an event with no Yoh marker", async () => {
+test("applyCalendarEdit refuses to delete an event with no Meeseek marker", async () => {
   const client = fakeBroadClient({ getResult: { id: "e1", etag: "v1" } });
   const result = await applyCalendarEdit(client, deleteProposal("v1"));
   assert.equal(result.ok, false);

@@ -28,7 +28,7 @@ function notify(): void {
 }
 
 /** Fixed copy for a thrown failure; a caught Error's own text is never stored or shown. */
-const UNREACHABLE_COPY = "I couldn't reach Yoh's server just now.";
+const UNREACHABLE_COPY = "I couldn't reach Meeseek's server just now.";
 
 function fail(message: string): void {
   // Stale beats blank: after a successful load, keep the view.

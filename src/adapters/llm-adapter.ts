@@ -190,7 +190,7 @@ export interface ExtractMemoriesOptions {
 function extractMemoriesSystemPrompt(opts: ExtractMemoriesOptions): string {
   const examples = opts.sortingExamples ?? [];
   return [
-    "You are Yoh's memory filer. From Spencer's typed message, propose at most 2 short facts worth remembering.",
+    "You are Meeseek's memory filer. From Spencer's typed message, propose at most 2 short facts worth remembering.",
     "Reply with ONLY a JSON array (no prose). Each element: {\"folder\", \"text\", \"origin\", optional \"scope\", \"expiresOn\", \"entityRef\", \"restatesId\", \"contradictsId\", \"sensitive\", \"ruleChange\"}.",
     `folder is one of: ${MEMORY_FOLDERS_IN_ORDER.join(", ")}.`,
     "text: one sentence in Spencer's own meaning, at most 280 characters.",
@@ -354,7 +354,7 @@ const SUGGEST_FIELD_VALUE_MAX_TOKENS = 256;
 
 function buildSuggestFieldValueSystemPrompt(taskTitle: string, field: PlanningFieldNames): string {
   return [
-    "You are helping Yoh, Spencer's personal planning assistant, decide whether a specific Task field can be confidently answered from Spencer's own recent chat messages.",
+    "You are helping Meeseek, Spencer's personal planning assistant, decide whether a specific Task field can be confidently answered from Spencer's own recent chat messages.",
     `Task: "${taskTitle}"`,
     `Missing field: ${FIELD_LABELS[field]}`,
     "",
@@ -490,7 +490,7 @@ function buildDraftNotionPageStableSystemPrompt(database: NotionDatabaseTarget):
   const fields = DRAFT_NOTION_PAGE_KNOWN_FIELDS[database];
   const dateFields = DRAFT_NOTION_PAGE_DATE_FIELDS[database];
   const lines = [
-    `You are helping Yoh, Spencer's personal planning assistant, turn a chat request into a structured draft for a new "${database}" Notion item.`,
+    `You are helping Meeseek, Spencer's personal planning assistant, turn a chat request into a structured draft for a new "${database}" Notion item.`,
     `Extract ONLY fields Spencer actually mentioned, from this list: ${fields.join(", ")}.`,
     `Respond with one "field=value" line per field you can confidently extract, using EXACTLY these field names. "title" is required — if you cannot confidently extract a title, respond with exactly: NONE`,
     "Never invent a value Spencer didn't say or clearly imply.",
@@ -619,7 +619,7 @@ interface CalendarEditCandidateEvent {
  */
 function buildDraftCalendarEditStableSystemPrompt(): string {
   return [
-    "You are helping Yoh, Spencer's personal planning assistant, turn a chat request into a structured Calendar edit.",
+    "You are helping Meeseek, Spencer's personal planning assistant, turn a chat request into a structured Calendar edit.",
     'Resolve any relative date or time Spencer gives (e.g. "4pm", "tomorrow", "Friday", "in an hour") into a full ISO-8601 UTC datetime with a "Z" suffix (e.g. "2026-09-18T20:00:00.000Z") — always include the date, time and "Z"; never a bare date or a time without an offset. Spencer\'s current date, timezone, and today\'s known calendar events are given right after this instruction block.',
     "For a CREATE request, compute the event's END time precisely from whatever Spencer said: an explicit end time (\"till 4\", \"until 4pm\") ends there; a duration phrase (\"an hour and a half\" = 90 minutes, \"half an hour\" = 30 minutes, \"for 45 minutes\"/\"for 45 mins\" = 45 minutes) ends that many minutes after the start. If Spencer gave NEITHER an explicit end time NOR a duration at all, default the duration to exactly 60 minutes.",
     "Respond on ONE line, in exactly one of these forms:",
@@ -779,7 +779,7 @@ const NORMALIZE_QUICK_ADD_MAX_TOKENS = 256;
 /** The STABLE half (Task 9's caching convention) — the instructions never depend on `today`/`timeZone`/the live option lists actually CHANGING shape call to call for the same Spencer session, only their VALUES do, which live in the volatile block instead. */
 function buildNormalizeQuickAddStableSystemPrompt(): string {
   return [
-    "You are helping Yoh, Spencer's personal planning assistant, read the real fields out of a quick-add line for a new Task — Spencer typed the WHOLE line as one piece of free text, and some of it is data (a due date, a duration, an energy level, an area, a status), not title.",
+    "You are helping Meeseek, Spencer's personal planning assistant, read the real fields out of a quick-add line for a new Task — Spencer typed the WHOLE line as one piece of free text, and some of it is data (a due date, a duration, an energy level, an area, a status), not title.",
     'Respond with STRICT JSON only, on one line, with exactly these optional keys: {"title": "...", "dueDate": "YYYY-MM-DD", "estimatedDurationMinutes": "60", "energy": "low|medium|high", "area": "...", "status": "not-started|in-progress", "priority": "..."}.',
     '"title" is the words that are genuinely the task\'s name once every field below is read out of the line — drop a leading imperative like "add". Always include "title", even if you find no other field at all.',
     "Resolve any relative date/day phrase (\"wednesday\", \"tomorrow\", \"next week friday\") into a real \"YYYY-MM-DD\" date using today's date and timezone, given right after this instruction block. Never invent a date Spencer didn't say or clearly imply.",

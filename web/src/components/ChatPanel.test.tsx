@@ -27,7 +27,7 @@ function setScrollGeometry(el: HTMLElement, geometry: { scrollHeight: number; cl
 }
 
 function pressEnterWith(text: string): void {
-  const input = screen.getByRole("combobox", { name: "Message Yoh" });
+  const input = screen.getByRole("combobox", { name: "Message Meeseek" });
   fireEvent.change(input, { target: { value: text } });
   fireEvent.keyDown(input, { key: "Enter" });
 }
@@ -105,7 +105,7 @@ describe("ChatPanel", () => {
 
   it("focuses the Chat Input's textarea as soon as it opens (capture flow: click/⌘K, type, Enter)", () => {
     renderOpenPanel();
-    expect(screen.getByRole("combobox", { name: "Message Yoh" })).toHaveFocus();
+    expect(screen.getByRole("combobox", { name: "Message Meeseek" })).toHaveFocus();
   });
 
   it("Esc closes the panel", () => {
@@ -131,7 +131,7 @@ describe("ChatPanel", () => {
 
   it("Task 8: Tab between inner controls is left to the browser", () => {
     renderOpenPanel();
-    const input = screen.getByRole("combobox", { name: "Message Yoh" });
+    const input = screen.getByRole("combobox", { name: "Message Meeseek" });
     expect(fireEvent.keyDown(input, { key: "Tab", shiftKey: true })).toBe(true);
   });
 
@@ -145,7 +145,7 @@ describe("ChatPanel", () => {
 
   it("S2: Esc that a control inside the panel already handled does not also close it", () => {
     renderOpenPanel();
-    const input = screen.getByRole("combobox", { name: "Message Yoh" });
+    const input = screen.getByRole("combobox", { name: "Message Meeseek" });
     input.addEventListener("keydown", (e) => {
       if (e.key === "Escape") e.preventDefault();
     });
@@ -316,20 +316,20 @@ describe("ChatPanel", () => {
   it("on Enter, Spencer's turn and the Thinking Indicator render synchronously, before streamChat has done anything", () => {
     const streamChat = vi.spyOn(chatStreamModule, "streamChat").mockReturnValue(new Promise(() => {}));
     renderOpenPanel();
-    pressEnterWith("Hello Yoh");
-    expect(screen.getByText("Hello Yoh")).toBeInTheDocument();
+    pressEnterWith("Hello Meeseek");
+    expect(screen.getByText("Hello Meeseek")).toBeInTheDocument();
     expect(screen.getByTestId("thinking-indicator")).toBeInTheDocument();
     expect(streamChat).toHaveBeenCalledTimes(1);
   });
 
-  it("the Thinking Indicator gives way to Yoh's streamed text as deltas arrive", async () => {
+  it("the Thinking Indicator gives way to Meeseek's streamed text as deltas arrive", async () => {
     let onEvent!: (e: ChatStreamEvent) => void;
     vi.spyOn(chatStreamModule, "streamChat").mockImplementation((_request, handlers) => {
       onEvent = (e) => handlers.onEvent(e);
       return new Promise(() => {});
     });
     renderOpenPanel();
-    pressEnterWith("Hello Yoh");
+    pressEnterWith("Hello Meeseek");
     act(() => onEvent({ type: "delta", text: "Here's what " }));
     act(() => onEvent({ type: "delta", text: "I found." }));
     expect(screen.queryByTestId("thinking-indicator")).not.toBeInTheDocument();
@@ -339,7 +339,7 @@ describe("ChatPanel", () => {
   it("registers no launch-splash gate (Home's \"home-data\" stays the only one)", () => {
     const gate = vi.spyOn(readiness, "useReadinessGate");
     renderOpenPanel();
-    pressEnterWith("Hello Yoh");
+    pressEnterWith("Hello Meeseek");
     expect(gate).not.toHaveBeenCalled();
     const { result } = renderHook(() => readiness.useAppReady());
     expect(result.current).toBe(true);

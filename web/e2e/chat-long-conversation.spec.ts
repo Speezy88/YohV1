@@ -19,7 +19,7 @@ const TURNS = 30;
 
 async function openChat(page: Page): Promise<void> {
   await page.goto("/");
-  await page.getByRole("button", { name: /ask yoh/i }).click();
+  await page.getByRole("button", { name: /ask meeseek/i }).click();
   await expect(page.getByTestId("chat-panel")).toBeVisible();
 }
 
@@ -60,7 +60,7 @@ test("a long conversation never lets the stream or the last message overlap the 
   await openChat(page);
   const chat = page.getByTestId("chat-panel");
 
-  const input = chat.getByRole("combobox", { name: "Message Yoh" });
+  const input = chat.getByRole("combobox", { name: "Message Meeseek" });
   const stream = chat.getByTestId("chat-stream");
   for (let i = 0; i < TURNS; i++) {
     // eslint-disable-next-line no-await-in-loop -- turns are inherently

@@ -62,7 +62,7 @@ test("expiry compares against the local date, not UTC (late evening)", () => {
 const flags = { handledDeterministically: false, isStructuredAnswer: false };
 
 test("isTrivialTurn: short, acknowledgement, flagged", () => {
-  for (const t of ["ok thanks", "yes", "sounds good, thank you", "Thanks so much, Yoh!", "ok, that works for me", "Got it, thank you very much"]) {
+  for (const t of ["ok thanks", "yes", "sounds good, thank you", "Thanks so much, Meeseek!", "ok, that works for me", "Got it, thank you very much"]) {
     assert.equal(isTrivialTurn(t, flags), true, t);
   }
   assert.equal(isTrivialTurn("I have chemistry club every Tuesday after school", flags), false);

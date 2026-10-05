@@ -12,14 +12,14 @@ test.beforeEach(async ({ request }) => {
 
 test("a message and its reply are still shown after a reload", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: /ask yoh/i }).click();
+  await page.getByRole("button", { name: /ask meeseek/i }).click();
   const chat = page.getByTestId("chat-panel");
-  await chat.getByRole("combobox", { name: "Message Yoh" }).fill("Remember this exchange");
-  await chat.getByRole("combobox", { name: "Message Yoh" }).press("Enter");
+  await chat.getByRole("combobox", { name: "Message Meeseek" }).fill("Remember this exchange");
+  await chat.getByRole("combobox", { name: "Message Meeseek" }).press("Enter");
   await expect(chat.getByText(FIXTURE_CHAT_REPLY)).toBeVisible({ timeout: 5_000 });
 
   await page.reload();
-  await page.getByRole("button", { name: /ask yoh/i }).click();
+  await page.getByRole("button", { name: /ask meeseek/i }).click();
   const restored = page.getByTestId("chat-panel");
   await expect(restored.getByText("Remember this exchange")).toBeVisible();
   // .first(): a previous spec's late reply can land after this spec's reset.

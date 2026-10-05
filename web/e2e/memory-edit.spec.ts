@@ -179,9 +179,9 @@ test("Changed settings: Revert the seeded override", async ({ page }) => {
 test("rule change chain: remember, Yes on the card, Changed settings, Revert", async ({ page, request }) => {
   await request.post("/__fixture/reset");
   await page.goto("/");
-  await page.getByRole("button", { name: /ask yoh/i }).click();
+  await page.getByRole("button", { name: /ask meeseek/i }).click();
   const chat = page.getByTestId("chat-panel");
-  const input = chat.getByRole("combobox", { name: "Message Yoh" });
+  const input = chat.getByRole("combobox", { name: "Message Meeseek" });
   await input.fill("remember that I want to start work at 2:30 on school days");
   await input.press("Enter");
   await expect(chat.getByTestId("remembered-receipt")).toContainText(`Remembered: ${FIXTURE_RULE_TEXT}`, { timeout: 10_000 });

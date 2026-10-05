@@ -16,6 +16,6 @@ export async function requestSetTimeBudget(totalMinutes: number): Promise<TimeBu
     const result = (await res.json()) as { ok: true; value: { receipt: string } } | { ok: false; error: { message: string } };
     return result.ok ? { ok: true, receipt: result.value.receipt } : { ok: false, message: result.error.message };
   } catch {
-    return { ok: false, message: "Couldn't reach Yoh — try again." };
+    return { ok: false, message: "Couldn't reach Meeseek — try again." };
   }
 }

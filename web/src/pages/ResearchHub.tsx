@@ -177,7 +177,7 @@ function AskResearchBox(): React.JSX.Element {
         <span className="shrink-0 font-body text-small text-ink-secondary">Enter to ask</span>
       </label>
       <p className="m-0 pl-1 font-body text-small text-ink-secondary">
-        Opens in Chat, where Yoh searches — say "save that" to file the answer here.
+        Opens in Chat, where Meeseek searches — say "save that" to file the answer here.
       </p>
     </section>
   );

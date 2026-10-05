@@ -75,10 +75,10 @@ test("skip and after: skipped keys are not proposed; only observations after `af
 test("describePattern copy", () => {
   const p = { kind: "area-overrun" as const, area: "History" as never, occurrences: 5, firstSeen: "2026-09-03", lastSeen: "2026-09-23", sampleDates: ["2026-09-03", "2026-09-10"], paddingMinutes: 30 };
   const d = describePattern(p);
-  assert.equal(d.headline, "Yoh noticed History Tasks run about 30 min over.");
+  assert.equal(d.headline, "Meeseek noticed History Tasks run about 30 min over.");
   assert.equal(d.evidence, "5 times since Sep 3: Sep 3, Sep 10");
   assert.equal(d.question, "Plan for that?");
   const s = describePattern({ kind: "area-slips", area: p.area, occurrences: 5, firstSeen: p.firstSeen, lastSeen: p.lastSeen, sampleDates: p.sampleDates });
-  assert.equal(s.headline, "Yoh noticed History Tasks keep slipping to the next day.");
+  assert.equal(s.headline, "Meeseek noticed History Tasks keep slipping to the next day.");
   assert.equal(s.question, "Remember that?");
 });

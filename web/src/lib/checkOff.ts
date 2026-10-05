@@ -24,7 +24,7 @@ async function settle<T>(request: () => Promise<{ json(): Promise<unknown> }>): 
     // no message worth showing Spencer — `err.message` here is a browser/
     // fetch implementation detail, not something actionable. Mirrors
     // `sandboxClient.ts`'s identical catch verbatim.
-    return { ok: false, message: "Couldn't reach Yoh — try again." };
+    return { ok: false, message: "Couldn't reach Meeseek — try again." };
   }
 }
 

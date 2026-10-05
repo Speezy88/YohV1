@@ -152,7 +152,7 @@ export async function runClaudeExportExtract(o: ExtractOptions): Promise<number>
       `Lines per folder: ${perFolder}.`,
       "Delete the lines you do not want, reword freely, and move lines between headings.",
       "Each line is one memory item of at most 280 characters. The date and [sensitive] marker are optional.",
-      `Always-loaded folders: ${always} lines here (Feedback, Planning preferences, Corrections, About you). Yoh loads at most ${ALWAYS_LOADED_CAP} in total, counting what it already holds.`,
+      `Always-loaded folders: ${always} lines here (Feedback, Planning preferences, Corrections, About you). Meeseek loads at most ${ALWAYS_LOADED_CAP} in total, counting what it already holds.`,
     ]),
   );
   o.print(`Wrote ${merged.length} candidates (from ${candidates.length} before merging) to ${o.outPath}.`);

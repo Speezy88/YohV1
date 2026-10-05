@@ -718,7 +718,7 @@ function ritualSubject(subcommand: string): string {
     case "night-escalate":
       return "Tonight's reminder email";
     default:
-      return `Yoh's ${subcommand}`;
+      return `Meeseek's ${subcommand}`;
   }
 }
 
@@ -807,7 +807,7 @@ export function buildDegradedAlertBody(detail: string): string {
 
 /** Worded distinctly from all three alert bodies above — this run neither failed nor was skipped; a DIFFERENT process (the server) appears down. No mention of "heartbeat" — that's this file's own internal mechanism name, not something Spencer needs to know. */
 export function buildHeartbeatStaleAlertBody(): string {
-  return "The Yoh server on your Mac hasn't checked in recently — it may be off or asleep. This doesn't affect your Plan.";
+  return "The Meeseek server on your Mac hasn't checked in recently — it may be off or asleep. This doesn't affect your Plan.";
 }
 
 /**

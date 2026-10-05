@@ -337,7 +337,7 @@ test("zero tagged events while the snapshot has future entries: unchanged, one w
   s.store.close();
 });
 
-test("every Yoh event confirmed deleted by Google: each Task is dropped for today", async () => {
+test("every Meeseek event confirmed deleted by Google: each Task is dropped for today", async () => {
   const s = setup();
   s.setEvents([]);
   s.setDeletedIds(["ev-v1-work-1", "ev-v1-work-2"]);

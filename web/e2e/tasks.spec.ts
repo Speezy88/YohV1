@@ -135,7 +135,7 @@ test("↓ from quick-add moves into the rows, and ↓/↑ there move rows — ne
   await expect(page.getByRole("textbox", { name: "New task" })).toBeFocused();
 });
 
-test("scrolled to its very end, the last row sits fully above the Ask Yoh pill", async ({ page }) => {
+test("scrolled to its very end, the last row sits fully above the Ask Meeseek pill", async ({ page }) => {
   await openTasks(page);
   const list = page.getByTestId("page-tasks").locator("[data-captures-arrow-keys]");
   await list.evaluate((el) => {
@@ -144,7 +144,7 @@ test("scrolled to its very end, the last row sits fully above the Ask Yoh pill",
   const lastRow = page.getByTestId("task-row").last();
   await expect(lastRow).toBeVisible();
   const rowBox = (await lastRow.boundingBox())!;
-  const pillBox = (await page.getByRole("button", { name: /ask yoh/i }).boundingBox())!;
+  const pillBox = (await page.getByRole("button", { name: /ask meeseek/i }).boundingBox())!;
   expect(rowBox.y + rowBox.height).toBeLessThanOrEqual(pillBox.y);
 });
 

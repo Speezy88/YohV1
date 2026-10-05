@@ -285,7 +285,7 @@ test("fixed Calendar events land in the Plan as calendar-anchor blocks with thei
   assert.equal(anchors.length, 1);
   assert.equal(anchors[0]!.start, "2026-08-22T15:00:00.000Z");
   assert.equal(anchors[0]!.end, "2026-08-22T15:30:00.000Z");
-  assert.equal(anchors[0]!.taskId, undefined, "an anchor is never attributed to a Task Yoh could reschedule");
+  assert.equal(anchors[0]!.taskId, undefined, "an anchor is never attributed to a Task Meeseek could reschedule");
 });
 
 test("idempotent: a second same-day trigger sends no second notification and re-generates no Plan", async () => {
@@ -1463,7 +1463,7 @@ function schoolCalendarEvent(id: string, title: string, start: string, end: stri
   return { id, title, start, end, calendarId: "spencerhatch@seattleacademy.org" };
 }
 
-test("Polish-5 Task 3 (superseded 2026-09-29): a Study Block is not an anchor, but Yoh's work still waits for 3:15 PM on a school day", async () => {
+test("Polish-5 Task 3 (superseded 2026-09-29): a Study Block is not an anchor, but Meeseek's work still waits for 3:15 PM on a school day", async () => {
   const now = `${SCHOOL_TODAY}T09:00:00.000Z`;
   const store = tempStore();
   putTimeBudget(store, { date: SCHOOL_TODAY, totalMinutes: 60, workMinutes: 70, breakMinutes: 15 });

@@ -211,7 +211,7 @@ test("deleting a Task replaces an earlier staged change to the same Task", async
   assert.deepEqual(openChangeSet(d)?.items, [{ kind: "delete-task", taskId: "t-ps", label: "Personal Statement" }]);
 });
 
-test("delete is refused for an event Yoh did not create and staged for one it did", async () => {
+test("delete is refused for an event Meeseek did not create and staged for one it did", async () => {
   const { client, requests } = scripted([
     [use("1", "list_events", { date: "2026-10-03" })],
     [use("2", "delete_event", { eventId: "ev-dentist" }), use("3", "delete_event", { eventId: "ev-dinner" })],
@@ -220,7 +220,7 @@ test("delete is refused for an event Yoh did not create and staged for one it di
   const d = deps(client);
   await chatAgent(d, input("delete the dentist and the dinner"));
   const results = (requests[2]!.messages.at(-1) as { content: { content: string; is_error?: boolean }[] }).content;
-  assert.match(results[0]!.content, /can only delete events Yoh created/);
+  assert.match(results[0]!.content, /can only delete events Meeseek created/);
   assert.equal(results[0]!.is_error, true);
   assert.deepEqual(openChangeSet(d)?.items, [{ kind: "delete-event", eventId: "ev-dinner", label: "Dinner", etag: "v1" }]);
 });

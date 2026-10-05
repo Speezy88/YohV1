@@ -26,7 +26,7 @@ describe("z-index layers", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("the chat panel, Ask Yoh pill and confetti sit on distinct layers in the right order", () => {
+  it("the chat panel, Ask Meeseek pill and confetti sit on distinct layers in the right order", () => {
     const values = ["pill", "confetti", "chat-backdrop", "chat", "toast", "splash"].map(zToken);
     expect(values.every(Number.isFinite)).toBe(true);
     expect(new Set(values).size).toBe(values.length);

@@ -677,7 +677,7 @@ test("createMorningRitualDeps delivers the morning Plan in the app only — send
     throw new Error("no network call expected");
   }) as typeof fetch;
   try {
-    await deps.sendNotification({ title: "Yoh", message: "today's Plan" });
+    await deps.sendNotification({ title: "Meeseek", message: "today's Plan" });
   } finally {
     globalThis.fetch = originalFetch;
     store.close();
@@ -1450,13 +1450,13 @@ test("createOperationalNotifier writes a real `operational` in-app notification 
   initNotificationStoreSchema(connection.db);
   const notifyOperational = createOperationalNotifier(connection);
 
-  notifyOperational("Yoh: server is down", "The Yoh server's heartbeat is stale.");
+  notifyOperational("Meeseek: server is down", "The Meeseek server's heartbeat is stale.");
 
   const unread = listUnreadNotifications(connection);
   assert.equal(unread.length, 1);
   assert.equal(unread[0]!.kind, "operational");
-  assert.equal(unread[0]!.title, "Yoh: server is down");
-  assert.equal(unread[0]!.body, "The Yoh server's heartbeat is stale.");
+  assert.equal(unread[0]!.title, "Meeseek: server is down");
+  assert.equal(unread[0]!.body, "The Meeseek server's heartbeat is stale.");
   assert.equal(unread[0]!.deepLink, null);
   connection.close();
 });
@@ -1585,7 +1585,7 @@ test("buildDegradedAlertBody: pins the exact plain-language copy, matching the b
 });
 
 test("buildHeartbeatStaleAlertBody: pins the exact plain-language copy, no 'heartbeat' terminology", () => {
-  assert.equal(buildHeartbeatStaleAlertBody(), "The Yoh server on your Mac hasn't checked in recently — it may be off or asleep. This doesn't affect your Plan.");
+  assert.equal(buildHeartbeatStaleAlertBody(), "The Meeseek server on your Mac hasn't checked in recently — it may be off or asleep. This doesn't affect your Plan.");
   assert.doesNotMatch(buildHeartbeatStaleAlertBody(), /heartbeat/i);
 });
 

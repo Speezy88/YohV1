@@ -102,7 +102,7 @@ function Pane({ view, selection, pendingScrollId, del }: { readonly view: Memory
   }
   return (
     <ul aria-label={folder.label} className="m-0 flex flex-col gap-2 p-0">
-      <PendingPatterns key={folder.folder} questions={patterns} {...(folder.folder === "patterns" && folder.items.length === 0 ? { emptyNote: "No patterns yet. Yoh will ask before adding one." } : {})} />
+      <PendingPatterns key={folder.folder} questions={patterns} {...(folder.folder === "patterns" && folder.items.length === 0 ? { emptyNote: "No patterns yet. Meeseek will ask before adding one." } : {})} />
       {folder.items.map((i) => (
         <MemoryItemRow key={i.id} item={i} onOpenSource={openSource} {...rowProps(i.id)} />
       ))}

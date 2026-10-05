@@ -142,7 +142,7 @@ export const TaskQuickAdd = forwardRef<HTMLInputElement, TaskQuickAddProps>(func
     <section aria-label="Add a task" className="flex flex-col gap-3">
       {hasReads && (
         <div id="quick-add-reads" aria-live="polite" className="flex flex-wrap items-center gap-2.5 pl-1">
-          <span className="font-body text-small text-ink-secondary">Yoh reads:</span>
+          <span className="font-body text-small text-ink-secondary">Meeseek reads:</span>
           {chips.map((chip) => (
             <span
               key={chip}

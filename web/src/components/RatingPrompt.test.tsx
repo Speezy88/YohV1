@@ -18,8 +18,8 @@ describe("RatingPrompt", () => {
   it("key 3 on the focused group posts score 3 and folds to Rated 3 (good)", async () => {
     const spy = vi.spyOn(ratingApi, "submitRating").mockResolvedValue({ status: "ok" });
     render(<Harness />);
-    expect(screen.getByText("How is Yoh doing?")).toBeInTheDocument();
-    fireEvent.keyDown(screen.getByRole("radiogroup", { name: "How is Yoh doing?" }), { key: "3" });
+    expect(screen.getByText("How is Meeseek doing?")).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole("radiogroup", { name: "How is Meeseek doing?" }), { key: "3" });
     await waitFor(() => expect(screen.getByText("Rated 3 (good)")).toBeInTheDocument());
     expect(spy).toHaveBeenCalledWith({ promptId: "p1", score: 3 });
     expect(screen.queryByRole("radio")).toBeNull();

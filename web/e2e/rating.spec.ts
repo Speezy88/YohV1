@@ -10,12 +10,12 @@ import { FIXTURE_RATING_NOTE } from "../../tests/e2e/fixture-memory-seed.ts";
 
 async function openChat(page: Page): Promise<void> {
   await page.goto("/");
-  await page.getByRole("button", { name: /ask yoh/i }).click();
+  await page.getByRole("button", { name: /ask meeseek/i }).click();
   await expect(page.getByTestId("chat-panel")).toBeVisible();
 }
 
 async function say(page: Page, text: string): Promise<void> {
-  const input = page.getByTestId("chat-panel").getByRole("combobox", { name: "Message Yoh" });
+  const input = page.getByTestId("chat-panel").getByRole("combobox", { name: "Message Meeseek" });
   await input.fill(text);
   await input.press("Enter");
 }
@@ -29,7 +29,7 @@ test("a substantive turn shows the prompt; a 3 folds to Rated 3 (good); no secon
   const chat = page.getByTestId("chat-panel");
   await say(page, "/morning");
   await expect(chat.getByText("Fixture morning.")).toBeVisible({ timeout: 10_000 });
-  await expect(chat.getByRole("radiogroup", { name: "How is Yoh doing?" })).toBeVisible();
+  await expect(chat.getByRole("radiogroup", { name: "How is Meeseek doing?" })).toBeVisible();
 
   // Scan after the fade-in finishes (finite animations only), so contrast is measured at full opacity.
   await page.evaluate(() => Promise.all(document.getAnimations().filter((a) => Number.isFinite(a.effect?.getComputedTiming().endTime as number)).map((a) => a.finished)));
@@ -76,7 +76,7 @@ test("Not now removes the prompt", async ({ page }) => {
   await say(page, "/morning");
   await chat.getByRole("button", { name: "Not now" }).click();
   await expect(chat.getByRole("radiogroup")).toHaveCount(0);
-  await expect(chat.getByText("How is Yoh doing?")).toHaveCount(0);
+  await expect(chat.getByText("How is Meeseek doing?")).toHaveCount(0);
 });
 
 test("a non-substantive message never prompts", async ({ page }) => {

@@ -79,10 +79,10 @@ describe("chatStore", () => {
   it("send() shows Spencer's turn and a thinking placeholder synchronously, before streamChat ever settles (NFR-Latency)", async () => {
     const stream = controllableStream();
     const { result } = renderHook(() => useChatStore());
-    act(() => setDraft("Hello Yoh"));
-    act(() => void send("Hello Yoh"));
+    act(() => setDraft("Hello Meeseek"));
+    act(() => void send("Hello Meeseek"));
     expect(messagesOf(result.current)).toHaveLength(2);
-    expect(messagesOf(result.current)[0]).toMatchObject({ role: "user", text: "Hello Yoh", status: "done" });
+    expect(messagesOf(result.current)[0]).toMatchObject({ role: "user", text: "Hello Meeseek", status: "done" });
     expect(messagesOf(result.current)[1]).toMatchObject({ role: "assistant", status: "streaming", text: "", statusText: "Thinking…" });
     expect(result.current.draft).toBe("");
     expect(result.current.sending).toBe(true);
@@ -248,13 +248,13 @@ describe("chatStore", () => {
     const notice = vi.spyOn(notifications, "addLocalFailureNotice").mockImplementation(() => {});
     const stream = controllableStream();
     const { result } = renderHook(() => useChatStore());
-    act(() => void send("Hello Yoh"));
+    act(() => void send("Hello Meeseek"));
     stream.emit({ type: "status", text: "Thinking…" });
     await stream.fail(new Error("network down"));
     expect(messagesOf(result.current)).toHaveLength(0);
-    expect(result.current.draft).toBe("Hello Yoh");
+    expect(result.current.draft).toBe("Hello Meeseek");
     expect(result.current.sending).toBe(false);
-    expect(notice).toHaveBeenCalledWith("Couldn't reach Yoh. Your message is back in the box to try again.");
+    expect(notice).toHaveBeenCalledWith("Couldn't reach Meeseek. Your message is back in the box to try again.");
   });
 
   it("a transport failure never overwrites a new draft typed while the turn was in flight", async () => {
@@ -273,7 +273,7 @@ describe("chatStore", () => {
     const { result } = renderHook(() => useChatStore());
     act(() => void send("Hi"));
     stream.emit({ type: "delta", text: "Sure, I" });
-    await stream.fail(new Error("chat: the reply stream ended before Yoh finished"));
+    await stream.fail(new Error("chat: the reply stream ended before Meeseek finished"));
     expect(messagesOf(result.current)).toHaveLength(2);
     expect(messagesOf(result.current)[1]).toMatchObject({ status: "error", text: "Sure, I" });
     expect(result.current.sending).toBe(false);
@@ -306,7 +306,7 @@ describe("chatStore", () => {
   // recordAnsweredOpenItem (Story 8.6, Task 7)
   // ==========================================================================
 
-  it("recordAnsweredOpenItem appends Spencer's pick and Yoh's reply as an ordinary turn pair (UX-DR38)", () => {
+  it("recordAnsweredOpenItem appends Spencer's pick and Meeseek's reply as an ordinary turn pair (UX-DR38)", () => {
     const { result } = renderHook(() => useChatStore());
     act(() => recordAnsweredOpenItem("Work", { message: "Got it — Work.", receipts: ["Set area to Work"] }));
     expect(messagesOf(result.current)).toHaveLength(2);
@@ -321,7 +321,7 @@ describe("chatStore", () => {
     expect(messagesOf(result.current)[1]).toMatchObject({ receipt, receiptState: "settled" });
   });
 
-  it("recordAnsweredOpenItem with no message still appends Yoh's turn, as an empty reply", () => {
+  it("recordAnsweredOpenItem with no message still appends Meeseek's turn, as an empty reply", () => {
     const { result } = renderHook(() => useChatStore());
     act(() => recordAnsweredOpenItem("no", { receipts: [] }));
     expect(messagesOf(result.current)[1]).toMatchObject({ role: "assistant", text: "", receipts: [], status: "done" });
@@ -338,7 +338,7 @@ describe("chatStore", () => {
     question: { requestId: "data-completeness", questionId: "score", text: "Score (1-10)?", options: [], allowsFreeText: true },
   };
 
-  it("appendPendingOpenItem shows one Yoh message per requestId+questionId, a no-op on a repeat of the SAME pending item", () => {
+  it("appendPendingOpenItem shows one Meeseek message per requestId+questionId, a no-op on a repeat of the SAME pending item", () => {
     const { result } = renderHook(() => useChatStore());
     act(() => appendPendingOpenItem(PENDING_ITEM));
     expect(messagesOf(result.current)).toHaveLength(1);

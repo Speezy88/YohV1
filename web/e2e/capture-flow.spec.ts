@@ -20,11 +20,11 @@
 import { expect, test, type Page } from "@playwright/test";
 
 async function openPanel(page: Page): Promise<void> {
-  await page.getByRole("button", { name: /ask yoh/i }).click();
+  await page.getByRole("button", { name: /ask meeseek/i }).click();
 }
 
 function messageInput(page: Page) {
-  return page.getByRole("combobox", { name: "Message Yoh" });
+  return page.getByRole("combobox", { name: "Message Meeseek" });
 }
 
 test.beforeEach(async ({ request }) => {
