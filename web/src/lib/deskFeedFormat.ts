@@ -24,6 +24,11 @@ export function formatFeedTime(iso: string, timeZone: string): string {
   return new Intl.DateTimeFormat("en-US", { timeZone, hour: "numeric", minute: "2-digit", hour12: true }).format(new Date(iso)).replace(/ /g, " ");
 }
 
+/** `Oct 4, 2:10 PM` in `timeZone` (the host's, never the browser's). */
+export function formatFeedDateTime(iso: string, timeZone: string): string {
+  return new Intl.DateTimeFormat("en-US", { timeZone, month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true }).format(new Date(iso)).replace(/ /g, " ");
+}
+
 /** The caption for a feed that is not `ok`: `Unavailable · last updated 3:30 PM`, or `Unavailable` with no value ever fetched. */
 export function unavailableCaption(fetchedAt: string | undefined, timeZone: string): string {
   return fetchedAt === undefined ? "Unavailable" : `Unavailable · last updated ${formatFeedTime(fetchedAt, timeZone)}`;

@@ -2,11 +2,13 @@
  * web/src/pages/Desk.tsx — Epic 12: the Desk page. Six widgets from
  * `GET /api/desk` (copy: Ruling E12-R9): Tasks completed today, Worked,
  * On-time rate, Streak and Claude API spend this month, then the full-width
- * Activity heatmap (Task 5), then the Crypto feed widget (Task 6, its own request).
+ * Activity heatmap (Task 5), then the Crypto, Weather and News feed widgets (Tasks 6 and 7, one request of their own).
  */
 import { useContext, useEffect } from "react";
 import { DeskWidget, DeskWidgetSkeleton } from "../components/DeskWidget.tsx";
 import { DeskCrypto } from "../components/DeskCrypto.tsx";
+import { DeskWeather } from "../components/DeskWeather.tsx";
+import { DeskNews } from "../components/DeskNews.tsx";
 import { DeskHeatmap } from "../components/DeskHeatmap.tsx";
 import { CheckGlyph } from "../components/icons/Glyphs.tsx";
 import { StateMessage } from "../components/StateMessage.tsx";
@@ -90,6 +92,8 @@ function Widgets({ value, feeds, reducedMotion }: { readonly value: DeskResponse
         <DeskHeatmap weeks={value.heatmap.weeks} />
       </DeskWidget>
       <DeskCrypto state={feeds} reducedMotion={reducedMotion} />
+      <DeskWeather state={feeds} reducedMotion={reducedMotion} />
+      <DeskNews state={feeds} reducedMotion={reducedMotion} />
     </>
   );
 }
@@ -113,7 +117,7 @@ export default function DeskPage(): React.JSX.Element {
       ) : (
         <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
           {state.status === "loading" ? (
-            Array.from({ length: 7 }, (_, i) => <DeskWidgetSkeleton key={i} reducedMotion={reducedMotion} className={i === 0 ? "sm:col-span-2" : i === 5 ? "sm:col-span-2 lg:col-span-3" : ""} />)
+            Array.from({ length: 9 }, (_, i) => <DeskWidgetSkeleton key={i} reducedMotion={reducedMotion} className={i === 0 ? "sm:col-span-2" : i === 5 || i === 8 ? "sm:col-span-2 lg:col-span-3" : ""} />)
           ) : (
             <Widgets value={state.value} feeds={feeds} reducedMotion={reducedMotion} />
           )}

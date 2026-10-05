@@ -848,10 +848,34 @@ export interface CryptoFeedValue {
   readonly tickers: readonly CryptoTicker[];
 }
 
+/** Ruling E12-R19: Seattle's weather from the National Weather Service (forecast-period values). */
+export interface WeatherFeedValue {
+  readonly location: string;
+  readonly temperatureF: number;
+  readonly conditions: string;
+  /** The first daily-forecast period that is not "now" (e.g. "Tonight"); null when there is none. */
+  readonly next: { readonly name: string; readonly temperatureF: number; readonly summary: string } | null;
+}
+
+/** Ruling E12-R20: one headline from a fixed RSS source. */
+export interface NewsItem {
+  readonly title: string;
+  readonly url: string;
+  readonly source: "NPR" | "TechCrunch";
+  readonly publishedAt: IsoDateTime;
+}
+
+/** The news feed's value: the newest 4 per source, merged newest first. */
+export interface NewsFeedValue {
+  readonly items: readonly NewsItem[];
+}
+
 /** `GET /api/desk/feeds`'s value (Ruling E12-R21): each feed fails on its own, so this is always an ok envelope. */
 export interface DeskFeedsResponse {
   readonly timeZone: string;
   readonly crypto: FeedResult<CryptoFeedValue>;
+  readonly weather: FeedResult<WeatherFeedValue>;
+  readonly news: FeedResult<NewsFeedValue>;
 }
 
 /** `GET /api/research`'s value: the most recent Research Vault items, newest first, server-limited (AD-17). */

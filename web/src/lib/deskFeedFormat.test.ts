@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatChangePercent, formatFeedTime, formatUsdPrice, unavailableCaption } from "./deskFeedFormat.ts";
+import { formatChangePercent, formatFeedDateTime, formatFeedTime, formatUsdPrice, unavailableCaption } from "./deskFeedFormat.ts";
 
 describe("formatUsdPrice", () => {
   it("shows whole dollars with a thousands separator at 1,000 and above", () => {
@@ -36,4 +36,12 @@ describe("formatFeedTime", () => {
 describe("unavailableCaption", () => {
   it("names the last update when there was one", () => expect(unavailableCaption("2026-10-04T15:30:00.000Z", "UTC")).toBe("Unavailable · last updated 3:30 PM"));
   it("is just Unavailable otherwise", () => expect(unavailableCaption(undefined, "UTC")).toBe("Unavailable"));
+});
+
+describe("formatFeedDateTime", () => {
+  it("is Mon D, h:mm AM/PM in the given zone", () => {
+    expect(formatFeedDateTime("2026-10-04T21:10:00.000Z", "UTC")).toBe("Oct 4, 9:10 PM");
+    expect(formatFeedDateTime("2026-10-04T21:10:00.000Z", "America/Los_Angeles")).toBe("Oct 4, 2:10 PM");
+    expect(formatFeedDateTime("2026-10-05T02:10:00.000Z", "America/Los_Angeles")).toBe("Oct 4, 7:10 PM");
+  });
 });

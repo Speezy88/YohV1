@@ -108,15 +108,18 @@ describe("DeskPage", () => {
     await screen.findByText("75 min today");
     const crypto = card("Crypto");
     await within(crypto).findByText("Unavailable");
+    await within(card("Weather · Seattle, WA")).findByText("Unavailable");
+    await within(card("Business and AI news")).findByText("Unavailable");
     expect(screen.getByText("50%")).toBeInTheDocument();
     const order = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
     expect(order.indexOf("Crypto")).toBe(order.indexOf("Activity") + 1);
+    expect(order.slice(order.indexOf("Crypto"))).toEqual(["Crypto", "Weather · Seattle, WA", "Business and AI news"]);
   });
 
   it("shows skeleton cards while loading", () => {
     get.mockReturnValue(new Promise(() => {}));
     render(<DeskPage />);
-    expect(screen.getAllByTestId("desk-widget-skeleton").length).toBe(7); // six metric widgets and the Crypto feed widget
+    expect(screen.getAllByTestId("desk-widget-skeleton").length).toBe(9); // six metric widgets and the three feed widgets
     expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
   });
 

@@ -11,6 +11,8 @@ import { buildDeskFeedsDeps } from "../src/shell/server-wiring.ts";
 const deskFeeds: NonNullable<ServerDeps["deskFeeds"]> = {
   timeZone: "UTC",
   readCrypto: async () => ({ status: "ok", value: { tickers: [{ symbol: "BTC", priceUsd: 67123.4, changePercent: 1.2 }] }, fetchedAt: "2026-10-07T12:00:00.000Z" }),
+  readWeather: async () => ({ status: "ok", value: { location: "Seattle, WA", temperatureF: 58, conditions: "Cloudy", next: null }, fetchedAt: "2026-10-07T12:00:00.000Z" }),
+  readNews: async () => ({ status: "unavailable" }),
 };
 
 function connection() {
@@ -23,10 +25,12 @@ test("GET /api/desk/feeds returns the ok envelope with timeZone and crypto", asy
   const app = createApp({ connection: connection(), log: () => {}, deskFeeds });
   const res = await app.request("/api/desk/feeds");
   assert.equal(res.status, 200);
-  const body = (await res.json()) as { ok: boolean; value: { timeZone: string; crypto: { status: string } } };
+  const body = (await res.json()) as { ok: boolean; value: { timeZone: string; crypto: { status: string }; weather: { status: string }; news: { status: string } } };
   assert.equal(body.ok, true);
   assert.equal(body.value.timeZone, "UTC");
   assert.equal(body.value.crypto.status, "ok");
+  assert.equal(body.value.weather.status, "ok");
+  assert.equal(body.value.news.status, "unavailable"); // one feed down leaves the others ok
 });
 
 test("GET /api/desk/feeds answers the Desk not-configured failure when absent", async () => {

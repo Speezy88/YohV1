@@ -227,9 +227,25 @@ const FEED_TICKERS = [
 ] as const;
 const cryptoCard = (page: Page) => page.locator("section", { has: page.getByRole("heading", { name: "Crypto" }) });
 
-async function routeCrypto(page: Page, crypto: unknown): Promise<void> {
-  await page.route("**/api/desk/feeds", (route) => route.fulfill({ json: { ok: true, value: { timeZone: "UTC", crypto } } }));
+const FEED_WEATHER = { location: "Seattle, WA", temperatureF: 58, conditions: "Partly Cloudy", next: { name: "Tonight", temperatureF: 49, summary: "Mostly Clear" } };
+const FEED_NEWS = [
+  { title: "Chipmaker\u2019s sales rise on AI demand", url: "https://example.org/chipmaker", source: "TechCrunch", publishedAt: "2026-10-04T21:10:00.000Z" },
+  { title: "Rates & markets: what the Fed signaled", url: "https://example.org/rates", source: "NPR", publishedAt: "2026-10-04T18:00:00.000Z" },
+  { title: "Startup raises a seed round for AI agents", url: "https://example.org/seed", source: "TechCrunch", publishedAt: "2026-10-04T16:45:00.000Z" },
+] as const;
+const OK_WEATHER = { status: "ok", value: FEED_WEATHER, fetchedAt: FEEDS_FETCHED_AT };
+const OK_NEWS = { status: "ok", value: { items: FEED_NEWS }, fetchedAt: FEEDS_FETCHED_AT };
+const OK_CRYPTO = { status: "ok", value: { tickers: FEED_TICKERS }, fetchedAt: FEEDS_FETCHED_AT };
+const weatherCard = (page: Page) => page.locator("section", { has: page.getByRole("heading", { name: "Weather · Seattle, WA" }) });
+const newsCard = (page: Page) => page.locator("section", { has: page.getByRole("heading", { name: "Business and AI news" }) });
+
+/** Overrides the feeds response; any feed not given stays the fixture's `ok` value. */
+async function routeFeeds(page: Page, feeds: { crypto?: unknown; weather?: unknown; news?: unknown }): Promise<void> {
+  await page.route("**/api/desk/feeds", (route) =>
+    route.fulfill({ json: { ok: true, value: { timeZone: "UTC", crypto: feeds.crypto ?? OK_CRYPTO, weather: feeds.weather ?? OK_WEATHER, news: feeds.news ?? OK_NEWS } } }),
+  );
 }
+const routeCrypto = (page: Page, crypto: unknown) => routeFeeds(page, { crypto });
 
 test("the Crypto widget shows the fixture's prices, signed changes and caption", async ({ page }) => {
   await openDesk(page);
@@ -290,4 +306,59 @@ test("no request leaves the page for any host but the fixture", async ({ page })
   await openDesk(page);
   await expect(cryptoCard(page).getByRole("listitem")).toHaveCount(3);
   expect([...hosts]).toEqual([new URL(page.url()).host]);
+});
+
+// ---- Task 7: the Weather and News feed widgets ----
+
+test("the Weather and News widgets show the fixture values after Crypto", async ({ page }) => {
+  await openDesk(page);
+  const weather = weatherCard(page);
+  await expect(weather.getByText("58°F")).toBeVisible();
+  await expect(weather.getByText("Partly Cloudy")).toBeVisible();
+  await expect(weather.getByText("Tonight: 49°F, Mostly Clear")).toBeVisible();
+  await expect(weather.getByText("National Weather Service · updated 3:30 PM")).toBeVisible();
+  const news = newsCard(page);
+  await expect(news.getByRole("listitem")).toHaveCount(3);
+  const link = news.getByRole("link", { name: "Chipmaker\u2019s sales rise on AI demand" });
+  await expect(link).toHaveAttribute("target", "_blank");
+  await expect(link).toHaveAttribute("rel", "noopener noreferrer");
+  await expect(news.getByRole("listitem").first()).toContainText("TechCrunch · Oct 4,");
+  const order = await page.getByTestId("page-desk").getByRole("heading", { level: 2 }).allTextContents();
+  expect(order.slice(order.indexOf("Crypto"))).toEqual(["Crypto", "Weather · Seattle, WA", "Business and AI news"]);
+});
+
+test("one feed forced unavailable leaves the other widgets rendering", async ({ page }) => {
+  await routeFeeds(page, { weather: { status: "unavailable" } });
+  await openDesk(page);
+  await expect(weatherCard(page).getByText("Unavailable", { exact: true })).toBeVisible();
+  await expect(weatherCard(page).getByText("58°F")).toHaveCount(0);
+  await expect(cryptoCard(page).getByRole("listitem")).toHaveCount(3);
+  await expect(newsCard(page).getByRole("listitem")).toHaveCount(3);
+  await expect(page.getByText(/^\d+ min today$/)).toBeVisible();
+  await page.unroute("**/api/desk/feeds");
+  await routeFeeds(page, { news: { status: "unavailable" } });
+  await page.reload();
+  await expect(newsCard(page).getByText("Unavailable", { exact: true })).toBeVisible();
+  await expect(weatherCard(page).getByText("58°F")).toBeVisible();
+});
+
+for (const scheme of ["light", "dark"] as const) {
+  test(`axe passes with every feed widget in ${scheme}`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: scheme });
+    await openDesk(page);
+    await expect(newsCard(page).getByRole("listitem")).toHaveCount(3);
+    await expect(weatherCard(page).getByText("58°F")).toBeVisible();
+    const results = await new AxeBuilder({ page }).include('[data-testid="page-desk"]').analyze();
+    expect(results.violations).toEqual([]);
+  });
+}
+
+test("no horizontal page scroll at 390px with every widget present", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openDesk(page);
+  await expect(newsCard(page).getByRole("listitem")).toHaveCount(3);
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(0);
+  const inner = await page.getByTestId("page-desk").evaluate((el) => el.scrollWidth - el.clientWidth);
+  expect(inner).toBeLessThanOrEqual(0);
 });

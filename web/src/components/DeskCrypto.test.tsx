@@ -13,7 +13,7 @@ const TICKERS = [
   { symbol: "ETH", priceUsd: 3456.78, changePercent: null },
 ] as const;
 const AT = "2026-10-04T15:30:00.000Z";
-const loaded = (crypto: DeskFeedsResponse["crypto"]): DeskFeedsState => ({ status: "loaded", value: { timeZone: "UTC", crypto }, loadedAt: new Date(AT) });
+const loaded = (crypto: DeskFeedsResponse["crypto"]): DeskFeedsState => ({ status: "loaded", value: { timeZone: "UTC", crypto, weather: { status: "unavailable" }, news: { status: "unavailable" } }, loadedAt: new Date(AT) });
 const rows = () => within(screen.getByRole("list")).getAllByRole("listitem").map((r) => r.textContent);
 
 describe("DeskCrypto", () => {

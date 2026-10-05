@@ -10,7 +10,7 @@ import { __resetDeskFeedsForTests, startDeskFeedsStream, useDeskFeeds } from "./
 vi.mock("./apiClient.ts", () => ({ apiClient: { api: { desk: { feeds: { $get: vi.fn() } } } } }));
 
 const get = apiClient.api.desk.feeds.$get as unknown as ReturnType<typeof vi.fn>;
-const VALUE = { timeZone: "UTC", crypto: { status: "ok", value: { tickers: [] }, fetchedAt: "2026-10-04T15:30:00.000Z" } };
+const VALUE = { timeZone: "UTC", crypto: { status: "ok", value: { tickers: [] }, fetchedAt: "2026-10-04T15:30:00.000Z" }, weather: { status: "unavailable" }, news: { status: "unavailable" } };
 const setVisibility = (v: "visible" | "hidden") => Object.defineProperty(document, "visibilityState", { value: v, configurable: true });
 
 describe("deskFeeds store", () => {

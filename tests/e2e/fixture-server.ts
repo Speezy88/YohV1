@@ -160,6 +160,14 @@ export const FIXTURE_DESK_FEEDS_CRYPTO = [
   { symbol: "ETH", priceUsd: 3456.78, changePercent: null },
 ] as const;
 
+/** Epic 12 Task 7: the fake Weather and News feeds' fixed values (both `ok`). */
+export const FIXTURE_DESK_FEEDS_WEATHER = { location: "Seattle, WA", temperatureF: 58, conditions: "Partly Cloudy", next: { name: "Tonight", temperatureF: 49, summary: "Mostly Clear" } } as const;
+export const FIXTURE_DESK_FEEDS_NEWS = [
+  { title: "Chipmaker\u2019s sales rise on AI demand", url: "https://example.org/chipmaker", source: "TechCrunch", publishedAt: "2026-10-04T21:10:00.000Z" },
+  { title: "Rates & markets: what the Fed signaled", url: "https://example.org/rates", source: "NPR", publishedAt: "2026-10-04T18:00:00.000Z" },
+  { title: "Startup raises a seed round for AI agents", url: "https://example.org/seed", source: "TechCrunch", publishedAt: "2026-10-04T16:45:00.000Z" },
+] as const;
+
 /** The Desk values the seed above produces, for `web/e2e/desk.spec.ts`. */
 export const FIXTURE_DESK_COMPLETED_TODAY = ["Desk seed today-3", "Desk seed today-2", "Desk seed today-1"] as const; // newest first
 export const FIXTURE_DESK_MINUTES_TODAY = 75;
@@ -735,7 +743,7 @@ const handle = startServer(
         return url.pathname === "/__fixture/state" ? fixtureState(url) : options.fetch(request);
       },
     }),
-  { homeView, calendarDay, checkOff, plan: reshufflePlanDeps, planSync: planSyncDeps, chat, chatHistory, memoryItems, ratings, tasks: tasksPage, research, sandbox, desk: buildDeskDeps(connection, { YOH_TIMEZONE: TIME_ZONE })!, deskFeeds: { timeZone: TIME_ZONE, readCrypto: async () => ({ status: "ok", value: { tickers: FIXTURE_DESK_FEEDS_CRYPTO }, fetchedAt: FIXTURE_DESK_FEEDS_FETCHED_AT }) } },
+  { homeView, calendarDay, checkOff, plan: reshufflePlanDeps, planSync: planSyncDeps, chat, chatHistory, memoryItems, ratings, tasks: tasksPage, research, sandbox, desk: buildDeskDeps(connection, { YOH_TIMEZONE: TIME_ZONE })!, deskFeeds: { timeZone: TIME_ZONE, readCrypto: async () => ({ status: "ok", value: { tickers: FIXTURE_DESK_FEEDS_CRYPTO }, fetchedAt: FIXTURE_DESK_FEEDS_FETCHED_AT }), readWeather: async () => ({ status: "ok", value: FIXTURE_DESK_FEEDS_WEATHER, fetchedAt: FIXTURE_DESK_FEEDS_FETCHED_AT }), readNews: async () => ({ status: "ok", value: { items: FIXTURE_DESK_FEEDS_NEWS }, fetchedAt: FIXTURE_DESK_FEEDS_FETCHED_AT }) } },
 );
 const sweep = startCheckOffCommitSweep({ connection, ...checkOff, now: () => new Date() }, { log: quiet });
 // Story 11.3: the real research runner over the fake search and the fake vault (short interval so specs stay fast).
