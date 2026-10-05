@@ -14,6 +14,7 @@ import {
   streakOf,
   type DeskCompletionRow,
 } from "../src/core/desk-metrics.ts";
+import { closeOutCompletedAt } from "../src/core/local-time.ts";
 
 const LA = "America/Los_Angeles";
 const row = (completedAt: string, o: Partial<DeskCompletionRow> = {}): DeskCompletionRow => ({
@@ -69,6 +70,20 @@ test("onTimeRate: due day, day after, no due date, zero rows, local midnight", (
   assert.equal(onTimeRate(edge, "UTC").percent, 0);
   // 07:30Z on the 5th is the 5th in Los Angeles: late.
   assert.equal(onTimeRate([row("2026-10-05T07:30:00.000Z", { dueDate: "2026-10-04" })], LA).percent, 0);
+});
+
+test("E12-R13: a Task due on day D, closed out the next morning, is on time and listed under D only", () => {
+  // Answered at 08:15 on the 5th in Los Angeles, for the night of the 4th.
+  const completedAt = closeOutCompletedAt("2026-10-04", new Date("2026-10-05T15:15:00.000Z"), LA);
+  const rows = [row(completedAt, { taskName: "closed out late", dueDate: "2026-10-04" })];
+  assert.deepEqual(onTimeRate(rows, LA), { onTime: 1, counted: 1, percent: 100 });
+  assert.deepEqual(completedToday(rows, "2026-10-04", LA).map((r) => r.taskName), ["closed out late"]);
+  assert.deepEqual(completedToday(rows, "2026-10-05", LA), []);
+  const days = heatmapWeeks(rows, [], "2026-10-05", LA).flat();
+  assert.equal(days.find((d) => d.date === "2026-10-04")?.completed, 1);
+  assert.equal(days.find((d) => d.date === "2026-10-05")?.completed, 0);
+  // The answer instant itself would have been late and listed under the 5th.
+  assert.equal(onTimeRate([row("2026-10-05T15:15:00.000Z", { dueDate: "2026-10-04" })], LA).percent, 0);
 });
 
 test("streakOf: today closed out, today pending, gaps, weekends, one-sided days, longest, empty", () => {

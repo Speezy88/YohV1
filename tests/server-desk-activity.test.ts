@@ -75,16 +75,20 @@ test("M2: a missing or empty YOH_TIMEZONE means Desk is not configured, not UTC"
   assert.equal(buildDeskDeps(connection, { YOH_TIMEZONE: "" }), undefined);
 });
 
-test("M9: after a failed write the closure does not retry within a minute, then retries", () => {
+test("M9: after a failed write the closure fails without retrying for a minute, then retries", () => {
   const { connection } = setup();
   let clock = new Date("2026-10-04T12:00:00.000Z").getTime();
   const desk = buildDeskDeps(connection, { YOH_TIMEZONE: "UTC" }, () => new Date(clock))!;
   connection.db.exec("ALTER TABLE activity_days RENAME TO activity_days_gone");
   assert.throws(() => desk.recordActivityDay("2026-10-04"));
   clock += 30_000;
-  assert.doesNotThrow(() => desk.recordActivityDay("2026-10-04"), "within a minute: no attempt");
+  // Within a minute: no attempt (the table is back, yet nothing is written), and it still fails so the web pings again.
+  connection.db.exec("ALTER TABLE activity_days_gone RENAME TO activity_days");
+  assert.throws(() => desk.recordActivityDay("2026-10-04"), /backing off/);
+  assert.deepEqual(listActivityDays(connection), []);
+  connection.db.exec("ALTER TABLE activity_days RENAME TO activity_days_gone");
   clock += 31_000;
-  assert.throws(() => desk.recordActivityDay("2026-10-04"), "after a minute: tried again");
+  assert.throws(() => desk.recordActivityDay("2026-10-04"), (err: Error) => !/backing off/.test(err.message), "after a minute: tried again");
   connection.db.exec("ALTER TABLE activity_days_gone RENAME TO activity_days");
   clock += 61_000;
   desk.recordActivityDay("2026-10-04");

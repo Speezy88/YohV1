@@ -270,7 +270,8 @@ export function buildDeskDeps(connection: SqliteConnection, env: Readonly<Record
     timeZone,
     recordActivityDay: (date) => {
       if (date === lastWritten) return;
-      if (lastFailedAt !== undefined && now().getTime() - lastFailedAt < ACTIVITY_RETRY_MS) return;
+      // Throws rather than returning, so `POST /api/activity` answers with a failure and the web pings again on a later input.
+      if (lastFailedAt !== undefined && now().getTime() - lastFailedAt < ACTIVITY_RETRY_MS) throw new Error("activity day not written: backing off after a failed write");
       try {
         recordActivityDay(connection, date);
       } catch (err) {
