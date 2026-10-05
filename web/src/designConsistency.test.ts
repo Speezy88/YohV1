@@ -45,7 +45,8 @@ describe("design consistency (P6-R9/R10/R11)", () => {
   it("draws every stroked glyph at 1.8px", () => {
     const found: string[] = [];
     for (const [path, text] of files) {
-      if (STROKE_ALLOW_LIST[path]) continue;
+      // The copied Bklit chart (components/charts/, see its NOTICE.md) draws chart rims, focus rings and pattern lines, not glyphs.
+      if (STROKE_ALLOW_LIST[path] || path.startsWith("./components/charts/")) continue;
       text.split("\n").forEach((line, i) => {
         for (const m of line.matchAll(/strokeWidth=(?:\{([^}]*)\}|"([^"]*)")/g)) {
           const value = (m[1] ?? m[2] ?? "").trim().replace(/^"|"$/g, "");

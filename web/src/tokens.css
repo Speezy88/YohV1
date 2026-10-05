@@ -218,6 +218,31 @@
   /* Polish 6 (P6-R2): the shared control transition (hover, pressed, focus). */
   --duration-control: 150ms;
   --ease-control: cubic-bezier(0.2, 0, 0, 1);
+
+  /* Epic 12 Task 5: the Desk heatmap (Bklit chart, copied in). Five fixed
+     steps (Story 12.2): level 0 is the sunken surface (its cell also gets a
+     --color-rim-structural stroke); levels 1-4 are --color-accent-solid at
+     four stepped opacities. Both themes come from accent-solid's light-dark(). */
+  --color-heatmap-level-0: var(--color-surface-sunken);
+  --color-heatmap-level-1: color-mix(in srgb, var(--color-accent-solid) 25%, transparent);
+  --color-heatmap-level-2: color-mix(in srgb, var(--color-accent-solid) 50%, transparent);
+  --color-heatmap-level-3: color-mix(in srgb, var(--color-accent-solid) 75%, transparent);
+  --color-heatmap-level-4: var(--color-accent-solid);
+  /* The chart tooltip panel (read by the copied tooltip as classes). */
+  --color-chart-tooltip-background: var(--color-surface-raised);
+  --color-chart-tooltip-foreground: var(--color-ink-primary);
+  --color-chart-tooltip-muted: var(--color-ink-secondary);
+  /* The copied chart's own variable names, mapped onto the tokens above. */
+  --chart-scale-01: var(--color-heatmap-level-0);
+  --chart-scale-02: var(--color-heatmap-level-1);
+  --chart-scale-03: var(--color-heatmap-level-2);
+  --chart-scale-04: var(--color-heatmap-level-3);
+  --chart-scale-05: var(--color-heatmap-level-4);
+  --chart-scale-pattern-color: var(--color-rim-structural);
+  --chart-tooltip-background: var(--color-chart-tooltip-background);
+  --chart-1: var(--color-accent-solid);
+  /* The heatmap's enter fade (JS reads it, then hands motion a number). */
+  --duration-heatmap-enter: 600ms;
 }
 
 :root {

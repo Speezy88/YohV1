@@ -1,5 +1,5 @@
 /**
- * web/src/pages/Desk.test.tsx — the Desk page's five widgets (Ruling E12-R9 copy),
+ * web/src/pages/Desk.test.tsx — the Desk page's six widgets (Ruling E12-R9 copy),
  * their zero states, the skeleton and the error + retry. `GET /api/desk` is
  * mocked at the one RPC client.
  */
@@ -99,7 +99,7 @@ describe("DeskPage", () => {
   it("shows skeleton cards while loading", () => {
     get.mockReturnValue(new Promise(() => {}));
     render(<DeskPage />);
-    expect(screen.getAllByTestId("desk-widget-skeleton").length).toBe(5);
+    expect(screen.getAllByTestId("desk-widget-skeleton").length).toBe(6);
     expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
   });
 
@@ -119,6 +119,27 @@ describe("DeskPage", () => {
     const cards = screen.getAllByTestId("desk-widget-skeleton");
     expect(cards[0]).toHaveClass("sm:col-span-2");
     expect(cards[1]).not.toHaveClass("sm:col-span-2");
+  });
+
+  it("the sixth skeleton card spans the full width like the Activity widget", () => {
+    get.mockReturnValue(new Promise(() => {}));
+    render(<DeskPage />);
+    const cards = screen.getAllByTestId("desk-widget-skeleton");
+    expect(cards[5]).toHaveClass("sm:col-span-2", "lg:col-span-3");
+    expect(cards[4]).not.toHaveClass("lg:col-span-3");
+  });
+
+  it("shows the Activity heatmap widget after the five others, with its caption", async () => {
+    serve({ heatmap: { weeks: [[{ date: "2026-10-03", completed: 2, level: 2 }, { date: "2026-10-04", completed: 0, level: 0 }]] } });
+    render(<DeskPage />);
+    await screen.findByText("75 min today");
+    const activity = card("Activity");
+    expect(activity).toHaveAttribute("data-wheel-nav", "off");
+    expect(activity).toHaveClass("sm:col-span-2", "lg:col-span-3");
+    expect(within(activity).getByText("Last 26 weeks")).toBeInTheDocument();
+    expect(within(activity).getByRole("img", { name: "Oct 3, 2026: 2 Tasks completed" })).toBeInTheDocument();
+    const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
+    expect(headings.at(-1)).toBe("Activity");
   });
 
   it("skeletons pulse normally and do not under reduced motion", () => {

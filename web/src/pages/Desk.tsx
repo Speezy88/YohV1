@@ -1,10 +1,12 @@
 /**
- * web/src/pages/Desk.tsx — Epic 12: the Desk page. Five widgets from
+ * web/src/pages/Desk.tsx — Epic 12: the Desk page. Six widgets from
  * `GET /api/desk` (copy: Ruling E12-R9): Tasks completed today, Worked,
- * On-time rate, Streak and Claude API spend this month.
+ * On-time rate, Streak and Claude API spend this month, then the full-width
+ * Activity heatmap (Task 5).
  */
 import { useContext, useEffect } from "react";
 import { DeskWidget, DeskWidgetSkeleton } from "../components/DeskWidget.tsx";
+import { DeskHeatmap } from "../components/DeskHeatmap.tsx";
 import { CheckGlyph } from "../components/icons/Glyphs.tsx";
 import { StateMessage } from "../components/StateMessage.tsx";
 import { useReducedMotion } from "../hooks/useReducedMotion.ts";
@@ -81,6 +83,10 @@ function Widgets({ value }: { readonly value: DeskResponse }): React.JSX.Element
         <p className={CAPTION}>Estimated from recorded calls.</p>
         {spend.unpricedCalls > 0 && <p className={CAPTION}>{spend.unpricedCalls === 1 ? "1 call not priced." : `${spend.unpricedCalls} calls not priced.`}</p>}
       </DeskWidget>
+      <DeskWidget title="Activity" className="sm:col-span-2 lg:col-span-3">
+        <p className={CAPTION}>Last 26 weeks</p>
+        <DeskHeatmap weeks={value.heatmap.weeks} />
+      </DeskWidget>
     </>
   );
 }
@@ -101,7 +107,7 @@ export default function DeskPage(): React.JSX.Element {
       ) : (
         <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
           {state.status === "loading" ? (
-            Array.from({ length: 5 }, (_, i) => <DeskWidgetSkeleton key={i} reducedMotion={reducedMotion} className={i === 0 ? "sm:col-span-2" : ""} />)
+            Array.from({ length: 6 }, (_, i) => <DeskWidgetSkeleton key={i} reducedMotion={reducedMotion} className={i === 0 ? "sm:col-span-2" : i === 5 ? "sm:col-span-2 lg:col-span-3" : ""} />)
           ) : (
             <Widgets value={state.value} />
           )}
