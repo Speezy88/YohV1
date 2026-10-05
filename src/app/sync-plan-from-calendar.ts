@@ -14,7 +14,7 @@ import { listDayDrops, listDayPins, replaceDayPinsAndDropsInTx } from "../adapte
 import type { SqliteConnection } from "../adapters/sqlite.ts";
 import type { LogEntry } from "../adapters/logger.ts";
 import { errorCopyForThrown } from "../core/error-copy.ts";
-import { diffPlanCalendar } from "../core/plan-calendar-diff.ts";
+import { diffPlanCalendar, rebasePlanCalendarSnapshot } from "../core/plan-calendar-diff.ts";
 import { buildReshuffleSummary, diffPlanBlocks } from "../core/reshuffle-preview.ts";
 import { refitToday } from "../rituals/day-refit-inputs.ts";
 import { localIsoDate } from "../rituals/ritual-shared.ts";
@@ -24,7 +24,10 @@ import type { DayPin, ExternalId, PlanBlock, PlanCalendarSnapshotEntry, Result, 
 export interface SyncPlanFromCalendarDeps extends RequestReshuffleDeps {
   readonly connection: SqliteConnection;
   /** `writeTodaysPlanToCalendar`, pre-bound. Receives only non-anchor blocks; returns per-block outcome. */
-  readonly writeCalendarPlan?: (blocks: readonly PlanBlock[]) => Promise<{ readonly written: readonly string[]; readonly failed: readonly string[] }>;
+  readonly writeCalendarPlan?: (
+    blocks: readonly PlanBlock[],
+    options?: { readonly baseline?: readonly PlanCalendarSnapshotEntry[]; readonly skipEditCheck?: boolean },
+  ) => Promise<{ readonly written: readonly string[]; readonly failed: readonly string[]; readonly deferred?: true }>;
   /** Events on the Yoh Plan calendar for today, with the plan block each was written from; `undefined` when there is no Yoh Plan calendar id yet (never read as "everything deleted"). */
   readonly readYohPlanEvents: () => Promise<readonly YohPlanEvent[] | undefined>;
   /** Ids of today's Yoh Plan events Google reports as deleted (cancelled); read only when every tagged event is missing. */
@@ -94,7 +97,7 @@ export async function syncPlanFromCalendar(
       // A writer that died mid-write left the snapshot untrustworthy: don't diff, rewrite the calendar from the stored Plan.
       if (deps.writeCalendarPlan) {
         try {
-          await deps.writeCalendarPlan(plan.blocks.filter((b) => b.kind !== "calendar-anchor"));
+          await deps.writeCalendarPlan(plan.blocks.filter((b) => b.kind !== "calendar-anchor"), { skipEditCheck: true });
         } catch {
           // The marker stays stale; the next sync retries the rewrite.
         }
@@ -133,6 +136,7 @@ export async function syncPlanFromCalendar(
   if (unconfirmed > 0) deps.log?.({ level: "warn", event: PLAN_SYNC_MISSING_UNCONFIRMED_EVENT, detail: { date: today, events: unconfirmed } });
 
   const diff = diffPlanCalendar({ snapshot, events, planBlocks: plan.blocks, now: nowDate.toISOString(), date: today, confirmedDeletedEventIds: deleted });
+  const baseline = rebasePlanCalendarSnapshot(snapshot, events, deleted);
   if (!diff.changed) return { ok: true, value: { status: "unchanged" } };
 
   // Merge the new pins and drops into the day's stored ones.
@@ -148,8 +152,17 @@ export async function syncPlanFromCalendar(
     ...diff.taskPins.map((p): DayPin => ({ date: today, subject: { kind: "task", taskId: p.taskId }, start: p.start, durationMinutes: p.durationMinutes })),
     ...diff.routinePins.map((p): DayPin => ({ date: today, subject: { kind: "routine", routineId: p.routineId }, start: p.start })),
   ];
-  // Nothing new to apply (e.g. the calendar write failed or the snapshot lags): stay quiet.
-  if (!diff.addedOverlap && samePins(mergedPins, storedPins, nowMs) && sameIds(mergedDrops, storedDrops)) return { ok: true, value: { status: "unchanged" } };
+  // Nothing new to apply: the stored Plan already has his edit but the calendar is behind. Repair it, quietly.
+  if (!diff.addedOverlap && samePins(mergedPins, storedPins, nowMs) && sameIds(mergedDrops, storedDrops)) {
+    if (deps.writeCalendarPlan) {
+      try {
+        await deps.writeCalendarPlan(plan.blocks.filter((b) => b.kind !== "calendar-anchor"), { baseline });
+      } catch {
+        // Quiet: the next sync retries.
+      }
+    }
+    return { ok: true, value: { status: "unchanged" } };
+  }
 
   // A colliding pin from a sync is released by the refit, never a rejection.
   const result = await refitToday(deps, { plan, now: nowDate, resolveDay: () => ({ ok: true, value: { pins: mergedPins, drops: mergedDrops, requested: [] } }) });
@@ -191,7 +204,7 @@ export async function syncPlanFromCalendar(
   let failedIds: readonly string[] = [];
   if (deps.writeCalendarPlan) {
     try {
-      failedIds = (await deps.writeCalendarPlan(toSync)).failed;
+      failedIds = (await deps.writeCalendarPlan(toSync, { baseline })).failed;
     } catch {
       failedIds = toSync.map((b) => b.id);
     }

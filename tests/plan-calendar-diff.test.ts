@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { diffPlanCalendar } from "../src/core/plan-calendar-diff.ts";
+import { diffPlanCalendar, rebasePlanCalendarSnapshot } from "../src/core/plan-calendar-diff.ts";
 import type { PlanBlock, PlanCalendarSnapshotEntry, YohPlanEvent } from "../src/types/domain.ts";
 
 const NOW = new Date("2026-08-22T18:00:00.000Z");
@@ -164,4 +164,11 @@ test("a missing event that is confirmed deleted drops the Task", () => {
 test("a split Task with one block missing but unconfirmed and the other moved keeps both lengths in the pin", () => {
   const r = runConfirmed([work("e1", "t1", 30, 60), work("e2", "t1", 90, 120)], [ev("e2", 150, 180, "b-e2")], []);
   assert.deepEqual(r.taskPins, [{ taskId: "t1", start: iso(30), durationMinutes: 60 }]);
+});
+
+test("rebasePlanCalendarSnapshot: moved takes the event's times, confirmed deleted is left out, missing unconfirmed keeps its times", () => {
+  const snap = [work("e1", "t1", 30, 60), work("e2", "t2", 70, 100), work("e3", "t3", 110, 140)];
+  const out = rebasePlanCalendarSnapshot(snap, [ev("e1", 90, 120, "b-e1")], new Set(["e2"]));
+  assert.deepEqual(out.map((e) => [e.eventId, e.start, e.end]), [["e1", iso(90), iso(120)], ["e3", iso(110), iso(140)]]);
+  assert.equal(out[0]!.taskId, "t1");
 });

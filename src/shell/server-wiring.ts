@@ -50,7 +50,7 @@ import {
 import { createAnthropicMessagesClient, loadLlmAdapterConfigFromEnv, type AnthropicMessagesClient } from "../adapters/llm-adapter.ts";
 import { search as runSearch } from "../adapters/search-adapter.ts";
 import type { SearchFn } from "../app/web-search.ts";
-import type { CalendarEvent, ExternalId, IsoDate, Task, TaskFieldOptions } from "../types/domain.ts";
+import type { CalendarEvent, ExternalId, IsoDate, PlanBlock, PlanCalendarSnapshotEntry, Task, TaskFieldOptions } from "../types/domain.ts";
 import { currentIsoDate, type ServerDeps } from "./server-routes.ts";
 
 /**
@@ -324,18 +324,39 @@ export function buildCheckOffDeps(notion: NotionFeatureConfig): ServerDeps["chec
   };
 }
 
+let planWriteDeferredHook: (() => unknown) | undefined;
+
+/** `server.ts` sets what runs after a Plan calendar write was deferred (the Plan calendar sync); late-bound because the sweep is built after these deps. */
+export function setPlanWriteDeferredHook(hook: (() => unknown) | undefined): void {
+  planWriteDeferredHook = hook;
+}
+
 /**
- * Story 8.5: `POST /api/chat`'s real dependencies — the same wiring
- * `shell/chat-cli.ts`'s `main()` used to build for its own `chatTurn` call
- * (since retired, Story 8.9), mirrored here for the server process. Only
- * `YOH_TIMEZONE` and
- * `CLAUDE_API_KEY` are required up front (general chat, Time Budget, and
- * Plan-view need nothing else); every Notion, search, and Calendar
- * dependency is constructed lazily on first use and reports its own missing
- * configuration then, so a server without Notion or Google still chats.
- * Missing either required value returns `undefined` (logged once), and the
- * route streams its not-configured `error` event.
+ * Wraps a Plan calendar writer: when the write comes back `deferred` (Spencer changed the calendar since the
+ * last read), runs the hook once on a later tick, never awaited and never throwing into the caller.
  */
+export function withDeferredWriteHook<A extends unknown[], R extends { readonly deferred?: true }>(
+  write: (...args: A) => Promise<R>,
+  getHook: () => (() => unknown) | undefined,
+): (...args: A) => Promise<R> {
+  return async (...args: A): Promise<R> => {
+    const result = await write(...args);
+    if (result.deferred) {
+      const hook = getHook();
+      if (hook) {
+        setImmediate(() => {
+          try {
+            void Promise.resolve(hook()).catch(() => undefined);
+          } catch {
+            // A failed hook never reaches the writer's caller.
+          }
+        });
+      }
+    }
+    return result;
+  };
+}
+
 /** `POST /api/plan/reshuffle*`'s deps: the reshuffle binding `buildChatDeps` already built, so both entry points share one set. */
 export function buildPlanDeps(chat: ServerDeps["chat"]): ServerDeps["plan"] {
   if (!chat?.reshuffle) return undefined;
@@ -348,6 +369,18 @@ export function buildPlanSyncDeps(chat: ServerDeps["chat"]): ServerDeps["planSyn
   return { ...chat.reshuffle, store: chat.store, ...chat.planSyncReads };
 }
 
+/**
+ * Story 8.5: `POST /api/chat`'s real dependencies — the same wiring
+ * `shell/chat-cli.ts`'s `main()` used to build for its own `chatTurn` call
+ * (since retired, Story 8.9), mirrored here for the server process. Only
+ * `YOH_TIMEZONE` and
+ * `CLAUDE_API_KEY` are required up front (general chat, Time Budget, and
+ * Plan-view need nothing else); every Notion, search, and Calendar
+ * dependency is constructed lazily on first use and reports its own missing
+ * configuration then, so a server without Notion or Google still chats.
+ * Missing either required value returns `undefined` (logged once), and the
+ * route streams its not-configured `error` event.
+ */
 export function buildChatDeps(
   connection: SqliteConnection,
   notion: NotionFeatureConfig | undefined,
@@ -570,7 +603,11 @@ export function buildChatDeps(
     // `/plan` — see that file's own doc comment for why (this object is
     // built once at server startup, but a long-running process can see
     // fresh `SlipHistory` rows written hours later, e.g. via `/night`).
-    writeCalendarPlan: (blocks) => writeTodaysPlanToCalendar(getCalendarWriteClient(), getTokenStore(), blocks, { timeZone, snapshot: createPlanCalendarSnapshotStore(connection) }),
+    // `/plan` builds the day's first Plan, so its snapshot is normally empty and the edit check is a no-op; the hook covers the rest.
+    writeCalendarPlan: withDeferredWriteHook(
+      (blocks: readonly PlanBlock[]) => writeTodaysPlanToCalendar(getCalendarWriteClient(), getTokenStore(), blocks, { timeZone, snapshot: createPlanCalendarSnapshotStore(connection) }),
+      () => planWriteDeferredHook,
+    ),
     log: (entry) => writeStructuredLog(entry),
     planSyncReads: {
       readYohPlanEvents: async () => {
@@ -594,7 +631,16 @@ export function buildChatDeps(
       now: () => new Date(),
       readTasks,
       readCalendarEvents: readCalendarEventsFn,
-      writeCalendarPlan: (blocks) => writeTodaysPlanToCalendar(getCalendarWriteClient(), getTokenStore(), blocks, { timeZone, snapshot: createPlanCalendarSnapshotStore(connection) }),
+      writeCalendarPlan: withDeferredWriteHook(
+        (blocks: readonly PlanBlock[], options?: { readonly baseline?: readonly PlanCalendarSnapshotEntry[]; readonly skipEditCheck?: boolean }) =>
+          writeTodaysPlanToCalendar(getCalendarWriteClient(), getTokenStore(), blocks, {
+            timeZone,
+            snapshot: createPlanCalendarSnapshotStore(connection),
+            ...(options?.baseline ? { baseline: options.baseline } : {}),
+            ...(options?.skipEditCheck ? { skipEditCheck: true } : {}),
+          }),
+        () => planWriteDeferredHook,
+      ),
     },
     // Story 8.6 (Task 7): `AnswerOpenItemDeps`'s own fields — spread in via
     // each write function's adapter-owned binder (never named directly

@@ -1578,3 +1578,91 @@ test("readCalendarEvents retries a failing extra calendar once, but not one Goog
   });
   assert.deepEqual(logs.map((l) => (l.detail as { calendarId?: string }).calendarId), Object.keys(failures));
 });
+
+// ---- Plan write waits for Spencer's edits (calendar-guard T1) ----------------
+
+const GUARD_BLOCKS: PlanBlock[] = [{ id: "g1", kind: "work", start: "2026-08-22T17:00:00.000Z", end: "2026-08-22T18:00:00.000Z", label: "A", taskId: "task-a" }];
+// Now is 15:00Z; the baseline entry runs 17:00-18:00Z, so it is still ahead.
+const futureEntry = (eventId: string, blockId: string): PlanCalendarSnapshotEntry => ({ ...snapEntry(eventId, blockId), start: "2026-08-22T17:00:00.000Z", end: "2026-08-22T18:00:00.000Z" });
+const futureEvent = (id: string, blockId: string, start = "2026-08-22T17:00:00.000Z", end = "2026-08-22T18:00:00.000Z"): calendar_v3.Schema$Event => ({
+  ...taggedEvent(id, blockId, start),
+  end: { dateTime: end },
+});
+class CountingSnapshot extends FakeSnapshot {
+  begins = 0;
+  finishes = 0;
+  replaces = 0;
+  beginWrite = () => { this.begins++; };
+  finishWrite = () => { this.finishes++; };
+  override replace = (date: string, entries: PlanCalendarSnapshotEntry[]) => { this.replaces++; this.data.set(date, [...entries]); };
+}
+const noEventCalls = (c: FakeCalendarWriteClient) => c.eventsUpdateCalls.length + c.eventsInsertCalls.length + c.eventsDeleteCalls.length;
+const guardRun = (listResponses: calendar_v3.Schema$Events[], snapshot: CountingSnapshot, extra: Partial<Parameters<typeof writeTodaysPlanToCalendar>[3]> = {}) => {
+  const client = new FakeCalendarWriteClient({ listResponses });
+  return writeTodaysPlanToCalendar(client, new FakeCalendarIdStore("cal"), GUARD_BLOCKS, { now: WRITE_FIXED_NOW, timeZone: "UTC", snapshot, ...extra }).then((result) => ({ client, result }));
+};
+
+test("writeTodaysPlanToCalendar defers when Spencer moved a tagged event since the snapshot", async () => {
+  const snapshot = new CountingSnapshot();
+  snapshot.replace(SNAP_DATE, [futureEntry("ev-a", "g1")]);
+  snapshot.replaces = 0;
+  const { client, result } = await guardRun([{ items: [futureEvent("ev-a", "g1", "2026-08-22T19:00:00.000Z", "2026-08-22T20:00:00.000Z")] }], snapshot);
+  assert.deepEqual(result, { written: [], failed: [], deferred: true });
+  assert.equal(noEventCalls(client), 0);
+  assert.equal(snapshot.begins + snapshot.finishes + snapshot.replaces, 0);
+  assert.equal(snapshot.list(SNAP_DATE)[0]?.start, "2026-08-22T17:00:00.000Z");
+});
+
+test("writeTodaysPlanToCalendar defers when a baseline entry is confirmed deleted, with one showDeleted list", async () => {
+  const snapshot = new CountingSnapshot();
+  snapshot.replace(SNAP_DATE, [futureEntry("ev-a", "g1")]);
+  const { client, result } = await guardRun([{ items: [] }, { items: [{ id: "ev-a", status: "cancelled" }] }], snapshot);
+  assert.equal(result.deferred, true);
+  assert.equal(noEventCalls(client), 0);
+  assert.equal(client.eventsListCalls.filter((c) => c.showDeleted === true).length, 1);
+});
+
+test("writeTodaysPlanToCalendar goes ahead when a baseline entry is missing but not confirmed deleted", async () => {
+  const snapshot = new CountingSnapshot();
+  snapshot.replace(SNAP_DATE, [futureEntry("ev-a", "g1")]);
+  const { client, result } = await guardRun([{ items: [] }, { items: [] }], snapshot);
+  assert.equal(result.deferred, undefined);
+  assert.deepEqual(result.written, ["g1"]);
+  assert.equal(client.eventsInsertCalls.length, 1);
+});
+
+test("writeTodaysPlanToCalendar goes ahead when the moved event's baseline entry already ended", async () => {
+  const snapshot = new CountingSnapshot();
+  snapshot.replace(SNAP_DATE, [snapEntry("ev-a", "g1")]); // 09:00-10:00Z, before now
+  const { client, result } = await guardRun([{ items: [futureEvent("ev-a", "g1", "2026-08-22T19:00:00.000Z", "2026-08-22T20:00:00.000Z")] }], snapshot);
+  assert.equal(result.deferred, undefined);
+  assert.equal(client.eventsUpdateCalls.length, 1);
+});
+
+test("writeTodaysPlanToCalendar goes ahead past an untagged event Spencer added, with no showDeleted call", async () => {
+  const snapshot = new CountingSnapshot();
+  snapshot.replace(SNAP_DATE, [futureEntry("ev-a", "g1")]);
+  const added: calendar_v3.Schema$Event = { id: "u1", summary: "Dentist", start: { dateTime: "2026-08-22T17:00:00.000Z" }, end: { dateTime: "2026-08-22T18:00:00.000Z" } };
+  const { client, result } = await guardRun([{ items: [futureEvent("ev-a", "g1"), added] }], snapshot);
+  assert.equal(result.deferred, undefined);
+  assert.equal(client.eventsUpdateCalls.length, 1);
+  assert.equal(client.eventsListCalls.filter((c) => c.showDeleted === true).length, 0);
+});
+
+test("writeTodaysPlanToCalendar checks the given baseline, not the stored snapshot", async () => {
+  const snapshot = new CountingSnapshot();
+  snapshot.replace(SNAP_DATE, [futureEntry("ev-a", "g1")]); // stale: the event has since moved
+  const moved = futureEvent("ev-a", "g1", "2026-08-22T19:00:00.000Z", "2026-08-22T20:00:00.000Z");
+  const baseline = [{ ...futureEntry("ev-a", "g1"), start: "2026-08-22T19:00:00.000Z", end: "2026-08-22T20:00:00.000Z" }];
+  const { client, result } = await guardRun([{ items: [moved] }], snapshot, { baseline });
+  assert.equal(result.deferred, undefined);
+  assert.equal(client.eventsUpdateCalls.length, 1);
+});
+
+test("writeTodaysPlanToCalendar with skipEditCheck writes over a moved event", async () => {
+  const snapshot = new CountingSnapshot();
+  snapshot.replace(SNAP_DATE, [futureEntry("ev-a", "g1")]);
+  const { client, result } = await guardRun([{ items: [futureEvent("ev-a", "g1", "2026-08-22T19:00:00.000Z", "2026-08-22T20:00:00.000Z")] }], snapshot, { skipEditCheck: true });
+  assert.equal(result.deferred, undefined);
+  assert.equal(client.eventsUpdateCalls.length, 1);
+});

@@ -192,3 +192,12 @@ test("approve rolls the pins and drops back with the Plan when the transaction f
   assert.deepEqual(listDayDrops(s.connection.db, s.today), []);
   s.store.close();
 });
+
+test("approve: a deferred calendar write is not a failure (applied, no failed ids, no notification)", async () => {
+  const s = await setup();
+  const deferredDeps: ApproveReshuffleDeps = { ...s.deps, writeCalendarPlan: async () => ({ written: [], failed: [], deferred: true }) };
+  const result = await approveReshuffle(deferredDeps, { proposal: s.proposal });
+  assert.deepEqual(result, { ok: true, value: { status: "applied", calendarFailedBlockIds: [] } });
+  assert.equal(notifications(s.connection).length, 0);
+  s.store.close();
+});

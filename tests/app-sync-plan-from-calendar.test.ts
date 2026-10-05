@@ -57,6 +57,8 @@ function setup() {
   let keepStale = false;
   let failWrites = false;
   const logs: { event: string }[] = [];
+  const writeOptions: ({ baseline?: readonly PlanCalendarSnapshotEntry[]; skipEditCheck?: boolean } | undefined)[] = [];
+  let deferWrites = false;
   let noCalendar = false;
   let deletedIds: string[] = [];
   const deps: SyncPlanFromCalendarDeps = {
@@ -77,15 +79,19 @@ function setup() {
       stateReads += 1;
       return writeState;
     },
-    writeCalendarPlan: async (bs) => {
+    writeCalendarPlan: async (bs, options) => {
       if (failWrites) throw new Error("google down");
       written.push(bs);
+      writeOptions.push(options);
+      if (deferWrites) return { written: [], failed: [], deferred: true };
       writeFake(bs, keepStale);
       return { written: bs.map((b) => b.id), failed: [] };
     },
   };
   return {
-    store, connection, today, plan, deps, written, logs,
+    store, connection, today, plan, deps, written, logs, writeOptions,
+    deferWrites: () => { deferWrites = true; },
+    stopFailing: () => { failWrites = false; },
     setNoCalendar: () => { noCalendar = true; },
     setDeletedIds: (ids: string[]) => { deletedIds = ids; },
     setEvents: (e: YohPlanEvent[]) => { yohEvents = e; },
@@ -419,5 +425,67 @@ test("nothing missing: the deleted-events read is not made", async () => {
   const r = await syncPlanFromCalendar(s.deps, {});
   assert.ok(r.ok && r.value.status === "applied");
   assert.equal(reads, 0);
+  s.store.close();
+});
+
+test("after an apply the calendar write gets the snapshot rebased onto what the sync read", async () => {
+  const s = setup();
+  s.setEvents([evOf(s, 120, 150), laterEv()]);
+  const r = await syncPlanFromCalendar(s.deps, {});
+  assert.ok(r.ok && r.value.status === "applied");
+  const baseline = s.writeOptions[0]?.baseline;
+  assert.ok(baseline);
+  const moved = baseline!.find((e) => e.eventId === "ev-v1-work-1");
+  assert.deepEqual([moved?.start, moved?.end], [iso(120), iso(150)]);
+  assert.equal(baseline!.find((e) => e.eventId === "ev-v1-work-2")?.start, iso(200));
+  s.store.close();
+});
+
+test("a deferred write after an apply is not a failure: applied, no failure notification", async () => {
+  const s = setup();
+  s.setEvents([evOf(s, 120, 150)]);
+  s.deferWrites();
+  const r = await syncPlanFromCalendar(s.deps, {});
+  assert.deepEqual(r, { ok: true, value: { status: "applied", calendarFailedBlockIds: [] } });
+  assert.deepEqual(notifications(s.connection).map((n) => n.kind), ["plan-calendar-synced"]);
+  s.store.close();
+});
+
+test("edit already stored but the calendar is behind: one quiet repair write of the stored Plan with the baseline", async () => {
+  const s = setup();
+  s.setEvents([evOf(s, 120, 150)]);
+  s.failWrites(); // the first sync stores his edit; its calendar write throws, leaving the snapshot stale
+  const first = await syncPlanFromCalendar(s.deps, {});
+  assert.ok(first.ok && first.value.status === "applied");
+  s.stopFailing();
+  const version = getPlan(s.store, s.today)!.data.version;
+  const hints = planHints(s.connection);
+  const notes = notifications(s.connection).length;
+  const second = await syncPlanFromCalendar(s.deps, {});
+  assert.deepEqual(second, { ok: true, value: { status: "unchanged" } });
+  assert.equal(s.written.length, 1);
+  assert.deepEqual(s.written[0]!.map((b) => b.id), getPlan(s.store, s.today)!.data.blocks.filter((b) => b.kind !== "calendar-anchor").map((b) => b.id));
+  assert.equal(s.writeOptions[0]?.baseline?.find((e) => e.eventId === "ev-v1-work-1")?.start, iso(120));
+  assert.equal(getPlan(s.store, s.today)!.data.version, version);
+  assert.equal(planHints(s.connection), hints);
+  assert.equal(notifications(s.connection).length, notes);
+  s.store.close();
+});
+
+test("the repair write's throw is swallowed", async () => {
+  const s = setup();
+  s.setEvents([evOf(s, 120, 150)]);
+  s.failWrites();
+  await syncPlanFromCalendar(s.deps, {});
+  const second = await syncPlanFromCalendar(s.deps, {});
+  assert.deepEqual(second, { ok: true, value: { status: "unchanged" } });
+  s.store.close();
+});
+
+test("the stale-marker recovery rewrite skips the edit check", async () => {
+  const s = setup();
+  s.setWriteState({ writingSince: new Date(NOW.getTime() - 6 * 60_000).toISOString() });
+  await syncPlanFromCalendar(s.deps, {});
+  assert.deepEqual(s.writeOptions, [{ skipEditCheck: true }]);
   s.store.close();
 });

@@ -32,7 +32,7 @@ export interface ApproveReshuffleDeps extends RequestReshuffleDeps {
   readonly store: MemoryStore;
   readonly connection: SqliteConnection;
   /** `writeTodaysPlanToCalendar`, pre-bound. Receives only non-anchor blocks; returns per-block outcome. */
-  readonly writeCalendarPlan?: (blocks: readonly PlanBlock[]) => Promise<{ readonly written: readonly string[]; readonly failed: readonly string[] }>;
+  readonly writeCalendarPlan?: (blocks: readonly PlanBlock[]) => Promise<{ readonly written: readonly string[]; readonly failed: readonly string[]; readonly deferred?: true }>;
 }
 
 export interface ApproveReshuffleInput {

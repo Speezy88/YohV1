@@ -113,3 +113,23 @@ export function diffPlanCalendar(input: PlanCalendarDiffInput): PlanCalendarDiff
     changedTitles,
   };
 }
+
+/**
+ * The snapshot as the calendar stands now: each entry takes the start/end of the event read for it, an entry
+ * whose event Google confirms deleted is left out, and an entry whose event is missing but unconfirmed keeps
+ * its snapshot times.
+ */
+export function rebasePlanCalendarSnapshot(
+  snapshot: readonly PlanCalendarSnapshotEntry[],
+  events: readonly YohPlanEvent[],
+  confirmedDeletedEventIds: ReadonlySet<string>,
+): PlanCalendarSnapshotEntry[] {
+  const eventById = new Map(events.map((e) => [e.eventId, e]));
+  const out: PlanCalendarSnapshotEntry[] = [];
+  for (const s of snapshot) {
+    const e = eventById.get(s.eventId);
+    if (e) out.push({ ...s, start: e.start, end: e.end });
+    else if (!confirmedDeletedEventIds.has(s.eventId)) out.push(s);
+  }
+  return out;
+}

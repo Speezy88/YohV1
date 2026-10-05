@@ -160,6 +160,7 @@ import { calendar, type calendar_v3, type GlobalOptions } from "@googleapis/cale
 import { isValidIsoDateTime, normalizeIsoDateTime as toUtcIsoDateTime } from "./iso-datetime.ts";
 import type { LogEntry } from "./logger.ts";
 import type { PlanCalendarSnapshotEntry } from "./plan-calendar-snapshot-store.ts";
+import { diffPlanCalendar } from "../core/plan-calendar-diff.ts";
 import type {
   CalendarEditChange,
   CalendarEvent,
@@ -386,6 +387,13 @@ export interface CalendarWriteConfig {
     /** Clears the in-flight mark and stamps the write time (after the snapshot is replaced), even when the write threw. */
     finishWrite?(date: string, at: string): void;
   };
+  /**
+   * What the caller last read off the calendar (the sync's rebased snapshot). When given it is the
+   * baseline for the edit check instead of `snapshot.list(date)`.
+   */
+  readonly baseline?: readonly PlanCalendarSnapshotEntry[];
+  /** True: write without checking for edits Spencer made since the baseline (a stale-marker rewrite). */
+  readonly skipEditCheck?: boolean;
 }
 
 // ============================================================================
@@ -522,6 +530,20 @@ export async function readCalendarEvents(
   return events.sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0));
 }
 
+/** One listed item as a `YohPlanEvent`; `undefined` for cancelled, all-day or untimed items. */
+function toYohPlanEvent(item: calendar_v3.Schema$Event): YohPlanEvent | undefined {
+  if (item.status === "cancelled" || isAllDayEvent(item) || !item.id) return undefined;
+  if (!item.start?.dateTime || !item.end?.dateTime) return undefined;
+  const blockId = item.extendedProperties?.private?.[PLAN_BLOCK_ID_EXTENDED_PROPERTY];
+  return {
+    eventId: item.id,
+    ...(blockId ? { blockId } : {}),
+    title: item.summary ?? "",
+    start: toIsoDateTime(item.start),
+    end: toIsoDateTime(item.end),
+  };
+}
+
 /**
  * Today's timed events on the "Yoh Plan" calendar, tagged (Yoh-written) and
  * untagged (added by Spencer) alike. All-day and cancelled events are skipped.
@@ -541,16 +563,8 @@ export async function readYohPlanEvents(
   });
   const out: YohPlanEvent[] = [];
   for (const item of response.data.items ?? []) {
-    if (item.status === "cancelled" || isAllDayEvent(item) || !item.id) continue;
-    if (!item.start?.dateTime || !item.end?.dateTime) continue;
-    const blockId = item.extendedProperties?.private?.[PLAN_BLOCK_ID_EXTENDED_PROPERTY];
-    out.push({
-      eventId: item.id,
-      ...(blockId ? { blockId } : {}),
-      title: item.summary ?? "",
-      start: toIsoDateTime(item.start),
-      end: toIsoDateTime(item.end),
-    });
+    const event = toYohPlanEvent(item);
+    if (event) out.push(event);
   }
   return out.sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0));
 }
@@ -698,6 +712,40 @@ export async function writeTodaysPlanToCalendar(
     singleEvents: true,
   });
 
+  const snapshotDate = config.snapshot ? localDateString(now, config.timeZone) : "";
+
+  // Spencer's edits since the baseline win: a write over them would snap his change back.
+  const baseline = config.skipEditCheck ? undefined : (config.baseline ?? config.snapshot?.list(snapshotDate));
+  if (baseline && baseline.length > 0) {
+    const nowMs = now.getTime();
+    const listedEvents: YohPlanEvent[] = [];
+    for (const item of existingResponse.data.items ?? []) {
+      const event = toYohPlanEvent(item);
+      if (event) listedEvents.push(event);
+    }
+    const present = new Set(listedEvents.map((e) => e.eventId));
+    let confirmedDeleted: ReadonlySet<string> = new Set();
+    if (baseline.some((entry) => Date.parse(entry.end) > nowMs && !present.has(entry.eventId))) {
+      const deletedResponse = await client.events.list({
+        calendarId,
+        timeMin: start.toISOString(),
+        timeMax: end.toISOString(),
+        singleEvents: true,
+        showDeleted: true,
+      });
+      confirmedDeleted = new Set((deletedResponse.data.items ?? []).filter((item) => item.status === "cancelled" && item.id).map((item) => item.id as string));
+    }
+    const diff = diffPlanCalendar({
+      snapshot: baseline,
+      events: listedEvents,
+      planBlocks: [],
+      now: now.toISOString(),
+      date: localDateString(now, config.timeZone),
+      confirmedDeletedEventIds: confirmedDeleted,
+    });
+    if (diff.taskPins.length > 0 || diff.routinePins.length > 0 || diff.drops.length > 0) return { written: [], failed: [], deferred: true };
+  }
+
   // Only events carrying the plan-block tag are ever considered.
   const tagged: { eventId: string; blockId: string; startMs: number }[] = [];
   for (const item of existingResponse.data.items ?? []) {
@@ -736,7 +784,6 @@ export async function writeTodaysPlanToCalendar(
   const written: string[] = [];
   const failed: string[] = [];
   const recorded = new Map<string, PlanCalendarSnapshotEntry>();
-  const snapshotDate = config.snapshot ? localDateString(now, config.timeZone) : "";
   // Only entries whose event still exists today: one Spencer deleted or dragged off the day is gone for good.
   const listedIds = new Set((existingResponse.data.items ?? []).map((item) => item.id).filter((id): id is string => !!id));
   for (const entry of config.snapshot?.list(snapshotDate) ?? []) if (listedIds.has(entry.eventId)) recorded.set(entry.eventId, entry);
@@ -791,6 +838,8 @@ export async function writeTodaysPlanToCalendar(
 export interface CalendarPlanWriteResult {
   readonly written: string[];
   readonly failed: string[];
+  /** Present (true) when nothing was written because Spencer changed the calendar since the baseline. */
+  readonly deferred?: true;
 }
 
 // ============================================================================

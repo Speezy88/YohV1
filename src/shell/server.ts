@@ -66,7 +66,7 @@ import { initJobStoreSchema } from "../adapters/job-store.ts";
 import type { ChatSession } from "../app/chat-session.ts";
 import { startHeartbeatWriter, startPlanCalendarSyncSweep, startCheckOffCommitSweep, startResearchJobRunner } from "./server-streams.ts";
 import { createApp, type ServerDeps } from "./server-routes.ts";
-import { loadNotionFeatureConfig, buildHomeViewDeps, buildCalendarDayDeps, buildTasksDeps, buildSandboxDeps, buildResearchDeps, buildDeskDeps, buildDeskFeedsDeps, buildCheckOffDeps, buildPlanDeps, buildPlanSyncDeps, buildChatDeps } from "./server-wiring.ts";
+import { loadNotionFeatureConfig, buildHomeViewDeps, buildCalendarDayDeps, buildTasksDeps, buildSandboxDeps, buildResearchDeps, buildDeskDeps, buildDeskFeedsDeps, buildCheckOffDeps, buildPlanDeps, buildPlanSyncDeps, buildChatDeps, setPlanWriteDeferredHook } from "./server-wiring.ts";
 
 // Public names of the split-out files: importers (tests, the fixture server, `types/api.ts`) keep using `shell/server.ts`.
 export {
@@ -219,6 +219,8 @@ if (import.meta.main) {
   // previous process, then the commit timer takes over.
   const checkOffSweep = checkOff ? startCheckOffCommitSweep({ ...checkOff, connection, now: () => new Date() }) : undefined;
   const planSyncSweep = planSync ? startPlanCalendarSyncSweep(planSync) : undefined;
+  // A Plan calendar write that waited for Spencer's edit hands over to the sync at once.
+  if (planSyncSweep) setPlanWriteDeferredHook(planSyncSweep.runOnce);
   // Story 11.3 (E11-R9): recovery first, then one queued research job per tick. Needs search and the Notion vault.
   const researchRunner =
     chat?.webSearchAvailable && chat.getNotionCreatePageBinding().ok && chat.timeZone
@@ -240,6 +242,7 @@ if (import.meta.main) {
     heartbeat.stop();
     checkOffSweep?.stop();
     planSyncSweep?.stop();
+    setPlanWriteDeferredHook(undefined);
     researchRunner?.stop();
     handle.close();
     setTimeout(() => {

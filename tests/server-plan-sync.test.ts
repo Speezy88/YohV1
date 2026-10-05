@@ -9,6 +9,7 @@ import { createMemoryStore, putPlan } from "../src/adapters/memory-store.ts";
 import { initNotificationStoreSchema } from "../src/adapters/notification-store.ts";
 import { createApp, startPlanCalendarSyncSweep, PLAN_CALENDAR_SYNC_INTERVAL_MS } from "../src/shell/server.ts";
 import { PLAN_SYNC_MISSING_UNCONFIRMED_EVENT, type SyncPlanFromCalendarDeps } from "../src/app/sync-plan-from-calendar.ts";
+import { withDeferredWriteHook } from "../src/shell/server-wiring.ts";
 import type { LogEntry } from "../src/adapters/logger.ts";
 import type { Plan, YohPlanEvent } from "../src/types/domain.ts";
 
@@ -158,4 +159,34 @@ test("POST /api/plan/sync with no Plan today reports no-plan", async () => {
   const res = await app.request("/api/plan/sync", { method: "POST", headers: { "Content-Type": "application/json" } });
   assert.deepEqual(await res.json(), { ok: true, value: { status: "no-plan" } });
   connection.close();
+});
+
+test("a deferred Plan calendar write triggers one sync run on a later tick; a normal write triggers none", async () => {
+  let runs = 0;
+  const hook = (): Promise<void> => { runs++; return Promise.resolve(); };
+  let deferred = true;
+  const write = withDeferredWriteHook(async (_blocks: readonly string[]) => (deferred ? { written: [], failed: [], deferred: true as const } : { written: ["a"], failed: [] as string[] }), () => hook);
+  const result = await write(["a"]);
+  assert.equal(result.deferred, true);
+  assert.equal(runs, 0, "never awaited: it runs on a later tick");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(runs, 1);
+  deferred = false;
+  await write(["a"]);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(runs, 1);
+});
+
+test("a throwing or rejecting hook never reaches the writer's caller", async () => {
+  const unhandled: unknown[] = [];
+  const onUnhandled = (e: unknown): void => { unhandled.push(e); };
+  process.on("unhandledRejection", onUnhandled);
+  const throwing = withDeferredWriteHook(async () => ({ deferred: true as const }), () => () => { throw new Error("boom"); });
+  const rejecting = withDeferredWriteHook(async () => ({ deferred: true as const }), () => () => Promise.reject(new Error("boom")));
+  assert.deepEqual(await throwing(), { deferred: true });
+  assert.deepEqual(await rejecting(), { deferred: true });
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  process.off("unhandledRejection", onUnhandled);
+  assert.deepEqual(unhandled, []);
 });
