@@ -119,6 +119,11 @@ Feed rulings (coordinator, 2026-10-04; made without Spencer):
   - `stale`: the last values stay on screen and the caption is replaced by `Unavailable · last updated {time}` in `ink-secondary`. `unavailable`: only `Unavailable` (or `Unavailable · last updated {time}` when an expired value existed). Times are in the host time zone. A change is never shown by color alone.
   - Loading: a skeleton card per feed widget; a failed `/api/desk/feeds` request shows `Unavailable` in each feed widget and leaves the metric widgets alone.
 
+Added by the second whole-branch review (2026-10-04):
+- **E12-R23 (coordinator; amends E12-R22)** A feed caption's time carries the date when the value is not from the host's today (`Oct 3, 3:30 PM`). When a refetch of `/api/desk/feeds` fails and the last good load is more than 15 minutes old, each `ok` feed is shown as stale (values stay, `Unavailable · last updated {time}`); the next good load clears it. Feed bodies are capped at 1 MB; the RSS parser is linear.
+- **E12-R24 (coordinator)** Every heatmap cell has the `rim-structural` stroke (levels 1–3 alone were under 3:1 against the card); the focus ring is drawn outside the cell, and the chart keeps a margin for it. Spencer's four accent steps are unchanged.
+- **Spencer, 2026-10-04 ("keep all five as built for now"):** weather's second line is the forecast period in progress; news with one source never loaded shows as stale; one hanging provider can delay the three feed widgets by up to 8 s; `@visx/* 4.0.1-alpha.0` is accepted; the copied chart files that cannot run on Desk stay.
+
 ## Task 4b: Close-out dates and real-interaction activity days (Spencer's answers; built 2026-10-04, `feb005e` + `927ef1a`)
 
 - **E12-R13.** In `src/app/answer-night-close-out.ts`, when the answer's local date is later than the close-out's date, the completion's `completedAt` is the last minute of the close-out's date in the host timezone (23:59 local); answered on the same day, it stays the answer time. The helper that turns a local date into that instant is pure, in `src/core/local-time.ts`. Existing rows are not rewritten. Tests: answered the same night; answered the next morning (on-time for a Task due that day, listed under that day, not under the next); across a DST change.
@@ -128,7 +133,7 @@ Feed rulings (coordinator, 2026-10-04; made without Spencer):
 
 Outline: add the `@/` alias and `components.json`; add `@bklit/heatmap-chart`; map `--chart-*` and the five `levelColors` to `tokens.css` (`accent-solid` at four stepped opacities plus the rimmed empty step); `animate={!reducedMotion}`; make each cell focusable with a label (`{date}: {n} Tasks completed`) and show the tooltip on focus; legend; horizontal scroll region with `data-wheel-nav="off"`. Remove the unused pattern preset color and the `zinc-*` loading label. Vitest + Playwright (keyboard reaches a cell and shows its tooltip; axe; computed style for the five levels). Then the UX amendment from Task 1.
 
-## Tasks 6–7: Feeds (Stories 12.3, 12.4) — providers chosen (2026-10-04)
+## Tasks 6–7: Feeds (Stories 12.3, 12.4) — built 2026-10-04 (`41f6e6e`, `3a80b9c`; review fixes `ecad0f9` and the commit after it)
 
 Kraken public ticker, NWS (needs a `User-Agent`; cache the grid lookup), and the two RSS feeds of E12-R12. The provider research is in the ledger folder (`feed-providers.md`); the Kraken and NWS terms pages were not read, only their API docs. Task 6 = `adapters/crypto-feed.ts` + the ticker widget; Task 7 = `adapters/weather-feed.ts`, `adapters/news-feed.ts` + their widgets. Each adapter keeps its own cache and last-good value, never throws, and takes no argument that could carry Task, Calendar or usage data (AD-22). Rulings for these are written when the providers are known.
 
