@@ -59,8 +59,7 @@ export function PageShell(): React.JSX.Element {
   // The launch splash: visible while `showSplash` is true, then either
   // fades out (normal motion, `onTransitionEnd` unmounts it once the real
   // CSS transition completes — no JS timer duplicating the CSS duration) or
-  // disappears instantly (reduced motion: the splash's dot drift is static,
-  // and the same rule is applied to its entry/exit too).
+  // disappears instantly (reduced motion).
   const [splashVisible, setSplashVisible] = useState(true);
   const [splashFadingOut, setSplashFadingOut] = useState(false);
 

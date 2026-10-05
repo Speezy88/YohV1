@@ -153,8 +153,8 @@
   /* Motion durations — Story 7.6 fix round 1 (controller ruling R14 #3).
      DESIGN.md's motion table gives no concrete number for the page-slide
      transition or the launch splash's exit fade, so these are tuned by eye
-     — the same "tuned by eye" latitude the launch splash's own dot-speed/
-     wordmark-size JS constants use, just expressed as CSS custom
+     — the same "tuned by eye" latitude the launch splash's own
+     wordmark-size JS constant uses, just expressed as CSS custom
      properties (since these two values are consumed purely by components
      as CSS `transition-duration`s, not read by any JS logic) so the "no
      component hard-codes a duration" rule holds: `PageShell.tsx` reaches
@@ -315,19 +315,6 @@ body {
   overscroll-behavior-x: none;
 }
 
-/* Story 7.6: the launch splash's dot field
-   drift, read only when `useReducedMotion` is false (LaunchSplash.tsx sets
-   `animation: none` directly under reduced motion, so this keyframe simply
-   never runs rather than needing its own media-query guard). */
-@keyframes splash-drift {
-  from {
-    transform: translate(0, 0);
-  }
-  to {
-    transform: translate(12px, -12px);
-  }
-}
-
 /* Story 7.7, DESIGN.md `in-app-notification` / UX-DR45. Glass, floating
    (Elevation & Depth's "Glass" row): opaque `surface-raised` + the same
    neutral rim by default, so the boundary never disappears; the
@@ -440,8 +427,7 @@ body {
 /* Story 7.8, DESIGN.md `Birthday Confetti`, UX-DR46: a one-shot burst, read
    only when `useReducedMotion` is false (`Confetti.tsx` never renders the
    element at all under reduced motion, so this keyframe simply never runs
-   rather than needing its own media-query guard, mirroring the splash
-   drift convention above). */
+   rather than needing its own media-query guard). */
 @keyframes confetti-fall {
   to {
     transform: translateY(110vh) rotate(360deg);
