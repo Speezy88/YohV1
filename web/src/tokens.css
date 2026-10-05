@@ -153,7 +153,7 @@
   /* Motion durations — Story 7.6 fix round 1 (controller ruling R14 #3).
      DESIGN.md's motion table gives no concrete number for the page-slide
      transition or the launch splash's exit fade, so these are tuned by eye
-     — the same "tuned by eye" latitude the Screensaver's own dot-speed/
+     — the same "tuned by eye" latitude the launch splash's own dot-speed/
      wordmark-size JS constants use, just expressed as CSS custom
      properties (since these two values are consumed purely by components
      as CSS `transition-duration`s, not read by any JS logic) so the "no
@@ -173,7 +173,7 @@
   /* Task 8 (polish-6): the stacking layers, defined once. Ascending order:
      in-page popovers < Ask Yoh pill < confetti < Chat backdrop < Chat panel
      < notifications and the Undo Toast (they stay operable over an open
-     Chat panel) < the skip link < splash/Screensaver (always the top layer).
+     Chat panel) < the skip link < the launch splash (always the top layer).
      Components use `z-(--z-name)`; never a bare number. */
   --z-raised: 10;
   --z-popover: 20;
@@ -315,11 +315,11 @@ body {
   overscroll-behavior-x: none;
 }
 
-/* Story 7.6, DESIGN.md "Screensaver drift": the Screensaver's dot field
-   drift, read only when `useReducedMotion` is false (Screensaver.tsx sets
+/* Story 7.6: the launch splash's dot field
+   drift, read only when `useReducedMotion` is false (LaunchSplash.tsx sets
    `animation: none` directly under reduced motion, so this keyframe simply
    never runs rather than needing its own media-query guard). */
-@keyframes screensaver-drift {
+@keyframes splash-drift {
   from {
     transform: translate(0, 0);
   }
@@ -440,7 +440,7 @@ body {
 /* Story 7.8, DESIGN.md `Birthday Confetti`, UX-DR46: a one-shot burst, read
    only when `useReducedMotion` is false (`Confetti.tsx` never renders the
    element at all under reduced motion, so this keyframe simply never runs
-   rather than needing its own media-query guard, mirroring the Screensaver
+   rather than needing its own media-query guard, mirroring the splash
    drift convention above). */
 @keyframes confetti-fall {
   to {

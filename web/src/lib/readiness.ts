@@ -119,9 +119,8 @@ export function useReadinessGate(key: string, ready: boolean): void {
  * gate later flips back to not-ready (fix round 2, controller ruling R16:
  * Home's `planLoaded` gate could plausibly go true, then false again on a
  * background refetch-on-focus/reconnect; a live-tracking splash would
- * otherwise re-cover Home with a full-screen takeover mid-session — the
- * idle Screensaver already owns "no input for a while", so the splash has
- * no business reappearing for this). No timer: `isSplashReady`'s one-way
+ * otherwise re-cover Home with a full-screen takeover mid-session). No
+ * timer: `isSplashReady`'s one-way
  * `hasBeenReady` latch (module-level, in this file) is what makes this
  * permanent, and it is deliberately immune to the mount-order race a naive
  * "latch on first true" would reintroduce — see `isSplashReady`'s own

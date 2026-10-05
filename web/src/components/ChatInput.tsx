@@ -6,7 +6,7 @@
  * always wide, with DESIGN.md's focus ring + accent glow
  * (`--shadow-focus-glow`). Enter sends; Shift+Enter adds a newline; Enter
  * while an IME is composing is left alone. The draft is `chatStore.ts`'s
- * own `draft`, so an unsent message survives a swipe or the Screensaver.
+ * own `draft`, so an unsent message survives a swipe.
  * Typing the next message stays possible while a reply streams; only
  * sending waits.
  *

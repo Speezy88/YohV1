@@ -6,7 +6,7 @@
  * Bubble. Module-level state behind `useSyncExternalStore`, the same shape
  * as `homeView.ts` and `notifications.ts`. Client memory only for Phase 2
  * (`[DECISION DEFAULT]`, AD-10): never persisted, so the transcript lasts
- * for the page session. It survives a page swipe or the Screensaver because
+ * for the page session. It survives a page swipe because
  * `PageShell.tsx` keeps every page mounted and this state lives outside any
  * component.
  *

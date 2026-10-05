@@ -3,14 +3,13 @@
  * page stack (Home → Tasks → Desk → Research Hub), the sidebar's up/down
  * arrow buttons, ↑/↓/Page Up/Page Down keys, an edge-aware vertical wheel,
  * the Chat panel's ⌘K toggle and its dimming of every page while open, and
- * the same launch-splash/idle-Screensaver contract Story 7.6/7.7 built.
+ * the same launch-splash contract Story 7.6/7.7 built.
  * Side swipe is retired: no horizontal gesture or ← → key moves a page.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, screen, fireEvent, act } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { PageShell } from "./PageShell.tsx";
 import * as reducedMotionModule from "../hooks/useReducedMotion.ts";
-import { SCREENSAVER_IDLE_MS } from "../lib/idle.ts";
 import { __resetReadinessForTests, useReadinessGate } from "../lib/readiness.ts";
 import { __resetChatPanelForTests } from "../lib/chatPanel.ts";
 
@@ -254,18 +253,6 @@ describe("PageShell", () => {
       </>,
     );
     expect(screen.queryByTestId("launch-splash")).not.toBeInTheDocument();
-  });
-
-  it("the idle Screensaver overlays without navigating away or unmounting the current page", () => {
-    vi.useFakeTimers();
-    render(<PageShell />);
-    act(() => vi.advanceTimersByTime(0));
-    fireEvent.keyDown(document, { key: "ArrowDown" }); // move to Tasks
-    act(() => vi.advanceTimersByTime(SCREENSAVER_IDLE_MS));
-    expect(screen.getByRole("dialog", { name: /idle/i })).toBeInTheDocument();
-    expect(screen.getByTestId("page-tasks")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^tasks$/i })).toHaveAttribute("aria-current", "page");
-    vi.useRealTimers();
   });
 
   // ==========================================================================

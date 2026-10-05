@@ -32,9 +32,8 @@ import DeskPage from "../pages/Desk.tsx";
 import ResearchHubPage from "../pages/ResearchHub.tsx";
 import MemoryPage from "../pages/Memory.tsx";
 import { useReducedMotion } from "../hooks/useReducedMotion.ts";
-import { Screensaver } from "./Screensaver.tsx";
+import { LaunchSplash } from "./LaunchSplash.tsx";
 import { useLaunchSplash } from "../lib/readiness.ts";
-import { useIdleScreensaver } from "../lib/idle.ts";
 import { useWheelPageNavigation } from "../lib/wheelNav.ts";
 import { PageNavigationContext } from "../lib/navigationContext.tsx";
 import { NotificationOverlay } from "./NotificationOverlay.tsx";
@@ -54,15 +53,14 @@ export function PageShell(): React.JSX.Element {
   const nav = usePageNavigation();
   const reducedMotion = useReducedMotion();
   const showSplash = useLaunchSplash();
-  const idle = useIdleScreensaver();
   const { open: chatOpen } = useChatPanel();
   const rootRef = useRef<HTMLDivElement>(null);
 
   // The launch splash: visible while `showSplash` is true, then either
   // fades out (normal motion, `onTransitionEnd` unmounts it once the real
   // CSS transition completes — no JS timer duplicating the CSS duration) or
-  // disappears instantly (reduced motion, per DESIGN.md's "Screensaver
-  // drift … reduced motion: static" pattern applied to entry/exit too).
+  // disappears instantly (reduced motion: the splash's dot drift is static,
+  // and the same rule is applied to its entry/exit too).
   const [splashVisible, setSplashVisible] = useState(true);
   const [splashFadingOut, setSplashFadingOut] = useState(false);
 
@@ -233,10 +231,9 @@ export function PageShell(): React.JSX.Element {
               if (e.target === e.currentTarget) setSplashVisible(false);
             }}
           >
-            <Screensaver variant="splash" />
+            <LaunchSplash />
           </div>
         )}
-        {idle && <Screensaver variant="idle" />}
       </div>
       <ChatPanel />
       <NotificationOverlay />
