@@ -33,7 +33,6 @@ const LEGEND: readonly { readonly label: string; readonly swatch: string }[] = [
 ];
 const CELL_SIZE = 18;
 const CELL_GAP = 4;
-const NO_MARGIN = { top: 0, right: 0, bottom: 0, left: 0 } as const;
 
 export interface DeskHeatmapProps {
   readonly weeks: readonly (readonly DeskHeatmapDay[])[];
@@ -43,6 +42,11 @@ export function DeskHeatmap({ weeks }: DeskHeatmapProps): React.JSX.Element {
   const reducedMotion = useReducedMotion();
   const data = useMemo(() => toHeatmapColumns(weeks), [weeks]);
   const cornerRadius = useMemo(() => readCssPx("--radius-xs"), []);
+  // Room around the grid for the focus ring, which is drawn outside its cell: without it the svg clips the ring on the outer rows and columns.
+  const margin = useMemo(() => {
+    const m = Math.ceil(readCssPx("--focus-ring-width")) + 1;
+    return { top: m, right: m, bottom: m, left: m };
+  }, []);
   const regionRef = useRef<HTMLDivElement>(null);
   const enter = useMemo(() => {
     const ms = readCssDurationMs("--duration-heatmap-enter");
@@ -73,7 +77,7 @@ export function DeskHeatmap({ weeks }: DeskHeatmapProps): React.JSX.Element {
           layout="fluid"
           binSize={CELL_SIZE}
           gap={CELL_GAP}
-          margin={NO_MARGIN}
+          margin={margin}
           levelColors={LEVEL_COLORS}
           animate={!reducedMotion}
           animationDuration={enter.ms}

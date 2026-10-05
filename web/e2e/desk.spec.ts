@@ -194,6 +194,21 @@ test("the five levels have five distinct fills and strokes, each the token's val
   expect(ring!.ring.y).toBeLessThan(ring!.cell.y);
   expect(ring!.ring.x + ring!.ring.w).toBeGreaterThan(ring!.cell.x + ring!.cell.w);
   expect(ring!.ring.y + ring!.ring.h).toBeGreaterThan(ring!.cell.y + ring!.cell.h);
+  // The svg clips what it draws, so the ring must fit inside it on the grid's outer cells: the first day (top-left) and today (last column).
+  for (const edge of ["first", "last"] as const) {
+    const fits = await page.evaluate((which) => {
+      const cells = [...document.querySelectorAll<SVGElement>('svg[aria-label="Activity, last 26 weeks"] [role="img"]')];
+      const byX = cells.map((el) => ({ el, r: el.getBoundingClientRect() })).sort((p, q) => p.r.x - q.r.x || p.r.y - q.r.y);
+      const target = which === "first" ? byX[0]! : byX[byX.length - 1]!;
+      target.el.focus();
+      const ringEl = document.querySelector("[data-heatmap-focus-ring]") as SVGElement;
+      const half = parseFloat(getComputedStyle(ringEl).strokeWidth) / 2;
+      const r = ringEl.getBoundingClientRect();
+      const v = (ringEl.ownerSVGElement as SVGSVGElement).getBoundingClientRect();
+      return r.x - half >= v.x && r.y - half >= v.y && r.x + r.width + half <= v.x + v.width && r.y + r.height + half <= v.y + v.height;
+    }, edge);
+    expect(fits, `the focus ring of the ${edge} cell fits inside the svg`).toBe(true);
+  }
 });
 
 test("the heatmap scrolls sideways inside its region at 390px, starts at the newest week, and the page does not scroll sideways", async ({ page }) => {

@@ -56,6 +56,8 @@ test("I1: hostile 500 KB bodies parse in under 200 ms", () => {
     "<item>".repeat(80_000),
     "<item ".padEnd(500_000, " "),
     `<item><title>${"<".repeat(500_000)}</title></item>`,
+    `<item>${"<pubDatex".repeat(60_000)}</item>`,
+    `<item>${"<Title ".repeat(80_000)}</item>${"<item><title>t</title></item>".repeat(40)}`,
     `<item><title>${"<![CDATA[".repeat(55_000)}</title><link>https://a.b/</link><pubDate>2026-01-01</pubDate></item>`,
     "<item><title>x</title>".repeat(25_000),
     `<rss><item>${"<title>".repeat(70_000)}`,

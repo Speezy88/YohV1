@@ -59,9 +59,12 @@ const spellings = (tag: string): string[] => (tag === tag.toLowerCase() ? [tag] 
 /** Index just past the `>` of the open tag `<tag ...>` that starts at or after `from`, with its start; undefined when absent. */
 function openTag(xml: string, tag: string, from: number, to: number): { start: number; end: number } | undefined {
   const needles = spellings(tag).map((t) => `<${t}`);
-  let pos = from;
-  while (pos < to) {
-    const i = find(xml, needles, pos);
+  // Each spelling's next match is remembered and searched again only once passed, so a run of
+  // near-misses (`<pubDatex<pubDatex…`) costs one pass over the text, not one pass per near-miss.
+  const nextAt = needles.map((n) => xml.indexOf(n, from));
+  for (;;) {
+    let i = -1;
+    for (const at of nextAt) if (at >= 0 && (i < 0 || at < i)) i = at;
     if (i < 0 || i >= to) return undefined;
     const next = xml.charAt(i + tag.length + 1);
     if (next === ">" || next === " " || next === "\t" || next === "\n" || next === "\r") {
@@ -69,9 +72,12 @@ function openTag(xml: string, tag: string, from: number, to: number): { start: n
       if (gt < 0 || gt >= to) return undefined;
       return { start: i, end: gt + 1 };
     }
-    pos = i + 1;
+    for (let k = 0; k < nextAt.length; k++) {
+      const at = nextAt[k];
+      const needle = needles[k];
+      if (at !== undefined && needle !== undefined && at >= 0 && at <= i) nextAt[k] = xml.indexOf(needle, i + 1);
+    }
   }
-  return undefined;
 }
 
 /** The raw inner text (capped) of the first `<tag>` inside `xml[from, to)`, or undefined. */
@@ -132,9 +138,11 @@ export function parseRssItems(xml: string): RssItem[] {
       const close = xml.indexOf("</item>", open.end);
       if (close < 0) break; // an unclosed item ends the walk
       pos = close + 7;
-      const rawTitle = inner(xml, "title", open.end, close);
-      const rawLink = inner(xml, "link", open.end, close);
-      const rawDate = inner(xml, "pubDate", open.end, close);
+      // The fields are searched inside the item's own text, so no search runs past the item.
+      const item = xml.slice(open.end, close);
+      const rawTitle = inner(item, "title", 0, item.length);
+      const rawLink = inner(item, "link", 0, item.length);
+      const rawDate = inner(item, "pubDate", 0, item.length);
       if (rawTitle === undefined || rawLink === undefined || rawDate === undefined) continue;
       const title = Array.from(cleanTitle(rawTitle)).slice(0, RSS_TITLE_MAX).join("");
       const dateText = plainText(rawDate);
